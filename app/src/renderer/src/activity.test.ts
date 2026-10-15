@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/engine/types.ts';
 import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/engine/persona.ts';
-import { countStates, filterEvents, filterPersonas, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
+import { countStates, filterEvents, filterPersonas, isPreparingReport, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, timelineSummary, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -11,6 +11,37 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 const blockedRequest = (seq: number, host: string, path: string) => event(seq, 'containment.blocked_request', { host, url: `http://${host}${path}`, method: 'GET' });
 const blocked = (seq: number, reason: 'captcha' | 'session_expired' = 'captcha', who = 'p-001') => event(seq, 'persona.blocked', { step_no: 2, reason, detail: 'recaptcha' }, who);
 const resumed = (seq: number, who = 'p-001') => event(seq, 'persona.resumed', { step_no: 2 }, who);
+
+test('the report is preparing after every episode ends, including final surveys inside an open social round', () => {
+  const personas = [{ ...BUILTIN_PERSONA, id: 'p-001' }, { ...BUILTIN_PERSONA, id: 'p-002' }];
+  const abandoned = event(2, 'persona.abandoned', { step_no: 6, reason: 'The form cannot be completed.' });
+  const done = event(3, 'persona.goal_done', { step_no: 4, summary: 'Complete' }, 'p-002');
+  const preparing = (events: GnomiEvent[], population = personas) => isPreparingReport(events, personaStates(events, population));
+  assert.equal(preparing([]), false);
+  assert.equal(preparing([], []), false);
+  assert.equal(preparing([abandoned]), false);
+  assert.equal(preparing([abandoned, blocked(3, 'captcha', 'p-002')]), false);
+  assert.equal(preparing([abandoned, done]), true);
+  const social = [event(1, 'run.round_started', {}, null), abandoned, done];
+  assert.equal(preparing(social), true, 'Final surveys can outlive the last episode; no further social phase will start.');
+  assert.equal(preparing([...social, event(4, 'run.round_ended', {}, null)]), true);
+  assert.equal(preparing(social.slice(0, 2)), false, 'Social rounds continue while another persona has not ended.');
+  assert.equal(preparing([abandoned, done, event(4, 'run.finished', {}, null)]), false);
+});
+
+test('timeline retains event time and puts a persona quote on the line without hiding failures', () => {
+  const [post] = toRows([event(42, 'social.post', { post_id: 'post-1', parent_id: null, text: 'I found the next step.\nThat was easy.', about_poi_id: 'poi-1' })]);
+  assert.equal(post.ts, 42);
+  assert.equal(timelineSummary(post), '“I found the next step. That was easy.”');
+  assert.equal(post.quote, 'I found the next step.\nThat was easy.');
+  assert.equal(timelineSummary({ ...post, badge: { ok: false, text: 'failed' } }), post.title);
+  assert.equal(timelineSummary({ ...post, tone: 'alarm', title: 'Safety stop' }), 'Safety stop');
+  assert.equal(toRows([blockedRequest(12, 'outside.test', '/a')])[0].ts, 12);
+  assert.ok(isTimelineHighlight(post));
+  assert.ok(isTimelineHighlight({ ...post, tone: 'alarm' }));
+  assert.ok(isTimelineHighlight({ ...post, tone: 'muted', badge: { ok: false, text: 'failed' } }));
+  assert.equal(isTimelineHighlight({ ...post, tone: 'muted', quote: undefined }), false);
+});
 
 test('opinion updates have their own activity category with explicit self-reported confidence', () => {
   const changed = event(3, 'persona.opinion_changed', { poi_id: 'poi-1', before: null, after: { sentiment: -1, confidence: 0.7, likes: ['Clear labels'], frictions: ['No confirmation'] }, cause: { step_ids: [2], post_ids: [] } });

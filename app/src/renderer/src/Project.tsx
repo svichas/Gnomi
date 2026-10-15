@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { ProjectConfig } from '@gnomi/engine/types.ts';
 import { hostOf, hostToConfirm, offeredHosts, startHost } from './form.ts';
@@ -7,6 +7,7 @@ import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
 import { Summary } from './Summary.tsx';
 import { Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { Icon, PersonaAvatar } from './Icon.tsx';
 
 function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string | null; onToggle(host: string, on: boolean): void; onAdd(host: string): void }) {
   const { hosts, allowed, start, onToggle, onAdd } = props;
@@ -75,14 +76,19 @@ export function Project(props: {
   sessionsPersist: boolean;
   onSaved(): Promise<void>;
   onStarted(runId: string): void;
+  onAudience(): void;
+  onSettings(): void;
+  reviewRequest: number;
+  needsProvider: boolean;
 }) {
-  const { info, draft, onForm, save, sessionsPersist, onSaved, onStarted } = props;
+  const { info, draft, onForm, save, sessionsPersist, onSaved, onStarted, onAudience, onSettings, reviewRequest, needsProvider } = props;
   const { form, audience } = draft;
   const set = <K extends keyof Form>(key: K, value: Form[K]) => onForm((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
   const [summary, setSummary] = useState<ProjectConfig | null>(null);
   const { busy, outcome, run } = useAction();
   const sessions = info?.sessions ?? [];
+  const needsPersonas = audience !== null && !info?.personas.length;
   const confirmHost = hostToConfirm(form.url);
   const start = startHost(form.url);
 
@@ -112,12 +118,22 @@ export function Project(props: {
     });
 
   const persona = info?.persona;
+  useEffect(() => { if (reviewRequest > 0) void onStart(); }, [reviewRequest]);
+
+  const continueToAudience = () => run(async () => {
+    const saved = await save();
+    if (typeof saved === 'string') return { ok: false, text: saved };
+    onAudience();
+    return null;
+  });
+
   return (
-    <div className="space-y-5">
+    <div className="setup-layout">
+      <div className="space-y-5">
       <Card title="What to test">
         <div className="space-y-4">
           <Field label="Project name">
-            <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Gym" className={inputClass} />
+            <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Your product" className={inputClass} />
           </Field>
           <Field label="What the product does" hint="One sentence. It helps the persona understand the site.">
             <input
@@ -160,6 +176,9 @@ export function Project(props: {
         </div>
       </Card>
 
+      <details className="disclosure">
+        <summary><Icon name="settings" />Access & advanced options<span>Logins, allowed websites, and safety</span></summary>
+        <div className="space-y-5 disclosure-body">
       <Card title="Safety">
         <div className="space-y-4">
           <Field
@@ -211,43 +230,45 @@ export function Project(props: {
           set('allowed', [...new Set([...form.allowed, host])]);
         }}
       />
+        </div>
+      </details>
 
+      <div className="flow-footer">
+        <button type="button" onClick={onSave} disabled={busy} className={secondaryButton}>Save project</button>
+        <button type="button" onClick={continueToAudience} disabled={busy} className={primaryButton}>{busy ? 'Saving…' : 'Continue to audience'}<Icon name="arrow" size={18} /></button>
+      </div>
+      {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+      </div>
+
+      <aside className="setup-aside" aria-label="Your test at a glance">
+        <div className="aside-intro"><span className="aside-icon"><Icon name="leaf" size={24} /></span><h2>A little perspective<br />goes a long way.</h2><p>Watch simulated people try your product, then explore the moments that matter.</p></div>
+        <ol className="journey-preview"><li><span>1</span><div><strong>Set the scene</strong><p>A website and a task to try.</p></div></li><li><span>2</span><div><strong>Meet your audience</strong><p>Different people, different perspectives.</p></div></li><li><span>3</span><div><strong>Follow their experience</strong><p>Actions, opinions, and evidence.</p></div></li></ol>
       {audience !== null ? (
         <Card title="Who will try it">
           <p className="text-sm text-stone-700">
-            {info?.personas.length ? `${info.personas.length} personas in ${audience.segments.length} segments.` : 'No personas yet.'} Shape the audience and generate the personas on the
-            Audience tab.
+            {info?.personas.length ? `${info.personas.length} simulated users in ${audience.segments.length} groups.` : 'Your audience is defined. Generate its personas in the Audience step before starting a run.'}
           </p>
         </Card>
       ) : (
         persona && (
           <Card title="Who will try it">
-            <p className="text-sm font-medium text-stone-900">
-              {persona.name}, {persona.job_title}
-            </p>
-            <p className="mt-1 text-sm text-stone-600">
-              A {persona.seniority}-level {persona.job_title.toLowerCase()} at a {persona.company_size}-person {persona.industry} company, on a{' '}
-              {persona.device} browser. Tech skill {persona.tech_skill} of 5, patience {persona.patience} of 5.
-            </p>
-            <p className="mt-2 text-sm text-stone-600">{persona.context_of_use}.</p>
-            <p className="mt-2 text-sm italic text-stone-600">{persona.voice}</p>
-            <p className="mt-3 text-xs text-stone-500">Without an audience, every run uses this built-in persona. Build one on the Audience tab.</p>
+            <div className="persona-preview"><PersonaAvatar name={persona.name} id={persona.id} /><div><strong>{persona.name}</strong><p>{persona.job_title}</p></div></div>
+            <p className="mt-3 text-sm text-stone-600">Try a quick run with this simulated user, or create your own audience.</p>
           </Card>
         )
       )}
 
-      <div className="sticky bottom-0 space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-md">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={onSave} disabled={busy} className={secondaryButton}>
-            Save project
-          </button>
-          <button type="button" onClick={onStart} disabled={busy || recorder.recording !== null} className={primaryButton}>
-            Start run
+          <button type="button" onClick={needsPersonas ? onAudience : onStart} disabled={busy || recorder.recording !== null} className={`${secondaryButton} w-full`}>
+            <Icon name={needsPersonas ? 'people' : 'play'} size={16} />{needsPersonas ? 'Build personas first' : 'Start run'}
           </button>
           {busy && <p className="text-sm text-stone-500">Working...</p>}
         </div>
-        {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+        {needsProvider && <p className="text-xs text-stone-600">Before your first run, connect the AI provider that will power your simulated users.</p>}
+        <button type="button" className="text-link" onClick={onSettings}>{needsProvider ? 'Connect an AI provider' : 'AI connection & budget settings'}<Icon name="arrow" size={14} /></button>
       </div>
+      </aside>
 
       {summary && (
         <Summary

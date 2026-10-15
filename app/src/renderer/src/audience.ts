@@ -101,8 +101,7 @@ export function removeSegment(audience: Audience, id: string): Audience {
   return { ...audience, segments: withShares(rest, apportion(rest.map((segment) => segment.share), 100)) };
 }
 
-/** Each segment with a share gets at least three personas (roadmap M2). */
-export const personaMinimum = (audience: Audience) => 3 * audience.segments.filter((segment) => segment.share > 0).length;
+export const PERSONA_MINIMUM = 1;
 export const PERSONA_MAXIMUM = 200;
 
 /** The audience as it is saved: names trimmed and blank goal lines dropped. */
@@ -130,9 +129,8 @@ export function audienceProblem(audience: Audience): string | null {
   if (audience.segments.length === 0) return 'Audience: add at least one segment.';
   if (audience.segments.some((segment) => !segment.name.trim())) return 'Audience: give every segment a name.';
   if (audience.segments.reduce((sum, segment) => sum + segment.share, 0) !== 100) return 'Audience: the segment shares must add up to 100%.';
-  const minimum = personaMinimum(audience);
-  if (!whole(audience.persona_count) || audience.persona_count < minimum || audience.persona_count > PERSONA_MAXIMUM)
-    return `Audience: the persona count must be a whole number from ${minimum} to ${PERSONA_MAXIMUM}.`;
+  if (!whole(audience.persona_count) || audience.persona_count < PERSONA_MINIMUM || audience.persona_count > PERSONA_MAXIMUM)
+    return `Audience: the persona count must be a whole number from ${PERSONA_MINIMUM} to ${PERSONA_MAXIMUM}.`;
   if (!whole(audience.seed) || audience.seed < 0) return 'Audience: the seed must be a whole number, zero or more.';
   for (const { name, patience, tech_skill } of audience.segments) {
     for (const [what, [low, high]] of [['patience', patience], ['tech skill', tech_skill]] as const)

@@ -3,7 +3,7 @@ import type { LlmRequest, Responder } from '../seams.ts';
 import type { Persona } from '../types.ts';
 import { LOGINS_LABEL, type Proposal } from './propose.ts';
 import { fnv1a, mulberry32, type Traits } from './sample.ts';
-import { languageName, nameKey, TAKEN_LABEL, TRAITS_LABEL, WRITTEN_LABEL, type Candidate } from './write.ts';
+import { languageName, nameKey, SELECTED_LABEL, TAKEN_LABEL, TRAITS_LABEL, WRITTEN_LABEL, type Candidate } from './write.ts';
 
 const FIRST: Record<Persona['pronouns'], string[]> = {
   she: ['Amara', 'Lucía', 'Mei', 'Priya', 'Hannah', 'Fatima', 'Ingrid', 'Chloé', 'Ana', 'Yuki', 'Zainab', 'Olga', 'Grace', 'Leila', 'Sofia', 'Nadia', 'Rosa', 'Ewa', 'Thandiwe', 'Camille', 'Meera', 'Isabel', 'Aroha', 'Sun-hee'],
@@ -191,10 +191,16 @@ function line(text: string, label: string): unknown {
 export const DEMO_PERSONA_WRITER: Responder = (req: LlmRequest<unknown>) => {
   const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
   if (req.purpose === 'propose_audience') return proposal((line(text, LOGINS_LABEL) as string[] | undefined) ?? []);
-  if (req.purpose === 'write_persona') {
+  if (['write_persona', 'expand_persona', 'rename_persona'].includes(req.purpose ?? '')) {
     const traits = line(text, TRAITS_LABEL) as Traits | undefined;
     if (!traits) throw new Error('DEMO_PERSONA_WRITER: the request has no sampled traits');
-    return candidates(traits, (line(text, TAKEN_LABEL) as string[] | undefined) ?? [], fnv1a(`${req.persona_id}/${JSON.stringify(traits)}`), (line(text, WRITTEN_LABEL) as string[] | undefined) ?? ['name', 'job_title', 'industry', 'context_of_use', 'background', 'goal_interpretation', 'voice']);
+    const full = candidates(traits, (line(text, TAKEN_LABEL) as string[] | undefined) ?? [], fnv1a(`${req.persona_id}/${JSON.stringify(traits)}`), (line(text, WRITTEN_LABEL) as string[] | undefined) ?? ['name', 'job_title', 'industry', 'context_of_use', 'background', 'goal_interpretation', 'voice']);
+    if (req.purpose === 'rename_persona') return { names: full.candidates.map((c) => c.name) };
+    if (req.purpose === 'expand_persona') {
+      const selected = line(text, SELECTED_LABEL) as Candidate;
+      return { background: full.candidates.find((c) => c.background.startsWith(selected.background))?.background ?? `${selected.background} (Scripted demo persona: no model wrote this.)` };
+    }
+    return { candidates: full.candidates.map((c) => ({ ...c, background: c.background.split(/\s+/).slice(0, 40).join(' ') })) };
   }
   throw new Error(`DEMO_PERSONA_WRITER has no scripted answer for purpose ${req.purpose}`);
 };

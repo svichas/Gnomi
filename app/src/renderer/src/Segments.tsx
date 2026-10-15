@@ -48,8 +48,8 @@ export function SegmentCard(props: {
   const roles = sessions.map((session) => session.role);
   return (
     <li className="space-y-4 rounded-lg border border-stone-200 p-4">
-      <div className="flex items-end gap-3">
-        <div className="flex-1">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-0 flex-1">
           <Field label="Segment name">
             <input value={segment.name} onChange={(e) => set('name', e.target.value)} className={inputClass} />
           </Field>
@@ -84,6 +84,7 @@ export function SegmentCard(props: {
         <textarea value={(segment.employers ?? []).join('\n')} onChange={(e) => set('employers', e.target.value.split('\n'))} rows={2} className={inputClass} />
       </Field>
 
+      <details className="segment-options"><summary>Habits, devices & scenarios</summary><div className="space-y-4 mt-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Login">
           <select value={segment.role ?? ''} onChange={(e) => set('role', e.target.value || null)} className={inputClass}>
@@ -116,6 +117,7 @@ export function SegmentCard(props: {
           <textarea value={segment.goal_override ?? ''} onChange={(e) => set('goal_override', e.target.value || null)} rows={3} className={inputClass} />
         </Field>
       </div>
+      </div></details>
     </li>
   );
 }

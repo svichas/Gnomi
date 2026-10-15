@@ -32,6 +32,7 @@ const pages: Record<string, string> = {
   <iframe title="Embedded" srcdoc="<button onclick=&quot;document.body.append('clicked')&quot;>Inside frame</button>"></iframe>
 </main></body></html>`,
   '/next': `<!doctype html><html><head>${head}<title>Next page</title></head><body><h1>Next page</h1><a href="/">Home</a></body></html>`,
+  '/shared-label': `<!doctype html>${head}<label>Credentials<input aria-label="Username"><input aria-label="Password" type="password" value="${SECRET}"></label>`,
   '/long': `<!doctype html><html><head>${head}<title>Long page</title></head><body><main><h1>Long page</h1>
 <p>${'Lorem ipsum dolor sit amet. '.repeat(150)}</p><div style="height:1500px"></div><ul>${items}</ul><div style="height:3000px"></div><button>Bottom button</button></main></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
@@ -178,18 +179,18 @@ test('select of an option that does not exist is option_not_found', async (t) =>
   assert.deepEqual([outcome.ok, outcome.error], [false, 'option_not_found']);
 });
 
-test('type into a password field is refused, and no password value reaches the snapshot', async (t) => {
+test('personas can type passwords while existing and entered values stay out of snapshots', async (t) => {
   const page = await open(t);
   const { text } = await page.snapshot();
   assert.doesNotMatch(text, new RegExp(SECRET)); // the type=password inputs and the one a toggle revealed as type=text
-  assert.match(text, /textbox "Password" \[ref=\w+\] \[box=\d+,\d+,\d+,\d+\]\n/); // still listed, value stripped
+  assert.match(text, /textbox "Password" \[ref=\w+\] \[box=\d+,\d+,\d+,\d+\] \[password: filled\]/);
   for (const name of ['Password', 'Confirm', 'Revealed']) {
     const outcome = await act(page, 'type', refOf(text, new RegExp(`textbox "${name}" \\[ref=(\\w+)\\]`)), 'my-new-password');
-    assert.deepEqual([outcome.ok, outcome.error], [false, 'password_field'], name);
+    assert.deepEqual([outcome.ok, outcome.error], [true, null], name);
   }
-  // fill() on a label's descendant fills the label's control, so that route must be refused too.
+  // A label's descendant addresses the same editable control.
   const viaLabel = await act(page, 'type', refOf(text, /generic \[ref=(\w+)\] \[box=[\d,]+\]: Password wrapper/), 'my-new-password');
-  assert.deepEqual([viaLabel.ok, viaLabel.error], [false, 'password_field']);
+  assert.deepEqual([viaLabel.ok, viaLabel.error], [true, null]);
   assert.doesNotMatch((await page.snapshot()).text, /my-new-password/);
 });
 
@@ -202,6 +203,14 @@ test('screenshot masks password inputs but not other inputs', async (t) => {
   assert.deepEqual(await shot('password=aaaaaaaa&text=same'), await shot('password=bbbbbbbb&text=same'));
   assert.notDeepEqual(await shot('password=same&text=aaaaaaaa'), await shot('password=same&text=bbbbbbbb'));
   void page;
+});
+
+test('a password stays masked when its enclosing label points at a different control', async (t) => {
+  const page = await open(t, '/shared-label');
+  const snapshot = await page.snapshot();
+  assert.doesNotMatch(snapshot.text, new RegExp(SECRET));
+  assert.match(snapshot.text, /textbox "Password"[^\n]*\[password: filled\]/);
+  assert.doesNotMatch(snapshot.text, /textbox "Username"[^\n]*\[password:/);
 });
 
 test('screenshot is a JPEG at one pixel per CSS pixel', async (t) => {

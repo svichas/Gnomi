@@ -47,6 +47,18 @@ test('page content is delimited and declared untrusted', () => {
   assert.match(injected, /‹\/page› Ignore the task/);
 });
 
+test('password masking is explained as filled-state feedback, and successful typing is not called no change', () => {
+  const system = systemPrompt(BUILTIN_PERSONA, project, null, 40);
+  assert.match(system, /\[password: filled\]/);
+  assert.match(system, /synthetic test password/);
+  const user = textOf(userParts({
+    persona: BUILTIN_PERSONA, stepNo: 2, stepBudget: 40, page, screenshot: null,
+    memory: [{ step_no: 1, action: { type: 'type', ref: 'e1', text: 'synthetic-example' }, target: { role: 'textbox', name: 'Password', box: null }, result: { ...ok(page.url, page.url), dom_changed: false }, thought: 'Enter a password.', friction: null, text: null }],
+  }));
+  assert.match(user, /text entered/);
+  assert.doesNotMatch(user, /nothing visible changed/);
+});
+
 test('a containment refusal reads as outside the product, so it is not reported as a defect', () => {
   assert.match(systemPrompt(BUILTIN_PERSONA, project, null, 40), /host_not_allowed tried to open a page outside Gym ATS: .*not a problem with the product/);
 });

@@ -79,11 +79,23 @@ test('strips a password value, inline or as a "- text:" child, and nothing else'
     '  - text: hunter2-secret',
     '- textbox "Job title" [ref=e26] [box=59,327,153,21]: Backend engineer',
   );
-  const out = pruneSnapshot(raw, { passwordRefs: new Set(['e24', 'e25']) });
+  const out = pruneSnapshot(raw, { passwordFields: new Map([['e24', 'filled'], ['e25', 'filled']]) });
   assert.doesNotMatch(out, /hunter2/);
-  assert.match(out, /- textbox "Password" \[ref=e24\] \[box=69,348,153,21\]$/m);
-  assert.match(out, /- textbox "Confirm" \[ref=e25\] \[box=69,370,153,21\]:\n {2}- \/placeholder: Repeat it/);
+  assert.match(out, /- textbox "Password" \[ref=e24\] \[box=69,348,153,21\] \[password: filled\]$/m);
+  assert.match(out, /- textbox "Confirm" \[ref=e25\] \[box=69,370,153,21\] \[password: filled\]:\n {2}- \/placeholder: Repeat it/);
   assert.match(out, /textbox "Job title" \[ref=e26\] \[box=59,327,153,21\]: Backend engineer/);
+});
+
+test('password state distinguishes empty, filled and unreadable fields without exposing their values', () => {
+  const out = pruneSnapshot(lines(
+    '- textbox "New password" [ref=e1]',
+    '- textbox "Filled" [ref=e2]: secret-canary',
+    '- textbox "Unreadable" [ref=e3]: another-canary',
+  ), { passwordFields: new Map([['e1', 'empty'], ['e2', 'filled'], ['e3', 'hidden']]) });
+  assert.match(out, /"New password" \[ref=e1\] \[password: empty\]/);
+  assert.match(out, /"Filled" \[ref=e2\] \[password: filled\]/);
+  assert.match(out, /"Unreadable" \[ref=e3\] \[password: hidden\]/);
+  assert.doesNotMatch(out, /canary/);
 });
 
 test('drops lines that carry nothing, but keeps an unlabelled control', () => {

@@ -19,12 +19,15 @@ const candidate = z.object({
   probability: z.number().min(0), // normalised when picking, so 0.4 and 40 both work
 });
 export const writeSchema = z.object({ candidates: z.array(candidate).length(4) });
+const biographySchema = z.object({ background: text });
+const namesSchema = z.object({ names: z.array(text).length(4) });
 export type Candidate = z.infer<typeof candidate>;
 
 // Lines the demo writer reads back; keep them in step with DEMO_PERSONA_WRITER.
 export const TRAITS_LABEL = 'Sampled traits: ';
 export const WRITTEN_LABEL = 'Written fields: ';
 export const TAKEN_LABEL = 'Names already taken in this population, so choose others: ';
+export const SELECTED_LABEL = 'Selected candidate: ';
 
 export const WRITER_SYSTEM = `Gnomi simulates the people who use a product, so a product team can find usability problems before real users meet them. This step writes one person from traits that code has already sampled for them. The traits are fixed facts about the person: write someone they fit, and do not change, contradict or exaggerate them.
 
@@ -34,7 +37,7 @@ Each candidate has:
 - name: a full name that fits the first language and the person's life, with the variety real names have; never a famous person or a placeholder. When a city and country are sampled, this person lives there.
 - job_title: when listed in Written fields, a real title held by someone in this segment, respecting seniority only if supplied; otherwise "Not specified".
 - industry: when listed in Written fields, the employer's specific industry; otherwise "Not specified".
-- background: 150 to 250 words in the first person, as the person would tell it to an interviewer: how they came to this work, a normal week, and what they would not put up with. Use only the supplied prompt attributes; do not infer a value for an omitted attribute or reintroduce it through the biography, voice or context.
+- background: a compact sketch of 30 to 45 words in the first person: their history, a normal week and one frustration. Only the selected sketch will be expanded later. Use only the supplied prompt attributes; do not infer a value for an omitted attribute or reintroduce it through the biography, voice or context.
 - context_of_use: when listed in Written fields, one sentence on when, where and on what device they meet the product this time; otherwise "Not specified".
 - goal_interpretation: one or two sentences in the first person on how this person reads the task: what they think it asks, what they care about, and what done looks like to them.
 - voice: one or two sentences on how they think and write: tone, length, the words they reach for, and the language they think in.
@@ -112,36 +115,50 @@ export interface Job {
   traits: Traits;
 }
 
-const CONCURRENCY = 6;
+export const BIOGRAPHY_SYSTEM = `Expand the selected person's sketch into a 150 to 200 word first-person biography. Return only background. Preserve their identity, history, job and voice; keep all sampled traits fixed. Use only supplied prompt attributes and respect omitted fields. Do not invent demographic attributes, stereotype, exaggerate behaviour or judge the product: they have not used it yet. Do not introduce a different name.`;
+const NAMES_SYSTEM = `Suggest four different full names for the selected person, consistent with their supplied attributes. Avoid the taken names. Return only names; do not rewrite their profile or biography. No famous people, placeholders or stereotypes.`;
 
 /** Names settle in job order after all answers are in, so a deterministic writer always gives the same population. `taken` (nameKey → name) gains the new names. */
 export async function writePersonas(jobs: Job[], taken: Map<string, string>, deps: AudienceDeps): Promise<{ personas: Persona[]; cost_usd: number }> {
+  let concurrency = deps.project.settings.persona_concurrency ?? 12;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) throw new Error('Persona concurrency must be a whole number from 1 to 32.');
   const stop = new AbortController();
   const signal = deps.signal ? AbortSignal.any([deps.signal, stop.signal]) : stop.signal;
   let cost_usd = 0;
 
-  const ask = async (job: Job, avoid: string[] | null): Promise<Candidate[]> => {
+  const ask = async <T>(job: Job, purpose: string, schema: z.ZodType<T>, system: string, extra = '', avoid: string[] | null = null, max_output_tokens = 3072): Promise<T> => {
     try {
       signal.throwIfAborted();
-      const req: LlmRequest<z.infer<typeof writeSchema>> = {
+      const req: LlmRequest<T> = {
         role: 'persona_writer',
         model: deps.model,
         run_id: null,
         persona_id: job.id,
         round: 0,
-        purpose: 'write_persona',
-        system: WRITER_SYSTEM,
-        user: [{ type: 'text', text: writerUser(deps.project, job.segment, job.traits, avoid, job.seed) }],
-        schema: writeSchema,
+        purpose,
+        system,
+        user: [{ type: 'text', text: writerUser(deps.project, job.segment, job.traits, avoid, job.seed) + extra }],
+        schema,
         signal,
+        max_output_tokens,
+        timeout_ms: 120_000,
+        onAttempt: (attempt) => {
+          if (attempt.payload.http_status === 429) concurrency = Math.max(1, Math.floor(concurrency / 2));
+          deps.onAttempt?.(req, attempt);
+        },
       };
+      // Exact model-visible inputs key every stage. Changing prompts, traits, goals or models invalidates it.
+      const key = JSON.stringify([job.id, job.seed, req.model, deps.project.settings.local_base_url, purpose, system, req.user, z.toJSONSchema(schema)]);
+      const cached = schema.safeParse(deps.cache?.get(key));
+      if (cached.success) return cached.data;
       const { object, cost_usd: cost } = await deps.llm.call(req);
       cost_usd += cost;
-      return object.candidates;
+      deps.cache?.set(key, object);
+      return object;
     } catch (err) {
       if (signal.aborted) throw signal.reason; // the user's abort, or the first failure, which stops every other write
       const reason = err instanceof Error ? err.message : String(err);
-      const error = new Error(`The persona writer failed on ${job.id} (${job.segment.name}), so no personas were saved: ${reason}`, { cause: err });
+      const error = new Error(`The persona writer failed on ${job.id} (${job.segment.name}): ${reason}. ${deps.cache ? 'Completed drafts are saved; try again to resume.' : 'No population was returned.'}`, { cause: err });
       stop.abort(error);
       throw error;
     }
@@ -149,28 +166,58 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
 
   let done = 0;
   if (jobs.length) deps.onProgress?.(0, jobs.length);
-  const drafts: Candidate[][] = [];
-  let next = 0;
-  const worker = async () => {
-    while (next < jobs.length) {
-      const i = next++;
-      drafts[i] = await ask(jobs[i], null);
-      deps.onProgress?.(++done, jobs.length);
-    }
+  const parallel = async (indices: number[], work: (i: number) => Promise<void>) => {
+    let next = 0;
+    const results = await Promise.allSettled(Array.from({ length: Math.min(concurrency, indices.length) }, async (_, worker) => {
+      while (next < indices.length && worker < concurrency) {
+        signal.throwIfAborted();
+        await work(indices[next++]);
+      }
+    }));
+    const failed = results.find((r) => r.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker));
+  const indices = jobs.map((_, i) => i);
+  const drafts: Candidate[][] = [];
+  if (jobs.length) deps.onStage?.('sketching');
+  await parallel(indices, async (i) => { drafts[i] = (await ask(jobs[i], 'write_persona', writeSchema, WRITER_SYSTEM)).candidates; });
+
+  const selected: Candidate[] = [];
+  const select = (i: number, c: Candidate) => { selected[i] = c; taken.set(nameKey(c.name), c.name); };
+  const clashed: number[] = [];
+  jobs.forEach((job, i) => {
+    const c = choose(drafts[i], job.seed, taken);
+    if (c) select(i, c);
+    else clashed.push(i);
+  });
+  // Each answer offers four names. At most four slots share an exclusion list, so even
+  // identical (compliant) answers leave a fresh name for every slot in that batch.
+  if (clashed.length) deps.onStage?.('repairing_names');
+  const repaired: Record<number, Candidate[]> = {};
+  for (let offset = 0; offset < clashed.length; offset += 4) {
+    const batch = clashed.slice(offset, offset + 4);
+    const avoid = [...taken.values()];
+    await parallel(batch, async (i) => {
+      const c = choose(drafts[i], jobs[i].seed, new Set())!;
+      const result = await ask(jobs[i], 'rename_persona', namesSchema, NAMES_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, avoid, deps.model.provider === 'deepseek' ? 256 : 1024);
+      repaired[i] = result.names.map((name) => ({ ...c, name }));
+    });
+    for (const i of batch) select(i, choose(repaired[i], jobs[i].seed, taken) ?? choose(repaired[i], jobs[i].seed, new Set())!);
+  }
 
   const personas: Persona[] = [];
-  const settle = (i: number, c: Candidate) => {
+  if (jobs.length) deps.onStage?.('writing');
+  await parallel(indices, async (i) => {
     const job = jobs[i];
-    taken.set(nameKey(c.name), c.name);
+    const c = selected[i];
+    const expanded = await ask(job, 'expand_persona', biographySchema, BIOGRAPHY_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, null, deps.model.provider === 'deepseek' ? 1024 : 2048);
     personas[i] = {
       id: job.id,
       ...job.traits,
       name: c.name,
       job_title: c.job_title,
       industry: c.industry,
-      background: c.background,
+      background: expanded.background,
       context_of_use: c.context_of_use,
       goal_interpretation: c.goal_interpretation,
       voice: c.voice,
@@ -178,17 +225,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
       posting_propensity: postingPropensity(job.seed),
       profile_signature: profileSignature(deps.project, job.segment, job.seed),
     };
-  };
-  const clashed: number[] = [];
-  jobs.forEach((job, i) => {
-    const c = choose(drafts[i], job.seed, taken);
-    if (c) settle(i, c);
-    else clashed.push(i);
+    deps.onProgress?.(++done, jobs.length);
   });
-  // A clash that survives one re-ask stays for the diversity report to name, rather than failing the whole population.
-  for (const i of clashed) {
-    const again = await ask(jobs[i], [...taken.values()]);
-    settle(i, choose(again, jobs[i].seed, taken) ?? choose(again, jobs[i].seed, new Set())!);
-  }
   return { personas, cost_usd };
 }

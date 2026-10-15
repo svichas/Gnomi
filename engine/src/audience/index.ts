@@ -1,6 +1,6 @@
-import type { LlmGateway } from '../seams.ts';
+import type { LlmAttempt, LlmGateway, LlmRequest } from '../seams.ts';
 import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '../types.ts';
-import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments } from './propose.ts';
+import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from './sample.ts';
 import { nameKey, writePersonas } from './write.ts';
 import { validateCountries } from './locations.ts';
@@ -19,10 +19,13 @@ export interface AudienceDeps {
   project: ProjectConfig;
   roles?: string[]; // recorded login names a proposed segment may use; defaults to project.role
   onProgress?(done: number, total: number): void;
+  onStage?(stage: 'sketching' | 'repairing_names' | 'writing'): void;
+  onAttempt?(request: LlmRequest<unknown>, attempt: LlmAttempt): void;
+  cache?: { get(key: string): unknown; set(key: string, value: unknown): void };
   signal?: AbortSignal;
 }
 
-const MIN_PER_SEGMENT = 3; // so every segment with a share is represented; the report still weights it by share
+const PREFERRED_MIN_PER_SEGMENT = 3;
 const MAX_PERSONAS = 200;
 
 // Starting points the user sees and edits (idea.md §11), not measurements: about 15% think in a first language other than English.
@@ -62,7 +65,7 @@ export function defaultAudience(project: ProjectConfig): Audience {
 export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: Audience; cost_usd: number }> {
   const roles = deps.roles ?? (deps.project.role ? [deps.project.role] : []);
   try {
-    const { object, cost_usd } = await deps.llm.call({
+    const request: LlmRequest<Proposal> = {
       role: 'persona_writer',
       model: deps.model,
       run_id: null,
@@ -72,8 +75,12 @@ export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: A
       system: PROPOSE_SYSTEM,
       user: [{ type: 'text', text: proposeUser(deps.project, roles) }],
       schema: proposalSchema(roles),
+      max_output_tokens: 4096,
+      timeout_ms: 120_000,
+      onAttempt: (attempt) => deps.onAttempt?.(request, attempt),
       signal: deps.signal,
-    });
+    };
+    const { object, cost_usd } = await deps.llm.call(request);
     return { audience: { ...defaultAudience(deps.project), segments: toSegments(object) }, cost_usd };
   } catch (err) {
     if (deps.signal?.aborted) throw err;
@@ -88,12 +95,15 @@ interface Slot {
   old: Persona | null; // the stored persona of this slot when it descends from the slot's seed
 }
 
-/** Each segment's slots: its share of persona_count (at least 3) plus the personas added by hand, in index order. */
+/** Split persona_count by share, lowering the per-segment minimum for small runs; hand-added personas remain extra. */
 function layout(audience: Audience, population: Persona[]): { segment: Segment; slots: Slot[] }[] {
   validateCountries(audience.countries);
   const count = audience.persona_count;
   if (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS) throw new Error(`persona_count must be a whole number from 1 to ${MAX_PERSONAS}`);
-  const counts = apportion(audience.segments.map((s) => s.share), count, MIN_PER_SEGMENT);
+  const shares = audience.segments.map((s) => s.share);
+  const activeSegments = shares.filter((share) => share > 0).length;
+  const minimum = Math.min(PREFERRED_MIN_PER_SEGMENT, Math.floor(count / Math.max(1, activeSegments)));
+  const counts = apportion(shares, count, minimum);
   const byId = new Map(population.map((p) => [p.id, p]));
   return audience.segments.map((segment, k) => {
     const slots: Slot[] = population

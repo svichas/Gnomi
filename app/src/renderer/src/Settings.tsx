@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
-import type { LlmRole, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
+import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
 import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';
 import { Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
+import { Icon } from './Icon.tsx';
 
 // What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
 const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
@@ -115,17 +116,36 @@ function AddProvider({ choices, disabled, onAdd }: { choices: ProviderId[]; disa
   );
 }
 
-export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string> }) {
-  const { settings, onSettings, save } = props;
-  const [list, setList] = useState<ProviderList | null>(null); // null until main has answered
+function ModelSelect({ role, choice, onChange }: { role: LlmRole; choice: ModelChoice; onChange(model: string): void }) {
+  const models = [...new Set(Object.values(PROVIDER_DEFAULTS[choice.provider]).map((route) => route.model))];
+  const [custom, setCustom] = useState(!models.includes(choice.model));
+  const label = ROLE_TEXT[role].label;
+  const recommended = PROVIDER_DEFAULTS[choice.provider][role].model;
+  return (
+    <div className="space-y-2">
+      <select
+        aria-label={`${label} model`}
+        value={custom ? '__custom__' : choice.model}
+        onChange={(event) => {
+          const value = event.target.value;
+          setCustom(value === '__custom__');
+          if (value !== '__custom__') onChange(value);
+        }}
+        className={inputClass}
+      >
+        {models.map((model) => <option key={model} value={model}>{model}{model === recommended ? ' (recommended)' : ''}</option>)}
+        <option value="__custom__">Custom model…</option>
+      </select>
+      {custom && <Field label={`${label} custom model`}><input value={choice.model} onChange={(event) => onChange(event.target.value)} spellCheck={false} className={inputClass} /></Field>}
+    </div>
+  );
+}
+
+export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void> }) {
+  const { settings, onSettings, save, list, reloadProviders } = props;
   const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
-  const reload = async () => setList(await window.gnomi.listProviders());
-
-  useEffect(() => {
-    void reload();
-  }, []);
 
   const localUrl = settings.local_base_url?.trim() || null;
   const configured = list && configuredProviders(list.keys, localUrl);
@@ -149,7 +169,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       }
       const entry = await window.gnomi.saveKey(provider, value);
       added = true;
-      await reload();
+      await reloadProviders();
       return entry.remembered ? null : { ok: true, text: 'Key accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
     });
     return added;
@@ -159,7 +179,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     changing.run(async () => {
       if (provider === 'openai_compatible') return saveLocal(null);
       await window.gnomi.clearKey(provider);
-      await reload();
+      await reloadProviders();
       return null;
     });
 
@@ -169,7 +189,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       if (typeof saved === 'string') return problemFor(saved, 'settings');
     }
     await window.gnomi.testKey(provider);
-    await reload();
+    await reloadProviders();
     return null;
   }
 
@@ -217,8 +237,8 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         {changing.outcome && <div className="mt-3"><Note tone={changing.outcome.ok ? 'ok' : 'error'}>{changing.outcome.text}</Note></div>}
       </Card>
 
-      <Card title="This project's models">
-        <p className="mb-4 text-sm text-stone-600">Pick a provider and a model for each job from the providers above. Changing the provider fills in its usual model.</p>
+      <details className="disclosure"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
+        <p className="mb-4 text-sm text-stone-600">With one connected provider, Gnomi assigns it to every task automatically. You can choose a provider and model for each task below. Changing the provider selects its recommended model.</p>
         <div className="space-y-3">
           {ROLES.map((role) => {
             const choice = settings.routing[role];
@@ -244,20 +264,23 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
                   ))}
                 </select>
                 <div>
-                  <input
-                    aria-label={`${text.label} model`}
-                    value={choice.model}
-                    onChange={(e) => set('routing', { ...settings.routing, [role]: { ...choice, model: e.target.value } })}
-                    spellCheck={false}
-                    className={inputClass}
-                  />
-                  {text.used && warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
+                  <ModelSelect key={`${role}-${choice.provider}`} role={role} choice={choice} onChange={(model) => set('routing', { ...settings.routing, [role]: { ...choice, model } })} />
+                  {warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
                   {blind && <p className="mt-1 text-xs text-stone-500">DeepSeek reads text only, so the navigator will not see the screenshots.</p>}
                 </div>
               </div>
             );
           })}
         </div>
+      </Card>
+
+      </div></details>
+
+      <Card title="Persona generation">
+        <Field label="Writer concurrency (1-32)" hint="Profiles written at once. Lower this if your provider throttles requests or your local model slows down.">
+          <NumberInput label="Writer concurrency (1-32)" value={settings.persona_concurrency ?? 12} onChange={(v) => set('persona_concurrency', v)} min={1} max={32} />
+        </Field>
+        <p className="mt-3 text-xs text-stone-500">Completed drafts are saved automatically. Retrying an interrupted build resumes the work already completed.</p>
       </Card>
 
       <Card title="Budgets">

@@ -299,7 +299,7 @@ Notes on the example:
 - Employers are the user's call. Typing "Coca-Cola, Pepsi, a staffing agency" into the recruiters segment spreads its personas across an in-house recruiter at Coca-Cola, one at Pepsi and an agency recruiter who works for several clients, and their goal interpretations differ accordingly (the agency recruiter juggles many clients and cares about bulk actions and client-facing views). The inspector, the activity panel and the report can be filtered by employer. The personas remain fictional people; a real company name is context, not a claim about that company's staff.
 - Recorded sessions: the engineer records one session each for `recruiter`, `hiring_manager`, `admin` and `approver` on staging; candidates and buyers need none.
 
-Personas per run: 50 by default (27 recruiters, 13 hiring managers, 5 admins, 3 approvers, plus a candidate population of 10 and a buyer population of 5). A segment with a 5% share gets at least 3 personas so it is represented; the report still weights it by 5%.
+Personas per run: 50 by default, configurable from 1 to 200. Counts follow segment shares, preferring at least 3 per active segment when the requested total allows it; smaller runs lower that minimum so even one persona is possible. The report still weights segments by their configured shares. Personas added by hand remain extra.
 
 ## 9. Example report excerpt
 

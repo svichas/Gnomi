@@ -78,10 +78,30 @@ export type LlmRole = 'navigator' | 'socialiser' | 'persona_writer' | 'judge' | 
 
 export type Routing = Record<LlmRole, ModelChoice>; // tech.md §10.2
 
+/** Setup diagnostics are separate from run evidence and never affect run budgets. */
+export interface SetupCall {
+  id: number;
+  ts: number;
+  task_id: string;
+  persona_id: string | null;
+  purpose: string;
+  payload: EventPayloads['llm.call'];
+}
+
+export interface PersonaProgress {
+  done: number;
+  total: number;
+  stage?: 'sketching' | 'repairing_names' | 'writing' | 'saving';
+  calls?: number;
+  failed_attempts?: number;
+  elapsed_ms?: number;
+}
+
 export interface RunSettings {
   routing: Routing;
   local_base_url: string | null; // the OpenAI-compatible endpoint behind provider 'openai_compatible', e.g. http://localhost:11434/v1
   concurrency: number; // personas in flight, each with its own browser context (default 12, at most 32)
+  persona_concurrency?: number; // independent writer pool, 1–32; old projects default to 12
   cost_budget_usd: number;
   wall_clock_budget_min: number;
   screenshots: boolean; // send each step's screenshot to the navigator; always stored as evidence
@@ -243,7 +263,7 @@ export interface ActionResult {
   url_before: string;
   url_after: string;
   dom_changed: boolean;
-  error: string | null; // 'ref_not_found' | 'not_editable' | 'password_field' | 'host_not_allowed' | 'timeout' | message
+  error: string | null; // 'ref_not_found' | 'not_editable' | 'host_not_allowed' | 'timeout' | message; older logs may contain 'password_field'
 }
 
 export interface ActionOutcome extends ActionResult {
@@ -347,6 +367,9 @@ export interface EventPayloads {
     cache_write_tokens: number;
     cost_usd: number;
     latency_ms: number;
+    reasoning_tokens?: number; // included in output_tokens, never charged twice
+    queue_ms?: number;
+    http_status?: number;
     usage_reported?: boolean; // false means provider usage was absent/incomplete; cost may understate billing
     status: 'ok' | 'error' | 'invalid_output';
     error: string | null;

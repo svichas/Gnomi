@@ -1,11 +1,13 @@
 import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { ProjectStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { EventType, GnomiEvent, Persona, ProjectConfig, RunConfig, RunStatus } from '../types.ts';
+import type { EventType, GnomiEvent, Persona, ProjectConfig, RunConfig, RunStatus, SetupCall } from '../types.ts';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+const draftKey = (key: string) => createHash('sha256').update(key).digest('hex');
 
 // IF NOT EXISTS makes the schema idempotent: a crash mid-way is finished by the next open; a v1 file gains new tables.
 const SCHEMA = `
@@ -59,6 +61,21 @@ CREATE TABLE IF NOT EXISTS persona (
   position INTEGER NOT NULL,
   profile_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS persona_draft (
+  cache_key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS setup_call (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  task_id TEXT NOT NULL,
+  persona_id TEXT,
+  purpose TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  response_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS setup_call_task ON setup_call (task_id, id);
 `;
 
 const EVENT_COLUMNS = 'run_id, seq, ts, round, persona_id, poi_id, type, payload_json';
@@ -287,6 +304,22 @@ export function openProject(dir: string): ProjectStore {
     },
     deletePersona(id) {
       removePersona.run(id);
+    },
+    getPersonaDraft(key) {
+      const row = db.prepare('SELECT value_json FROM persona_draft WHERE cache_key = ?').get(draftKey(key));
+      return row ? JSON.parse(String(row.value_json)) : undefined;
+    },
+    putPersonaDraft(key, value) {
+      db.prepare('INSERT INTO persona_draft VALUES (?, ?) ON CONFLICT(cache_key) DO UPDATE SET value_json = excluded.value_json').run(draftKey(key), JSON.stringify(value));
+    },
+    clearPersonaDrafts() { db.exec('DELETE FROM persona_draft'); },
+    recordSetupCall({ task_id, persona_id, purpose }, { payload, transcript }) {
+      db.prepare('INSERT INTO setup_call (ts, task_id, persona_id, purpose, payload_json, request_json, response_json) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(Date.now(), task_id, persona_id, purpose, JSON.stringify(payload), JSON.stringify(transcript.request), JSON.stringify(transcript.response));
+    },
+    listSetupCalls() {
+      return db.prepare('SELECT id, ts, task_id, persona_id, purpose, payload_json FROM setup_call WHERE task_id = (SELECT task_id FROM setup_call ORDER BY id DESC LIMIT 1) ORDER BY id').all()
+        .map(({ payload_json, ...row }) => ({ ...row, payload: JSON.parse(String(payload_json)) }) as SetupCall);
     },
     close() {
       db.close();

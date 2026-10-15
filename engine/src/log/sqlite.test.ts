@@ -121,7 +121,7 @@ test('reopening keeps the project, the population, runs and events', (t) => {
   const raw = new DatabaseSync(join(dir, 'project.sqlite'));
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
-  assert.equal(userVersion(dir), 3);
+  assert.equal(userVersion(dir), 4);
 });
 
 test('profile schemas and typed persona values survive reopening without rewriting legacy records', (t) => {
@@ -152,7 +152,7 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
 
   // The later changes are additive: without the session and persona tables the file is exactly a v1 file.
   const v1 = new DatabaseSync(join(dir, 'project.sqlite'));
-  v1.exec('DROP TABLE session; DROP TABLE persona; PRAGMA user_version = 1;');
+  v1.exec('DROP TABLE session; DROP TABLE persona; DROP TABLE persona_draft; DROP TABLE setup_call; PRAGMA user_version = 1;');
   v1.close();
 
   const upgraded = openProject(dir);
@@ -160,7 +160,7 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.events(run), [appended]);
   upgraded.close();
-  assert.equal(userVersion(dir), 3);
+  assert.equal(userVersion(dir), 4);
 });
 
 test('a v2 project upgrades on open with an empty population', (t) => {
@@ -170,14 +170,14 @@ test('a v2 project upgrades on open with an empty population', (t) => {
   store.close();
 
   const v2 = new DatabaseSync(join(dir, 'project.sqlite'));
-  v2.exec('DROP TABLE persona; PRAGMA user_version = 2;');
+  v2.exec('DROP TABLE persona; DROP TABLE persona_draft; DROP TABLE setup_call; PRAGMA user_version = 2;');
   v2.close();
 
   const upgraded = openProject(dir);
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.listSessions(), [sessionInfo('recruiter')]);
   upgraded.close();
-  assert.equal(userVersion(dir), 3);
+  assert.equal(userVersion(dir), 4);
 });
 
 test('a project saved before M1 or M2 reads back with the defaults', (t) => {

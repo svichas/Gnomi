@@ -564,6 +564,9 @@ run(snapshot):
     parallel(personas.active, concurrency=C):        # default C = 12
       episode_slice(persona, K = ceil(persona.step_budget / R))
       maybe emit persona.rated (first impression on first view)
+    if every episode has ended:
+      emit run.round_ended
+      break  # no remaining social rounds; collect bounded surveys and prepare the report
     # social round
     parallel(personas.all, concurrency=C):
       feed = select_feed(persona, follow_graph, unseen, max=12)
@@ -670,6 +673,8 @@ Segment eligibility: each POI lists which segments engage with it (default: all 
 
 The comparison view runs steps 1–4 on both runs, matches themes across runs by `(poi, page pattern, element)` first and by title similarity second, and classifies each as fixed, new or unchanged with the sentiment deltas.
 
+Once every persona has finished, abandoned, or exhausted its episode budget, the run ends exploration and the UI shows **Preparing report** while the remaining survey and report requests settle. Ended personas can still join social phases while others are browsing, but no social phase starts after the last episode ends. Surveys have a 30-second request deadline; each judge and author request has a 60-second deadline, including queueing and retries. A timed-out survey is omitted; unavailable report analysis falls back to the collected evidence and deterministic themes. The report opens automatically when ready. The user can return to the timeline without later report updates switching the view again.
+
 ## 9. Hard problems
 
 ### 9.1 Authentication
@@ -677,7 +682,7 @@ The comparison view runs steps 1–4 on both runs, matches themes across runs by
 - **The human logs in; Gnomi keeps the session.** The login recorder opens a visible, persistent Playwright context on the POI's URL. The user logs in by hand, including SSO redirects, MFA prompts and any CAPTCHA. Gnomi watches only for the start page to be reached and then saves the context's storage state (cookies and local storage) for that role, encrypted on disk. The engine never reads form values and never sees the password; the LLM is not involved at all during recording.
 - **Per role, not per persona.** Each segment maps to a role; each role has one recorded session. At run time every persona gets its own browser context created from its role's storage state, so cookies are isolated between personas even though they share an account. Teams that need separate accounts per persona record more sessions (the UI allows several sessions per role and distributes them round-robin).
 - **Session health.** Before a run, Gnomi loads each role's start page and checks it did not land on a login page (URL contains `login`, `signin`, `sso`, `auth`, or a password field is present). During a run the same check runs after every navigation; a hit emits `persona.blocked(session_expired)`, pauses every persona on that role, and prompts the user to re-record. Resumed personas continue from their last step. Session lifetimes are the identity provider's policy, not Gnomi's (Okta's default is two hours; many SaaS staging sessions last hours to two weeks), so the sessions screen shows each role's cookie expiry and last-verified time. Storage state does not capture `sessionStorage`; apps that keep tokens there are handled with Playwright's documented init-script workaround, scoped to the POI host.
-- **Three guards on credentials in both channels.** Password-field values are stripped from snapshots; screenshots mask password inputs with Playwright's `mask` option; and the tool layer refuses a `type` action whose target is a password field, logging it as a blocked step. The LLM therefore has no way to read or enter a secret even if a page asks for one.
+- **Password entry and masking.** Personas may type synthetic test passwords into editable fields for account-creation flows. Existing values are stripped from snapshots and replaced with `[password: empty]`, `[password: filled]` or `[password: hidden]` (presence could not be checked); screenshots mask the inputs with Playwright's `mask` option. Fields recognised as passwords remain masked after a reveal toggle changes their type. Successful typing is described as text entered rather than no visible change. The login recorder and recorded-session checks remain separate: personas are never given the human's saved credentials.
 - **CAPTCHA and bot protection.** Detected by well-known DOM markers and challenge-page titles. The step fails with `persona.blocked(captcha)`, the persona pauses, the user is told. Gnomi never solves, bypasses or proxies challenges, and never uses third-party solving services. The user's installed Chrome channel and a per-POI headed switch reduce false challenges; nothing else is attempted. The setup screen suggests the two legitimate options: disable the challenge on staging, or use the provider's published test keys that always pass (reCAPTCHA documents these for automated testing).
 - **Email verification.** Personas get addresses on a domain the team routes to an email sink (Mailpit). When a flow sends a verification email, the engine (not the LLM) polls the sink's API for a message to that address, extracts the first link on an allowed host and navigates the persona's browser to it, emitting `persona.email_link_followed`. Without a sink, such flows end with `persona.blocked(email_verification)` and the report lists them as blocked, not as product frictions.
 - **Roles per segment.** The segment's role determines the session, so hiring managers really do see the limited UI, and candidates get no session at all.
@@ -740,11 +745,13 @@ One module in the engine wraps the Vercel AI SDK: `call(role, prompt, schema, op
 
 ### 10.2 Model routing
 
+Persona generation uses a separate concurrency setting (default 12, range 1–32), bounded requests, saved stage checkpoints, and setup-call diagnostics. See [persona generation](persona-generation.md) for the call flow, recovery behavior and measured tradeoffs.
+
 | Role | Used for | Calls in a default run (50 personas) | Default on Anthropic | Default on OpenAI | Default on Google | Default on DeepSeek | Local option |
 |---|---|---|---|---|---|---|---|
 | Navigator | browser and static-design steps | ~2,000 | Claude Haiku 5.5, effort low | GPT-6 Luna | Gemini 3.5 Flash-Lite | DeepSeek V4.1-Flash, text-only mode | gemma4:e4b (vision) |
 | Socialiser | social rounds | ~300 | Claude Haiku 5.5, effort low | GPT-6 Luna | Gemini 3.5 Flash-Lite | DeepSeek V4.1-Flash | gemma4:e4b |
-| Persona writer | biographies and voices at setup, written from the sampled profile with verbalized sampling | 50 | Claude Sonnet 5.5 | GPT-6.1 Sol | Gemini 3.8 Flash | DeepSeek V4-Pro | qwen3:30b |
+| Persona writer | four short candidates per sampled profile, then one selected biography at setup | 100 at setup, plus name repairs; 0 for unchanged saved profiles | Claude Sonnet 5.5, effort low | GPT-6.1 Sol, effort low | Gemini 3.8 Flash, thinking low | DeepSeek V4-Pro, thinking disabled | qwen3:30b |
 | Judge | surveys, theme merging, post tagging, influence audit | ~60 | Claude Sonnet 5.5 | GPT-6.1 Sol | Gemini 3.8 Flash | DeepSeek V4-Pro | — |
 | Author | report prose, suggested changes | ~10 | Claude Opus 5.5 (Sonnet 5.5 in budget mode) | GPT-6.1 Sol | Gemini 4 Argon | DeepSeek V4-Pro | — |
 

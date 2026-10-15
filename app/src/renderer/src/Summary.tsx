@@ -81,7 +81,7 @@ export function Summary(props: {
     if (!audience) return builtin ? `${builtin.name}, ${builtin.job_title} (the built-in persona)` : 'One built-in persona';
     if (personas.length === 0) return 'No personas yet. Generate them on the Audience tab first.';
     const counts = audience.segments.map((segment) => [segment.name, personas.filter((p) => p.segment_id === segment.id).length] as const).filter(([, n]) => n > 0);
-    return `${personas.length} personas: ${counts.map(([name, n]) => `${n} ${name}`).join(', ')}`;
+    return `${personas.length} ${personas.length === 1 ? 'persona' : 'personas'}: ${counts.map(([name, n]) => `${n} ${name}`).join(', ')}`;
   }
 
   function loginStatus(role: string): ReactNode {

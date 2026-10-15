@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
+import appIcon from '../../../assets/brand/gnomi-app-icon.png?asset';
 import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
 import type { KeyTest } from '../providers.ts';
 import { REPORT_FORMATS } from '../reports.ts';
@@ -20,8 +21,8 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL; // set by `electron-vite 
 // Only the bundled page and its own script and styles; the dev server also needs inline styles and a websocket.
 // worker-src blob: is the swarm layout, which ForceAtlas2 starts from a Blob of its own bundled code.
 const CSP = rendererUrl
-  ? "default-src 'self' 'unsafe-inline' ws://localhost:*; img-src data:; worker-src blob:"
-  : "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; worker-src blob:; base-uri 'none'; form-action 'none'";
+  ? "default-src 'self' 'unsafe-inline' ws://localhost:*; img-src 'self' data:; font-src 'self'; worker-src blob:"
+  : "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'";
 
 // Main is a protocol client of the engine over the utility process's parent port (engine/src/host.ts).
 let engine: UtilityProcess | undefined;
@@ -247,6 +248,7 @@ function createWindow(started: Promise<Startup>) {
     minWidth: 720,
     minHeight: 520,
     title: 'Gnomi',
+    icon: appIcon,
     backgroundColor: '#fafaf9',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -271,6 +273,7 @@ function createWindow(started: Promise<Startup>) {
 }
 
 app.whenReady().then(() => {
+  app.dock?.setIcon(appIcon);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [CSP] } });
   });

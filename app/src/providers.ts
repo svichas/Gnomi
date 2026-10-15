@@ -1,4 +1,5 @@
-import type { ProviderId } from '@gnomi/engine/types.ts';
+import { PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
+import type { LlmRole, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
 
 // The provider list of the Settings page. Keys stay in main, encrypted by the OS; the page only ever sees what is here.
 
@@ -41,10 +42,22 @@ export function configuredProviders(entries: ProviderEntry[], localBaseUrl: stri
   return ALL.filter((id) => (id === 'openai_compatible' ? !!localBaseUrl?.trim() : entries.some((entry) => entry.provider === id)));
 }
 
+/** When there is only one connected provider, use it for tasks whose provider is unavailable. Keep valid choices. */
+export function withAvailableProvider(settings: RunSettings, entries: ProviderEntry[]): RunSettings {
+  const configured = configuredProviders(entries, settings.local_base_url);
+  if (configured.length !== 1) return settings;
+  const provider = configured[0];
+  const missing = (Object.keys(settings.routing) as LlmRole[]).filter((role) => settings.routing[role].provider !== provider);
+  if (!missing.length) return settings;
+  const routing = { ...settings.routing };
+  for (const role of missing) routing[role] = { ...PROVIDER_DEFAULTS[provider][role] };
+  return { ...settings, routing };
+}
+
 /** What a route needs before its provider can answer, or null. */
 export function routeProblem(provider: ProviderId, configured: ProviderId[]): string | null {
   if (configured.includes(provider)) return null;
-  return provider === 'openai_compatible' ? 'The local endpoint has no address. Add it under Providers.' : `No ${PROVIDER_LABELS[provider]} key is saved. Add one under Providers.`;
+  return provider === 'openai_compatible' ? 'The local endpoint has no address. Add it under Providers.' : 'The selected AI provider is not connected. Add it under Providers or choose a connected provider.';
 }
 
 /** A route's provider choices: the configured ones, plus the one it uses now, so a route to a removed provider stays visible and flagged. */

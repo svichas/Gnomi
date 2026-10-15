@@ -28,6 +28,11 @@ function populated(library: ProjectLibrary) {
   store.saveProject(config);
   store.replacePersonas([BUILTIN_PERSONA]);
   store.putSession({ role: 'recruiter', start_url: config.poi.start_url, hosts: [], recorded_at: 1, verified_at: 1, expires_at: null });
+  store.putPersonaDraft('pending-persona-inputs', { background: 'A completed draft from the source project.' });
+  store.recordSetupCall({ task_id: 'source-generation', persona_id: BUILTIN_PERSONA.id, purpose: 'expand_persona' }, {
+    payload: { role: 'persona_writer', provider: 'scripted', model: 'demo', input_tokens: 100, output_tokens: 30, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.02, latency_ms: 400, status: 'ok', error: null },
+    transcript: { request: { prompt: 'Source generation request' }, response: { text: 'Source biography' } },
+  });
   const run = store.createRun({ seed: 42, project: config, personas: [BUILTIN_PERSONA], sessions: [], reset: false, pause_timeout_ms: 0, app_version: 'test' });
   store.append({ run_id: run.run_id, round: 0, persona_id: null, poi_id: null, type: 'run.started', payload: { config: run } });
   store.finishRun(run.run_id, 'finished', null, 0);
@@ -89,7 +94,7 @@ test('name and SQLite sidecar symlinks cannot redirect project writes', (t) => {
   }
 });
 
-test('duplication copies configuration and personas without runs, screenshots or recorded logins', (t) => {
+test('duplication copies configuration and personas without generation history, drafts, runs or logins', (t) => {
   const { library } = setup(t);
   const source = populated(library);
   const copied = library.duplicate(source.entry.id, 'Gym copy');
@@ -99,6 +104,8 @@ test('duplication copies configuration and personas without runs, screenshots or
   assert.deepEqual(store.listPersonas(), [BUILTIN_PERSONA]);
   assert.deepEqual(store.listRuns(), []);
   assert.deepEqual(store.listSessions(), []);
+  assert.deepEqual(store.listSetupCalls(), [], 'a new project must not inherit the source generation costs or errors');
+  assert.equal(store.getPersonaDraft('pending-persona-inputs'), undefined, 'unpublished source drafts do not belong to the duplicate');
   store.close();
   assert.equal(existsSync(join(copiedDir, 'runs')), false);
   assert.equal(existsSync(join(copiedDir, 'sessions')), false);
@@ -115,6 +122,8 @@ test('export retains report history and screenshots but removes login rows, sess
   assert.equal(store.events('r-0001').length, 1);
   assert.deepEqual(store.listSessions(), []);
   assert.deepEqual(store.listPersonas(), [BUILTIN_PERSONA]);
+  assert.equal(store.listSetupCalls()[0].task_id, 'source-generation', 'full exports retain setup diagnostics with the project history');
+  assert.deepEqual(store.getPersonaDraft('pending-persona-inputs'), { background: 'A completed draft from the source project.' }, 'full exports can resume interrupted generation');
   store.close();
   assert.equal(readFileSync(join(exported, 'runs', 'r-0001', 'step.jpg'), 'utf8'), 'screenshot');
   assert.equal(existsSync(join(exported, 'sessions')), false);

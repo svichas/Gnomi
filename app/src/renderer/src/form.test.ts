@@ -107,6 +107,8 @@ test('the run settings are checked, and a problem is worded for the tab that sho
   assert.equal(typeof toConfig(settings({})), 'object');
   assert.match(String(toConfig(settings({ concurrency: 33 }))), /^Settings: concurrency must be a whole number from 1 to 32/);
   assert.match(String(toConfig(settings({ concurrency: 0 }))), /concurrency/);
+  for (const persona_concurrency of [0, 33, 1.5]) assert.match(String(toConfig(settings({ persona_concurrency }))), /writer concurrency/);
+  assert.equal(typeof toConfig(settings({ persona_concurrency: undefined })), 'object', 'older projects use the writer default');
   assert.match(String(toConfig(settings({ cost_budget_usd: 0 }))), /cost budget/);
   assert.match(String(toConfig(settings({ wall_clock_budget_min: -1 }))), /time budget/);
   assert.match(String(toConfig(settings({ local_base_url: 'localhost:11434' }))), /local endpoint/);
@@ -129,7 +131,10 @@ test('the audience goes into the project cleaned up, or stops the save with a se
   assert.deepEqual(config.audience?.segments[0].typical_goals, ['post jobs', 'screen']);
   assert.equal(config.audience?.segments[0].name, 'Recruiters');
   assert.equal(config.audience?.segments[0].goal_override, null);
-  assert.match(String(toConfig(form({}, { audience: { ...audience, persona_count: 2 } }))), /^Audience: the persona count/);
+  const single = toConfig(form({}, { audience: { ...audience, persona_count: 1 } }));
+  assert.ok(typeof single !== 'string');
+  assert.equal(single.audience?.persona_count, 1);
+  assert.match(String(toConfig(form({}, { audience: { ...audience, persona_count: 0 } }))), /^Audience: the persona count/);
 });
 
 test('profile schemas round-trip only when configured and invalid schemas stop project save', () => {

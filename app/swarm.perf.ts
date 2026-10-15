@@ -44,11 +44,12 @@ try {
   // An occluded or unfocused window may throttle its frames; the measurement is of rendering, not of the desktop.
   await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.webContents.setBackgroundThrottling(false); win.setSize(1280, 900); });
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
-  await page.getByRole('tab', { name: 'Run', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: /r-0001/ }).click();
-  await page.getByRole('tab', { name: 'Swarm' }).click();
+  await page.locator('#tab-run').click();
+  await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+  await page.getByRole('tab', { name: 'Connections' }).click();
   const graph = page.getByRole('region', { name: 'Swarm graph' });
   await graph.getByText(/^200 personas, 10 points of interest/).waitFor();
+  await graph.locator('.sigma-container').scrollIntoViewIfNeeded();
 
   // Stand in for the engine's port and stream the remaining rounds as the engine would: frames of 100 events every 100 ms.
   await page.evaluate((events) => {

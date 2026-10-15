@@ -42,6 +42,8 @@ test('the HTML export is one file with no scripts or external resources, its scr
   assert.doesNotMatch(html, /<script/i);
   assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'every src and href is a data URL');
   assert.doesNotMatch(html, /url\(\s*(?!["']?data:)|@import/i, 'the styles fetch nothing');
+  assert.match(html, /data:font\/woff2;base64,/, 'Inter travels inside the file');
+  assert.match(html, /src="data:image\/svg\+xml,/, 'the brand logo travels inside the file');
   assert.doesNotMatch(html, /<(?:button|select)\b/, 'no inspector links or export control');
   assert.match(html, /<style>[\s\S]*\.bg-amber-50[\s\S]*@media print/, 'the app styles and the print styles are inline');
   assert.match(html, /<title>Gnomi report: Post a job for a &#34;backend&#34; &#60;engineer&#62;<\/title>/);

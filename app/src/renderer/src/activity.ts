@@ -18,6 +18,7 @@ export const TONE_CLASSES: Record<Tone, string> = {
 
 export interface Row {
   seq: number;
+  ts?: number;
   persona_id: string | null; // whose row it is; null for the run as a whole and for requests blocked across personas
   label: string;
   tone: Tone;
@@ -27,6 +28,15 @@ export interface Row {
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
 }
+
+/** Quotes lead ordinary activity; a failed action or safety event always keeps its outcome visible. */
+export function timelineSummary(row: Row): string {
+  const quote = row.quote?.replace(/\s+/g, ' ').trim();
+  return quote && (row.tone === 'plain' || row.tone === 'notice') && row.badge?.ok !== false ? `“${quote}”` : row.title;
+}
+
+/** Keep thoughts, actions and problems prominent; routine feed reads and reactions remain in All events. */
+export const isTimelineHighlight = (row: Row): boolean => row.tone !== 'muted' || !!row.quote || row.badge?.ok === false;
 
 const STEP_ERRORS: Record<string, string> = {
   ref_not_found: 'element not found',
@@ -212,12 +222,12 @@ export function chronologicalRows(events: GnomiEvent[]): Row[] {
   return events.flatMap((event): Row[] => {
     if (event.type !== 'containment.blocked_request') {
       const row = describe(event);
-      return row ? [{ ...row, persona_id: event.persona_id }] : [];
+      return row ? [{ ...row, ts: event.ts, persona_id: event.persona_id }] : [];
     }
     const { host } = event.payload;
     if (shown.has(host)) return [];
     shown.add(host);
-    return [{ seq: event.seq, persona_id: null, label: 'Blocked', tone: 'notice', title: `Blocked requests to ${host} (${blocked.get(host)})` }];
+    return [{ seq: event.seq, ts: event.ts, persona_id: null, label: 'Blocked', tone: 'notice', title: `Blocked requests to ${host} (${blocked.get(host)})` }];
   });
 }
 
@@ -273,6 +283,11 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
   const counts: Record<PersonaState, number> = { waiting: 0, active: 0, blocked: 0, done: 0, abandoned: 0, unfinished: 0 };
   for (const state of states.values()) counts[state] += 1;
   return counts;
+}
+
+/** Once everyone ends, the scheduler skips remaining social phases and collects final feedback. */
+export function isPreparingReport(events: GnomiEvent[], states: Map<string, PersonaState>): boolean {
+  return !events.some(isEnd) && states.size > 0 && [...states.values()].every((state) => state === 'done' || state === 'abandoned');
 }
 
 export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'social' | 'outcomes' | 'blocks' | 'containment' | 'run';

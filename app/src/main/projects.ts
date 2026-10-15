@@ -131,7 +131,14 @@ export class ProjectLibrary {
       });
       database(destination, (db) => {
         db.exec('DELETE FROM session;');
-        if (!includeRuns) db.exec('DELETE FROM llm_transcript; DELETE FROM event; DELETE FROM run;');
+        if (!includeRuns) {
+          db.exec('DELETE FROM llm_transcript; DELETE FROM event; DELETE FROM run;');
+          // A duplicate starts with configuration and personas only. Older projects
+          // may not have been opened by a build with setup diagnostics yet.
+          for (const table of ['setup_call', 'persona_draft']) {
+            if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) db.exec(`DELETE FROM ${table};`);
+          }
+        }
         db.exec('VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
       });
       const metadata = join(source, NAME_FILE);

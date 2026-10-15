@@ -116,14 +116,14 @@ test('an invalid proposal is rejected after the gateway retry, including a role 
   await assert.rejects(proposeAudience(deps(gateway((req) => ({ segments: demo(req).segments.map((s) => ({ ...s, role: 'recruiter' })) })).llm, { roles: [] })));
 });
 
-test('the first sync writes each persona once; an unchanged second sync makes no call; the same seed gives the same personas', async () => {
+test('the first sync sketches and expands each persona; an unchanged second sync makes no call; the same seed gives the same personas', async () => {
   const audience = await proposed();
   const { llm, calls } = gateway();
   const progress: [number, number][] = [];
   const first = await syncPersonas(audience, [], deps(llm, { onProgress: (done, total) => progress.push([done, total]) }));
   assert.equal(first.personas.length, 20);
-  assert.equal(calls.length, 20);
-  assert.ok(near(first.cost_usd, 0.2));
+  assert.equal(calls.length, 40);
+  assert.ok(near(first.cost_usd, 0.4));
   assert.deepEqual(progress[0], [0, 20]);
   assert.deepEqual(progress.at(-1), [20, 20]);
   assert.deepEqual(
@@ -131,8 +131,8 @@ test('the first sync writes each persona once; an unchanged second sync makes no
     [11, 6, 3],
   );
   assert.deepEqual(ids(first.personas).slice(9, 13), ['p-seg1-10', 'p-seg1-11', 'p-seg2-01', 'p-seg2-02']);
-  for (const req of calls) assert.deepEqual([req.role, req.run_id, req.purpose, req.model], ['persona_writer', null, 'write_persona', MODEL]);
-  assert.deepEqual(calls.map((req) => req.persona_id).sort(), ids(first.personas).sort());
+  for (const req of calls) assert.deepEqual([req.role, req.run_id, req.model], ['persona_writer', null, MODEL]);
+  for (const purpose of ['write_persona', 'expand_persona']) assert.deepEqual(calls.filter((req) => req.purpose === purpose).map((req) => req.persona_id).sort(), ids(first.personas).sort());
   for (const p of first.personas) {
     const segment = audience.segments.find((s) => s.id === p.segment_id)!;
     const traits = sampleTraits(segment, audience, p.seed);
@@ -149,9 +149,38 @@ test('the first sync writes each persona once; an unchanged second sync makes no
 
   const reseeded = gateway();
   const other = await syncPersonas({ ...audience, seed: 2 }, first.personas, deps(reseeded.llm));
-  assert.equal(reseeded.calls.length, 20, 'a new audience seed re-samples everyone');
+  assert.equal(reseeded.calls.length, 40, 'a new audience seed re-samples everyone');
   assert.deepEqual(ids(other.personas), ids(first.personas));
   assert.ok(other.personas.every((p, i) => p.seed !== first.personas[i].seed));
+});
+
+test('small audiences generate the requested count even with five active segments', async () => {
+  const base = defaultAudience(project);
+  const segments = [10, 50, 20, 15, 5].map((share, i) => ({ ...base.segments[0], id: `seg-${i + 1}`, share }));
+  for (const persona_count of [1, 2, 4, 5, 6, 9, 10, 14, 15]) {
+    const { llm, calls } = gateway();
+    const progress: [number, number][] = [];
+    const result = await syncPersonas({ ...base, segments, persona_count }, [], deps(llm, { onProgress: (done, total) => progress.push([done, total]) }));
+    assert.equal(result.personas.length, persona_count);
+    assert.deepEqual(progress.at(-1), [persona_count, persona_count]);
+    if (persona_count === 1) {
+      assert.equal(result.personas[0].segment_id, 'seg-2', 'the largest share gets the single slot');
+      assert.deepEqual(calls.map((call) => call.purpose), ['write_persona', 'expand_persona']);
+    }
+    if (persona_count >= segments.length) assert.ok(segments.every((s) => result.personas.some((p) => p.segment_id === s.id)));
+  }
+});
+
+test('reducing fifteen personas to one reuses the retained profile without another model call', async () => {
+  const base = defaultAudience(project);
+  const audience = { ...base, persona_count: 15, segments: Array.from({ length: 5 }, (_, i) => ({ ...base.segments[0], id: `seg-${i + 1}`, share: 20 })) };
+  const first = await syncPersonas(audience, [], deps(gateway().llm));
+  assert.equal(first.personas.length, 15);
+  const { llm, calls } = gateway();
+  const single = await syncPersonas({ ...audience, persona_count: 1 }, first.personas, deps(llm));
+  assert.deepEqual(single.personas, [first.personas[0]], 'ties go to the first segment deterministically');
+  assert.equal(calls.length, 0);
+  assert.equal(single.cost_usd, 0);
 });
 
 test('written personas carry a posting propensity sampled from their seed, mostly low, that moves no other trait', async () => {
@@ -185,7 +214,7 @@ test('country and employer traits reach the writer, survive persistence, and syn
 
   const changed = gateway();
   const greek = await syncPersonas({ ...audience, countries: { GR: 100 } }, first.personas, deps(changed.llm));
-  assert.equal(changed.calls.length, first.personas.length);
+  assert.equal(changed.calls.length, first.personas.length * 2);
   assert.ok(greek.personas.every((p) => p.country === 'GR' && p.language === 'el-GR' && p.employer === 'Northwind'));
 });
 
@@ -207,7 +236,7 @@ test('writer signatures refresh changed goals and prompt attributes but preserve
   assert.ok(first.personas.every((p) => !personaProfileIsCurrent(p, changed)));
   const writer = gateway();
   const refreshed = await syncPersonas(audience, first.personas, deps(writer.llm, { project: changed }));
-  assert.equal(writer.calls.length, first.personas.length);
+  assert.equal(writer.calls.length, first.personas.length * 2);
   assert.ok(refreshed.personas.every((p) => personaProfileIsCurrent(p, changed)));
   const metadata = structuredClone(changed);
   metadata.persona_schema.attributes.forEach((a) => { a.show_on_card = !a.show_on_card; a.report_dimension = !a.report_dimension; });
@@ -280,7 +309,7 @@ test('changing one share rewrites only the slots it adds and drops the slots it 
     ['seg-1', 'seg-2', 'seg-3'].map((id) => after.filter((p) => p.segment_id === id).length),
     [13, 4, 3],
   );
-  assert.deepEqual(calls.map((req) => req.persona_id), ['p-seg1-12', 'p-seg1-13']);
+  assert.deepEqual(calls.map((req) => req.persona_id), ['p-seg1-12', 'p-seg1-13', 'p-seg1-12', 'p-seg1-13']);
   assert.ok(!after.some((p) => p.id === 'p-seg2-05' || p.id === 'p-seg2-06'));
   for (const p of after) if (before.some((b) => b.id === p.id)) assert.deepEqual(p, before.find((b) => b.id === p.id));
 });
@@ -294,14 +323,14 @@ test('a removed segment drops its personas, and editing a distribution rewrites 
   assert.ok(!two.some((p) => p.segment_id === 'seg-3'));
   assert.equal(two.length, 20);
   const added = two.filter((p) => !before.some((b) => b.id === p.id));
-  assert.deepEqual(removed.calls.map((req) => req.persona_id), ids(added));
+  assert.deepEqual(removed.calls.map((req) => req.persona_id), [...ids(added), ...ids(added)]);
 
   const edited: Audience = { ...audience, segments: audience.segments.map((s, i) => (i === 0 ? { ...s, mobile_share: 0.6 } : s)) };
   const flipped = before.filter((p) => p.device !== sampleTraits(edited.segments[0], edited, p.seed).device && p.segment_id === 'seg-1');
   assert.ok(flipped.length > 0);
   const device = gateway();
   const after = (await syncPersonas(edited, before, deps(device.llm))).personas;
-  assert.deepEqual(device.calls.map((req) => req.persona_id), ids(flipped));
+  assert.deepEqual(device.calls.map((req) => req.persona_id), [...ids(flipped), ...ids(flipped)]);
   assert.ok(after.every((p, i) => p.id === before[i].id && (flipped.some((f) => f.id === p.id) ? p.device !== before[i].device : p === before[i])));
 });
 
@@ -311,9 +340,9 @@ test('a regenerated persona keeps its id, moves its seed one generation, and sur
   const old = population[3];
   const { llm, calls } = gateway();
   const { persona, cost_usd } = await regeneratePersona(old, audience, population, deps(llm));
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].persona_id, old.id);
-  assert.equal(cost_usd, 0.01);
+  assert.equal(cost_usd, 0.02);
   assert.equal(persona.id, old.id);
   assert.equal(persona.seed, old.seed + GENERATION);
   assert.equal(personaProfileIsCurrent(persona, { ...project, audience }), true, 'regenerated seeds still belong to the audience');
@@ -332,7 +361,7 @@ test('an added persona takes the next free slot, survives syncs and share change
   const population = (await syncPersonas(audience, [], deps(gateway().llm))).personas;
   const { llm, calls } = gateway();
   const { persona } = await addPersona('seg-1', audience, population, deps(llm));
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(persona.id, 'p-seg1-12');
   assert.equal(persona.seed, addedSeed(audience.seed, 'seg-1', 11));
   assert.equal(personaProfileIsCurrent(persona, { ...project, audience }), true, 'manually added slots remain current');
@@ -346,7 +375,7 @@ test('an added persona takes the next free slot, survives syncs and share change
 
   const grown = gateway();
   const after = (await syncPersonas(withShares(audience, [70, 20, 10]), kept, deps(grown.llm))).personas;
-  assert.deepEqual(grown.calls.map((req) => req.persona_id), ['p-seg1-13', 'p-seg1-14'], 'the share grows around the added slot');
+  assert.deepEqual(grown.calls.map((req) => req.persona_id), ['p-seg1-13', 'p-seg1-14', 'p-seg1-13', 'p-seg1-14'], 'the share grows around the added slot');
   assert.equal(after.filter((p) => p.segment_id === 'seg-1').length, 14);
   assert.deepEqual(after.find((p) => p.id === persona.id), persona);
 
@@ -369,6 +398,8 @@ test('when every candidate name is taken the writer is asked once more, with the
   const taken = population[0].name;
   const variants = [taken, taken.toUpperCase(), ` ${taken} `, taken.replace(' ', '  ')];
   const clash = (always: boolean): Responder => (req) => {
+    if (req.purpose === 'expand_persona') return DEMO_PERSONA_WRITER(req);
+    if (req.purpose === 'rename_persona') return always ? { names: variants } : DEMO_PERSONA_WRITER(req);
     const out = DEMO_PERSONA_WRITER(req) as { candidates: Candidate[] };
     const reasked = textOf(req).includes(TAKEN_LABEL);
     return reasked && !always ? out : { candidates: out.candidates.map((c, i) => ({ ...c, name: variants[i] })) };
@@ -376,7 +407,8 @@ test('when every candidate name is taken the writer is asked once more, with the
 
   const once = gateway(clash(false));
   const { persona } = await addPersona('seg-2', audience, population, deps(once.llm));
-  assert.equal(once.calls.length, 2);
+  assert.equal(once.calls.length, 3);
+  assert.equal(once.calls[1].purpose, 'rename_persona', 'a collision repairs only the name');
   assert.ok(!textOf(once.calls[0]).includes(TAKEN_LABEL));
   assert.ok(textOf(once.calls[1]).includes(`${TAKEN_LABEL}[`) && textOf(once.calls[1]).includes(JSON.stringify(taken)));
   assert.notEqual(nameKey(persona.name), nameKey(taken));
@@ -384,7 +416,7 @@ test('when every candidate name is taken the writer is asked once more, with the
   // A clash that survives the re-ask stays, and the diversity check names it rather than the whole population failing.
   const twice = gateway(clash(true));
   const stuck = (await addPersona('seg-2', audience, population, deps(twice.llm))).persona;
-  assert.equal(twice.calls.length, 2);
+  assert.equal(twice.calls.length, 3);
   assert.deepEqual(diversityReport([...population, stuck]).duplicate_names, [taken]);
 });
 
@@ -419,14 +451,14 @@ test('a second invalid answer surfaces as a clear error, stops the other writes,
   const audience = await proposed();
   const { llm, calls } = gateway((req) => (req.persona_id === 'p-seg1-05' ? { candidates: [] } : DEMO_PERSONA_WRITER(req)));
   await assert.rejects(syncPersonas(audience, [], deps(llm)), (err: Error) => {
-    assert.match(err.message, /^The persona writer failed on p-seg1-05 \(Everyday users\), so no personas were saved: Invalid output twice/);
+    assert.match(err.message, /^The persona writer failed on p-seg1-05 \(Everyday users\): Invalid output twice/);
     assert.ok(err.cause instanceof InvalidOutputError);
     return true;
   });
   assert.ok(calls.length < 20, `stopped after ${calls.length} calls`);
 });
 
-test('an abort stops the sync with its reason, and at most six writes are ever in flight', async () => {
+test('an abort stops the sync with its reason, and the default pool allows twelve writes in flight', async () => {
   const audience = await proposed();
   const stop = new AbortController();
   stop.abort();
@@ -445,6 +477,6 @@ test('an abort stops the sync with its reason, and at most six writes are ever i
     },
   };
   await syncPersonas(audience, [], deps(slow));
-  assert.equal(peak, 6);
+  assert.equal(peak, 12);
   await assert.rejects(syncPersonas({ ...audience, persona_count: 201 }, [], deps(slow)), /persona_count must be a whole number from 1 to 200/);
 });

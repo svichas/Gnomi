@@ -6,6 +6,12 @@ import type { ReportFormat } from '../../reports.ts';
 import { InFile, Report } from './Report.tsx';
 import { when } from './ui.tsx';
 import css from './styles.css?inline';
+import font from '../../../../assets/brand/fonts/InterVariable.woff2?inline';
+import logo from '../../../../assets/brand/gnomi-logo.svg?raw';
+
+// Exports travel without the app's asset folder. Replace the bundled font URL with its embedded bytes.
+const portableCss = css.replace(/@font-face\s*\{[^}]*\}/g, '') + `\n@font-face { font-family: 'Inter'; src: url('${font}') format('woff2'); font-style: normal; font-weight: 100 900; font-display: swap; }`;
+const logoUrl = `data:image/svg+xml,${encodeURIComponent(logo)}`;
 
 // Screenshots past this are left out, so a 50-persona run stays under the roadmap's 25 MB (M3) with room for the markup.
 export const IMAGE_BYTES = 20_000_000;
@@ -26,6 +32,7 @@ function Page({ report, screenshot }: { report: ReportData; screenshot: (path: s
   return (
     <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
       <header>
+        <img src={logoUrl} width="130" height="40" alt="Gnomi" className="mb-4" />
         <h1 className="text-lg font-semibold text-stone-900">Gnomi report</h1>
         <p className="break-words text-sm text-stone-500">
           Run {report.run_id} on {report.poi.start_url}, started {when(report.started_at)}
@@ -65,9 +72,9 @@ export async function reportHtml(report: ReportData, thumbnails: (paths: string[
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">
 <title>${escapeHtml(`Gnomi report: ${report.goal}`)}</title>
-<style>${css}
+<style>${portableCss}
 ${PRINT}</style>
 </head>
 <body class="bg-stone-50 text-stone-900 antialiased">${draw()}</body>
