@@ -84,6 +84,8 @@ export interface RunSettings {
   cost_budget_usd: number;
   wall_clock_budget_min: number;
   screenshots: boolean; // send each step's screenshot to the navigator; always stored as evidence
+  social?: boolean; // social rounds between usage slices (tech.md §6.4); absent before M4, which is off
+  rounds?: number; // R when social rounds are on, 1–10, default 5
 }
 
 export type UsageFrequency = 'daily' | 'weekly' | 'monthly' | 'rarely' | 'never';

@@ -270,12 +270,14 @@ try {
     await settings.getByText('No OpenAI key is saved yet.').first().waitFor();
     await settings.getByLabel('Navigator provider').selectOption('anthropic');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
-    assert.equal(await settings.getByText('Used from a later version.').count(), 3, 'the socialiser, judge and author are marked as not used yet');
+    assert.equal(await settings.getByText('Used from a later version.').count(), 2, 'the judge and author are marked as not used yet');
     await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('40');
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('concurrency must be a whole number from 1 to 32.').waitFor();
     await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('3');
     await settings.getByLabel('Cost budget (USD)', { exact: true }).fill('2');
+    await settings.getByLabel('Let personas read and post in a shared feed between stretches of use').check();
+    assert.equal(await settings.getByLabel('Rounds (1-10)', { exact: true }).inputValue(), '5');
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('Settings saved with the project.').waitFor();
     await page.screenshot({ path: join(shots, 'settings-models.png'), fullPage: true });
@@ -401,6 +403,16 @@ try {
       assert.match(await page.getByRole('region', { name: 'Run status' }).innerText(), /Personas finished\s+6 of 6/);
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /3 browsers at a time/);
       await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
+      // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
+      const activity = page.getByRole('region', { name: 'Activity' });
+      await activity.getByLabel('Kind of event').selectOption({ label: 'Feed, posts and reactions' });
+      await page.waitForFunction(() => {
+        const section = document.querySelector('section[aria-labelledby=activity-title]');
+        section?.scrollIntoView({ block: 'end' }); // the list holds only the rows on screen, and the first posts are at its end
+        return [...(section?.querySelectorAll('[role=listitem]') ?? [])].some((row) => row.textContent?.includes('Posted in the feed'));
+      }, null, { timeout: 30_000 });
+      await page.screenshot({ path: join(shots, 'activity-social.png') });
+      await activity.getByLabel('Kind of event').selectOption({ label: 'Everything' });
       population = true;
     } finally {
       await site.close();

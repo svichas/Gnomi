@@ -94,6 +94,14 @@ test('offeredHosts lists recorded, allowed and added hosts once each, never the 
   );
 });
 
+test('social rounds need a whole number of rounds from 1 to 10 only while they are on', () => {
+  const settings = (changes: Partial<RunSettings>) => form({}, { settings: { ...DEFAULT_SETTINGS, ...changes } });
+  assert.equal(typeof toConfig(settings({ social: true, rounds: 5 })), 'object');
+  assert.equal(typeof toConfig(settings({ social: true, rounds: undefined })), 'object', 'an older project gets the default');
+  for (const rounds of [0, 11, 2.5]) assert.match(String(toConfig(settings({ social: true, rounds }))), /^Settings: social rounds must be a whole number from 1 to 10/);
+  assert.equal(typeof toConfig(settings({ social: false, rounds: 0 })), 'object');
+});
+
 test('the run settings are checked, and a problem is worded for the tab that shows it', () => {
   const settings = (changes: Partial<RunSettings>) => form({}, { settings: { ...DEFAULT_SETTINGS, ...changes } });
   assert.equal(typeof toConfig(settings({})), 'object');

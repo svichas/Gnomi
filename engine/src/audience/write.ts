@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { LlmRequest } from '../seams.ts';
 import type { Persona, ProjectConfig, Segment, UsageFrequency } from '../types.ts';
 import type { AudienceDeps } from './index.ts';
-import { fnv1a, mulberry32, type Traits } from './sample.ts';
+import { fnv1a, mulberry32, postingPropensity, type Traits } from './sample.ts';
 import { getPersonaSchema, isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { profileSignature } from '../profile/signature.ts';
 
@@ -175,6 +175,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
       goal_interpretation: c.goal_interpretation,
       voice: c.voice,
       seed: job.seed,
+      posting_propensity: postingPropensity(job.seed),
       profile_signature: profileSignature(deps.project, job.segment, job.seed),
     };
   };
