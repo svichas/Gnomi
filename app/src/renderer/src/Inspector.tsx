@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { GnomiEvent, Persona, Segment } from '@gnomi/engine/types.ts';
+import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
 import { Screenshot } from './ui.tsx';
@@ -91,6 +92,11 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
               </Trait>
               <Trait label="Device">{persona.device}</Trait>
               <Trait label="First language">{persona.language}</Trait>
+              {persona.country && <Trait label="Country">{countryName(persona.country)}</Trait>}
+              {persona.city && <Trait label="City">{persona.city}</Trait>}
+              {persona.timezone && <Trait label="Timezone">{persona.timezone}</Trait>}
+              {persona.languages && <Trait label="Languages">{persona.languages.join(', ')}</Trait>}
+              {persona.employer && <Trait label="Employer">{persona.employer}</Trait>}
               <Trait label="Tech skill">{persona.tech_skill} of 5</Trait>
               <Trait label="Patience">{persona.patience} of 5</Trait>
               <Trait label="Motivation">{persona.motivation} of 5</Trait>

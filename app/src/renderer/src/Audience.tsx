@@ -5,6 +5,7 @@ import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, per
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
 import { PersonaList } from './Personas.tsx';
+import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
 import { Card, Field, Note, NumberInput, primaryButton, ProgressBar, secondaryButton, usd, useAction } from './ui.tsx';
 
@@ -122,6 +123,8 @@ export function AudienceTab(props: {
                 </button>
               </div>
             </div>
+
+            <CountryMix countries={audience.countries} onChange={(countries) => onAudience({ ...audience, countries })} />
 
             <ul aria-label="Segments" className="space-y-4">
               {segments.map((segment) => (

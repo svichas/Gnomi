@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { DiversityReport, Persona, Segment } from '@gnomi/engine/types.ts';
+import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
 import { Bars, Card, Field, inputClass, Note, primaryButton, secondaryButton } from './ui.tsx';
 
@@ -20,6 +21,7 @@ export function Distribution({ personas }: { personas: Persona[] }) {
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
       <Bars title="Devices" entries={distribution(personas, (p) => p.device, ['desktop', 'mobile'])} />
       <Bars title="First languages" entries={distribution(personas, (p) => languageName(p.language))} />
+      {personas.some((p) => p.country) && <Bars title="Countries" entries={distribution(personas, (p) => p.country ? countryName(p.country) : 'Not set')} />}
       <Bars title="Accessibility needs" entries={distribution(personas, (p) => ACCESSIBILITY[p.accessibility_needs], Object.values(ACCESSIBILITY))} />
       <Bars title="Patience (1-5)" entries={distribution(personas, (p) => String(p.patience), SCALE)} />
       <Bars title="Tech skill (1-5)" entries={distribution(personas, (p) => String(p.tech_skill), SCALE)} />
@@ -95,6 +97,8 @@ function PersonaCard(props: { persona: Persona; allotted: boolean; busy: boolean
           <p className="text-stone-700">
             {persona.job_title}, {persona.seniority} level, {persona.industry}, {persona.company_size} employees
           </p>
+          {persona.employer && <p className="text-sm text-stone-700">Employer: {persona.employer}</p>}
+          {persona.country && <p className="text-xs text-stone-500">{persona.city}, {countryName(persona.country)} · {persona.timezone} · {(persona.languages ?? [persona.language]).join(', ')}</p>}
           <p className="text-xs text-stone-500">
             Tech skill {persona.tech_skill}/5, patience {persona.patience}/5, motivation {persona.motivation}/5, {persona.familiarity_with_category} familiarity with the
             category, accessibility: {ACCESSIBILITY[persona.accessibility_needs].toLowerCase()}, seed {persona.seed}

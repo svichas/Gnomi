@@ -80,6 +80,9 @@ export function SegmentCard(props: {
       <Field label="Who they are" hint="A sentence or two. The persona writer reads it.">
         <textarea value={segment.description} onChange={(e) => set('description', e.target.value)} rows={2} className={inputClass} />
       </Field>
+      <Field label={`Employers for ${segment.name}`} hint="Optional, one employer per line. Personas are sampled across these employers.">
+        <textarea value={(segment.employers ?? []).join('\n')} onChange={(e) => set('employers', e.target.value.split('\n'))} rows={2} className={inputClass} />
+      </Field>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Login">

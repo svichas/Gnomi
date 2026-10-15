@@ -2,7 +2,32 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Persona } from '@gnomi/engine/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '../../../../engine/src/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, distribution, personaMinimum, rebalance, removeSegment, setShare } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, personaMinimum, rebalance, removeCountry, removeSegment, setCountryShare, setShare } from './audience.ts';
+
+test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
+  assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
+  assert.deepEqual(countryShares({ DE: 1e308, GR: 1e308 }), { DE: 50, GR: 50 });
+  assert.deepEqual(setCountryShare({ DE: 100 }, 'GR', 25), { DE: 75, GR: 25 });
+  assert.deepEqual(setCountryShare({ DE: 75, GR: 25 }, 'DE', 50), { DE: 50, GR: 50 });
+  assert.deepEqual(removeCountry({ DE: 50, GR: 50 }, 'GR'), { DE: 100 });
+  assert.equal(removeCountry({ DE: 100 }, 'DE'), undefined, 'removing the last country restores legacy language sampling');
+});
+
+test('employer lists are trimmed, deduplicated and saved without empty lines', () => {
+  const audience = blankAudience('ATS');
+  audience.segments[0].employers = [' Acme ', '', 'Acme', 'Example GmbH'];
+  assert.deepEqual(cleanAudience(audience).segments[0].employers, ['Acme', 'Example GmbH']);
+});
+
+test('country mix validation gives an actionable error before saving', () => {
+  const audience = blankAudience('ATS');
+  assert.equal(audienceProblem({ ...audience, countries: undefined }), null);
+  assert.equal(audienceProblem({ ...audience, countries: { DE: 60, GR: 40 } }), null);
+  const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: 0 }, { DE: -1 }, { DE: NaN }];
+  for (const countries of invalid) {
+    assert.match(audienceProblem({ ...audience, countries }) ?? '', /Audience: .*country/i);
+  }
+});
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 // A small seeded generator, so a failure can be reproduced.
