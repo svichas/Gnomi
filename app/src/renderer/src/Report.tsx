@@ -1,10 +1,12 @@
+import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { Outcome, Report as ReportData, ReportDimension, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
-import { Note, Screenshot, usd } from './ui.tsx';
+import { ExportReport } from './ReportExport.tsx';
+import { Note, Screenshot, StaticFile, usd } from './ui.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -30,6 +32,7 @@ function OutcomeChip({ outcome }: { outcome: Outcome }) {
 type Inspect = (personaId: string, seq?: number) => void;
 
 function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
+  if (useContext(StaticFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>; // a file has no inspector
   return (
     <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
       {name}
@@ -330,9 +333,12 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
   ];
   return (
     <section aria-labelledby="report-title" className="space-y-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-      <h2 id="report-title" className="text-base font-semibold text-stone-900">
-        Report
-      </h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 id="report-title" className="text-base font-semibold text-stone-900">
+          Report
+        </h2>
+        <ExportReport report={report} />
+      </div>
       <Note tone="info">{report.banner}</Note>
       {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
