@@ -1,11 +1,12 @@
-import type { LlmGateway, LlmRequest, LlmResult, Recorder } from '../seams.ts';
+import type { LlmGateway, LlmRequest, LlmResult, Recorder, Responder } from '../seams.ts';
+import type { LlmRole } from '../types.ts';
 import { InvalidOutputError, retryParts, transcriptRequest } from './gateway.ts';
 
 /** One entry per model call: the raw output object, or a function of the request that returns it. */
 export type Script = Array<object | ((req: LlmRequest<unknown>) => unknown)>;
 
 /** Page-independent, so GNOMI_FAKE_LLM=1 works on any site; every text says plainly that no model ran. */
-export const DEMO_SCRIPT: Script = [
+const DEMO_STEPS = [
   {
     thought: 'Scripted demo, no model is running. Scrolling to look the page over.',
     feeling: 0,
@@ -19,7 +20,7 @@ export const DEMO_SCRIPT: Script = [
     friction: {
       severity: 1,
       what: 'Sample friction from the scripted demo persona; no model looked at this page',
-      expected: 'A run with an Anthropic key, which reports real frictions',
+      expected: 'A run with a model API key, which reports real frictions',
     },
   },
   {
@@ -30,6 +31,19 @@ export const DEMO_SCRIPT: Script = [
   },
 ];
 
+export const DEMO_SCRIPT: Script = DEMO_STEPS;
+
+/** Every persona of every run plays the three demo steps in turn; counted per run, so the next run starts over. */
+export const DEMO_NAVIGATOR: Responder = (() => {
+  const calls = new Map<string, number>();
+  return (req) => {
+    const key = `${req.run_id}/${req.persona_id}`;
+    const n = calls.get(key) ?? 0;
+    calls.set(key, n + 1);
+    return DEMO_STEPS[Math.min(n, DEMO_STEPS.length - 1)];
+  };
+})();
+
 /** The ref of the first `- role "name" … [ref=eN]` line in the request's page snapshot, for scripts that walk a known site. */
 export function findRef(req: LlmRequest<unknown>, role: string, name: string): string | null {
   const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
@@ -37,41 +51,59 @@ export function findRef(req: LlmRequest<unknown>, role: string, name: string): s
   return new RegExp(`- ${role} "${quoted}".*?\\[ref=([^\\]\\s]+)\\]`).exec(text)?.[1] ?? null;
 }
 
-export function createScriptedGateway(script: Script, record: Recorder): LlmGateway {
+/**
+ * A gateway with no model behind it. `script` is either an array that answers the calls one after another whatever their
+ * role, or a responder per role. Each attempt costs `costPerCall`, so budget tests can spend fake money.
+ */
+export function createScriptedGateway(script: Script | Partial<Record<LlmRole, Responder>>, record: Recorder, opts: { costPerCall?: number } = {}): LlmGateway {
+  const costPerCall = opts.costPerCall ?? 0;
   let next = 0;
+  const respond = (req: LlmRequest<unknown>): unknown => {
+    if (!Array.isArray(script)) {
+      const responder = script[req.role];
+      if (!responder) throw new Error(`The script has no responder for the ${req.role} role`);
+      return responder(req);
+    }
+    if (next >= script.length) throw new Error(`The script ran out after ${script.length} model calls`);
+    const entry = script[next++];
+    return typeof entry === 'function' ? entry(req) : entry;
+  };
+
   return {
     async call<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
       let user = req.user;
+      let spent = 0;
       for (let attempt = 1; ; attempt++) {
-        if (next >= script.length) throw new Error(`The script ran out after ${script.length} model calls`);
-        const entry = script[next++];
-        const output = typeof entry === 'function' ? entry({ ...req, user }) : entry;
+        const output = respond({ ...req, user });
         const parsed = req.schema.safeParse(output);
         const error = parsed.success ? null : parsed.error.message;
-        record(
-          {
-            run_id: req.run_id,
-            round: req.round,
-            persona_id: req.persona_id,
-            poi_id: null,
-            type: 'llm.call',
-            payload: {
-              role: req.role,
-              provider: 'scripted',
-              model: req.model,
-              input_tokens: 0,
-              output_tokens: 0,
-              cache_read_tokens: 0,
-              cache_write_tokens: 0,
-              cost_usd: 0,
-              latency_ms: 0,
-              status: parsed.success ? 'ok' : 'invalid_output',
-              error,
+        spent += costPerCall;
+        if (req.run_id !== null) {
+          record(
+            {
+              run_id: req.run_id,
+              round: req.round,
+              persona_id: req.persona_id,
+              poi_id: null,
+              type: 'llm.call',
+              payload: {
+                role: req.role,
+                provider: 'scripted',
+                model: req.model.model,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_usd: costPerCall,
+                latency_ms: 0,
+                status: parsed.success ? 'ok' : 'invalid_output',
+                error,
+              },
             },
-          },
-          { request: transcriptRequest(req, user), response: { output, error } },
-        );
-        if (parsed.success) return { object: parsed.data, cost_usd: 0 };
+            { request: transcriptRequest(req, user), response: { output, error } },
+          );
+        }
+        if (parsed.success) return { object: parsed.data, cost_usd: spent };
         if (attempt === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);
         user = retryParts(req.user, error ?? '');
       }

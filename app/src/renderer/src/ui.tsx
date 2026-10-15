@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { ReactNode } from 'react';
-import { errorText } from './engine.ts';
+import { cloneElement, useEffect, useId, useRef, useState } from 'react';
+import type { ReactElement, ReactNode } from 'react';
+import { call, errorText } from './engine.ts';
 
 export const inputClass =
   'w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200';
@@ -18,13 +18,15 @@ export function Card({ title, children }: { title: string; children: ReactNode }
   );
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+/** A labelled control. The label is tied to it by id rather than wrapped around it, so its text stays "Goal" however much the control holds. */
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string }> }) {
+  const id = useId();
   return (
     <div>
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
-        {children}
+      <label htmlFor={id} className="mb-1 block text-sm font-medium text-stone-700">
+        {label}
       </label>
+      {cloneElement(children, { id })}
       {hint && <p className="mt-1 text-xs text-stone-500">{hint}</p>}
     </div>
   );
@@ -38,6 +40,75 @@ export function Check({ checked, onChange, children }: { checked: boolean; onCha
     </label>
   );
 }
+
+/** A number field that can be half-typed: it hands the parent only whole, valid numbers and shows the last good one again on blur. */
+export function NumberInput(props: { value: number; onChange(value: number): void; min?: number; max?: number; step?: number; label: string; id?: string }) {
+  const { value, onChange, min, max, step, label, id } = props;
+  const [text, setText] = useState(String(value));
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+  return (
+    <input
+      type="number"
+      id={id}
+      aria-label={label}
+      value={text}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(e) => {
+        setText(e.target.value);
+        if (e.target.value.trim() !== '' && Number.isFinite(Number(e.target.value))) onChange(Number(e.target.value));
+      }}
+      onBlur={() => setText(String(value))}
+      className={inputClass}
+    />
+  );
+}
+
+export function ProgressBar({ value, max, label }: { value: number; max: number; label: string }) {
+  return (
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-2 w-full overflow-hidden rounded-full bg-stone-200">
+      <div className="h-full rounded-full bg-indigo-600 transition-[width]" style={{ width: `${max > 0 ? Math.min(100, (value / max) * 100) : 0}%` }} />
+    </div>
+  );
+}
+
+/** A screenshot, fetched only once it scrolls into view: a report or a timeline can hold hundreds. */
+export function Screenshot({ path, alt }: { path: string; alt: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    let current = true;
+    const watcher = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        watcher.disconnect();
+        call('get_blob', { path }).then(
+          ({ mime, base64 }) => current && setSrc(`data:${mime};base64,${base64}`),
+          () => current && setFailed(true),
+        );
+      },
+      { rootMargin: '300px' },
+    );
+    watcher.observe(element);
+    return () => {
+      current = false;
+      watcher.disconnect();
+    };
+  }, [path]);
+  return (
+    <div ref={box} className="min-h-12">
+      {src ? <img src={src} alt={alt} className="w-full rounded-lg border border-stone-200" /> : <p className="text-sm text-stone-500">{failed ? 'The screenshot could not be loaded.' : 'Loading screenshot...'}</p>}
+    </div>
+  );
+}
+
+export const usd = (amount: number) => `$${amount.toFixed(amount < 1 ? 4 : 2)}`;
 
 export const when = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -78,4 +149,25 @@ export function useAction() {
     }
   }
   return { busy, outcome, run };
+}
+
+/** A small bar chart as a list: one row per value, the longest bar for the most common. */
+export function Bars({ title, entries }: { title: string; entries: [label: string, count: number][] }) {
+  const most = Math.max(1, ...entries.map(([, count]) => count));
+  return (
+    <figure>
+      <figcaption className="mb-2 text-xs font-medium text-stone-700">{title}</figcaption>
+      <ul className="space-y-1">
+        {entries.map(([label, count]) => (
+          <li key={label} className="grid grid-cols-[6.5rem_minmax(0,1fr)_2rem] items-center gap-2 text-xs">
+            <span className="truncate text-stone-600">{label}</span>
+            <span className="h-2 rounded bg-stone-100">
+              <span className="block h-full rounded bg-indigo-500" style={{ width: `${(count / most) * 100}%` }} />
+            </span>
+            <span className="text-right text-stone-600">{count}</span>
+          </li>
+        ))}
+      </ul>
+    </figure>
+  );
 }

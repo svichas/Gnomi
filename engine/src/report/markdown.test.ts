@@ -4,36 +4,95 @@ import type { Report } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
 import { reportToMarkdown } from './markdown.ts';
 
+const url = 'http://localhost:3001/jobs/new';
+
 const report: Report = {
   run_id: 'r-0001',
   status: 'finished',
   stop_reason: null,
   goal: 'Post a job for a backend engineer',
   poi: { name: 'Gym', start_url: 'http://localhost:3001/' },
-  persona: { id: 'p-001', name: 'Priya Natarajan', job_title: 'Recruiter', device: 'desktop' },
-  outcome: 'done',
-  outcome_text: 'Posted the job.',
-  steps: 2,
+  personas: [
+    { id: 'p-1-01', name: 'Ana Ruiz', job_title: 'Recruiter', segment_id: 'seg-a', device: 'desktop', outcome: 'done', outcome_text: 'Posted the job.', steps: 2, frictions: 2 },
+    { id: 'p-1-02', name: 'Ben Okoro', job_title: 'Recruiter', segment_id: 'seg-a', device: 'desktop', outcome: 'abandoned', outcome_text: 'Gave up.', steps: 1, frictions: 1 },
+    { id: 'p-2-01', name: 'Eli Marsh', job_title: 'Hiring manager', segment_id: 'seg-b', device: 'mobile', outcome: 'blocked', outcome_text: 'Sign-in page.', steps: 1, frictions: 1 },
+  ],
+  segments: [
+    {
+      id: 'seg-a',
+      name: 'Recruiters',
+      share: 60,
+      personas: 2,
+      outcomes: { done: 1, abandoned: 1, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+      completion: 0.5,
+      with_friction: 1,
+      frictions: 3,
+    },
+    {
+      id: 'seg-b',
+      name: 'Hiring managers',
+      share: 40,
+      personas: 1,
+      outcomes: { done: 0, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 1, incomplete: 0 },
+      completion: 0,
+      with_friction: 1,
+      frictions: 1,
+    },
+  ],
+  weighted: { completion: 0.3, with_friction: 1 },
+  steps: 4,
   frictions: [
     {
-      seq: 3,
+      seq: 4,
+      persona_id: 'p-1-01',
+      persona_name: 'Ana Ruiz',
+      segment_id: 'seg-a',
       step_no: 1,
       severity: 2,
       what: 'The Save button is ambiguous.',
       expected: 'A button that says what it does.',
-      url: 'http://localhost:3001/jobs/new',
+      url,
       quote: 'Is this posting or saving?',
-      screenshot: 'runs/r-0001/shots/p-001-0001.jpg',
+      screenshot: 'runs/r-0001/shots/p-1-01-0001.jpg',
     },
     {
-      seq: 7,
-      step_no: 2,
+      seq: 6,
+      persona_id: 'p-2-01',
+      persona_name: 'Eli Marsh',
+      segment_id: 'seg-b',
+      step_no: 1,
       severity: 3,
+      what: 'The sign-in page is confusing.',
+      expected: 'A clear sign-in step.',
+      url,
+      quote: 'Where do I log in?',
+      screenshot: null,
+    },
+    {
+      seq: 9,
+      persona_id: 'p-1-01',
+      persona_name: 'Ana Ruiz',
+      segment_id: 'seg-a',
+      step_no: 2,
+      severity: 2,
       what: 'The required field gives\nno error.',
       expected: 'An error under the field.',
-      url: 'http://localhost:3001/jobs/new',
+      url,
       quote: 'Nothing happened.',
       screenshot: null,
+    },
+    {
+      seq: 12,
+      persona_id: 'p-1-02',
+      persona_name: 'Ben Okoro',
+      segment_id: 'seg-a',
+      step_no: 1,
+      severity: 4,
+      what: 'The form is hidden.',
+      expected: 'The form in plain view.',
+      url,
+      quote: 'I cannot see it.',
+      screenshot: 'runs/r-0001/shots/p-1-02-0001.jpg',
     },
   ],
   cost_usd: 0.75,
@@ -44,20 +103,29 @@ const report: Report = {
   ended_at: 9000,
   duration_ms: 8000,
   banner: HYPOTHESIS_BANNER,
-  methods: { role: null, allowed_hosts: ['localhost'], blocked_requests: [], blocked: [], tripwires: [], reset: null },
+  methods: {
+    seed: 99,
+    roles: ['recruiter'],
+    models: { navigator: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
+    budgets: { cost_usd: 5, wall_clock_min: 60, concurrency: 12 },
+    allowed_hosts: ['localhost'],
+    blocked_requests: [],
+    blocked: [],
+    tripwires: [],
+    reset: null,
+    concurrency_changes: [],
+  },
 };
 
-test('reportToMarkdown carries the banner, the goal, each friction and the totals', () => {
+test('reportToMarkdown carries the banner, the goal, the segment table and the totals', () => {
   const md = reportToMarkdown(report);
   assert.ok(md.startsWith('# Gnomi report: Post a job for a backend engineer\n'));
   for (const expected of [
     HYPOTHESIS_BANNER,
-    '1. Step 1, severity 2: The Save button is ambiguous.',
-    '   - Expected: A button that says what it does.',
-    '   - Quote: "Is this posting or saving?"',
-    '   - Screenshot: runs/r-0001/shots/p-001-0001.jpg',
-    '2. Step 2, severity 3: The required field gives no error.',
-    '   - Screenshot: none',
+    '| Segment | Share | Personas | Completion | With friction |',
+    '| Recruiters | 60% | 2 | 50% | 100% |',
+    '| Hiring managers | 40% | 1 | 0% | 100% |',
+    '**Weighted by share:** completion 30%, with friction 100%.',
     '- Cost: $0.7500',
     '- Tokens: 2000 in, 400 out',
     '- LLM calls: 2',
@@ -67,29 +135,64 @@ test('reportToMarkdown carries the banner, the goal, each friction and the total
   }
 });
 
+test('frictions are grouped by segment, then persona, and numbered across the groups', () => {
+  const md = reportToMarkdown(report);
+  for (const expected of [
+    '### Recruiters',
+    '**Ana Ruiz** (done)',
+    '1. Step 1, severity 2: The Save button is ambiguous.',
+    '   - Expected: A button that says what it does.',
+    '   - Quote: "Is this posting or saving?"',
+    '   - Screenshot: runs/r-0001/shots/p-1-01-0001.jpg',
+    '2. Step 2, severity 2: The required field gives no error.',
+    '**Ben Okoro** (abandoned)',
+    '3. Step 1, severity 4: The form is hidden.',
+    '### Hiring managers',
+    '**Eli Marsh** (blocked)',
+    '4. Step 1, severity 3: The sign-in page is confusing.',
+    '   - Screenshot: none',
+  ]) {
+    assert.ok(md.includes(expected), expected);
+  }
+  const at = (text: string) => md.indexOf(text);
+  assert.ok(at('### Recruiters') < at('**Ana Ruiz**'));
+  assert.ok(at('**Ana Ruiz**') < at('**Ben Okoro**'));
+  assert.ok(at('**Ben Okoro**') < at('### Hiring managers'));
+});
+
 test('reportToMarkdown says so when a run reported no frictions', () => {
   assert.ok(reportToMarkdown({ ...report, frictions: [] }).includes('No frictions reported.'));
 });
 
-test('reportToMarkdown lists the methods appendix: role, hosts, blocks, tripwires and the reset hook', () => {
+test('the methods appendix lists seed, models, budgets and concurrency changes, with blocks and resets', () => {
   const md = reportToMarkdown({
     ...report,
     methods: {
-      role: 'recruiter',
+      seed: 99,
+      roles: ['recruiter', 'admin'],
+      models: {
+        navigator: { provider: 'openai', model: 'gpt-6-luna' },
+        judge: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+      },
+      budgets: { cost_usd: 2.5, wall_clock_min: 30, concurrency: 8 },
       allowed_hosts: ['localhost', 'cdn.example.com'],
       blocked_requests: [{ host: 'ads.example.net', count: 3 }],
-      blocked: [{ step_no: 4, reason: 'captcha', detail: 'reCAPTCHA on the sign-in page', resumed: true }],
+      blocked: [{ persona_id: 'p-2-01', step_no: 4, reason: 'captcha', detail: 'reCAPTCHA on the sign-in page', resumed: true }],
       tripwires: [{ kind: 'live_payment_key', detail: 'pk_live_ on /checkout' }],
       reset: { url: 'https://staging.example/reset', status: 200, error: null },
+      concurrency_changes: [{ concurrency: 4, reason: 'rate limited by anthropic' }],
     },
   });
-  assert.ok(md.endsWith('\n'));
   assert.ok(md.indexOf('## Methods') > md.indexOf('## Cost and time'));
   for (const expected of [
-    '- Role: recruiter',
+    '- Seed: 99',
+    '- Roles: recruiter, admin',
+    '- Models: navigator gpt-6-luna (openai); judge claude-sonnet-5-5 (anthropic)',
+    '- Budgets: $2.50 cost, 30 min wall clock, concurrency 8',
+    '- Concurrency changes: 4 (rate limited by anthropic)',
     '- Allowed hosts: localhost, cdn.example.com',
     '- Blocked requests: ads.example.net (3)',
-    '- Blocked at step 4 (captcha, resumed): reCAPTCHA on the sign-in page',
+    '- Blocked at step 4, persona p-2-01 (captcha, resumed): reCAPTCHA on the sign-in page',
     '- Tripwire (live_payment_key): pk_live_ on /checkout',
     '- Reset hook: https://staging.example/reset, HTTP 200',
   ]) {
@@ -97,13 +200,21 @@ test('reportToMarkdown lists the methods appendix: role, hosts, blocks, tripwire
   }
 });
 
-test('reportToMarkdown says what happened when nothing was blocked or reset', () => {
+test('the methods appendix says what did not happen', () => {
   const md = reportToMarkdown({
     ...report,
-    methods: { ...report.methods, reset: { url: 'https://staging.example/reset', status: null, error: 'ECONNREFUSED' } },
+    methods: {
+      ...report.methods,
+      roles: [],
+      models: {},
+      concurrency_changes: [],
+      reset: { url: 'https://staging.example/reset', status: null, error: 'ECONNREFUSED' },
+    },
   });
   for (const expected of [
-    '- Role: none, browsing logged out',
+    '- Roles: none, browsing logged out',
+    '- Models: none called',
+    '- Concurrency changes: none',
     '- Blocked requests: none',
     '- Blocked personas: none',
     '- Tripwires: none',

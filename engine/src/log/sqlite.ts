@@ -2,9 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { ProjectStore } from '../seams.ts';
-import type { EventType, GnomiEvent, ProjectConfig, RunConfig, RunStatus } from '../types.ts';
+import { DEFAULT_SETTINGS } from '../settings.ts';
+import type { EventType, GnomiEvent, Persona, ProjectConfig, RunConfig, RunStatus } from '../types.ts';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // IF NOT EXISTS makes the schema idempotent: a crash mid-way is finished by the next open; a v1 file gains new tables.
 const SCHEMA = `
@@ -52,6 +53,12 @@ CREATE TABLE IF NOT EXISTS session (
   verified_at INTEGER,
   expires_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS persona (
+  id TEXT PRIMARY KEY,
+  segment_id TEXT,
+  position INTEGER NOT NULL,
+  profile_json TEXT NOT NULL
+);
 `;
 
 const EVENT_COLUMNS = 'run_id, seq, ts, round, persona_id, poi_id, type, payload_json';
@@ -87,6 +94,8 @@ type SessionDbRow = {
   verified_at: number | null;
   expires_at: number | null;
 };
+
+type PersonaDbRow = { profile_json: string };
 
 function toEvent({ payload_json, ...event }: EventRow): GnomiEvent {
   return { ...event, payload: JSON.parse(payload_json) } as GnomiEvent;
@@ -142,6 +151,16 @@ export function openProject(dir: string): ProjectStore {
      ON CONFLICT (role) DO UPDATE SET start_url = excluded.start_url, hosts_json = excluded.hosts_json,
        recorded_at = excluded.recorded_at, verified_at = excluded.verified_at, expires_at = excluded.expires_at`,
   );
+  const selectPersonas = db.prepare('SELECT profile_json FROM persona ORDER BY position');
+  const clearPersonas = db.prepare('DELETE FROM persona');
+  const insertPersona = db.prepare('INSERT INTO persona (id, segment_id, position, profile_json) VALUES (?, ?, ?, ?)');
+  // A new id goes after the last position; an existing id keeps its position because ON CONFLICT never sets it.
+  const upsertPersona = db.prepare(
+    `INSERT INTO persona (id, segment_id, position, profile_json)
+     VALUES (?, ?, COALESCE((SELECT MAX(position) FROM persona), -1) + 1, ?)
+     ON CONFLICT (id) DO UPDATE SET segment_id = excluded.segment_id, profile_json = excluded.profile_json`,
+  );
+  const removePersona = db.prepare('DELETE FROM persona WHERE id = ?');
 
   return {
     dir,
@@ -149,9 +168,11 @@ export function openProject(dir: string): ProjectStore {
       const row = selectProject.get() as { config_json: string } | undefined;
       if (!row) return null;
       const saved = JSON.parse(row.config_json) as ProjectConfig;
-      // Configs saved before M1 lack these fields.
+      // Configs saved before M2 have no audience or settings; before M1, no role or POI fields.
       return {
         ...saved,
+        audience: saved.audience ?? null,
+        settings: saved.settings ?? structuredClone(DEFAULT_SETTINGS),
         role: saved.role ?? null,
         poi: {
           ...saved.poi,
@@ -246,6 +267,26 @@ export function openProject(dir: string): ProjectStore {
     putSession(info) {
       const { role, start_url, hosts, recorded_at, verified_at, expires_at } = info;
       upsertSession.run(role, start_url, JSON.stringify(hosts), recorded_at, verified_at, expires_at);
+    },
+    listPersonas() {
+      return (selectPersonas.all() as PersonaDbRow[]).map((row) => JSON.parse(row.profile_json) as Persona);
+    },
+    replacePersonas(personas) {
+      db.exec('BEGIN');
+      try {
+        clearPersonas.run();
+        personas.forEach((p, position) => insertPersona.run(p.id, p.segment_id, position, JSON.stringify(p)));
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    },
+    putPersona(persona) {
+      upsertPersona.run(persona.id, persona.segment_id, JSON.stringify(persona));
+    },
+    deletePersona(id) {
+      removePersona.run(id);
     },
     close() {
       db.close();

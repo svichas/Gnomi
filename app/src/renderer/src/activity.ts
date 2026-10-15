@@ -1,17 +1,29 @@
-import type { Action, ActionTarget, EventOf, GnomiEvent } from '@gnomi/engine/types.ts';
+import type { Action, ActionTarget, EventOf, GnomiEvent, Persona, RunConfig, Segment, SessionInfo } from '@gnomi/engine/types.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
 export type Tone = 'plain' | 'friction' | 'good' | 'bad' | 'alarm' | 'notice' | 'muted';
 
+export const TONE_CLASSES: Record<Tone, string> = {
+  plain: 'border-stone-200 bg-white',
+  friction: 'border-amber-300 bg-amber-50',
+  good: 'border-green-200 bg-green-50',
+  bad: 'border-red-200 bg-red-50',
+  alarm: 'border-2 border-red-500 bg-red-100',
+  notice: 'border-sky-200 bg-sky-50',
+  muted: 'border-transparent bg-transparent text-stone-500',
+};
+
 export interface Row {
   seq: number;
+  persona_id: string | null; // whose row it is; null for the run as a whole and for requests blocked across personas
   label: string;
   tone: Tone;
   title: string;
   badge?: { ok: boolean; text: string };
   detail?: string;
   quote?: string;
+  screenshot?: string | null; // a step's evidence, a blob path
 }
 
 const STEP_ERRORS: Record<string, string> = {
@@ -52,6 +64,7 @@ function describeAction(action: Action, target: ActionTarget | null): string {
 const STOP_REASONS = {
   user: 'You stopped the run',
   cost_budget: 'The run reached its cost limit',
+  wall_clock: 'The run reached its time limit',
   tripwire: 'The run was halted by a safety check',
   error: 'The run stopped because of an error',
 };
@@ -71,9 +84,11 @@ export function resetOutcome({ status, error }: { status: number | null; error: 
 }
 
 /** One line of the activity list, or null for events that are bookkeeping. */
-function describe(event: GnomiEvent): Row | null {
+function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
   const { seq } = event;
   switch (event.type) {
+    case 'run.concurrency_changed':
+      return { seq, label: 'Pace', tone: 'notice', title: `Now running ${event.payload.concurrency} personas at a time`, detail: event.payload.reason };
     case 'run.reset_called': {
       const reset = resetOutcome(event.payload);
       return { seq, label: 'Reset', tone: reset.ok ? 'muted' : 'bad', title: `Reset hook ${reset.text}`, detail: event.payload.url };
@@ -90,6 +105,7 @@ function describe(event: GnomiEvent): Row | null {
         title: describeAction(action, target),
         badge: action.type === 'done' || action.type === 'abandon' ? undefined : result.ok ? { ok: true, text: 'ok' } : { ok: false, text: `error: ${error || 'failed'}` },
         quote: thought,
+        screenshot: event.payload.screenshot,
       };
     }
     case 'persona.friction_reported': {
@@ -130,39 +146,169 @@ function describe(event: GnomiEvent): Row | null {
   }
 }
 
-/** The activity list, newest first so the latest step is always in view. Blocked requests are one updating row per host. */
-export function toRows(events: GnomiEvent[]): Row[] {
+/** The activity list in time order, blocked requests as one updating row per host that keeps the place of the first. */
+export function chronologicalRows(events: GnomiEvent[]): Row[] {
   const blocked = new Map<string, number>();
   for (const event of events) if (event.type === 'containment.blocked_request') blocked.set(event.payload.host, (blocked.get(event.payload.host) ?? 0) + 1);
   const shown = new Set<string>();
-  return events
-    .flatMap((event): Row[] => {
-      if (event.type !== 'containment.blocked_request') {
-        const row = describe(event);
-        return row ? [row] : [];
-      }
-      const { host } = event.payload;
-      if (shown.has(host)) return [];
-      shown.add(host);
-      // Anchored at the first request, so the row keeps its place while its count grows.
-      return [{ seq: event.seq, label: 'Blocked', tone: 'notice', title: `Blocked requests to ${host} (${blocked.get(host)})` }];
-    })
-    .reverse();
+  return events.flatMap((event): Row[] => {
+    if (event.type !== 'containment.blocked_request') {
+      const row = describe(event);
+      return row ? [{ ...row, persona_id: event.persona_id }] : [];
+    }
+    const { host } = event.payload;
+    if (shown.has(host)) return [];
+    shown.add(host);
+    return [{ seq: event.seq, persona_id: null, label: 'Blocked', tone: 'notice', title: `Blocked requests to ${host} (${blocked.get(host)})` }];
+  });
 }
+
+/** The activity feed: the same rows, newest first so the latest step is always in view. */
+export const toRows = (events: GnomiEvent[]): Row[] => chronologicalRows(events).reverse();
 
 export const isEnd = (event: GnomiEvent) => event.type === 'run.finished' || event.type === 'run.stopped';
 
-/** The persona.blocked event the user still has to act on: no persona.resumed after it, and the run has not ended. */
-export function waitingBlock(events: GnomiEvent[]): EventOf<'persona.blocked'> | null {
-  if (events.some(isEnd)) return null;
-  const blocked = events.findLast((event): event is EventOf<'persona.blocked'> => event.type === 'persona.blocked');
-  // shortcut: one persona per run, so any later resume ends the wait; key it by persona_id when M2 adds more personas
-  return blocked && !events.some((event) => event.type === 'persona.resumed' && event.seq > blocked.seq) ? blocked : null;
+// The events that end a persona's episode: after one of these she is no longer waiting for anyone.
+const ENDS_EPISODE = new Set(['persona.goal_done', 'persona.abandoned', 'signal.budget_exceeded', 'signal.repeated_failure']);
+
+/** The persona.blocked events the user still has to act on: per persona, no resume or ending after it, and the run has not ended. */
+export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[] {
+  if (events.some(isEnd)) return [];
+  const waiting = new Map<string, EventOf<'persona.blocked'>>();
+  for (const event of events) {
+    if (event.persona_id === null) continue;
+    if (event.type === 'persona.blocked') waiting.set(event.persona_id, event);
+    else if (event.type === 'persona.resumed' || ENDS_EPISODE.has(event.type)) waiting.delete(event.persona_id);
+  }
+  return [...waiting.values()];
+}
+
+export type PersonaState = 'waiting' | 'active' | 'blocked' | 'done' | 'abandoned' | 'unfinished';
+
+export const STATE_WORDS: Record<PersonaState, string> = {
+  waiting: 'Waiting to start',
+  active: 'Working',
+  blocked: 'Waiting for you',
+  done: 'Done',
+  abandoned: 'Gave up',
+  unfinished: 'Stopped early',
+};
+
+/** A persona's state in words; once the run is over, one still waiting for the user is simply blocked. */
+export const stateWord = (state: PersonaState, ended: boolean) => (ended && state === 'blocked' ? 'Blocked' : STATE_WORDS[state]);
+
+/** Where each persona stands, from the log alone. Once the run has ended, those still working or queued were cut short. */
+export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<string, PersonaState> {
+  const states = new Map<string, PersonaState>(personas.map((persona) => [persona.id, 'waiting']));
+  for (const event of events) {
+    if (event.persona_id === null || !states.has(event.persona_id)) continue;
+    if (event.type === 'persona.episode_started' || event.type === 'persona.step' || event.type === 'persona.resumed') states.set(event.persona_id, 'active');
+    else if (event.type === 'persona.blocked') states.set(event.persona_id, 'blocked');
+    else if (event.type === 'persona.goal_done') states.set(event.persona_id, 'done');
+    else if (ENDS_EPISODE.has(event.type)) states.set(event.persona_id, 'abandoned');
+  }
+  if (events.some(isEnd)) for (const [id, state] of states) if (state === 'waiting' || state === 'active') states.set(id, 'unfinished');
+  return states;
+}
+
+export function countStates(states: Map<string, PersonaState>): Record<PersonaState, number> {
+  const counts: Record<PersonaState, number> = { waiting: 0, active: 0, blocked: 0, done: 0, abandoned: 0, unfinished: 0 };
+  for (const state of states.values()) counts[state] += 1;
+  return counts;
+}
+
+export type Category = 'steps' | 'frictions' | 'outcomes' | 'blocks' | 'containment' | 'run';
+
+export const CATEGORIES: Record<Category, string> = {
+  steps: 'Steps',
+  frictions: 'Frictions',
+  outcomes: 'Finishes and give-ups',
+  blocks: 'Blocked and resumed',
+  containment: 'Blocked requests and safety stops',
+  run: 'The run itself',
+};
+
+const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
+  'persona.step': 'steps',
+  'persona.episode_started': 'steps',
+  'persona.friction_reported': 'frictions',
+  'persona.goal_done': 'outcomes',
+  'persona.abandoned': 'outcomes',
+  'signal.budget_exceeded': 'outcomes',
+  'signal.repeated_failure': 'outcomes',
+  'persona.blocked': 'blocks',
+  'persona.resumed': 'blocks',
+  'containment.blocked_request': 'containment',
+  'containment.tripwire': 'containment',
+  'run.reset_called': 'run',
+  'run.concurrency_changed': 'run',
+  'run.stopped': 'run',
+  'run.finished': 'run',
+  'llm.call': 'run',
+};
+
+export interface Filters {
+  persona: string; // a persona id, or '' for everyone
+  segment: string; // a segment id, or ''
+  category: Category | ''; // '' for every kind of event
+}
+
+/** The events a filter lets through; run-level events have no persona, so a persona or segment filter hides them. */
+export function filterEvents(events: GnomiEvent[], filters: Filters, personas: Map<string, Persona>): GnomiEvent[] {
+  if (!filters.persona && !filters.segment && !filters.category) return events;
+  return events.filter((event) => {
+    if (filters.category && CATEGORY_OF[event.type] !== filters.category) return false;
+    if (!filters.persona && !filters.segment) return true;
+    if (event.persona_id === null) return false;
+    if (filters.persona && event.persona_id !== filters.persona) return false;
+    return !filters.segment || personas.get(event.persona_id)?.segment_id === filters.segment;
+  });
 }
 
 /** Events arrive both live and from get_events, so adding the same one twice must change nothing. */
 export function merge(have: GnomiEvent[], incoming: GnomiEvent[]): GnomiEvent[] {
+  const last = have.at(-1)?.seq ?? 0;
+  if (incoming.every((event, i) => event.seq > last && (i === 0 || event.seq > incoming[i - 1].seq))) return incoming.length ? [...have, ...incoming] : have; // the usual case: the next events, in order
   const seen = new Set(have.map((event) => event.seq));
   const fresh = incoming.filter((event) => !seen.has(event.seq));
   return fresh.length ? [...have, ...fresh].sort((a, b) => a.seq - b.seq) : have;
+}
+
+export interface RunSetup {
+  personas: Persona[];
+  segments: Segment[];
+  costBudget: number | null;
+  concurrency: number | null;
+  pauseMs: number | null;
+  /** The login a persona uses: her segment's, or the project's for the built-in persona. */
+  roleOf(persona: Persona | undefined): string | null;
+}
+
+/** What a run was set up with. Runs logged before M2 hold `persona`, `session` and `cost_budget_usd` where newer ones hold the population. */
+export function runSetup(config: RunConfig | undefined): RunSetup {
+  const old = (config ?? {}) as unknown as { persona?: Persona; session?: SessionInfo | null; cost_budget_usd?: number };
+  const segments = config?.project.audience?.segments ?? [];
+  return {
+    personas: config?.personas ?? (old.persona ? [old.persona] : []),
+    segments,
+    costBudget: config?.project.settings?.cost_budget_usd ?? old.cost_budget_usd ?? null,
+    concurrency: config?.project.settings?.concurrency ?? null,
+    pauseMs: config?.pause_timeout_ms ?? null,
+    roleOf(persona) {
+      const segment = segments.find((candidate) => candidate.id === persona?.segment_id);
+      return segment ? segment.role : (old.session?.role ?? config?.project.role ?? null);
+    },
+  };
+}
+
+export const FEELINGS: Record<number, string> = { [-2]: 'very frustrated', [-1]: 'annoyed', 0: 'neutral', 1: 'pleased', 2: 'delighted' };
+
+/** Steps taken and the latest feeling per persona, from the log. */
+export function personaProgress(events: GnomiEvent[]): Map<string, { steps: number; feeling: number | null }> {
+  const progress = new Map<string, { steps: number; feeling: number | null }>();
+  for (const event of events) {
+    if (event.type !== 'persona.step' || event.persona_id === null) continue;
+    progress.set(event.persona_id, { steps: Math.max(event.payload.step_no, progress.get(event.persona_id)?.steps ?? 0), feeling: event.payload.feeling });
+  }
+  return progress;
 }

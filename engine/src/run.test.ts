@@ -1,12 +1,30 @@
-// startRun and the step loop over in-memory fakes of the store, blobs, sessions and browser, with scripted models.
+// startRun, the scheduler and the step loop over in-memory fakes of the store, blobs, sessions, browser and model.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
-import { createScriptedGateway, DEMO_SCRIPT, findRef, type Script } from './llm/scripted.ts';
+import { InvalidOutputError } from './llm/gateway.ts';
+import { BUILTIN_PERSONA } from './persona.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
+import { DEFAULT_SETTINGS } from './settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
-import type { Action, ActionOutcome, ActionType, EventOf, EventType, GnomiEvent, PageFlags, ProjectConfig, RunConfig, SessionInfo } from './types.ts';
+import type {
+  Action,
+  ActionOutcome,
+  ActionType,
+  Audience,
+  EventOf,
+  EventType,
+  GnomiEvent,
+  PageFlags,
+  Persona,
+  ProjectConfig,
+  RunConfig,
+  RunSettings,
+  Segment,
+  SessionInfo,
+} from './types.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',
@@ -23,13 +41,42 @@ const project: ProjectConfig = {
   },
   goal: 'Post a job for a backend engineer',
   role: null,
+  audience: null,
+  settings: DEFAULT_SETTINGS,
 };
 
 const step = (type: ActionType, ref: string | null = null, text: string | null = null, friction: object | null = null) => ({
-  thought: `Priya does a ${type}.`,
+  thought: `A ${type}, then.`,
   feeling: 0,
   action: { type, ref, text },
   friction,
+});
+const forever = () => step('scroll', null, 'down');
+
+const persona = (id: string, over: Partial<Persona> = {}): Persona => ({ ...BUILTIN_PERSONA, id, name: `Persona ${id}`, ...over });
+const segment = (id: string, over: Partial<Segment> = {}): Segment => ({
+  id,
+  name: id,
+  description: '',
+  share: 50,
+  role: null,
+  usage_frequency: 'weekly',
+  typical_goals: [],
+  mobile_share: 0,
+  patience: [3, 3],
+  tech_skill: [3, 3],
+  account_state: 'populated',
+  entry: 'direct',
+  goal_override: null,
+  ...over,
+});
+const audience = (segments: Segment[]): Audience => ({
+  seed: 7,
+  persona_count: 20,
+  segments,
+  company_size: [50, 2000],
+  languages: { en: 1 },
+  accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 },
 });
 
 const of = <K extends EventType>(events: GnomiEvent[], type: K) => events.filter((e): e is EventOf<K> => e.type === type);
@@ -38,29 +85,40 @@ const recruiter: SessionInfo = { role: 'recruiter', start_url: 'http://gym.test/
 
 /** One recorded role whose storage state the test can swap, as a re-recording would. */
 function fakeSessions(state: StorageState) {
-  const saved = { state, loads: 0 };
+  const saved = { state };
   const sessions: SessionStore = {
     list: () => [recruiter],
     save: async (_info, next) => void (saved.state = next),
-    load: async (role) => (role === recruiter.role ? (saved.loads++, { info: recruiter, state: saved.state }) : null),
+    load: async (role) => (role === recruiter.role ? { info: recruiter, state: saved.state } : null),
     markVerified: () => {},
   };
   return { sessions, saved };
 }
 
+/** Answers per persona: the n-th call of each persona gets respond(req, n). Validates like a gateway, one retry included. */
+type Respond = (req: LlmRequest<unknown>, n: number) => unknown;
+
 interface Options {
+  personas?: Persona[];
+  project?: Partial<ProjectConfig>;
+  settings?: Partial<RunSettings>;
   config?: Partial<RunConfig>;
+  sessions?: SessionInfo[];
+  sessionStore?: SessionStore | null;
+  cost?: number; // per model call
+  delayMs?: number; // per model call
+  onCall?: (req: LlmRequest<unknown>, run: RunHandle) => void;
   /** Overrides an action's outcome; may call the page's onBlockedRequest as a browser would. */
   act?: (a: Action, page: PageOptions) => Partial<ActionOutcome>;
-  /** Flags for the n-th inspection of the run (0 is the first load), across pages. */
-  inspect?: (n: number) => Partial<PageFlags>;
-  sessions?: SessionStore | null;
+  /** Flags for the n-th inspection of the run (0 is the first page's first load), given the page's current URL. */
+  inspect?: (n: number, url: string) => Partial<PageFlags>;
   onEvent?: (e: GnomiEvent, run: RunHandle) => void;
+  llm?: (record: Recorder) => LlmGateway;
 }
 
-function begin(model: Script | ((record: Recorder) => LlmGateway), opts: Options = {}) {
+function begin(respond: Respond | unknown[], opts: Options = {}) {
   const events: GnomiEvent[] = [];
-  const transcripts: { seq: number; request_json: string; response_json: string }[] = [];
+  const transcripts: { seq: number; persona_id: string | null; request_json: string }[] = [];
   const finished: { status: string; stop_reason: string | null; cost_usd: number }[] = [];
   const store: ProjectStore = {
     dir: 'memory',
@@ -74,12 +132,15 @@ function begin(model: Script | ((record: Recorder) => LlmGateway), opts: Options
       events.push(stored);
       return stored;
     },
-    events: (run_id, o = {}) => events.filter((e) => e.run_id === run_id && (!o.types || o.types.includes(e.type))),
-    saveTranscript: (_run_id, seq, request, response) =>
-      void transcripts.push({ seq, request_json: JSON.stringify(request), response_json: JSON.stringify(response) }),
-    transcripts: () => transcripts,
+    events: (run_id, o = {}) => events.filter((e) => e.run_id === run_id && e.seq > (o.afterSeq ?? 0) && (!o.types || o.types.includes(e.type))),
+    saveTranscript: (_run_id, seq, request) => void transcripts.push({ seq, persona_id: events[seq - 1]?.persona_id ?? null, request_json: JSON.stringify(request) }),
+    transcripts: () => transcripts.map(({ seq, request_json }) => ({ seq, request_json, response_json: '{}' })),
     listSessions: () => [],
     putSession: () => {},
+    listPersonas: () => [],
+    replacePersonas: () => {},
+    putPersona: () => {},
+    deletePersona: () => {},
     close: () => {},
   };
   const files = new Map<string, Uint8Array>();
@@ -87,11 +148,13 @@ function begin(model: Script | ((record: Recorder) => LlmGateway), opts: Options
     put: async (path, data) => void files.set(path, data),
     get: async (path) => files.get(path) ?? Promise.reject(new Error(`no blob ${path}`)),
   };
-  const pages: { url: string; gotos: string[]; closed: boolean; options: PageOptions }[] = [];
+  const pages: { url: string; gotos: string[]; closed: boolean; options: PageOptions; openWhenOpened: number }[] = [];
+  let open = 0;
   let inspections = 0;
   const browsers: BrowserPool = {
     async newPage(options) {
-      const page = { url: '', gotos: [] as string[], closed: false, options };
+      open++;
+      const page = { url: '', gotos: [] as string[], closed: false, options, openWhenOpened: open };
       pages.push(page);
       return {
         goto: async (url) => void page.gotos.push((page.url = url)),
@@ -102,22 +165,56 @@ function begin(model: Script | ((record: Recorder) => LlmGateway), opts: Options
           page.url = outcome.url_after;
           return outcome;
         },
-        inspect: async () => ({ login: false, challenge: null, live_key: null, ...opts.inspect?.(inspections++) }),
-        close: async () => void (page.closed = true),
+        inspect: async () => ({ login: false, challenge: null, live_key: null, ...opts.inspect?.(inspections++, page.url) }),
+        async close() {
+          if (!page.closed) open--;
+          page.closed = true;
+        },
       };
     },
     record: () => Promise.reject(new Error('not used')),
     checkSession: () => Promise.reject(new Error('not used')),
     close: async () => {},
   };
+
   let handle: RunHandle | undefined;
   const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-  const llm = Array.isArray(model) ? createScriptedGateway(model, record) : model(record);
-  const config = { ...store.createRun(newRunConfig(project, { session: null, reset: false })), ...opts.config };
-  handle = startRun(config, { store, blobs, browsers, llm, record, sessions: opts.sessions ?? null });
+  const answer: Respond = Array.isArray(respond)
+    ? (req, n) => {
+        if (n >= respond.length) throw new Error('the script ran out');
+        const entry = respond[n];
+        return typeof entry === 'function' ? entry(req) : entry;
+      }
+    : respond;
+  const calls = new Map<string | null, number>();
+  const llm: LlmGateway = opts.llm?.(record) ?? {
+    async call<T>(req: LlmRequest<T>) {
+      for (let attempt = 1; ; attempt++) {
+        const n = calls.get(req.persona_id) ?? 0;
+        calls.set(req.persona_id, n + 1);
+        if (handle) opts.onCall?.(req, handle);
+        if (opts.delayMs) await sleep(opts.delayMs);
+        const output = answer(req, n);
+        const parsed = req.schema.safeParse(output);
+        const payload = { role: req.role, provider: 'fake', model: req.model.model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+        const request = { system: req.system, user: req.user.map((part) => (part.type === 'text' ? part : { type: 'image', bytes: part.data.byteLength })) };
+        record(
+          { run_id: req.run_id ?? '', round: 1, persona_id: req.persona_id, poi_id: null, type: 'llm.call', payload: { ...payload, cost_usd: opts.cost ?? 0, latency_ms: 0, status: parsed.success ? 'ok' : 'invalid_output', error: parsed.success ? null : 'invalid' } },
+          { request, response: output },
+        );
+        if (parsed.success) return { object: parsed.data, cost_usd: opts.cost ?? 0 };
+        if (attempt === 2) throw new InvalidOutputError('invalid twice');
+      }
+    },
+  };
+  const target = { ...project, ...opts.project, settings: { ...project.settings, ...opts.project?.settings, ...opts.settings } };
+  const config = { ...store.createRun(newRunConfig(target, { personas: opts.personas ?? [BUILTIN_PERSONA], sessions: opts.sessions ?? [], reset: false })), ...opts.config };
+  handle = startRun(config, { store, blobs, browsers, llm, record, sessions: opts.sessionStore ?? null });
   const run = handle;
   return { run, events, transcripts, finished, files, pages, types: () => events.map((e) => e.type) };
 }
+
+// —— One persona, as in M0 and M1 ——
 
 test('a run logs its lifecycle in seq order, keeps the evidence and writes report.json', async () => {
   const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };
@@ -146,30 +243,32 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
   assert.deepEqual([first.persona_id, first.poi_id], ['p-001', 'poi-1']);
   assert.equal(first.payload.screenshot, 'runs/r-0001/shots/p-001-0001.jpg');
   assert.ok(r.files.has('runs/r-0001/shots/p-001-0001.jpg'));
-  assert.deepEqual(first.payload.target, { role: 'link', name: 'Jobs', box: null });
   assert.deepEqual(of(r.events, 'persona.friction_reported')[0].payload, { step_no: 1, ...friction, where: { url: 'http://gym.test/', ref: 'e1' } });
 
   assert.equal(report.status, 'finished');
-  assert.equal(report.outcome, 'done');
-  assert.equal(report.outcome_text, 'Posted the job');
+  assert.deepEqual([report.personas[0].outcome, report.personas[0].outcome_text], ['done', 'Posted the job']);
   assert.equal(report.frictions[0].screenshot, 'runs/r-0001/shots/p-001-0001.jpg');
   assert.deepEqual(JSON.parse(new TextDecoder().decode(r.files.get('runs/r-0001/report.json'))), report);
-  assert.deepEqual(of(r.events, 'report.generated')[0].payload, { path: 'runs/r-0001/report.json', friction_count: 1 });
   assert.deepEqual(r.finished, [{ status: 'finished', stop_reason: null, cost_usd: 0 }]);
   assert.ok(r.pages.every((p) => p.closed));
 });
 
-test('the step budget ends the episode exactly on the budget', async () => {
-  const r = begin(Array(5).fill(step('scroll', null, 'down')), { config: { step_budget: 3 } });
-  const report = await r.run.done;
+test('step budgets follow patience: 12, 20, 30, 45 and 60 steps', async () => {
+  const personas = [1, 2, 3, 4, 5].map((patience) => persona(`p-${patience}`, { patience }));
+  const r = begin(forever, { personas, settings: { concurrency: 5 } });
+  await r.run.done;
   assert.deepEqual(
-    of(r.events, 'persona.step').map((e) => e.payload.step_no),
-    [1, 2, 3],
+    of(r.events, 'signal.budget_exceeded').map((e) => [e.persona_id, e.payload.budget, e.payload.step_no]).sort(),
+    [
+      ['p-1', 12, 12],
+      ['p-2', 20, 20],
+      ['p-3', 30, 30],
+      ['p-4', 45, 45],
+      ['p-5', 60, 60],
+    ],
   );
-  assert.equal(of(r.events, 'llm.call').length, 3);
-  assert.deepEqual(of(r.events, 'signal.budget_exceeded')[0].payload, { step_no: 3, budget: 3 });
-  assert.equal(report.outcome, 'budget_exceeded');
-  assert.equal(report.status, 'finished');
+  assert.equal(of(r.events, 'persona.step').length, 12 + 20 + 30 + 45 + 60);
+  assert.match(r.transcripts.find((t) => t.persona_id === 'p-1')?.request_json ?? '', /gives up after about 12 actions/);
 });
 
 test('three identical failed actions in a row end the episode', async () => {
@@ -181,9 +280,7 @@ test('three identical failed actions in a row end the episode', async () => {
   assert.equal(of(r.events, 'persona.step').length, 6, 'the scroll in between resets the count');
   assert.deepEqual(of(r.events, 'signal.repeated_failure')[0].payload, { step_no: 6, action: 'click', error: 'ref_not_found' });
   assert.equal(of(r.events, 'persona.abandoned').length, 0, 'an engine stop is not the persona giving up');
-  assert.equal(report.outcome, 'repeated_failure');
-  assert.match(report.outcome_text ?? '', /same click failed three times in a row \(ref_not_found\)/);
-  assert.equal(report.status, 'finished');
+  assert.equal(report.personas[0].outcome, 'repeated_failure');
 });
 
 test("abandon ends the episode with the persona's own reason", async () => {
@@ -193,7 +290,7 @@ test("abandon ends the episode with the persona's own reason", async () => {
     of(r.events, 'persona.abandoned').map((e) => e.payload),
     [{ step_no: 1, reason: 'Too many dead ends for a Tuesday' }],
   );
-  assert.equal(report.outcome, 'abandoned');
+  assert.equal(report.personas[0].outcome, 'abandoned');
 });
 
 test('two invalid outputs make a failed step, not a crash', async () => {
@@ -207,68 +304,30 @@ test('two invalid outputs make a failed step, not a crash', async () => {
   assert.deepEqual(failed.payload.action, { type: 'wait', ref: null, text: null });
   assert.deepEqual([failed.payload.result.ok, failed.payload.result.error], [false, 'invalid_output']);
   assert.equal(done.payload.step_no, 2);
-  assert.match(r.transcripts[1].request_json, /did not match the required format/);
-  assert.equal(report.outcome, 'done');
+  assert.equal(report.personas[0].outcome, 'done');
 });
 
 test('stop() ends the run as stopped by the user once the step in flight is done', async () => {
-  let handle: RunHandle | undefined;
-  const scroll = step('scroll', null, 'down');
-  const r = begin([
-    scroll,
-    () => {
-      handle?.stop();
-      return scroll;
-    },
-    scroll,
-  ]);
-  handle = r.run;
+  const r = begin(forever, { onCall: (req, run) => req.persona_id && run.stop() });
   const report = await r.run.done;
-  assert.equal(of(r.events, 'persona.step').length, 2);
+  assert.equal(of(r.events, 'persona.step').length, 1);
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
     [{ reason: 'user', detail: null }],
   );
   assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'user', cost_usd: 0 }]);
-  assert.deepEqual([report.status, report.outcome], ['stopped', 'incomplete']);
+  assert.deepEqual([report.status, report.personas[0].outcome], ['stopped', 'incomplete']);
   assert.ok(r.pages.every((p) => p.closed));
 });
 
 test('stop() cancels a model call in flight', async () => {
-  const r = begin(() => ({
-    call: (req: LlmRequest<unknown>) => new Promise<never>((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('aborted')))),
-  }));
+  const r = begin([], {
+    llm: () => ({ call: (req) => new Promise<never>((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('aborted')))) }),
+  });
   setTimeout(() => r.run.stop(), 10);
   const report = await r.run.done;
   assert.equal(of(r.events, 'persona.step').length, 0);
   assert.deepEqual([report.status, report.stop_reason], ['stopped', 'user']);
-});
-
-test('the cost budget stops the run before the call that would pass it', async () => {
-  const r = begin(
-    (record) => ({
-      async call<T>(req: LlmRequest<T>) {
-        record({
-          run_id: req.run_id,
-          round: req.round,
-          persona_id: req.persona_id,
-          poi_id: null,
-          type: 'llm.call',
-          payload: { role: req.role, provider: 'fake', model: req.model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.4, latency_ms: 0, status: 'ok', error: null },
-        });
-        return { object: req.schema.parse(step('scroll', null, 'down')), cost_usd: 0.4 };
-      },
-    }),
-    { config: { cost_budget_usd: 1 } },
-  );
-  const report = await r.run.done;
-  assert.equal(of(r.events, 'persona.step').length, 2, '$0.80 spent; a third $0.40 step would pass $1');
-  assert.deepEqual(
-    of(r.events, 'run.stopped').map((e) => e.payload.reason),
-    ['cost_budget'],
-  );
-  assert.ok(Math.abs(r.finished[0].cost_usd - 0.8) < 1e-9);
-  assert.equal(report.status, 'stopped');
 });
 
 test('a browser failure ends the run as stopped(error), closes the page and still reports', async () => {
@@ -288,44 +347,157 @@ test('a browser failure ends the run as stopped(error), closes the page and stil
 });
 
 test('a model API error ends the run as stopped(error)', async () => {
-  const r = begin(() => ({
-    call: async () => {
-      throw new Error('401 invalid x-api-key');
-    },
-  }));
+  const r = begin([], {
+    llm: () => ({
+      call: async () => {
+        throw new Error('401 invalid x-api-key');
+      },
+    }),
+  });
   const report = await r.run.done;
   assert.deepEqual([report.status, report.stop_reason], ['stopped', 'error: 401 invalid x-api-key']);
 });
 
 test('screenshots are always kept, and sent to the model only when enabled', async () => {
-  const r = begin([step('done', null, 'Done')], { config: { screenshots: false } });
+  const r = begin([step('done', null, 'Done')], { settings: { screenshots: false } });
   await r.run.done;
   assert.ok(r.files.has('runs/r-0001/shots/p-001-0001.jpg'));
   assert.doesNotMatch(r.transcripts[0].request_json, /"type":"image"/);
   const s = begin([step('done', null, 'Done')]);
   await s.run.done;
-  assert.match(s.transcripts[0].request_json, /"type":"image","mediaType":"image\/jpeg","bytes":3/);
+  assert.match(s.transcripts[0].request_json, /"type":"image","bytes":3/);
 });
 
-test('the demo script runs on any page: a scroll, a sample friction, then abandon', async () => {
-  const r = begin(DEMO_SCRIPT);
+// —— A population ——
+
+test('no more personas are in flight than the concurrency allows, and all of them run', async () => {
+  const personas = Array.from({ length: 7 }, (_, i) => persona(`p-${i}`));
+  const r = begin([step('scroll', null, 'down'), step('done', null, 'Done')], { personas, settings: { concurrency: 3 }, delayMs: 5 });
   const report = await r.run.done;
-  assert.equal(report.steps, 3);
-  assert.equal(report.frictions.length, 1);
-  assert.match(report.frictions[0].what, /scripted demo/);
-  assert.deepEqual([report.status, report.outcome], ['finished', 'abandoned']);
+  assert.equal(r.pages.length, 7);
+  assert.ok(Math.max(...r.pages.map((p) => p.openWhenOpened)) <= 3, 'never more than three pages open at once');
+  assert.equal(Math.max(...r.pages.map((p) => p.openWhenOpened)), 3, 'and the slots are used');
+  assert.deepEqual(
+    of(r.events, 'persona.created').map((e) => e.persona_id),
+    personas.map((p) => p.id),
+    'every persona is created up front, in order',
+  );
+  assert.ok(r.types().indexOf('persona.episode_started') > r.types().lastIndexOf('persona.created'));
+  assert.equal(of(r.events, 'persona.goal_done').length, 7);
+  assert.equal(report.personas.length, 7);
 });
 
-test('scripts find refs by role and accessible name in the page text', () => {
-  const req = { user: [{ type: 'text', text: '<page>\n- link "Jobs" [ref=e7] [cursor=pointer]:\n- textbox "Job title *" [ref=e12]\n</page>' }] } as LlmRequest<unknown>;
-  assert.equal(findRef(req, 'link', 'Jobs'), 'e7');
-  assert.equal(findRef(req, 'textbox', 'Job title *'), 'e12');
-  assert.equal(findRef(req, 'button', 'Jobs'), null);
+test('a rate limit halves the concurrency once per burst and records it', async () => {
+  const personas = Array.from({ length: 8 }, (_, i) => persona(`p-${i}`));
+  let throttledAt = -1;
+  const r = begin([step('scroll', null, 'down'), step('done', null, 'Done')], {
+    personas,
+    settings: { concurrency: 4 },
+    delayMs: 5,
+    onCall: (_req, run) => {
+      if (throttledAt >= 0) return;
+      run.throttle('anthropic');
+      run.throttle('anthropic'); // the rest of the same burst
+      throttledAt = r.pages.length;
+    },
+  });
+  await r.run.done;
+  assert.deepEqual(
+    of(r.events, 'run.concurrency_changed').map((e) => e.payload),
+    [{ concurrency: 2, reason: 'anthropic is rate-limiting requests' }],
+  );
+  const later = r.pages.slice(throttledAt);
+  assert.ok(later.length > 0 && later.every((p) => p.openWhenOpened <= 2), 'personas started after the change wait for a slot under the new limit');
+  assert.equal(of(r.events, 'persona.goal_done').length, 8);
 });
+
+test('the cost budget stops new steps across concurrent personas, and the spend stays within one step per persona in flight', async () => {
+  const personas = Array.from({ length: 6 }, (_, i) => persona(`p-${i}`, { patience: 5 }));
+  const r = begin(forever, { personas, settings: { concurrency: 3, cost_budget_usd: 1 }, cost: 0.1, delayMs: 2 });
+  const report = await r.run.done;
+  const spent = r.finished[0].cost_usd;
+  assert.deepEqual(
+    of(r.events, 'run.stopped').map((e) => e.payload),
+    [{ reason: 'cost_budget', detail: 'the $1 budget was reached' }],
+  );
+  assert.ok(spent <= 1 + 1e-9, `spent ${spent}`);
+  assert.ok(spent >= 1 - (3 + 1) * 0.1 - 1e-9, `stopped too early: ${spent}`);
+  assert.equal(of(r.events, 'llm.call').length, of(r.events, 'persona.step').length, 'every call that started finished as a step');
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+  assert.equal(report.status, 'stopped');
+  assert.ok(r.pages.every((p) => p.closed));
+});
+
+test('the wall-clock budget ends the run the same way', async () => {
+  const personas = [persona('p-1', { patience: 5 }), persona('p-2', { patience: 5 })];
+  const r = begin(forever, { personas, settings: { wall_clock_budget_min: 0.002 }, delayMs: 15 });
+  const report = await r.run.done;
+  assert.deepEqual(
+    of(r.events, 'run.stopped').map((e) => e.payload.reason),
+    ['wall_clock'],
+  );
+  assert.ok(of(r.events, 'persona.step').length < 120);
+  assert.equal(report.status, 'stopped');
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+});
+
+test('each persona gets her segment goal, context and device', async () => {
+  const project_ = {
+    audience: audience([
+      segment('seg-a', { goal_override: 'Review the candidates for the backend role', typical_goals: ['screen applicants'], entry: 'email_link' }),
+      segment('seg-b'),
+    ]),
+  };
+  const personas = [persona('p-a', { segment_id: 'seg-a', device: 'mobile', pronouns: 'they' }), persona('p-b', { segment_id: 'seg-b', device: 'desktop', pronouns: 'he' })];
+  const r = begin([step('done', null, 'Done')], { personas, project: project_ });
+  await r.run.done;
+  const system = (id: string) => JSON.parse(r.transcripts.find((t) => t.persona_id === id)?.request_json ?? '{}').system as string;
+  assert.match(system('p-a'), /task: "Review the candidates for the backend role"/);
+  assert.match(system('p-a'), /usually here to: screen applicants/);
+  assert.match(system('p-a'), /arrived: from a link in an email/);
+  assert.match(system('p-a'), /pronouns: they\/them/);
+  assert.match(system('p-b'), /task: "Post a job for a backend engineer"/);
+  assert.match(system('p-b'), /pronouns: he\/him/);
+  assert.deepEqual(
+    of(r.events, 'persona.episode_started').map((e) => [e.persona_id, e.payload.device]).sort(),
+    [
+      ['p-a', 'mobile'],
+      ['p-b', 'desktop'],
+    ],
+  );
+  assert.deepEqual(r.pages.map((p) => p.options.device).sort(), ['desktop', 'mobile']);
+});
+
+test('a blocked persona pauses alone while the others carry on', async () => {
+  const personas = [persona('p-blocked'), persona('p-free')];
+  const r = begin((req, n) => (req.persona_id === 'p-blocked' ? step('click', 'candidates') : n < 3 ? step('scroll', null, 'down') : step('done', null, 'Done')), {
+    personas,
+    settings: { concurrency: 2 },
+    config: { pause_timeout_ms: 300 },
+    delayMs: 5,
+    act: (a) => (a.ref === 'candidates' ? { url_after: 'http://gym.test/candidates' } : {}),
+    inspect: (_n, url) => (url.endsWith('/candidates') ? { challenge: 'recaptcha' } : {}),
+  });
+  const report = await r.run.done;
+  const blocked = of(r.events, 'persona.blocked')[0];
+  const done = of(r.events, 'persona.goal_done')[0];
+  assert.equal(blocked.persona_id, 'p-blocked');
+  assert.equal(done.persona_id, 'p-free');
+  assert.ok(done.seq > blocked.seq, 'p-free finished while p-blocked was paused');
+  assert.deepEqual(
+    report.personas.map((p) => [p.id, p.outcome]),
+    [
+      ['p-blocked', 'blocked'],
+      ['p-free', 'done'],
+    ],
+  );
+});
+
+// —— Logins, containment, tripwires and the reset hook (M1) ——
 
 test('a recorded session opens a contained page logged in, at the session start page', async () => {
   const { sessions, saved } = fakeSessions({ cookies: [{ name: 'gym_session', value: 'v1' }] });
-  const r = begin([step('done', null, 'Posted')], { sessions, config: { session: recruiter } });
+  const r = begin([step('done', null, 'Posted')], { sessionStore: sessions, sessions: [recruiter], project: { role: 'recruiter' } });
   await r.run.done;
   const { options, gotos } = r.pages[0];
   assert.deepEqual(options.allowedHosts, ['gym.test', 'cdn.gym.test']);
@@ -335,17 +507,21 @@ test('a recorded session opens a contained page logged in, at the session start 
   assert.equal(of(r.events, 'persona.episode_started')[0].payload.start_url, 'http://gym.test/dashboard');
 });
 
-test('a run whose recorded login has gone missing stops with an error that says what to do', async () => {
-  const { sessions } = fakeSessions({});
-  const r = begin([step('done', null, 'Posted')], { sessions, config: { session: { ...recruiter, role: 'admin' } } });
+test('a segment role with no verified login stops the run with an error that says why', async () => {
+  const r = begin([step('done', null, 'Posted')], { personas: [persona('p-1', { segment_id: 'seg-a' })], project: { audience: audience([segment('seg-a', { role: 'admin' })]) } });
   const report = await r.run.done;
-  assert.match(report.stop_reason ?? '', /^error: The recorded "admin" login is missing\. Record it again/);
+  assert.equal(report.stop_reason, 'error: No login for the "admin" role was verified before the run.');
 });
 
-test('blocked requests are logged, and a blocked page load on a production domain trips the wire', async () => {
+test('blocked requests are logged, and a blocked page load on a production domain trips the wire for everyone', async () => {
   let clicks = 0;
-  const r = begin([step('click', 'e1'), step('click', 'e1'), step('click', 'e1'), step('done', null, 'Done')], {
-    act: (_a, page) => {
+  const personas = [persona('p-1'), persona('p-2', { patience: 5 })];
+  const r = begin((req) => (req.persona_id === 'p-1' ? step('click', 'e1') : forever()), {
+    personas,
+    settings: { concurrency: 2 },
+    delayMs: 5,
+    act: (a, page) => {
+      if (a.ref !== 'e1') return {};
       clicks++;
       if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false });
       if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true });
@@ -359,11 +535,11 @@ test('blocked requests are logged, and a blocked page load on a production domai
   );
   assert.deepEqual(of(r.events, 'containment.tripwire')[0].payload, {
     kind: 'production_host',
-    detail: 'The persona tried to open https://app.gym.com/jobs, on the production domain gym.com.',
+    detail: 'Persona p-1 tried to open https://app.gym.com/jobs, on the production domain gym.com.',
   });
-  assert.equal(of(r.events, 'persona.step').length, 2);
   assert.equal(of(r.events, 'run.stopped')[0].payload.reason, 'tripwire');
-  assert.match(report.stop_reason ?? '', /^tripwire: The persona tried to open/);
+  assert.ok(of(r.events, 'persona.step').filter((e) => e.persona_id === 'p-2').length < 60, 'the other persona was halted too');
+  assert.match(report.stop_reason ?? '', /^tripwire: Persona p-1 tried to open/);
   assert.ok(r.pages.every((p) => p.closed));
 });
 
@@ -375,7 +551,6 @@ test('a live payment key on the page halts the run', async () => {
     of(r.events, 'containment.tripwire').map((e) => e.payload.kind),
     ['live_payment_key'],
   );
-  assert.match(of(r.events, 'containment.tripwire')[0].payload.detail, /live payment key \(pk_live_…\) is on http:\/\/gym\.test\//);
   assert.deepEqual([report.status, of(r.events, 'run.stopped')[0].payload.reason], ['stopped', 'tripwire']);
 });
 
@@ -386,18 +561,17 @@ test('a captcha pauses the persona, and an unanswered pause ends her episode blo
     of(r.events, 'persona.blocked').map((e) => [e.payload.step_no, e.payload.reason]),
     [[1, 'captcha']],
   );
-  assert.match(of(r.events, 'persona.blocked')[0].payload.detail, /recaptcha challenge is showing\. Gnomi never solves challenges/);
   assert.equal(of(r.events, 'persona.resumed').length, 0);
-  assert.deepEqual([report.status, report.outcome], ['finished', 'blocked']);
-  assert.deepEqual(report.methods.blocked, [{ step_no: 1, reason: 'captcha', detail: of(r.events, 'persona.blocked')[0].payload.detail, resumed: false }]);
+  assert.deepEqual([report.status, report.personas[0].outcome], ['finished', 'blocked']);
 });
 
 test('an expired session pauses the persona; resumed, she goes on with the new login and her memory', async () => {
   const { sessions, saved } = fakeSessions({ cookies: [{ name: 'gym_session', value: 'old' }] });
   const relogged = { cookies: [{ name: 'gym_session', value: 'new' }] };
   const r = begin([step('click', 'e1'), step('done', null, 'Posted')], {
-    sessions,
-    config: { session: recruiter },
+    sessionStore: sessions,
+    sessions: [recruiter],
+    project: { role: 'recruiter' },
     act: () => ({ url_after: 'http://gym.test/login?next=%2Fjobs' }),
     inspect: (n) => (n === 1 ? { login: true } : {}),
     onEvent: (e, run) => {
@@ -411,20 +585,12 @@ test('an expired session pauses the persona; resumed, she goes on with the new l
     r.types().filter((t) => t.startsWith('persona.')),
     ['persona.created', 'persona.episode_started', 'persona.step', 'persona.blocked', 'persona.resumed', 'persona.step', 'persona.goal_done'],
   );
-  assert.deepEqual(of(r.events, 'persona.blocked')[0].payload.reason, 'session_expired');
   assert.equal(r.pages.length, 2);
   assert.ok(r.pages[0].closed);
   assert.deepEqual(r.pages[1].options.storageState, relogged);
   assert.deepEqual(r.pages[1].gotos, ['http://gym.test/dashboard'], 'back to the last page before the block');
   assert.match(r.transcripts[1].request_json, /1\. click link \\"Jobs\\" → went to \/login\?next=%2Fjobs/, 'her memory survives the pause');
-  assert.deepEqual([report.outcome, report.methods.blocked[0].resumed], ['done', true]);
-});
-
-test('a login page without a recorded session is just a page', async () => {
-  const r = begin([step('click', 'e1'), step('done', null, 'Done')], { inspect: () => ({ login: true }) });
-  const report = await r.run.done;
-  assert.equal(of(r.events, 'persona.blocked').length, 0);
-  assert.equal(report.outcome, 'done');
+  assert.deepEqual([report.personas[0].outcome, report.methods.blocked[0].resumed], ['done', true]);
 });
 
 test('stop() while a persona is paused ends the run as a user stop', async () => {
@@ -452,30 +618,24 @@ async function hook(status: number) {
   return { url, calls, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
-test('the reset hook is POSTed before the persona is created', async (t) => {
+test('the reset hook is POSTed before the personas are created', async (t) => {
   const server = await hook(204);
   t.after(server.close);
-  const r = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi: { ...project.poi, reset_hook_url: server.url } } } });
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi: { ...project.poi, reset_hook_url: server.url } } });
   const report = await r.run.done;
   assert.deepEqual(server.calls, ['POST']);
   assert.deepEqual(r.types().slice(0, 3), ['run.started', 'run.reset_called', 'persona.created']);
-  assert.deepEqual(of(r.events, 'run.reset_called')[0].payload, { url: server.url, status: 204, error: null });
   assert.deepEqual(report.methods.reset, { url: server.url, status: 204, error: null });
 });
 
-test('a reset hook that fails stops the run before the persona starts', async (t) => {
+test('a reset hook that fails stops the run before any persona starts', async (t) => {
   const server = await hook(500);
   t.after(server.close);
   const poi = { ...project.poi, reset_hook_url: server.url };
-  const r = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi } } });
-  assert.deepEqual(
-    (await r.run.done).stop_reason,
-    'error: The reset hook answered 500',
-  );
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi } });
+  assert.equal((await r.run.done).stop_reason, 'error: The reset hook answered 500');
   assert.equal(of(r.events, 'persona.created').length, 0);
-
   await server.close();
-  const offline = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi } } });
+  const offline = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi } });
   assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
-  assert.deepEqual(of(offline.events, 'run.reset_called')[0].payload.status, null);
 });

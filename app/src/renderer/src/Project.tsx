@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { ProjectConfig } from '@gnomi/engine/types.ts';
-import { call } from './engine.ts';
-import { hostOf, hostToConfirm, initialForm, offeredHosts, startHost, toConfig } from './form.ts';
-import type { Form } from './form.ts';
+import { hostOf, hostToConfirm, offeredHosts, startHost } from './form.ts';
+import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
 import { Summary } from './Summary.tsx';
@@ -70,13 +69,16 @@ function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string
 
 export function Project(props: {
   info: ProjectInfo | null;
+  draft: Draft;
+  onForm(update: (form: Form) => Form): void;
+  save(): Promise<ProjectConfig | string>;
   sessionsPersist: boolean;
   onSaved(): Promise<void>;
   onStarted(runId: string): void;
 }) {
-  const { info, sessionsPersist, onSaved, onStarted } = props;
-  const [form, setForm] = useState(() => initialForm(info?.project));
-  const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((was) => ({ ...was, [key]: value }));
+  const { info, draft, onForm, save, sessionsPersist, onSaved, onStarted } = props;
+  const { form, audience } = draft;
+  const set = <K extends keyof Form>(key: K, value: Form[K]) => onForm((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
   const [summary, setSummary] = useState<ProjectConfig | null>(null);
   const { busy, outcome, run } = useAction();
@@ -84,20 +86,13 @@ export function Project(props: {
   const confirmHost = hostToConfirm(form.url);
   const start = startHost(form.url);
 
-  async function save(): Promise<ProjectConfig | string> {
-    const config = toConfig(form);
-    if (typeof config === 'string') return config;
-    await call('save_project', { project: config });
-    await onSaved();
-    return config;
-  }
   const saveFirst = async () => {
     const saved = await save();
     return typeof saved === 'string' ? saved : null;
   };
 
   const recorder = useRecorder(async (session) => {
-    if (form.role === null) set('role', session.role); // the first login recorded is the one personas use
+    if (form.role === null && audience === null) set('role', session.role); // the first login recorded is the one the built-in persona uses
     await onSaved();
   });
 
@@ -198,6 +193,7 @@ export function Project(props: {
       <Logins
         sessions={sessions}
         role={form.role}
+        perSegment={audience !== null}
         onRole={(role) => set('role', role)}
         recorder={recorder}
         saveFirst={saveFirst}
@@ -216,19 +212,28 @@ export function Project(props: {
         }}
       />
 
-      {persona && (
+      {audience !== null ? (
         <Card title="Who will try it">
-          <p className="text-sm font-medium text-stone-900">
-            {persona.name}, {persona.job_title}
+          <p className="text-sm text-stone-700">
+            {info?.personas.length ? `${info.personas.length} personas in ${audience.segments.length} segments.` : 'No personas yet.'} Shape the audience and generate the personas on the
+            Audience tab.
           </p>
-          <p className="mt-1 text-sm text-stone-600">
-            A {persona.seniority}-level {persona.job_title.toLowerCase()} at a {persona.company_size}-person {persona.industry} company, on a{' '}
-            {persona.device} browser. Tech skill {persona.tech_skill} of 5, patience {persona.patience} of 5.
-          </p>
-          <p className="mt-2 text-sm text-stone-600">{persona.context_of_use}.</p>
-          <p className="mt-2 text-sm italic text-stone-600">{persona.voice}</p>
-          <p className="mt-3 text-xs text-stone-500">Every run uses this built-in persona for now.</p>
         </Card>
+      ) : (
+        persona && (
+          <Card title="Who will try it">
+            <p className="text-sm font-medium text-stone-900">
+              {persona.name}, {persona.job_title}
+            </p>
+            <p className="mt-1 text-sm text-stone-600">
+              A {persona.seniority}-level {persona.job_title.toLowerCase()} at a {persona.company_size}-person {persona.industry} company, on a{' '}
+              {persona.device} browser. Tech skill {persona.tech_skill} of 5, patience {persona.patience} of 5.
+            </p>
+            <p className="mt-2 text-sm text-stone-600">{persona.context_of_use}.</p>
+            <p className="mt-2 text-sm italic text-stone-600">{persona.voice}</p>
+            <p className="mt-3 text-xs text-stone-500">Without an audience, every run uses this built-in persona. Build one on the Audience tab.</p>
+          </Card>
+        )
       )}
 
       <div className="sticky bottom-0 space-y-3 rounded-xl border border-stone-200 bg-white p-4 shadow-md">
@@ -247,7 +252,8 @@ export function Project(props: {
       {summary && (
         <Summary
           config={summary}
-          persona={persona}
+          builtin={persona}
+          personas={info?.personas ?? []}
           sessions={sessions}
           onChecked={onSaved}
           onRerecord={(role) => {

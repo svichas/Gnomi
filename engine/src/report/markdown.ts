@@ -1,12 +1,12 @@
-import type { Report, ReportFriction, ReportMethods } from '../types.ts';
+import type { Report, ReportFriction, ReportMethods, ReportSegment } from '../types.ts';
 
-// Free text from the model can hold line breaks, which would split a Markdown list item.
+// Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim();
+const cell = (text: string) => line(text).replace(/\|/g, '\\|');
+const pct = (rate: number) => `${Math.round(rate * 100)}%`;
 
 export function reportToMarkdown(report: Report): string {
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
-  const outcome = report.outcome_text === null ? report.outcome : `${report.outcome}: ${line(report.outcome_text)}`;
-  const frictions = report.frictions.length === 0 ? ['No frictions reported.'] : report.frictions.map(frictionToMarkdown);
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
   return [
     `# Gnomi report: ${report.goal}`,
@@ -14,14 +14,20 @@ export function reportToMarkdown(report: Report): string {
     `> ${report.banner}`,
     '',
     `- Point of interest: ${report.poi.name} (${report.poi.start_url})`,
-    `- Persona: ${report.persona.name}, ${report.persona.job_title}, ${report.persona.device}`,
-    `- Steps: ${report.steps}`,
-    `- Outcome: ${outcome}`,
+    `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
+    '',
+    '## Segments',
+    '',
+    '| Segment | Share | Personas | Completion | With friction |',
+    '| --- | --- | --- | --- | --- |',
+    ...report.segments.map(segmentRow),
+    '',
+    `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}.`,
     '',
     '## Frictions',
     '',
-    ...frictions,
+    ...frictionLines(report),
     '',
     '## Cost and time',
     '',
@@ -37,6 +43,30 @@ export function reportToMarkdown(report: Report): string {
   ].join('\n');
 }
 
+function segmentRow(s: ReportSegment): string {
+  return `| ${cell(s.name)} | ${s.share}% | ${s.personas} | ${pct(s.completion)} | ${pct(s.with_friction)} |`;
+}
+
+// Grouped by segment, then persona. Numbers run on across the groups, so each finding has one reference.
+function frictionLines(report: Report): string[] {
+  if (report.frictions.length === 0) return ['No frictions reported.'];
+  const segmentIds = [...new Set([...report.segments.map((s) => s.id), ...report.frictions.map((f) => f.segment_id)])];
+  const lines: string[] = [];
+  let n = 0;
+  for (const id of segmentIds) {
+    const inSegment = report.frictions.filter((f) => f.segment_id === id);
+    if (inSegment.length === 0) continue;
+    lines.push(`### ${cell(report.segments.find((s) => s.id === id)?.name ?? 'Other personas')}`, '');
+    for (const personaId of new Set(inSegment.map((f) => f.persona_id))) {
+      const mine = inSegment.filter((f) => f.persona_id === personaId);
+      const outcome = report.personas.find((p) => p.id === personaId)?.outcome ?? 'unknown';
+      lines.push(`**${cell(mine[0].persona_name)}** (${outcome})`, '');
+      for (const friction of mine) lines.push(frictionToMarkdown(friction, n++), '');
+    }
+  }
+  return lines.slice(0, -1); // the report adds the blank line that ends the section
+}
+
 function frictionToMarkdown(friction: ReportFriction, index: number): string {
   return [
     `${index + 1}. Step ${friction.step_no}, severity ${friction.severity}: ${line(friction.what)}`,
@@ -47,18 +77,24 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
   ].join('\n');
 }
 
-function methodsToMarkdown(methods: ReportMethods): string[] {
-  const blocked = methods.blocked.map(
-    (b) => `- Blocked at step ${b.step_no} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,
+function methodsToMarkdown(m: ReportMethods): string[] {
+  const models = Object.entries(m.models).map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
+  const blocked = m.blocked.map(
+    (b) =>
+      `- Blocked at step ${b.step_no}, persona ${b.persona_id} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,
   );
-  const tripwires = methods.tripwires.map((t) => `- Tripwire (${t.kind}): ${line(t.detail)}`);
+  const tripwires = m.tripwires.map((t) => `- Tripwire (${t.kind}): ${line(t.detail)}`);
   return [
-    `- Role: ${methods.role ?? 'none, browsing logged out'}`,
-    `- Allowed hosts: ${methods.allowed_hosts.join(', ') || 'none'}`,
-    `- Blocked requests: ${methods.blocked_requests.map((r) => `${r.host} (${r.count})`).join(', ') || 'none'}`,
+    `- Seed: ${m.seed}`,
+    `- Roles: ${m.roles.join(', ') || 'none, browsing logged out'}`,
+    `- Models: ${models.join('; ') || 'none called'}`,
+    `- Budgets: $${m.budgets.cost_usd.toFixed(2)} cost, ${m.budgets.wall_clock_min} min wall clock, concurrency ${m.budgets.concurrency}`,
+    `- Concurrency changes: ${m.concurrency_changes.map((c) => `${c.concurrency} (${line(c.reason)})`).join('; ') || 'none'}`,
+    `- Allowed hosts: ${m.allowed_hosts.join(', ') || 'none'}`,
+    `- Blocked requests: ${m.blocked_requests.map((r) => `${r.host} (${r.count})`).join(', ') || 'none'}`,
     ...(blocked.length > 0 ? blocked : ['- Blocked personas: none']),
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
-    `- Reset hook: ${resetToMarkdown(methods.reset)}`,
+    `- Reset hook: ${resetToMarkdown(m.reset)}`,
   ];
 }
 

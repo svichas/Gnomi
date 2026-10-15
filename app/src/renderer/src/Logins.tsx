@@ -14,6 +14,7 @@ function expiry(session: SessionInfo): string {
 export function Logins(props: {
   sessions: SessionInfo[];
   role: string | null;
+  perSegment: boolean; // with an audience, each segment picks its own login
   onRole(role: string | null): void;
   recorder: Recorder;
   /** Recording opens the saved start page, so the form is saved first; resolves with what is wrong, or null. */
@@ -21,7 +22,7 @@ export function Logins(props: {
   onChecked(): Promise<void>;
   sessionsPersist: boolean;
 }) {
-  const { sessions, role, onRole, recorder, saveFirst, onChecked, sessionsPersist } = props;
+  const { sessions, role, perSegment, onRole, recorder, saveFirst, onChecked, sessionsPersist } = props;
   const [newRole, setNewRole] = useState('');
   const [checks, setChecks] = useState<Record<string, Outcome | 'checking'>>({});
 
@@ -123,17 +124,21 @@ export function Logins(props: {
           </ul>
         )}
 
-        <Field label="Personas log in as">
-          <select value={role ?? ''} onChange={(e) => onRole(e.target.value || null)} className={inputClass}>
-            <option value="">Logged out</option>
-            {role !== null && !sessions.some((session) => session.role === role) && <option value={role}>{role} (no login recorded)</option>}
-            {sessions.map((session) => (
-              <option key={session.role} value={session.role}>
-                {session.role}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {perSegment ? (
+          <p className="text-sm text-stone-600">Each segment picks its own login on the Audience tab.</p>
+        ) : (
+          <Field label="Personas log in as">
+            <select value={role ?? ''} onChange={(e) => onRole(e.target.value || null)} className={inputClass}>
+              <option value="">Logged out</option>
+              {role !== null && !sessions.some((session) => session.role === role) && <option value={role}>{role} (no login recorded)</option>}
+              {sessions.map((session) => (
+                <option key={session.role} value={session.role}>
+                  {session.role}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
       </div>
     </Card>
   );

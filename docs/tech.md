@@ -748,7 +748,7 @@ Facts about current providers that shape the defaults (checked 2026-10-15): curr
 |---|---|---|---|---|---|
 | Claude Fable 5.1 `claude-fable-5-1` | 10 / 50 | 1M | yes | 0.25 | Anthropic pricing page via the claude-api skill (cached 2026-10-06) |
 | Claude Opus 5.5 `claude-opus-5-5` | 4 / 20 | 1M | yes | 0.20 | same |
-| Claude Sonnet 5.5 `claude-sonnet-5-5` | 2 / 10 | 1M | yes | 0.10 | same |
+| Claude Sonnet 5.5 `claude-sonnet-5-5` | 2 / 10 | 1M | yes | 0.20 | same |
 | Claude Haiku 5.5 `claude-haiku-5-5` | 0.10 / 0.50 (≤ 100k prompt; 0.50 / 2.50 above) | 1M | yes | 0.01 | same |
 | GPT-6 Astra `gpt-6-astra` | 10 / 50 | ~1M | yes | 1.00 | [OpenAI pricing](https://developers.openai.com/api/docs/pricing) |
 | GPT-6.1 Sol `gpt-6.1-sol` | 2 / 10 | ~1M | yes | 0.10 | same |
@@ -769,7 +769,7 @@ Reference run: 50 personas × (40 browser steps at 5k in / 0.2k out + 6 social r
 
 ```
 cost = T_in · p_in · [ (1 − h) · w + h · r ] + T_out · p_out
-  h = share of input served from cache     r = cache-read price ratio (0.1 Haiku and OpenAI and Gemini; 0.05 Sonnet/Opus 5.5; 0.025 Fable 5.1)
+  h = share of input served from cache     r = cache-read price ratio (0.1 Haiku, Sonnet 5.5, OpenAI and Gemini; 0.05 Opus 5.5; 0.025 Fable 5.1)
   w = cache-write premium (1.25 on Anthropic's 5-minute cache; 1.0 where caching is implicit)
 ```
 
@@ -778,7 +778,7 @@ cost = T_in · p_in · [ (1 − h) · w + h · r ] + T_out · p_out
 | Cheap | Claude Haiku 5.5 | **$1.39** | $1.02 | $0.76 |
 | Cheap | GPT-6 Luna | $1.39 | $0.88 | $0.68 |
 | Cheap | Gemini 3.5 Flash-Lite | $4.68 | $3.15 | $2.54 |
-| Mid | Claude Sonnet 5.5 | $27.75 | $19.84 | $14.42 |
+| Mid | Claude Sonnet 5.5 | $27.75 | $20.41 | $15.21 |
 | Mid | GPT-5.4-mini | $10.79 | $6.98 | $5.45 |
 | Mid | Gemini 3.8 Flash (introductory price) | $10.41 | $6.59 | $5.07 |
 | Frontier | Claude Opus 5.5 | $55.50 | $39.68 | $28.83 |

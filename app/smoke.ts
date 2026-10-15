@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
 import type { Page } from 'playwright-core';
+import { PROVIDER_DEFAULTS } from '../engine/src/settings.ts';
 import { startGym } from '../gym/server.ts';
 
 const appDir = import.meta.dirname;
@@ -35,11 +36,13 @@ async function stage(name: string, body: () => Promise<void>) {
   }
 }
 
-/** The report names at least one friction and its screenshot actually loaded. */
+/** The report names at least one friction and its screenshot actually loaded (screenshots are fetched when they scroll into view). */
 async function expectReport(page: Page) {
   const report = page.locator('section[aria-labelledby=report-title]');
   assert.match(await report.innerText(), /Frictions found \([1-9]/);
-  const image = report.getByRole('img').first();
+  const friction = report.getByRole('region', { name: /Frictions found/ }).locator('li').first();
+  await friction.scrollIntoViewIfNeeded();
+  const image = friction.getByRole('img');
   await image.waitFor();
   await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
 }
@@ -68,9 +71,9 @@ try {
   const page = await app.firstWindow();
   const tab = (name: string) => page.getByRole('tab', { name });
 
-  await stage('the window shows the Settings, Project and Run tabs', async () => {
+  await stage('the window shows the Settings, Project, Audience and Run tabs', async () => {
     await tab('Settings').waitFor();
-    assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['Settings', 'Project', 'Run']);
+    assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['Settings', 'Project', 'Audience', 'Run']);
   });
 
   await stage('the engine started and opened the project', async () => {
@@ -81,7 +84,7 @@ try {
   });
 
   await stage('each screen renders (screenshots in app/test-results)', async () => {
-    for (const [name, heading] of [['Settings', 'Anthropic API key'], ['Project', 'What to test'], ['Run', 'Runs']]) {
+    for (const [name, heading] of [['Settings', 'Provider keys'], ['Project', 'What to test'], ['Audience', 'Audience'], ['Run', 'Runs']]) {
       await tab(name).click();
       await page.getByRole('heading', { name: heading }).waitFor();
       await page.screenshot({ path: join(shots, `${name.toLowerCase()}.png`) });
@@ -104,19 +107,25 @@ try {
     assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey'], inlineScriptRan: false, remote: 'blocked' });
   });
 
-  await stage('the API key and the session key are stored encrypted; the API key is never returned and can be removed', async () => {
-    const secret = 'sk-ant-smoke-test-key';
-    const saved = await page.evaluate((key) => window.gnomi.saveKey(key), `  ${secret}  `);
-    assert.equal(await page.evaluate(() => window.gnomi.hasKey()), true);
+  await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
+    const anthropic = 'sk-ant-smoke-test-key';
+    const openai = 'sk-openai-smoke-test-key';
+    const saved = await page.evaluate((key) => window.gnomi.saveKey('anthropic', key), `  ${anthropic}  `);
+    await page.evaluate((key) => window.gnomi.saveKey('openai', key), openai);
+    assert.deepEqual(await page.evaluate(() => Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai'), window.gnomi.hasKey('google')])), [true, true, false]);
+    const refused = await page.evaluate(() => (window.gnomi.saveKey as (provider: string, key: string) => Promise<unknown>)('mistral', 'x').then(() => 'accepted', (err: Error) => err.message));
+    assert.match(refused, /Unknown provider/);
     if (saved.remembered) {
-      assert.ok(!readFileSync(join(userData, 'anthropic.key')).includes(secret), 'the key file holds plain text');
+      assert.ok(!readFileSync(join(userData, 'anthropic.key')).includes(anthropic), 'the key file holds plain text');
+      assert.ok(!readFileSync(join(userData, 'openai.key')).includes(openai), 'the key file holds plain text');
       // The session key is 64 hex characters when it is plain, so a file that matches is not encrypted.
       const sessionKey = join(userData, 'session.key');
       assert.ok(!/^[0-9a-f]{64}$/.test(readFileSync(sessionKey, 'latin1')), 'the session key file holds plain text');
       if (process.platform !== 'win32') assert.equal(statSync(sessionKey).mode & 0o777, 0o600);
     }
-    await page.evaluate(() => window.gnomi.clearKey());
-    assert.equal(await page.evaluate(() => window.gnomi.hasKey()), false);
+    await page.evaluate(() => Promise.all([window.gnomi.clearKey('anthropic'), window.gnomi.clearKey('openai')]));
+    assert.deepEqual(await page.evaluate(() => Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai')])), [false, false]);
+    assert.ok(!existsSync(join(userData, 'openai.key')), 'the removed key file is still there');
   });
 
   await stage('a full run on the Gym ends in a report with a screenshot', async () => {
@@ -126,7 +135,7 @@ try {
     await page.getByLabel('Project name').fill('Gym');
     await page.getByLabel('What the product does').fill('An applicant tracking system for recruiters');
     await page.getByLabel('Start page URL').fill(started.url);
-    await page.getByLabel('Goal').fill('Post a job for a backend engineer');
+    await page.getByLabel('Goal', { exact: true }).fill('Post a job for a backend engineer');
     await page.screenshot({ path: join(shots, 'project-filled.png') });
     await startRun(page, 'r-0001');
     await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 180_000 });
@@ -168,7 +177,7 @@ try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
       await startRun(page, 'r-0003');
-      const banner = page.getByRole('alert', { name: 'The persona is waiting for you' });
+      const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
       await banner.waitFor({ timeout: 60_000 });
       assert.match(await banner.innerText(), /hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
       await page.screenshot({ path: join(shots, 'blocked.png') });
@@ -188,7 +197,10 @@ try {
       await page.getByLabel('Start page URL').fill(`${site.url}/billing`);
       await startRun(page, 'r-0004');
       await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 60_000 });
-      const activity = await page.getByRole('region', { name: 'Activity' }).innerText();
+      const feed = page.getByRole('region', { name: 'Activity' });
+      await feed.scrollIntoViewIfNeeded(); // the feed draws only the rows on screen
+      await feed.getByRole('listitem').first().waitFor();
+      const activity = await feed.innerText();
       assert.match(activity, /safety stop/i); // the row label is upper-cased by CSS, which innerText reflects
       assert.match(activity, /The run was halted by a safety check/);
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /Safety stops\s+Live payment key found/);
@@ -214,11 +226,218 @@ try {
     await summary.waitFor({ state: 'hidden' });
   });
 
-  await stage('after a reload the page gets a fresh engine port and the past run opens', async () => {
+  await stage("Settings: a role's provider fills in its usual model, and budgets save with the project", async () => {
+    await tab('Settings').click();
+    const settings = page.locator('#panel-settings');
+    await settings.getByLabel('Navigator provider').selectOption('openai');
+    assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.openai.navigator.model);
+    await settings.getByText('No OpenAI key is saved yet.').first().waitFor();
+    await settings.getByLabel('Navigator provider').selectOption('anthropic');
+    assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
+    assert.equal(await settings.getByText('Used from a later version.').count(), 3, 'the socialiser, judge and author are marked as not used yet');
+    await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('40');
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await settings.getByText('concurrency must be a whole number from 1 to 32.').waitFor();
+    await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('3');
+    await settings.getByLabel('Cost budget (USD)', { exact: true }).fill('2');
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await settings.getByText('Settings saved with the project.').waitFor();
+    await page.screenshot({ path: join(shots, 'settings-models.png'), fullPage: true });
+  });
+
+  const sum = (numbers: number[]) => numbers.reduce((a, b) => a + b, 0);
+
+  await stage('Audience: one segment, then proposed segments, and the shares always add up to 100', async () => {
+    await tab('Audience').click();
+    const audience = page.locator('#panel-audience');
+    const sliders = audience.getByRole('slider');
+    const shares = () => sliders.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
+    await audience.getByRole('button', { name: 'Start from one segment' }).click();
+    assert.deepEqual(await shares(), [100]);
+    assert.ok(await sliders.first().isDisabled(), 'a lone segment is everyone');
+    await audience.getByRole('button', { name: 'Add segment' }).click();
+    assert.deepEqual(await shares(), [50, 50]);
+    await sliders.first().fill('70');
+    assert.deepEqual(await shares(), [70, 30]);
+    await audience.getByRole('button', { name: 'Propose segments again' }).click();
+    await audience.getByText(/Proposed \d+ segments/).waitFor({ timeout: 60_000 });
+    const proposed = await shares();
+    assert.ok(proposed.length >= 2, 'the proposal has segments');
+    assert.equal(sum(proposed), 100);
+    await sliders.nth(1).fill('17');
+    const moved = await shares();
+    assert.equal(moved[1], 17);
+    assert.equal(sum(moved), 100, `after moving a slider: ${moved}`);
+    await page.screenshot({ path: join(shots, 'audience.png'), fullPage: true });
+  });
+
+  await stage('Audience: personas are generated with progress, then edited, regenerated, added and removed', async () => {
+    const audience = page.locator('#panel-audience');
+    await audience.getByRole('button', { name: 'Start over' }).click();
+    await audience.getByRole('button', { name: 'Start from one segment' }).click();
+    await audience.getByRole('button', { name: 'Add segment' }).click();
+    await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
+    await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
+    await audience.getByLabel('Number of personas', { exact: true }).fill('6');
+    // The generation may be quick, so a page observer keeps what the progress bar showed.
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { progressSeen: string[] }).progressSeen = seen;
+      new MutationObserver(() => {
+        const bar = document.querySelector('[role=progressbar][aria-label="Writing personas"]');
+        if (bar) seen.push(`${bar.getAttribute('aria-valuenow')}/${bar.getAttribute('aria-valuemax')}`);
+      }).observe(document.body, { subtree: true, childList: true, attributes: true });
+    });
+    await audience.getByRole('button', { name: 'Generate personas' }).click();
+    await audience.getByText(/6 personas are ready/).waitFor({ timeout: 120_000 });
+    const seen = await page.evaluate(() => (window as unknown as { progressSeen: string[] }).progressSeen);
+    assert.ok(seen.some((progress) => /^\d+\/6$/.test(progress)), `the progress bar never showed a total of 6: ${seen}`);
+    await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
+    await audience.getByText('Recruiters (3)').waitFor();
+    await audience.getByText('Hiring managers (3)').waitFor();
+    const cards = audience.locator('details li');
+    assert.equal(await cards.count(), 6);
+    await audience.getByRole('heading', { name: 'Personas (6)' }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(shots, 'personas.png') });
+
+    await audience.getByRole('button', { name: /^Edit / }).first().click();
+    await audience.getByLabel(/^Name \(/).fill('Renamed Person');
+    await audience.getByRole('button', { name: /^Save edits to / }).click();
+    await audience.getByText('Saved Renamed Person.').waitFor();
+    await audience.getByRole('button', { name: /^Regenerate / }).nth(1).click(); // another persona than the one just renamed
+    await audience.getByText(/Wrote a new persona/).waitFor();
+
+    // Only a persona added by hand stays removed; the ones the shares allot come back with the next generation.
+    const hint = audience.getByText('It comes back when you generate again');
+    assert.equal(await hint.count(), 6);
+    await audience.getByRole('button', { name: 'Add a persona to Recruiters' }).click();
+    await audience.getByRole('heading', { name: 'Personas (7)' }).waitFor();
+    assert.equal(await hint.count(), 6, 'the added persona has no hint');
+    await audience.locator('details').first().locator('li').last().getByRole('button', { name: /^Remove / }).click();
+    await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
+    await audience.locator('details').first().locator('li').nth(1).getByRole('button', { name: /^Remove / }).click(); // not the renamed one
+    await audience.getByRole('heading', { name: 'Personas (5)' }).waitFor();
+    await audience.getByRole('button', { name: 'Generate personas' }).click();
+    await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor({ timeout: 120_000 });
+    await audience.getByText('Renamed Person').first().waitFor(); // generating again keeps the personas it did not have to change
+  });
+
+  await stage('the pre-run summary shows who will browse and an estimate', async () => {
+    await tab('Project').click();
+    await page.getByRole('button', { name: 'Start run' }).click();
+    const summary = page.getByRole('dialog');
+    await summary.or(page.getByRole('alert')).first().waitFor();
+    assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
+    await summary.getByText(/About \$/).waitFor();
+    const text = await summary.innerText();
+    assert.match(text, /6 personas: 3 Recruiters, 3 Hiring managers/);
+    assert.match(text, /About \$[\d.]+(–\$[\d.]+)? and \d+(–\d+)? minutes?/);
+    assert.match(text, /Stops at \$2\.00 or 60 minutes, with 3 browsers at a time/);
+    await page.screenshot({ path: join(shots, 'summary-estimate.png') });
+    await summary.getByRole('button', { name: 'Cancel' }).click();
+    await summary.waitFor({ state: 'hidden' });
+  });
+
+  let population = false;
+  await stage('a run of two segments with three personas each, three at a time, ends in a report with both segments', async () => {
+    const site = await startGym({ port: 0, defects: 'all' });
+    try {
+      await tab('Project').click();
+      await page.getByLabel('Start page URL').fill(site.url);
+      await startRun(page, 'r-0005');
+      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 300_000 });
+      const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
+      for (const name of ['Recruiters', 'Hiring managers', 'Weighted by share']) assert.match(segments, new RegExp(name));
+      assert.equal(await page.getByRole('region', { name: 'What each persona did' }).getByRole('row').count(), 7, 'a row for each of the six personas');
+      assert.match(await page.getByRole('region', { name: 'Run status' }).innerText(), /Personas finished\s+6 of 6/);
+      assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /3 browsers at a time/);
+      await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
+      population = true;
+    } finally {
+      await site.close();
+    }
+  });
+
+  await stage('a persona opens in the inspector with her steps and their screenshots', async () => {
+    assert.ok(population, 'needs the run above');
+    const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
+    await page.getByRole('button', { name: /^Inspect / }).first().click();
+    await inspector.waitFor();
+    const image = inspector.getByRole('region', { name: 'Timeline' }).getByRole('img').first();
+    await image.waitFor();
+    await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
+    await inspector.getByText('Full profile').click();
+    assert.match(await inspector.innerText(), /Background/);
+    await page.screenshot({ path: join(shots, 'inspector.png') });
+    await page.keyboard.press('Escape');
+    await inspector.waitFor({ state: 'detached' });
+    // The report's persona names open it too.
+    await page.getByRole('region', { name: 'What each persona did' }).getByRole('button').first().click();
+    await inspector.waitFor();
+    await inspector.getByRole('button', { name: 'Close' }).click();
+    await inspector.waitFor({ state: 'detached' });
+  });
+
+  await stage('personas hit a CAPTCHA: one banner covers those in flight, Retry blocks them again, and ending the run reports them as blocked', async () => {
+    assert.ok(population, 'needs the population above');
+    const site = await startGym({ port: 0, captcha: true });
+    try {
+      await tab('Project').click();
+      await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
+      await startRun(page, 'r-0006');
+      const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
+      const status = page.getByRole('region', { name: 'Run status' });
+      await banner.waitFor({ timeout: 120_000 });
+      // Three run at a time, so three stop at the challenge and the other three have not started.
+      await status.getByText('Waiting for you 3').waitFor({ timeout: 120_000 });
+      await status.getByText('Waiting to start 3').waitFor();
+      const said = await banner.innerText();
+      assert.match(said, /3 personas \(.*\) hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
+      // The status line still says three until the engine has answered, so look at each persona's own rows: a second stop means she was blocked again.
+      const names = /\((.+)\) hit a CAPTCHA/.exec(said)?.[1].split(/, | and /) ?? [];
+      assert.equal(names.length, 3);
+      await banner.getByRole('button', { name: 'Retry' }).click();
+      const feed = page.getByRole('region', { name: 'Activity' });
+      await feed.getByLabel('Kind of event').selectOption({ label: 'Blocked and resumed' });
+      // The feed holds only the rows on screen, so each poll brings its end into view before it counts.
+      const rowsWith = (text: string, count: number) =>
+        page.waitForFunction(
+          ({ wanted, n }) => {
+            const section = document.querySelector('section[aria-labelledby=activity-title]');
+            section?.scrollIntoView({ block: 'end' });
+            return [...(section?.querySelectorAll('[role=listitem]') ?? [])].filter((row) => row.textContent?.includes(wanted)).length >= n;
+          },
+          { wanted: text, n: count },
+          { timeout: 120_000 },
+        );
+      for (const name of names) {
+        await feed.getByLabel('Persona', { exact: true }).selectOption({ label: name });
+        await rowsWith('Blocked by a CAPTCHA, waiting for you', 2); // the challenge is still there
+      }
+      await banner.getByRole('button', { name: 'End run' }).click();
+      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 120_000 });
+      const outcomes = await page.getByRole('region', { name: 'What each persona did' }).innerText();
+      assert.equal((outcomes.match(/Blocked/g) ?? []).length, 3);
+      // Each stopped twice: the first time they were let go again, the second time the run ended on them.
+      const methods = await page.locator('section[aria-labelledby=methods-title]').innerText();
+      assert.equal((methods.match(/then resumed/g) ?? []).length, 3);
+      assert.equal((methods.match(/did not resume/g) ?? []).length, 3);
+      await page.screenshot({ path: join(shots, 'blocked-personas.png') });
+    } finally {
+      await site.close();
+    }
+  });
+
+  await stage('after a reload the page gets a fresh engine port, the project comes back and the past run opens', async () => {
     await page.reload();
     await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('alert').count(), 0, `the page reports: ${await page.getByRole('alert').allInnerTexts()}`);
-    if (!ran) return; // nothing to open: the run above failed
+    await tab('Settings').click();
+    assert.equal(await page.locator('#panel-settings').getByLabel('Concurrency (1-32)', { exact: true }).inputValue(), '3');
+    await tab('Audience').click();
+    await page.locator('#panel-audience').getByRole('heading', { name: 'Personas (6)' }).waitFor();
+    assert.equal(await page.locator('#panel-audience').getByRole('slider').count(), 2);
+    if (!ran) return; // nothing to open: the first run failed
     await tab('Run').click();
     await page.getByRole('button', { name: /r-0001/ }).click();
     await page.getByRole('heading', { name: 'Report' }).waitFor();

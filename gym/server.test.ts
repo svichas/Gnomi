@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { GYM_ACCOUNTS, startGym } from "./server.ts";
+import { DEFECT_IDS, GYM_ACCOUNTS, startGym } from "./server.ts";
 
 const submitLabel = (html: string) => html.match(/<button[^>]*>([^<]*)<\/button>/)?.[1];
 const departmentLabel = (html: string) => html.match(/<label for="department">([^<]*)<\/label>/)?.[1];
@@ -111,7 +111,7 @@ describe("Gym ATS", () => {
   it("defects.yaml has a toggle for each defect", async () => {
     const yaml = await readFile(new URL("./defects.yaml", import.meta.url), "utf8");
     const toggles = [...yaml.matchAll(/^ {2}toggle: (\S+)$/gm)].map((m) => m[1]);
-    assert.deepEqual(toggles, ["D01", "D02", "D03"]);
+    assert.deepEqual(toggles, DEFECT_IDS);
   });
 });
 
@@ -275,6 +275,203 @@ describe("Gym ATS options", () => {
     });
     await withGym("all", async (url) => {
       assert.doesNotMatch((await visit(url, "/candidates")).body, /g-recaptcha|Verify you are human/);
+    });
+  });
+
+  const admin = GYM_ACCOUNTS[2];
+  const navLabels = (body: string) =>
+    [...(body.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/>([^<]+)<\/a>/g)].map((m) => m[1]);
+
+  it("nav: with login off it is the M0 nav", () =>
+    withGym("all", async (url) => {
+      assert.deepEqual(navLabels((await visit(url, "/")).body), ["Dashboard", "Jobs", "Candidates", "Settings"]);
+    }));
+
+  it("nav: with login on it depends on the role", () =>
+    withOptions({ login: true, defects: "none" }, async (url) => {
+      const asRecruiter = (await visit(url, "/", { cookie: await signIn(url, recruiter) })).body;
+      const asManager = (await visit(url, "/", { cookie: await signIn(url, manager) })).body;
+      const asAdmin = (await visit(url, "/", { cookie: await signIn(url, admin) })).body;
+      assert.deepEqual(navLabels(asRecruiter), ["Dashboard", "Jobs", "Candidates", "Settings"]);
+      assert.deepEqual(navLabels(asManager), ["Dashboard", "Reviews"]);
+      assert.deepEqual(navLabels(asAdmin), ["Dashboard", "Jobs", "Candidates", "Settings"]);
+    }));
+
+  it("login: the admin account signs in and shows its role", () =>
+    withOptions({ login: true, defects: "none" }, async (url) => {
+      const page = (await visit(url, "/", { cookie: await signIn(url, admin) })).body;
+      assert.match(page, /Signed in as Sam Rivera · Admin/);
+    }));
+
+  it("dashboard: the review widget counts candidates awaiting review and links to /reviews", () =>
+    withGym("none", async (url) => {
+      assert.match((await request(url, "/")).body, /<a href="\/reviews">Awaiting your review \(2\)<\/a>/);
+    }));
+
+  it("review flow: queue, candidate page, feedback sent", () =>
+    withOptions({ login: true, defects: "none" }, async (url) => {
+      const cookie = await signIn(url, manager);
+      const queue = (await visit(url, "/reviews", { cookie })).body;
+      assert.match(queue, /<a href="\/reviews\/1">Mateo Alvarez<\/a>/);
+      assert.match(queue, /<a href="\/reviews\/2">Jun Park<\/a>/);
+      assert.match((await visit(url, "/reviews/1", { cookie })).body, /<h1>Mateo Alvarez<\/h1>/);
+      const sent = await visit(url, "/reviews/1", {
+        method: "POST",
+        cookie,
+        body: new URLSearchParams({ feedback: "Strong on systems design." }),
+      });
+      assert.match(sent.body, /Feedback sent/);
+    }));
+
+  it("invite flow: an admin invites an email and it lists as invited", () =>
+    withOptions({ login: true, defects: "none" }, async (url) => {
+      const cookie = await signIn(url, admin);
+      const sent = await visit(url, "/settings/users", {
+        method: "POST",
+        cookie,
+        body: new URLSearchParams({ email: "new.person@gym.test", role: "recruiter" }),
+      });
+      assert.match(sent.body, /Invitation sent to new\.person@gym\.test/);
+      assert.match((await visit(url, "/settings/users", { cookie })).body, /new\.person@gym\.test<\/td><td>Recruiter<\/td><td>Invited<\/td>/);
+    }));
+
+  it("settings links to users, approvals and billing", () =>
+    withGym("none", async (url) => {
+      const body = (await request(url, "/settings")).body;
+      assert.match(body, /<a href="\/settings\/users">Users<\/a>/);
+      assert.match(body, /<a href="\/settings\/approvals">Approvals<\/a>/);
+      assert.match(body, /<a href="\/billing">Billing<\/a>/);
+    }));
+
+  it("D04 on: an unknown hiring manager links to the users page and the draft is lost", () =>
+    withGym("D04", async (url) => {
+      const res = await postJob(url, { title: "Data Engineer", department: "Engineering", hiring_manager: "Ines Moreau" });
+      assert.equal(res.status, 200);
+      assert.match(res.body, /No user found/);
+      assert.match(res.body, /<a href="\/settings\/users">Invite user<\/a>/);
+      assert.doesNotMatch(res.body, /Invite Ines Moreau/);
+      assert.doesNotMatch((await request(url, "/jobs/new")).body, /value="Data Engineer"/);
+    }));
+
+  it("D04 off: an inline invite keeps the draft and sends the invitation", () =>
+    withGym("none", async (url) => {
+      const draft = { title: "Data Engineer", department: "Engineering", hiring_manager: "Ines Moreau" };
+      assert.match((await postJob(url, draft)).body, /<button[^>]*>Invite Ines Moreau<\/button>/);
+      const sent = await postJob(url, { ...draft, intent: "invite" });
+      assert.match(sent.body, /Invitation sent to Ines Moreau/);
+      assert.match(sent.body, /value="Data Engineer"/);
+      assert.match(sent.body, /value="Ines Moreau"/);
+      assert.match((await request(url, "/settings/users")).body, /Ines Moreau/);
+      assert.equal((await postJob(url, { ...draft, hiring_manager: "ines moreau" })).status, 303);
+    }));
+
+  it("D05: the actions sit after the resume on narrow screens only when on", async () => {
+    let on = "";
+    let off = "";
+    await withGym("D05", async (url) => {
+      on = (await request(url, "/reviews/1")).body;
+    });
+    await withGym("none", async (url) => {
+      off = (await request(url, "/reviews/1")).body;
+    });
+    assert.match(on, /@media \(max-width: 599px\) \{ \.review-actions \{ order: 1; \} \}/);
+    assert.doesNotMatch(off, /order: 1;/);
+    for (const body of [on, off]) {
+      // The markup puts the actions first, so narrow screens show them above the resume unless the defect moves them.
+      assert.ok(body.indexOf('class="card review-actions"') < body.indexOf('class="card resume"'));
+      assert.match(body, /@media \(min-width: 600px\)/);
+      assert.match(body, /\.review-actions \{ grid-column: 2; grid-row: 1; \}/);
+    }
+  });
+
+  it("D06: decision buttons are icon-only when on and labelled when off", async () => {
+    await withGym("D06", async (url) => {
+      const body = (await request(url, "/reviews/1")).body;
+      assert.ok(body.includes(">✓</button>") && body.includes(">✕</button>"));
+      assert.doesNotMatch(body, />Advance<\/button>/);
+    });
+    await withGym("none", async (url) => {
+      const body = (await request(url, "/reviews/1")).body;
+      assert.match(body, />Advance<\/button>/);
+      assert.match(body, />Reject<\/button>/);
+    });
+  });
+
+  it("D07: the description is cut to 200 characters when on, kept with a hint when off", async () => {
+    const long = "z".repeat(300);
+    await withGym("D07", async (url) => {
+      const created = await postJob(url, { title: "Data Engineer", department: "Engineering", description: long });
+      const page = (await request(url, created.location ?? "")).body;
+      assert.ok(page.includes("z".repeat(200)) && !page.includes("z".repeat(201)));
+      assert.doesNotMatch((await request(url, "/jobs/new")).body, /Up to 2,000 characters/);
+    });
+    await withGym("none", async (url) => {
+      const created = await postJob(url, { title: "Data Engineer", department: "Engineering", description: long });
+      assert.ok((await request(url, created.location ?? "")).body.includes(long));
+      assert.match((await request(url, "/jobs/new")).body, /Up to 2,000 characters/);
+    });
+  });
+
+  it("D08: inviting an existing email shows a generic error when on and a clear one when off", async () => {
+    const invite = (url: string) =>
+      request(url, "/settings/users", { method: "POST", body: new URLSearchParams({ email: "recruiter@gym.test", role: "recruiter" }) });
+    await withGym("D08", async (url) => {
+      const body = (await invite(url)).body;
+      assert.match(body, /Something went wrong/);
+      assert.doesNotMatch(body, /already a user/);
+    });
+    await withGym("none", async (url) => {
+      assert.match((await invite(url)).body, /recruiter@gym\.test is already a user/);
+    });
+  });
+
+  it("D09: /candidates waits for the delay when on and answers at once when off", async () => {
+    await withOptions({ defects: "D09", candidatesDelayMs: 400 }, async (url) => {
+      const start = Date.now();
+      await visit(url, "/candidates");
+      assert.ok(Date.now() - start >= 390);
+    });
+    await withOptions({ defects: "none", candidatesDelayMs: 400 }, async (url) => {
+      const start = Date.now();
+      await visit(url, "/candidates");
+      assert.ok(Date.now() - start < 300);
+    });
+  });
+
+  it("D10: job form hints are light grey when on and muted when off", async () => {
+    await withGym("D10", async (url) => {
+      assert.match((await request(url, "/jobs/new")).body, /<p class="hint" id="hiring-manager-hint" style="color: #c8c8c8">/);
+    });
+    await withGym("none", async (url) => {
+      const body = (await request(url, "/jobs/new")).body;
+      assert.match(body, /<p class="hint" id="hiring-manager-hint" style="color: #5b6475">/);
+      assert.doesNotMatch(body, /#c8c8c8/);
+    });
+  });
+
+  it("D11: a hiring manager's next is ignored when on and honoured when off", async () => {
+    for (const [defects, expected] of [["D11", "/"], ["none", "/reviews/2"]]) {
+      await withOptions({ login: true, defects }, async (url) => {
+        const res = await visit(url, "/login", {
+          method: "POST",
+          body: new URLSearchParams({ email: manager.email, password: manager.password, next: "/reviews/2" }),
+        });
+        assert.equal(res.location, expected, defects);
+      });
+    }
+  });
+
+  it("D12: the approval checkbox label; the default 'all' includes it", async () => {
+    await withGym("D12", async (url) => {
+      assert.match((await request(url, "/settings/approvals")).body, /Disable approval bypass/);
+    });
+    await withGym("none", async (url) => {
+      const body = (await request(url, "/settings/approvals")).body;
+      assert.match(body, /Require approval before a job goes live/);
+      assert.doesNotMatch(body, /Disable approval bypass/);
+    });
+    await withGym("all", async (url) => {
+      assert.match((await request(url, "/settings/approvals")).body, /Disable approval bypass/);
     });
   });
 });

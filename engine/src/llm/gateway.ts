@@ -1,13 +1,40 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type LanguageModelUsage } from 'ai';
-import type { LlmGateway, LlmRequest, LlmResult, Recorder, UserPart } from '../seams.ts';
+import { createGoogle } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { APICallError, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type JSONValue, type LanguageModel, type LanguageModelUsage } from 'ai';
+import { z } from 'zod';
+import type { LlmGateway, LlmRequest, LlmResult, Recorder, SecretName, SecretsStore, UserPart } from '../seams.ts';
+import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
+import { createLimiter, DEFAULT_LIMITS, realClock, type Clock, type Limit } from './limiter.ts';
 import { costUsd, type TokenUsage } from './prices.ts';
 
 /** The model gave no schema-valid answer on either attempt. Callers treat it as a failed step, not a crash. */
 export class InvalidOutputError extends Error {}
 
 const NO_TOKENS: TokenUsage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
-const KEY_PATTERN = /sk-ant-[\w-]+/g;
+const NAME: Record<ProviderId, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', openai_compatible: 'The local endpoint' };
+const SECRET: Record<Exclude<ProviderId, 'openai_compatible'>, SecretName> = {
+  anthropic: 'anthropic_api_key',
+  openai: 'openai_api_key',
+  google: 'google_api_key',
+};
+
+// How hard each role thinks (tech.md §10.1): routine steps run low or the thinking tokens dominate the output bill (§10.2).
+const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'medium', judge: 'medium', author: 'high' };
+// GPT-5.6, GPT-6 Sol and GPT-6 Luna accept reasoning effort 'none'; GPT-6 Astra and 6.1 Sol start at 'low' (@ai-sdk/openai docs).
+const CAN_SKIP_REASONING = /^gpt-(5\.6|6-(sol|luna))/;
+
+const MAX_RETRIES = 3; // after the first attempt, for 429, 5xx and overloaded
+const BACKOFF_MS = 1000; // 1 s, 2 s, 4 s before jitter
+const MAX_WAIT_MS = 60_000; // a longer retry-after is a quota to wait out, not a blip: stop here and say so
+// OpenAI answers an empty account with a 429 too, but waiting never helps.
+const NO_CREDIT = /insufficient_quota|credit balance is too low/i;
+const OVERLOADED = /overloaded/i;
+
+// Key shapes: Anthropic and OpenAI sk-…, Google AIza…. The key in hand is replaced literally as well.
+const KEY_PATTERN = /\b(?:sk-[\w-]{8,}|AIza[\w-]{8,})/g;
+const redact = (text: string, key?: string) => (key ? text.replaceAll(key, '[redacted]') : text).replace(KEY_PATTERN, '[redacted]');
 
 /** The request as a transcript keeps it: screenshots are already stored as blobs, so images become a size. */
 export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
@@ -23,17 +50,101 @@ export function retryParts(user: UserPart[], error: string): UserPart[] {
   return [...user, { type: 'text', text: `That answer did not match the required format: ${error}\nAnswer again with one JSON object that matches the schema.` }];
 }
 
-export function createAnthropicGateway({ apiKey, record }: { apiKey: string; record: Recorder }): LlmGateway {
-  const anthropic = createAnthropic({ apiKey });
-  const redact = (text: string) => (apiKey ? text.replaceAll(apiKey, '[redacted]') : text).replace(KEY_PATTERN, '[redacted]');
+/** `credential` is the provider's API key, or for the local endpoint its base URL. */
+function languageModel({ provider, model }: ModelChoice, credential: string): LanguageModel {
+  switch (provider) {
+    case 'anthropic':
+      return createAnthropic({ apiKey: credential }).languageModel(model);
+    case 'openai':
+      return createOpenAI({ apiKey: credential }).languageModel(model);
+    case 'google':
+      return createGoogle({ apiKey: credential }).languageModel(model);
+    case 'openai_compatible':
+      return createOpenAICompatible({ name: 'local', baseURL: credential, supportsStructuredOutputs: true }).languageModel(model);
+  }
+}
+
+// Output.object carries the schema on every provider: output_config.format (Anthropic), text.format json_schema (OpenAI),
+// responseJsonSchema (Google), response_format json_schema (local). OpenAI's strict mode is set here too, so an SDK
+// default that changed could not loosen it (tech.md §10.6).
+// shortcut: Google gets thinkingLevel, which Gemini 3 and later take; 2.5-era ids would need thinkingBudget instead.
+function providerOptions({ provider, model }: ModelChoice, role: LlmRole): Record<string, Record<string, JSONValue>> {
+  const effort = EFFORT[role];
+  switch (provider) {
+    case 'anthropic':
+      return { anthropic: { effort } };
+    case 'openai':
+      return { openai: { reasoningEffort: effort === 'low' && CAN_SKIP_REASONING.test(model) ? 'none' : effort, strictJsonSchema: true } };
+    case 'google':
+      return { google: { thinkingConfig: { thinkingLevel: effort } } };
+    case 'openai_compatible':
+      return {};
+  }
+}
+
+/** About four characters a token and 1.2k for a screenshot (tech.md §10.4): enough to pace requests, not to bill them. */
+function estimateTokens(system: string, user: UserPart[]) {
+  const chars = user.reduce((n, p) => n + (p.type === 'text' ? p.text.length : 0), system.length);
+  return Math.ceil(chars / 4) + 1200 * user.filter((p) => p.type === 'image').length;
+}
+
+/**
+ * How long the provider asked us to wait, from retry-after-ms or retry-after (seconds or a date).
+ * shortcut: the retryDelay inside a Gemini error body is not read, so its 429s fall back to the backoff; parse it if they prove too slow.
+ */
+function retryAfterMs(headers: Record<string, string> | undefined): number | null {
+  const ms = Number(headers?.['retry-after-ms']);
+  if (headers?.['retry-after-ms'] && Number.isFinite(ms)) return ms;
+  const after = headers?.['retry-after'];
+  if (!after) return null;
+  const wait = Number.isFinite(Number(after)) ? Number(after) * 1000 : Date.parse(after) - Date.now();
+  return Number.isFinite(wait) ? Math.max(0, wait) : null;
+}
+
+/** Routes each request to its provider (tech.md §10.1): keys from the secrets store, retries and rate limits per provider. */
+export function createGateway({
+  secrets,
+  localBaseUrl,
+  record,
+  onThrottle,
+  limits = {},
+  clock = realClock,
+}: {
+  secrets: SecretsStore;
+  localBaseUrl: string | null;
+  record: Recorder;
+  /** Called on every rate-limit answer (429), so the scheduler can lower its concurrency. */
+  onThrottle?(provider: ProviderId): void;
+  /** Replaces the default limits of a provider whose account has a higher tier. */
+  limits?: Partial<Record<ProviderId, Limit>>;
+  /** For tests: the time source of the limiter and the retry delays. */
+  clock?: Clock;
+}): LlmGateway {
+  const buckets: Partial<Record<ProviderId, ReturnType<typeof createLimiter>>> = {};
+  const bucket = (provider: ProviderId) => {
+    const limit = limits[provider] ?? DEFAULT_LIMITS[provider];
+    return limit ? (buckets[provider] ??= createLimiter(limit, clock)) : null;
+  };
 
   return {
     async call<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
+      const { provider } = req.model;
       costUsd(req.model, NO_TOKENS); // throws before spending money on a model the budget cannot price
+      const credential = provider === 'openai_compatible' ? localBaseUrl : secrets.get(SECRET[provider]);
+      if (!credential) throw new Error(provider === 'openai_compatible' ? 'No local endpoint is set. Add its URL in Settings.' : `No ${NAME[provider]} API key is saved. Add one in Settings.`);
+      const hideKey = (text: string) => redact(text, provider === 'openai_compatible' ? undefined : credential);
+      const model = languageModel(req.model, credential);
+      const options = providerOptions(req.model, req.role);
+      // Local models also get the schema in the prompt, which grounds their answers (tech.md §10.6).
+      const system = provider === 'openai_compatible' ? `${req.system}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : req.system;
+
       let user = req.user;
       let spent = 0;
-      for (let attempt = 1; ; attempt++) {
-        const started = Date.now();
+      let invalid = 0; // answers that did not fit the schema; the second one ends the call
+      let retries = 0; // transient failures that were tried again
+      for (;;) {
+        await bucket(provider)?.acquire(estimateTokens(system, user), req.signal);
+        const started = clock.now();
         let object: T | undefined;
         let usage: LanguageModelUsage | undefined;
         let text: string | null = null;
@@ -43,9 +154,9 @@ export function createAnthropicGateway({ apiKey, record }: { apiKey: string; rec
         let thrown: unknown;
         try {
           const result = await generateText({
-            model: anthropic(req.model),
+            model,
             // The stable prefix carries the cache breakpoint; everything volatile is in the user turn.
-            instructions: { role: 'system', content: req.system, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } },
+            instructions: { role: 'system', content: system, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } },
             messages: [
               {
                 role: 'user',
@@ -53,9 +164,11 @@ export function createAnthropicGateway({ apiKey, record }: { apiKey: string; rec
               },
             ],
             output: Output.object({ schema: req.schema }),
-            // Routine steps run at low effort, or thinking tokens dominate the output bill (tech.md §10.2).
-            providerOptions: { anthropic: { effort: 'low' } },
-            maxOutputTokens: 4096,
+            providerOptions: options,
+            // Thinking tokens count against the cap, so the roles that think more get more room.
+            maxOutputTokens: EFFORT[req.role] === 'low' ? 4096 : 16_384,
+            // The retries are ours, so that each failed attempt is logged and a 429 reaches onThrottle.
+            maxRetries: 0,
             abortSignal: req.signal,
           });
           usage = result.usage;
@@ -69,14 +182,14 @@ export function createAnthropicGateway({ apiKey, record }: { apiKey: string; rec
             usage = err.usage;
             text = err.text ?? null;
             finish = err.finishReason ?? null;
-            error = redact(err.cause instanceof Error ? err.cause.message : err.message);
+            error = hideKey(err.cause instanceof Error ? err.cause.message : err.message);
           } else if (NoOutputGeneratedError.isInstance(err)) {
             // A paid call with no answer in it, such as a refusal: retried like any invalid output.
             status = 'invalid_output';
             error = `No answer (finish reason: ${finish})`;
           } else {
             status = 'error';
-            error = redact(err instanceof Error ? err.message : String(err));
+            error = hideKey(err instanceof Error ? err.message : String(err));
           }
         }
         const tokens: TokenUsage = {
@@ -87,41 +200,73 @@ export function createAnthropicGateway({ apiKey, record }: { apiKey: string; rec
         };
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
-        const transcript = { request: transcriptRequest(req, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } };
-        record(
-          {
-            run_id: req.run_id,
-            round: req.round,
-            persona_id: req.persona_id,
-            poi_id: null,
-            type: 'llm.call',
-            payload: { role: req.role, provider: 'anthropic', model: req.model, ...tokens, cost_usd, latency_ms: Date.now() - started, status, error },
-          },
-          JSON.parse(redact(JSON.stringify(transcript))),
-        );
+        // A setup call has no run to log into: it is priced and returned, nothing more.
+        if (req.run_id !== null) {
+          const transcript = { request: transcriptRequest({ ...req, system }, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } };
+          record(
+            {
+              run_id: req.run_id,
+              round: req.round,
+              persona_id: req.persona_id,
+              poi_id: null,
+              type: 'llm.call',
+              payload: { role: req.role, provider, model: req.model.model, ...tokens, cost_usd, latency_ms: clock.now() - started, status, error },
+            },
+            JSON.parse(hideKey(JSON.stringify(transcript))),
+          );
+        }
         if (status === 'ok') return { object: object as T, cost_usd: spent };
-        if (status === 'error') throw thrown;
-        if (attempt === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);
+
+        if (status === 'error') {
+          const api = APICallError.isInstance(thrown) ? thrown : null;
+          const detail = `${api?.message ?? ''} ${api?.responseBody ?? ''}`;
+          const noCredit = NO_CREDIT.test(detail);
+          if (api?.statusCode === 429 && !noCredit) onThrottle?.(provider);
+          const transient = !!api && !noCredit && (api.isRetryable || OVERLOADED.test(detail));
+          const asked = retryAfterMs(api?.responseHeaders);
+          if (!transient || retries === MAX_RETRIES || (asked ?? 0) > MAX_WAIT_MS || req.signal?.aborted) {
+            if (req.signal?.aborted) throw thrown;
+            const code = api?.statusCode ? `answered ${api.statusCode}` : 'failed';
+            throw new Error(`${NAME[provider]} ${code}: ${error}${retries ? ` (gave up after ${retries + 1} attempts)` : ''}`);
+          }
+          // A provider's retry-after is a floor; the jitter spreads the personas out so they do not all return together.
+          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal);
+          retries++;
+          continue;
+        }
+
+        if (++invalid === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);
         user = retryParts(req.user, error ?? '');
       }
     },
   };
 }
 
-/** Lists one model: free, and proves the key, the network path and the account in one request. */
-export async function testAnthropicKey(apiKey: string): Promise<{ ok: true } | { ok: false; error: string }> {
+const PROBES: Record<ProviderId, (credential: string) => { url: string; headers: Record<string, string> }> = {
+  anthropic: (key) => ({ url: 'https://api.anthropic.com/v1/models?limit=1', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }),
+  openai: (key) => ({ url: 'https://api.openai.com/v1/models', headers: { authorization: `Bearer ${key}` } }),
+  // The key travels in a header, never in the query string, so no URL we show or log can carry it.
+  google: (key) => ({ url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', headers: { 'x-goog-api-key': key } }),
+  openai_compatible: (baseUrl) => ({ url: `${baseUrl.replace(/\/+$/, '')}/models`, headers: {} }),
+};
+
+/** A zero-cost check of a provider's key, or for 'openai_compatible' that the endpoint at `credential` (a base URL) answers. */
+export async function testProviderKey(provider: ProviderId, credential: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const local = provider === 'openai_compatible';
+  if (local && !(/^https?:\/\//i.test(credential) && URL.canParse(credential))) return { ok: false, error: `"${credential}" is not a web address. Use one like http://localhost:11434/v1` };
+  const { url, headers } = PROBES[provider](credential);
+  const host = new URL(url).host;
+  const hideKey = (text: string) => redact(text, local ? undefined : credential);
+  const hint = local ? 'Is the server running?' : 'Check the internet connection, VPN or proxy.';
   let res: Response;
   try {
-    res = await fetch('https://api.anthropic.com/v1/models?limit=1', {
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      signal: AbortSignal.timeout(15_000),
-    });
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `Could not reach api.anthropic.com (${reason}). Check the internet connection, VPN or proxy.` };
+    if ((err as Error | undefined)?.name === 'TimeoutError') return { ok: false, error: `${host} did not answer within 15 seconds. ${hint}` };
+    return { ok: false, error: `Could not reach ${host} (${hideKey(err instanceof Error ? err.message : String(err))}). ${hint}` };
   }
   if (res.ok) return { ok: true };
-  if (res.status === 401) return { ok: false, error: 'Anthropic rejected this key (401). Check it was pasted in full and has not been revoked.' };
+  if (res.status === 401 && !local) return { ok: false, error: `${NAME[provider]} rejected this key (401). Check it was pasted in full and has not been revoked.` };
   const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-  return { ok: false, error: `Anthropic answered ${res.status}: ${body?.error?.message ?? res.statusText}` };
+  return { ok: false, error: hideKey(`${NAME[provider]} answered ${res.status}: ${body?.error?.message ?? res.statusText}`) };
 }

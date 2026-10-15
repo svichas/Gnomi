@@ -5,13 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { launchBrowserPool } from './browser/pool.ts';
-import { createAnthropicGateway } from './llm/gateway.ts';
-import { createScriptedGateway, DEMO_SCRIPT } from './llm/scripted.ts';
+import { createGateway } from './llm/gateway.ts';
+import { createScriptedGateway, DEMO_NAVIGATOR } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
+import { BUILTIN_PERSONA } from './persona.ts';
 import { reportToMarkdown } from './report/markdown.ts';
-import { createRecorder, newRunConfig, startRun } from './run.ts';
+import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { checkTarget } from './safety.ts';
+import { DEFAULT_SETTINGS } from './settings.ts';
 import type { GnomiEvent, ProjectConfig } from './types.ts';
 
 const USAGE =
@@ -21,6 +23,8 @@ function describe(e: GnomiEvent): string {
   switch (e.type) {
     case 'run.started':
       return `${e.payload.config.run_id}: "${e.payload.config.project.goal}" on ${e.payload.config.project.poi.start_url}`;
+    case 'run.concurrency_changed':
+      return `${e.payload.concurrency} at once: ${e.payload.reason}`;
     case 'run.reset_called':
       return `${e.payload.url} → ${e.payload.status ?? e.payload.error}`;
     case 'persona.created':
@@ -92,7 +96,8 @@ async function main(): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!values['fake-llm'] && !apiKey) throw new Error('Set ANTHROPIC_API_KEY, or pass --fake-llm for a scripted run that calls no model.');
 
-  // shortcut: sessions are recorded in the app only, so the CLI browses logged out; add --role once it can record
+  // shortcut: sessions and audiences are set up in the app only, so the CLI runs the built-in persona logged out on the
+  // default routing; add --role and --audience once the CLI can record and sample
   const project: ProjectConfig = {
     name: start.host,
     description: '',
@@ -108,6 +113,8 @@ async function main(): Promise<void> {
     },
     goal: values.goal,
     role: null,
+    audience: null,
+    settings: DEFAULT_SETTINGS,
   };
   const refusal = checkTarget(project.poi);
   if (refusal) throw new Error(project.poi.not_production ? refusal : `${refusal}\nOn the command line, confirm with --not-production.`);
@@ -119,17 +126,22 @@ async function main(): Promise<void> {
     const record = createRecorder(store, (e) => console.log(`#${e.seq} ${e.type} ${describe(e)}`.trimEnd()));
     const browsers = await launchBrowserPool({ headless: !values.headed });
     try {
-      const llm = apiKey && !values['fake-llm'] ? createAnthropicGateway({ apiKey, record }) : createScriptedGateway(DEMO_SCRIPT, record);
+      let run: RunHandle | undefined;
+      const llm =
+        apiKey && !values['fake-llm']
+          ? createGateway({ secrets: { get: (name) => (name === 'anthropic_api_key' ? apiKey : null) }, localBaseUrl: null, record, onThrottle: (provider) => run?.throttle(provider) })
+          : createScriptedGateway({ navigator: DEMO_NAVIGATOR }, record);
       console.log(`Project folder: ${dir}`);
       // Nobody can resume a blocked persona from a terminal, so a block ends her episode at once.
-      const config = store.createRun({ ...newRunConfig(project, { session: null, reset: false }), pause_timeout_ms: 0 });
-      const run = startRun(config, { store, blobs: createFsBlobStore(dir), browsers, llm, record, sessions: null });
+      const config = store.createRun({ ...newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }), pause_timeout_ms: 0 });
+      run = startRun(config, { store, blobs: createFsBlobStore(dir), browsers, llm, record, sessions: null });
+      const started = run;
       process.once('SIGINT', () => {
         console.log('Stopping… (Ctrl-C again to quit at once)');
-        run.stop();
+        started.stop();
         process.once('SIGINT', () => process.exit(130));
       });
-      const report = await run.done;
+      const report = await started.done;
       console.log(`\n${reportToMarkdown(report)}`);
       console.log(`Screenshots and report.json are under ${dir}`);
     } finally {

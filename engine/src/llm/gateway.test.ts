@@ -2,16 +2,24 @@
 import assert from 'node:assert/strict';
 import { afterEach, mock, test } from 'node:test';
 import { z } from 'zod';
-import type { LlmRequest, Recorder } from '../seams.ts';
-import type { EventOf, GnomiEvent } from '../types.ts';
-import { createAnthropicGateway, InvalidOutputError, testAnthropicKey } from './gateway.ts';
+import type { LlmRequest, Recorder, SecretName } from '../seams.ts';
+import type { EventOf, GnomiEvent, ModelChoice, ProviderId } from '../types.ts';
+import { createGateway, InvalidOutputError, testProviderKey } from './gateway.ts';
+import type { Clock } from './limiter.ts';
 
-const KEY = 'sk-ant-api03-test-key-0123456789';
+const KEYS: Record<'anthropic' | 'openai' | 'google', string> = {
+  anthropic: 'sk-ant-api03-test-key-0123456789',
+  openai: 'sk-proj-test-openai-key-0123456789',
+  google: 'AIzaSyTestGoogleKey0123456789abcd',
+};
+const KEY = KEYS.anthropic;
+const LOCAL = 'http://localhost:11434/v1';
+const HAIKU: ModelChoice = { provider: 'anthropic', model: 'claude-haiku-5-5' };
 const schema = z.object({ thought: z.string(), feeling: z.number().int().min(-2).max(2) });
 const shot = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
-const request = (signal?: AbortSignal): LlmRequest<z.infer<typeof schema>> => ({
+const request = (over: Partial<LlmRequest<z.infer<typeof schema>>> = {}): LlmRequest<z.infer<typeof schema>> => ({
   role: 'navigator',
-  model: 'claude-haiku-5-5',
+  model: HAIKU,
   run_id: 'r-0001',
   persona_id: 'p-001',
   round: 1,
@@ -21,7 +29,7 @@ const request = (signal?: AbortSignal): LlmRequest<z.infer<typeof schema>> => ({
     { type: 'text', text: 'What does Priya do next?' },
   ],
   schema,
-  signal,
+  ...over,
 });
 
 function recorder() {
@@ -34,28 +42,87 @@ function recorder() {
   return { record, calls };
 }
 
-const message = (text: string, usage = { input_tokens: 1_000, output_tokens: 200, cache_read_input_tokens: 3_000, cache_creation_input_tokens: 0 }) =>
-  Response.json({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', content: [{ type: 'text', text }], stop_reason: 'end_turn', stop_sequence: null, usage });
+/** A clock that never waits: it notes how long the gateway asked to sleep. No jitter, so delays are exact. */
+function fakeClock(sleep?: Clock['sleep']) {
+  const slept: number[] = [];
+  const clock: Clock = {
+    now: () => 1_000_000,
+    sleep: sleep ?? (async (ms) => void slept.push(ms)),
+    random: () => 0,
+  };
+  return { clock, slept };
+}
+
+function setup(opts: { keys?: Partial<Record<SecretName, string>>; localBaseUrl?: string | null; sleep?: Clock['sleep']; limits?: Parameters<typeof createGateway>[0]['limits'] } = {}) {
+  const { record, calls } = recorder();
+  const { clock, slept } = fakeClock(opts.sleep);
+  const throttled: ProviderId[] = [];
+  const keys = opts.keys ?? { anthropic_api_key: KEYS.anthropic, openai_api_key: KEYS.openai, google_api_key: KEYS.google };
+  const gateway = createGateway({
+    secrets: { get: (name) => keys[name] ?? null },
+    localBaseUrl: opts.localBaseUrl === undefined ? LOCAL : opts.localBaseUrl,
+    record,
+    onThrottle: (provider) => throttled.push(provider),
+    limits: opts.limits,
+    clock,
+  });
+  return { gateway, calls, slept, throttled };
+}
+
+const usage = { input_tokens: 1_000, output_tokens: 200, cache_read_input_tokens: 3_000, cache_creation_input_tokens: 0 };
+const anthropicMessage = (text: string, u = usage) =>
+  Response.json({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', content: [{ type: 'text', text }], stop_reason: 'end_turn', stop_sequence: null, usage: u });
+// 1,000 tokens in, 400 of them cached, 200 out (50 of them reasoning): each provider's own shape of the same usage.
+const openaiResponse = (text: string) =>
+  Response.json({
+    id: 'resp_1',
+    object: 'response',
+    created_at: 1,
+    status: 'completed',
+    model: 'gpt-6-luna',
+    output: [{ type: 'message', id: 'msg_1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] }],
+    usage: { input_tokens: 1_000, input_tokens_details: { cached_tokens: 400 }, output_tokens: 200, output_tokens_details: { reasoning_tokens: 50 }, total_tokens: 1_200 },
+  });
+const googleResponse = (text: string) =>
+  Response.json({
+    candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP', index: 0 }],
+    usageMetadata: { promptTokenCount: 1_000, cachedContentTokenCount: 400, candidatesTokenCount: 150, thoughtsTokenCount: 50, totalTokenCount: 1_200 },
+  });
+const chatCompletion = (text: string) =>
+  Response.json({
+    id: 'c1',
+    object: 'chat.completion',
+    created: 1,
+    model: 'gemma4:e4b',
+    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1_000, completion_tokens: 200, total_tokens: 1_200 },
+  });
+const anthropicError = (status: number, type: string, message: string, headers: Record<string, string> = {}) =>
+  Response.json({ type: 'error', error: { type, message } }, { status, headers });
+
+const OK = '{"thought":"Jobs is in the menu.","feeling":0}';
 
 function stubFetch(...responses: Array<() => Response | Promise<Response>>) {
+  const urls: string[] = [];
   const bodies: any[] = [];
   const headers: Headers[] = [];
-  mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+  mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
+    urls.push(String(url));
     bodies.push(init.body ? JSON.parse(String(init.body)) : null);
     headers.push(new Headers(init.headers));
     const next = responses.shift();
     if (!next) throw new Error('unexpected extra request');
     return next();
   });
-  return { bodies, headers };
+  return { urls, bodies, headers };
 }
 
 afterEach(() => mock.restoreAll());
 
-test('one call: cached system prefix, screenshot, low effort, native schema, cost from usage', async () => {
-  const sent = stubFetch(() => message('{"thought":"Jobs is in the menu.","feeling":0}'));
-  const { record, calls } = recorder();
-  const result = await createAnthropicGateway({ apiKey: KEY, record }).call(request());
+test('one call: cached system prefix, screenshot, low effort, native schema, cost and raw usage from the answer', async () => {
+  const sent = stubFetch(() => anthropicMessage(OK));
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request());
 
   assert.deepEqual(result.object, { thought: 'Jobs is in the menu.', feeling: 0 });
   const body = sent.bodies[0];
@@ -72,40 +139,116 @@ test('one call: cached system prefix, screenshot, low effort, native schema, cos
   assert.ok(Math.abs(result.cost_usd - 0.00023) < 1e-12);
   assert.equal(calls.length, 1);
   const { payload, persona_id, run_id } = calls[0].event;
-  assert.deepEqual(
-    { ...payload, latency_ms: 0 },
-    {
-      role: 'navigator',
-      provider: 'anthropic',
-      model: 'claude-haiku-5-5',
-      input_tokens: 1_000,
-      output_tokens: 200,
-      cache_read_tokens: 3_000,
-      cache_write_tokens: 0,
-      cost_usd: result.cost_usd,
-      latency_ms: 0,
-      status: 'ok',
-      error: null,
-    },
-  );
+  assert.deepEqual(payload, {
+    role: 'navigator',
+    provider: 'anthropic',
+    model: 'claude-haiku-5-5',
+    input_tokens: 1_000,
+    output_tokens: 200,
+    cache_read_tokens: 3_000,
+    cache_write_tokens: 0,
+    cost_usd: result.cost_usd,
+    latency_ms: 0,
+    status: 'ok',
+    error: null,
+  });
   assert.deepEqual([run_id, persona_id], ['r-0001', 'p-001']);
   assert.match(calls[0].transcript, /"type":"image","mediaType":"image\/jpeg","bytes":4/);
+  assert.equal(JSON.parse(calls[0].transcript).response.usage.cache_read_input_tokens, 3_000, 'the provider\'s own usage object is kept');
   assert.doesNotMatch(calls[0].transcript, /sk-ant-|\/9j\//); // no key, no base64 screenshot
 });
 
-test('an invalid output is retried once with the validation error appended', async () => {
-  const sent = stubFetch(
-    () => message('{"thought":"Hmm","feeling":7}'),
-    () => message('{"thought":"Hmm","feeling":-1}'),
+test('each provider gets its own client, key, schema format and token accounting', async () => {
+  const sent = stubFetch(() => anthropicMessage(OK), () => openaiResponse(OK), () => googleResponse(OK), () => chatCompletion(OK));
+  const { gateway, calls } = setup();
+  const models: ModelChoice[] = [HAIKU, { provider: 'openai', model: 'gpt-6-luna' }, { provider: 'google', model: 'gemini-3.5-flash-lite' }, { provider: 'openai_compatible', model: 'gemma4:e4b' }];
+  const costs: number[] = [];
+  for (const model of models) costs.push((await gateway.call(request({ model }))).cost_usd);
+
+  assert.deepEqual(sent.urls, [
+    'https://api.anthropic.com/v1/messages',
+    'https://api.openai.com/v1/responses',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+    `${LOCAL}/chat/completions`,
+  ]);
+  const [anthropic, openai, google, local] = sent.bodies;
+  assert.equal(sent.headers[0].get('x-api-key'), KEYS.anthropic);
+  assert.equal(sent.headers[1].get('authorization'), `Bearer ${KEYS.openai}`);
+  assert.equal(sent.headers[2].get('x-goog-api-key'), KEYS.google);
+  assert.equal(sent.headers[3].get('authorization'), null, 'a local endpoint needs no key');
+  assert.ok(!sent.urls.some((u) => u.includes('AIza')), 'the Google key travels in a header, not the URL');
+
+  // OpenAI: strict JSON schema, and no reasoning at all for a routine step on Luna.
+  assert.deepEqual([openai.text.format.type, openai.text.format.strict, openai.reasoning], ['json_schema', true, { effort: 'none' }]);
+  // Google: the schema as responseJsonSchema and a low thinking level.
+  assert.deepEqual(google.generationConfig.responseJsonSchema.required, ['thought', 'feeling']);
+  assert.deepEqual(google.generationConfig.thinkingConfig, { thinkingLevel: 'low' });
+  // Local: json_schema output, and the schema again in the prompt (tech.md §10.6).
+  assert.equal(local.response_format.type, 'json_schema');
+  assert.match(local.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
+  assert.match(calls[3].transcript, /Answer with one JSON object that matches this JSON Schema/, 'the transcript shows the prompt that was sent');
+  assert.equal(anthropic.output_config.effort, 'low');
+
+  // Tokens in the three fields the meter sums (uncached, read, written), and the cost from each model's own card.
+  assert.deepEqual(
+    calls.map((c) => [c.event.payload.provider, c.event.payload.model, c.event.payload.input_tokens, c.event.payload.cache_read_tokens, c.event.payload.output_tokens]),
+    [
+      ['anthropic', 'claude-haiku-5-5', 1_000, 3_000, 200],
+      ['openai', 'gpt-6-luna', 600, 400, 200],
+      ['google', 'gemini-3.5-flash-lite', 600, 400, 200],
+      ['openai_compatible', 'gemma4:e4b', 1_000, 0, 200],
+    ],
   );
-  const { record, calls } = recorder();
-  const result = await createAnthropicGateway({ apiKey: KEY, record }).call(request());
+  const expected = [0.00023, 0.000164, 0.000692, 0]; // 600 × 0.10 + 400 × 0.01 + 200 × 0.50 for Luna; 600 × 0.30 + 400 × 0.03 + 200 × 2.50 for Flash-Lite
+  costs.forEach((cost, i) => assert.ok(Math.abs(cost - expected[i]) < 1e-12, `${models[i].model}: ${cost} ≠ ${expected[i]}`));
+});
+
+test('a role sets how hard the model thinks and how much room it has', async () => {
+  const sent = stubFetch(
+    () => anthropicMessage(OK),
+    () => openaiResponse(OK),
+    () => openaiResponse(OK),
+    () => openaiResponse(OK),
+    () => googleResponse(OK),
+  );
+  const { gateway } = setup();
+  await gateway.call(request({ role: 'author', model: { provider: 'anthropic', model: 'claude-opus-5-5' } }));
+  await gateway.call(request({ role: 'author', model: { provider: 'openai', model: 'gpt-6.1-sol' } }));
+  await gateway.call(request({ role: 'navigator', model: { provider: 'openai', model: 'gpt-6.1-sol' } }));
+  await gateway.call(request({ role: 'judge', model: { provider: 'openai', model: 'gpt-6-luna' } }));
+  await gateway.call(request({ role: 'author', model: { provider: 'google', model: 'gemini-4-argon' } }));
+  assert.deepEqual([sent.bodies[0].output_config.effort, sent.bodies[0].max_tokens], ['high', 16_384]);
+  assert.deepEqual(sent.bodies.slice(1, 4).map((b) => b.reasoning.effort), ['high', 'low', 'medium'], 'GPT-6.1 Sol cannot switch reasoning off, so a routine step on it is low');
+  assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
+});
+
+test('a missing key fails before any request, and the message names the provider', async () => {
+  const sent = stubFetch();
+  const { gateway, calls } = setup({ keys: {}, localBaseUrl: null });
+  await assert.rejects(gateway.call(request()), /No Anthropic API key is saved/);
+  await assert.rejects(gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } })), /No OpenAI API key is saved/);
+  await assert.rejects(gateway.call(request({ model: { provider: 'google', model: 'gemini-3.5-flash-lite' } })), /No Google API key is saved/);
+  await assert.rejects(gateway.call(request({ model: { provider: 'openai_compatible', model: 'gemma4:e4b' } })), /No local endpoint is set/);
+  assert.deepEqual([sent.urls.length, calls.length], [0, 0]);
+});
+
+test('a setup call is priced and returned, but logs no event and no transcript', async () => {
+  stubFetch(() => anthropicMessage('{"thought":"Hmm","feeling":7}'), () => anthropicMessage(OK));
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request({ run_id: null, persona_id: null, role: 'persona_writer', model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } }));
+  assert.deepEqual(result.object, { thought: 'Jobs is in the menu.', feeling: 0 });
+  // Both attempts are paid for: 2 × (1,000 × $2 + 200 × $10 + 3,000 cache reads × $0.20), per million
+  assert.ok(Math.abs(result.cost_usd - 2 * 0.0046) < 1e-12);
+  assert.equal(calls.length, 0);
+});
+
+test('an invalid output is retried once with the validation error appended', async () => {
+  const sent = stubFetch(() => anthropicMessage('{"thought":"Hmm","feeling":7}'), () => anthropicMessage('{"thought":"Hmm","feeling":-1}'));
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request());
 
   assert.deepEqual(result.object, { thought: 'Hmm', feeling: -1 });
-  assert.deepEqual(
-    calls.map((c) => c.event.payload.status),
-    ['invalid_output', 'ok'],
-  );
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['invalid_output', 'ok']);
   assert.match(calls[0].event.payload.error ?? '', /feeling/);
   const retry = sent.bodies[1].messages[0].content.at(-1);
   assert.match(retry.text, /^That answer did not match the required format: .*feeling/s);
@@ -113,79 +256,234 @@ test('an invalid output is retried once with the validation error appended', asy
 });
 
 test('a second invalid output throws InvalidOutputError after recording both attempts', async () => {
-  stubFetch(
-    () => message('not json'),
-    () => message('{"thought":"Hmm"}'),
-  );
-  const { record, calls } = recorder();
-  await assert.rejects(createAnthropicGateway({ apiKey: KEY, record }).call(request()), InvalidOutputError);
-  assert.deepEqual(
-    calls.map((c) => c.event.payload.status),
-    ['invalid_output', 'invalid_output'],
-  );
+  stubFetch(() => anthropicMessage('not json'), () => anthropicMessage('{"thought":"Hmm"}'));
+  const { gateway, calls } = setup();
+  await assert.rejects(gateway.call(request()), InvalidOutputError);
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['invalid_output', 'invalid_output']);
 });
 
 test('an answer with no output in it, such as a refusal, is retried like an invalid one', async () => {
   stubFetch(
     () => Response.json({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', content: [], stop_reason: 'refusal', stop_sequence: null, usage: { input_tokens: 900, output_tokens: 0 } }),
-    () => message('{"thought":"Fine.","feeling":0}'),
+    () => anthropicMessage('{"thought":"Fine.","feeling":0}'),
   );
-  const { record, calls } = recorder();
-  const result = await createAnthropicGateway({ apiKey: KEY, record }).call(request());
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request());
   assert.deepEqual(result.object, { thought: 'Fine.', feeling: 0 });
-  assert.deepEqual(
-    calls.map((c) => [c.event.payload.status, c.event.payload.input_tokens]),
-    [
-      ['invalid_output', 900],
-      ['ok', 1_000],
-    ],
-  );
+  assert.deepEqual(calls.map((c) => [c.event.payload.status, c.event.payload.input_tokens]), [['invalid_output', 900], ['ok', 1_000]]);
   assert.match(calls[0].event.payload.error ?? '', /^No answer \(finish reason: content-filter\)$/);
 });
 
-test('an API error is recorded with the key redacted and rethrown', async () => {
-  stubFetch(() => Response.json({ type: 'error', error: { type: 'authentication_error', message: `invalid x-api-key ${KEY}` } }, { status: 401 }));
-  const { record, calls } = recorder();
-  await assert.rejects(createAnthropicGateway({ apiKey: KEY, record }).call(request()), /invalid x-api-key/);
-  assert.equal(calls[0].event.payload.status, 'error');
-  assert.equal(calls[0].event.payload.cost_usd, 0);
-  assert.match(calls[0].event.payload.error ?? '', /\[redacted\]/);
-  assert.doesNotMatch(calls[0].event.payload.error + calls[0].transcript, /sk-ant-/);
+test('a 429 is retried after its retry-after, each failed attempt is logged, and the scheduler is told', async () => {
+  const sent = stubFetch(
+    () => anthropicError(429, 'rate_limit_error', 'Rate limited', { 'retry-after': '7' }),
+    () => anthropicError(429, 'rate_limit_error', 'Rate limited', { 'retry-after': '7' }),
+    () => anthropicMessage(OK),
+  );
+  const { gateway, calls, slept, throttled } = setup();
+  const result = await gateway.call(request());
+
+  assert.deepEqual(result.object, { thought: 'Jobs is in the menu.', feeling: 0 });
+  assert.equal(sent.urls.length, 3);
+  assert.deepEqual(slept, [7_000, 7_000]);
+  assert.deepEqual(throttled, ['anthropic', 'anthropic']);
+  assert.deepEqual(calls.map((c) => [c.event.payload.status, c.event.payload.error, c.event.payload.cost_usd > 0]), [
+    ['error', 'Rate limited', false],
+    ['error', 'Rate limited', false],
+    ['ok', null, true],
+  ]);
+  assert.ok(Math.abs(result.cost_usd - 0.00023) < 1e-12, 'only the answer is paid for');
+});
+
+test('retry-after-ms is honoured too, with a little jitter on top', async () => {
+  stubFetch(() => Response.json({ error: { message: 'Slow down', type: 'rate_limit_exceeded' } }, { status: 429, headers: { 'retry-after-ms': '1500' } }), () => openaiResponse(OK));
+  const { gateway, slept, throttled } = setup();
+  await gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } }));
+  assert.deepEqual(slept, [1_500]);
+  assert.deepEqual(throttled, ['openai']);
+});
+
+test('an overloaded API (529) backs off exponentially, gives up after three retries, and is not a throttle signal', async () => {
+  const sent = stubFetch(...Array.from({ length: 4 }, () => () => anthropicError(529, 'overloaded_error', 'Overloaded')));
+  const { gateway, calls, slept, throttled } = setup();
+  await assert.rejects(gateway.call(request()), /^Error: Anthropic answered 529: Overloaded \(gave up after 4 attempts\)$/);
+  assert.equal(sent.urls.length, 4);
+  assert.deepEqual(slept, [500, 1_000, 2_000], 'half the nominal 1 s, 2 s and 4 s: jitter picks between half and all of it');
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['error', 'error', 'error', 'error']);
+  assert.deepEqual(throttled, []);
+});
+
+test('a 5xx is retried, and so are transient failures between invalid outputs', async () => {
+  stubFetch(
+    () => anthropicError(500, 'api_error', 'Internal error'),
+    () => anthropicMessage('{"thought":"Hmm","feeling":7}'),
+    () => anthropicError(503, 'api_error', 'Unavailable'),
+    () => anthropicMessage('{"thought":"Hmm","feeling":7}'),
+  );
+  const { gateway, calls, slept } = setup();
+  await assert.rejects(gateway.call(request()), InvalidOutputError);
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['error', 'invalid_output', 'error', 'invalid_output']);
+  assert.deepEqual(slept, [500, 1_000]);
+});
+
+test('400, 401 and 403 are thrown at once, never retried, and the key never reaches the log or the error', async () => {
+  for (const status of [400, 401, 403]) {
+    const sent = stubFetch(() => anthropicError(status, 'invalid_request_error', `invalid x-api-key ${KEY}`));
+    const { gateway, calls, slept, throttled } = setup();
+    await assert.rejects(gateway.call(request()), (err: Error) => {
+      assert.match(err.message, new RegExp(`^Anthropic answered ${status}: invalid x-api-key \\[redacted\\]$`));
+      return true;
+    });
+    assert.deepEqual([sent.urls.length, slept.length, throttled.length], [1, 0, 0]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].event.payload.status, 'error');
+    assert.equal(calls[0].event.payload.cost_usd, 0);
+    assert.match(calls[0].event.payload.error ?? '', /\[redacted\]/);
+    assert.doesNotMatch(calls[0].event.payload.error + calls[0].transcript, /sk-ant-/);
+    mock.restoreAll();
+  }
+});
+
+test('every provider key shape is redacted from errors', async () => {
+  const cases = [
+    { model: HAIKU, key: KEYS.anthropic, answer: () => anthropicError(401, 'authentication_error', `bad key ${KEYS.anthropic}`) },
+    { model: { provider: 'openai', model: 'gpt-6-luna' }, key: KEYS.openai, answer: () => Response.json({ error: { message: `Incorrect API key provided: ${KEYS.openai}`, type: 'invalid_request_error', code: 'invalid_api_key' } }, { status: 401 }) },
+    { model: { provider: 'google', model: 'gemini-3.5-flash-lite' }, key: KEYS.google, answer: () => Response.json({ error: { code: 400, message: `API key not valid: ${KEYS.google}`, status: 'INVALID_ARGUMENT' } }, { status: 400 }) },
+  ] as const;
+  for (const { model, key, answer } of cases) {
+    stubFetch(answer);
+    const { gateway, calls } = setup();
+    await assert.rejects(gateway.call(request({ model })), (err: Error) => {
+      assert.ok(!err.message.includes(key) && err.message.includes('[redacted]'), err.message);
+      return true;
+    });
+    assert.ok(!(calls[0].event.payload.error + calls[0].transcript).includes(key));
+    mock.restoreAll();
+  }
+});
+
+test('an exhausted account and a retry-after of minutes are not worth retrying', async () => {
+  const sent = stubFetch(() => Response.json({ error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota' } }, { status: 429 }));
+  const { gateway, slept, throttled } = setup();
+  await assert.rejects(gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } })), /OpenAI answered 429: You exceeded your current quota/);
+  assert.deepEqual([sent.urls.length, slept.length, throttled.length], [1, 0, 0], 'no retry, and not a rate limit either');
+
+  mock.restoreAll();
+  const daily = stubFetch(() => anthropicError(429, 'rate_limit_error', 'Daily limit reached', { 'retry-after': '3600' }));
+  const again = setup();
+  await assert.rejects(again.gateway.call(request()), /Anthropic answered 429: Daily limit reached/);
+  assert.deepEqual([daily.urls.length, again.slept.length, again.throttled], [1, 0, ['anthropic']]);
 });
 
 test('the abort signal cancels the request', async () => {
   mock.method(globalThis, 'fetch', (_url: string, init: RequestInit) => new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))));
-  const { record, calls } = recorder();
+  const { gateway, calls } = setup();
   const controller = new AbortController();
-  const call = createAnthropicGateway({ apiKey: KEY, record }).call(request(controller.signal));
+  const call = gateway.call(request({ signal: controller.signal }));
   setTimeout(() => controller.abort(), 10);
   await assert.rejects(call);
   assert.equal(calls[0].event.payload.status, 'error');
 });
 
-test('an unpriced model is refused before any request is sent', async () => {
-  const sent = stubFetch();
-  const { record } = recorder();
-  await assert.rejects(createAnthropicGateway({ apiKey: KEY, record }).call({ ...request(), model: 'claude-mystery-1' }), /No price/);
-  assert.equal(sent.bodies.length, 0);
+test('stopping the run while a call waits to retry ends the call', async () => {
+  const controller = new AbortController();
+  const sent = stubFetch(() => anthropicError(429, 'rate_limit_error', 'Rate limited', { 'retry-after': '30' }), () => anthropicMessage(OK));
+  const { gateway } = setup({
+    sleep: async (_ms, signal) => {
+      controller.abort();
+      throw signal?.reason;
+    },
+  });
+  await assert.rejects(gateway.call(request({ signal: controller.signal })));
+  assert.equal(sent.urls.length, 1, 'no second request after the stop');
 });
 
-test('testAnthropicKey explains success, a rejected key and an unreachable API', async () => {
+test('an unpriced cloud model is refused before any request, but a local one is free', async () => {
+  const sent = stubFetch(() => chatCompletion(OK));
+  const { gateway } = setup();
+  await assert.rejects(gateway.call(request({ model: { provider: 'anthropic', model: 'claude-mystery-1' } })), /No price for model claude-mystery-1/);
+  assert.equal(sent.bodies.length, 0);
+  assert.equal((await gateway.call(request({ model: { provider: 'openai_compatible', model: 'some-local-model:7b' } }))).cost_usd, 0);
+});
+
+test('requests wait their turn when the provider\'s bucket is empty', async () => {
+  stubFetch(() => anthropicMessage(OK), () => anthropicMessage(OK), () => openaiResponse(OK));
+  const { gateway, slept } = setup({ limits: { anthropic: { rpm: 1, tpm: 1_000_000 } } });
+  await gateway.call(request());
+  assert.deepEqual(slept, []);
+  await gateway.call(request());
+  assert.deepEqual(slept, [60_000], 'one request a minute');
+  await gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } }));
+  assert.deepEqual(slept, [60_000], 'each provider has its own bucket');
+});
+
+test('testProviderKey asks each provider\'s list endpoint, with the key in a header and never in the URL', async () => {
+  const sent = stubFetch(...Array.from({ length: 4 }, () => () => Response.json({ data: [] })));
+  assert.deepEqual(await testProviderKey('anthropic', KEYS.anthropic), { ok: true });
+  assert.deepEqual(await testProviderKey('openai', KEYS.openai), { ok: true });
+  assert.deepEqual(await testProviderKey('google', KEYS.google), { ok: true });
+  assert.deepEqual(await testProviderKey('openai_compatible', `${LOCAL}/`), { ok: true });
+  assert.deepEqual(sent.urls, [
+    'https://api.anthropic.com/v1/models?limit=1',
+    'https://api.openai.com/v1/models',
+    'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1',
+    `${LOCAL}/models`,
+  ]);
+  assert.equal(sent.headers[0].get('x-api-key'), KEYS.anthropic);
+  assert.equal(sent.headers[1].get('authorization'), `Bearer ${KEYS.openai}`);
+  assert.equal(sent.headers[2].get('x-goog-api-key'), KEYS.google);
+  assert.equal(sent.headers[3].get('authorization'), null);
+  assert.ok(!sent.urls.some((u) => Object.values(KEYS).some((k) => u.includes(k))));
+});
+
+test('testProviderKey explains a rejected key, a refusal, an unreachable API and a timeout', async () => {
   const sent = stubFetch(
-    () => Response.json({ data: [{ id: 'claude-haiku-5-5' }] }),
-    () => Response.json({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }, { status: 401 }),
-    () => Response.json({ type: 'error', error: { type: 'permission_error', message: 'This key cannot list models' } }, { status: 403 }),
+    () => anthropicError(401, 'authentication_error', 'invalid x-api-key'),
+    () => Response.json({ error: { message: 'Incorrect API key provided', code: 'invalid_api_key' } }, { status: 401 }),
+    () => anthropicError(403, 'permission_error', 'This key cannot list models'),
+    () => Response.json({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } }, { status: 400 }),
+    () => new Response('<html>bad gateway</html>', { status: 502, statusText: 'Bad Gateway' }),
   );
-  assert.deepEqual(await testAnthropicKey(KEY), { ok: true });
-  assert.equal(sent.headers[0].get('x-api-key'), KEY);
-  const rejected = await testAnthropicKey(KEY);
-  assert.ok(!rejected.ok && /rejected this key \(401\)/.test(rejected.error));
-  const forbidden = await testAnthropicKey(KEY);
-  assert.ok(!forbidden.ok && forbidden.error === 'Anthropic answered 403: This key cannot list models');
+  const fail = async (provider: ProviderId, credential: string) => {
+    const result = await testProviderKey(provider, credential);
+    assert.equal(result.ok, false);
+    return result.ok ? '' : result.error;
+  };
+  assert.match(await fail('anthropic', KEY), /^Anthropic rejected this key \(401\)/);
+  assert.match(await fail('openai', KEYS.openai), /^OpenAI rejected this key \(401\)/);
+  assert.equal(await fail('anthropic', KEY), 'Anthropic answered 403: This key cannot list models');
+  assert.equal(await fail('google', KEYS.google), 'Google answered 400: API key not valid. Please pass a valid API key.');
+  assert.equal(await fail('openai_compatible', LOCAL), 'The local endpoint answered 502: Bad Gateway');
+  assert.ok(sent.urls.length === 5);
+
   mock.restoreAll();
-  mock.method(globalThis, 'fetch', async () => {
+  mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    assert.ok(init.signal instanceof AbortSignal, 'every request has a timeout');
     throw new TypeError('fetch failed');
   });
-  const offline = await testAnthropicKey(KEY);
-  assert.ok(!offline.ok && /Could not reach api\.anthropic\.com \(fetch failed\)/.test(offline.error));
+  assert.match(await fail('anthropic', KEY), /^Could not reach api\.anthropic\.com \(fetch failed\)\. Check the internet connection/);
+  assert.match(await fail('openai_compatible', LOCAL), /^Could not reach localhost:11434 \(fetch failed\)\. Is the server running\?/);
+
+  mock.restoreAll();
+  mock.method(globalThis, 'fetch', async () => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  });
+  assert.match(await fail('openai', KEYS.openai), /^api\.openai\.com did not answer within 15 seconds/);
+  assert.match(await fail('openai_compatible', 'localhost:11434/v1'), /is not a web address/);
+});
+
+test('testProviderKey never puts a key in the message it returns', async () => {
+  for (const provider of ['anthropic', 'openai', 'google'] as const) {
+    const key = KEYS[provider];
+    stubFetch(() => Response.json({ error: { message: `no access for ${key}`, code: 403, status: 'PERMISSION_DENIED' } }, { status: 403 }));
+    const refused = await testProviderKey(provider, key);
+    assert.ok(!refused.ok && !refused.error.includes(key) && refused.error.includes('[redacted]'), JSON.stringify(refused));
+    mock.restoreAll();
+    mock.method(globalThis, 'fetch', async () => {
+      throw new TypeError(`connect failed while sending ${key}`);
+    });
+    const offline = await testProviderKey(provider, key);
+    assert.ok(!offline.ok && !offline.error.includes(key), JSON.stringify(offline));
+    mock.restoreAll();
+  }
 });

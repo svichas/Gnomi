@@ -1,9 +1,8 @@
 import { runEpisode } from './agent/loop.ts';
-import { BUILTIN_PERSONA } from './persona.ts';
 import { buildReport } from './report/build.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
-import type { EventPayloads, GnomiEvent, ProjectConfig, Report, RunConfig, SessionInfo } from './types.ts';
+import type { EventPayloads, GnomiEvent, Persona, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo } from './types.ts';
 
 export interface RunDeps {
   store: ProjectStore;
@@ -11,16 +10,18 @@ export interface RunDeps {
   browsers: BrowserPool;
   llm: LlmGateway;
   record: Recorder;
-  /** Where the role's storage state is loaded from; null when no session key has arrived. */
+  /** Where each role's storage state is loaded from; null when no session key has arrived. */
   sessions: SessionStore | null;
 }
 
 export interface RunHandle {
   run_id: string;
-  /** Cancels the in-flight model call (a browser action already under way completes); the run then ends with run.stopped(user). */
+  /** Stops every persona: model calls in flight are cancelled (browser actions under way complete); the run ends with run.stopped(user). */
   stop(): void;
-  /** Continues a persona paused by persona.blocked, with the role's session as it is now; ignored when she is not paused. */
+  /** Continues a persona paused by persona.blocked, with its role's session as it is now; ignored when it is not paused. */
   resume(persona_id: string): void;
+  /** A provider answered 429: halve the concurrency, never below 2 (tech.md §9.5). */
+  throttle(provider: ProviderId): void;
   /** Resolves with the final report after report.generated is recorded. Run failures never reject it: they end as run.stopped(error). */
   done: Promise<Report>;
 }
@@ -34,17 +35,23 @@ export function createRecorder(store: ProjectStore, onEvent: (event: GnomiEvent)
   };
 }
 
-/** M0/M1 defaults (roadmap): the built-in persona, a Claude Haiku navigator, 40 steps, a $1 cap, screenshots on, 10-minute pauses. */
-export function newRunConfig(project: ProjectConfig, opts: { session: SessionInfo | null; reset: boolean }): Omit<RunConfig, 'run_id'> {
+/** The segment a persona was sampled from; null for the built-in persona. */
+export function segmentOf(persona: Persona, project: ProjectConfig): Segment | null {
+  return project.audience?.segments.find((s) => s.id === persona.segment_id) ?? null;
+}
+
+/** The login a persona uses: its segment's role, or the project's for the built-in persona. */
+export function roleOf(persona: Persona, project: ProjectConfig): string | null {
+  return persona.segment_id === null ? project.role : (segmentOf(persona, project)?.role ?? null);
+}
+
+/** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
+export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean }): Omit<RunConfig, 'run_id'> {
   return {
-    seed: Math.floor(Math.random() * 2 ** 31),
+    seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
     project,
-    persona: BUILTIN_PERSONA,
-    model: { provider: 'anthropic', navigator: 'claude-haiku-5-5' },
-    step_budget: 40,
-    cost_budget_usd: 1,
-    screenshots: true,
-    session: opts.session,
+    personas: opts.personas,
+    sessions: opts.sessions,
     reset: opts.reset,
     pause_timeout_ms: 10 * 60_000,
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
@@ -52,26 +59,60 @@ export function newRunConfig(project: ProjectConfig, opts: { session: SessionInf
 }
 
 export function startRun(config: RunConfig, { store, blobs, browsers, llm, record, sessions }: RunDeps): RunHandle {
-  const { run_id, persona } = config;
-  const { poi } = config.project;
-  const controller = new AbortController(); // aborted by stop() and by a tripwire
-  let halted: EventPayloads['run.stopped'] | null = null; // a tripwire's reason, which outranks the abort it caused
-  const paused = new Map<string, () => void>();
-  // The budget reads spend from the log, so it counts every llm.call the gateway recorded, retries included.
-  const spentUsd = () => store.events(run_id, { types: ['llm.call'] }).reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
+  const { run_id, project } = config;
+  const { poi, settings } = project;
   const base = { run_id, round: 1, persona_id: null, poi_id: null };
-  const inPoi = { ...base, persona_id: persona.id, poi_id: poi.id };
+  const hard = new AbortController(); // stop(), a tripwire or an error: cancels model calls in flight
+  const drain = new AbortController(); // every run-wide stop: no step or persona starts, paused personas wake
+  let halted: EventPayloads['run.stopped'] | null = null;
+  let concurrency = Math.max(1, settings.concurrency); // 0 would wait forever for a slot
+  let lastThrottle = 0;
+  const paused = new Map<string, () => void>();
 
-  const tripwire = (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => {
-    if (halted) return;
-    record({ ...inPoi, type: 'containment.tripwire', payload: { kind, detail } });
-    halted = { reason: 'tripwire', detail };
-    controller.abort();
+  // The first reason to stop is the one reported, except that a tripwire always is.
+  const halt = (stop: EventPayloads['run.stopped'], cancel: boolean) => {
+    if (!halted || (stop.reason === 'tripwire' && halted.reason !== 'tripwire')) halted = stop;
+    drain.abort();
+    if (cancel) hard.abort();
+  };
+
+  // Spend comes from the log, read incrementally, so it counts every llm.call any gateway recorded, retries included.
+  let spent = 0;
+  let seen = 0;
+  const spentUsd = () => {
+    for (const e of store.events(run_id, { types: ['llm.call'], afterSeq: seen })) {
+      seen = e.seq;
+      if (e.type === 'llm.call') spent += e.payload.cost_usd;
+    }
+    return spent;
+  };
+  // The cost cap holds across concurrent personas (tech.md §10.5): a step may start only if the spend plus every step
+  // in flight, each projected at the average step cost so far, stays under the budget. In-flight steps then finish.
+  let inFlight = 0;
+  let stepsDone = 0;
+  const beginStep = () => {
+    if (drain.signal.aborted) return false;
+    const now = spentUsd();
+    const perStep = stepsDone ? now / stepsDone : 0;
+    if (now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
+      halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd} budget was reached` }, false);
+      return false;
+    }
+    inFlight++;
+    return true;
+  };
+  const endStep = () => {
+    inFlight--;
+    stepsDone++;
+  };
+
+  const tripwire = (persona_id: string) => (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => {
+    record({ ...base, persona_id, poi_id: poi.id, type: 'containment.tripwire', payload: { kind, detail } });
+    halt({ reason: 'tripwire', detail }, true);
   };
 
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session.
-  const openPage = async () => {
-    const role = config.session?.role;
+  const openPage = (persona: Persona, role: string | null) => async () => {
     const saved = role ? await sessions?.load(role) : null;
     if (role && !saved) throw new Error(`The recorded "${role}" login is missing. Record it again, then start a new run.`);
     return browsers.newPage({
@@ -80,34 +121,69 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       blockedDomains: poi.production_domains,
       storageState: saved?.state ?? null,
       onBlockedRequest: ({ host, url, method, navigation }) => {
-        record({ ...inPoi, type: 'containment.blocked_request', payload: { host, url, method } });
+        record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'containment.blocked_request', payload: { host, url, method } });
         const production = productionDomain(host, poi.production_domains);
-        if (navigation && production) tripwire('production_host', `The persona tried to open ${url}, on the production domain ${production}.`);
+        if (navigation && production) tripwire(persona.id)('production_host', `${persona.name} tried to open ${url}, on the production domain ${production}.`);
       },
     });
   };
 
-  const waitForResume = () =>
+  const waitForResume = (persona_id: string) => () =>
     new Promise<'resumed' | 'timeout' | 'stopped'>((resolve) => {
-      if (controller.signal.aborted) return resolve('stopped');
+      if (drain.signal.aborted) return resolve('stopped');
       const end = (how: 'resumed' | 'timeout' | 'stopped') => {
         clearTimeout(timer);
-        controller.signal.removeEventListener('abort', onAbort);
-        paused.delete(persona.id);
+        drain.signal.removeEventListener('abort', onDrain);
+        paused.delete(persona_id);
         resolve(how);
       };
-      const onAbort = () => end('stopped');
+      const onDrain = () => end('stopped');
       const timer = setTimeout(() => end('timeout'), config.pause_timeout_ms);
-      controller.signal.addEventListener('abort', onAbort);
-      paused.set(persona.id, () => end('resumed'));
+      drain.signal.addEventListener('abort', onDrain);
+      paused.set(persona_id, () => end('resumed'));
     });
+
+  const episode = async (persona: Persona) => {
+    const role = roleOf(persona, project);
+    const session = role ? (config.sessions.find((s) => s.role === role) ?? null) : null;
+    if (role && !session) throw new Error(`No login for the "${role}" role was verified before the run.`);
+    await runEpisode({
+      config,
+      persona,
+      segment: segmentOf(persona, project),
+      session,
+      openPage: openPage(persona, role),
+      llm,
+      blobs,
+      record,
+      signal: hard.signal,
+      beginStep,
+      endStep,
+      tripwire: tripwire(persona.id),
+      waitForResume: waitForResume(persona.id),
+    });
+  };
+
+  // At most `concurrency` personas in flight, each with its own page; a paused persona keeps its slot and its page.
+  const schedule = async () => {
+    const running = new Set<Promise<void>>();
+    for (const persona of config.personas) {
+      while (running.size >= concurrency && !drain.signal.aborted) await Promise.race(running);
+      if (drain.signal.aborted) break;
+      const tracked: Promise<void> = episode(persona)
+        .catch((err) => halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true))
+        .finally(() => running.delete(tracked));
+      running.add(tracked);
+    }
+    await Promise.all(running);
+  };
 
   const resetStaging = async (url: string | null) => {
     if (!url) throw new Error('This project has no reset hook to call.');
     let status: number | null = null;
     let error: string | null = null;
     try {
-      const res = await fetch(url, { method: 'POST', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) });
+      const res = await fetch(url, { method: 'POST', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
       status = res.status;
       await res.body?.cancel();
     } catch (err) {
@@ -119,17 +195,18 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   const execute = async (): Promise<Report> => {
     record({ ...base, type: 'run.started', payload: { config } });
-    let stopped: EventPayloads['run.stopped'] | null = null;
+    const clock = setTimeout(() => halt({ reason: 'wall_clock', detail: `the ${settings.wall_clock_budget_min}-minute limit was reached` }, false), settings.wall_clock_budget_min * 60_000);
     try {
       if (config.reset) await resetStaging(poi.reset_hook_url);
-      record({ ...base, persona_id: persona.id, type: 'persona.created', payload: { persona } });
-      const end = await runEpisode({ config, openPage, llm, blobs, record, signal: controller.signal, spentUsd, tripwire, waitForResume });
-      if (end === 'stopped') stopped = halted ?? { reason: 'user', detail: null };
-      if (end === 'cost_budget') stopped = { reason: 'cost_budget', detail: `spent $${spentUsd().toFixed(4)} of the $${config.cost_budget_usd} budget` };
+      for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: { persona } });
+      await schedule();
     } catch (err) {
-      stopped = halted ?? (controller.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) });
+      halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true);
+    } finally {
+      clearTimeout(clock);
     }
 
+    const stopped = halted as EventPayloads['run.stopped'] | null;
     record(stopped ? { ...base, type: 'run.stopped', payload: stopped } : { ...base, type: 'run.finished', payload: {} });
     const reason = stopped && (stopped.detail ? `${stopped.reason}: ${stopped.detail}` : stopped.reason);
     store.finishRun(run_id, stopped ? 'stopped' : 'finished', reason, spentUsd());
@@ -141,5 +218,18 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return report;
   };
 
-  return { run_id, stop: () => controller.abort(), resume: (persona_id) => paused.get(persona_id)?.(), done: execute() };
+  return {
+    run_id,
+    stop: () => halt({ reason: 'user', detail: null }, true),
+    resume: (persona_id) => paused.get(persona_id)?.(),
+    throttle(provider) {
+      // shortcut: concurrency only ever drops; the raise to 32 when memory allows (tech.md §9.5) waits for a measured need.
+      // One halving per burst: a dozen calls in flight all get the same 429 within a second or two.
+      if (concurrency <= 2 || Date.now() - lastThrottle < 5_000) return;
+      lastThrottle = Date.now();
+      concurrency = Math.max(2, Math.floor(concurrency / 2));
+      record({ ...base, type: 'run.concurrency_changed', payload: { concurrency, reason: `${provider} is rate-limiting requests` } });
+    },
+    done: execute(),
+  };
 }

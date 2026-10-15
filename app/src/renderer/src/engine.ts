@@ -6,6 +6,7 @@ let port: MessagePort | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
 const listeners = new Set<(event: GnomiEvent) => void>();
+const progressListeners = new Set<(progress: { done: number; total: number }) => void>();
 
 const STOPPED = 'The engine stopped unexpectedly. Quit and reopen Gnomi to continue.';
 let closed = false;
@@ -27,6 +28,10 @@ export const connected = new Promise<{ startupError: string | null; sessionsPers
     port.onmessage = ({ data }: MessageEvent<EngineToClient>) => {
       if (data.kind === 'event') {
         listeners.forEach((listener) => listener(data.event));
+        return;
+      }
+      if (data.kind === 'progress') {
+        progressListeners.forEach((listener) => listener(data)); // the one task so far is generate_personas
         return;
       }
       const waiting = pending.get(data.id);
@@ -52,6 +57,12 @@ export async function call<M extends Method>(method: M, params: Api[M]['params']
 export function onEvent(listener: (event: GnomiEvent) => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+/** Progress of a long request (writing personas), from now on; returns the unsubscribe function. */
+export function onProgress(listener: (progress: { done: number; total: number }) => void): () => void {
+  progressListeners.add(listener);
+  return () => progressListeners.delete(listener);
 }
 
 /** Electron prefixes errors thrown by main's IPC handlers; the designer only needs the sentence. */

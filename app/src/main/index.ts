@@ -32,7 +32,20 @@ function request<M extends Method>(method: M, params: Api[M]['params']): Promise
 
 // Secrets live encrypted in userData, never in a project folder, and are only ever sent to the engine.
 const secretFile = (name: string) => join(app.getPath('userData'), name);
-let hasKey = false;
+
+// One file per provider key; the local endpoint needs none. `loaded` is the providers whose key the engine holds now.
+const PROVIDERS = {
+  anthropic: { file: 'anthropic.key', secret: 'anthropic_api_key' },
+  openai: { file: 'openai.key', secret: 'openai_api_key' },
+  google: { file: 'google.key', secret: 'google_api_key' },
+} as const;
+type KeyProvider = keyof typeof PROVIDERS;
+const loaded = new Set<KeyProvider>();
+
+function keyProvider(value: unknown): KeyProvider {
+  if (typeof value === 'string' && Object.hasOwn(PROVIDERS, value)) return value as KeyProvider;
+  throw new Error('Unknown provider');
+}
 
 async function readSecret(name: string): Promise<string | null> {
   if (!existsSync(secretFile(name))) return null;
@@ -95,11 +108,15 @@ async function startEngine(): Promise<Startup> {
     await request('set_secret', { name: 'session_key', value: sessionKey.key });
     await Promise.all([
       request('open_project', { dir }),
-      readSecret('anthropic.key').then(async (key) => {
-        if (!key) return;
-        await request('set_secret', { name: 'anthropic_api_key', value: key });
-        hasKey = true;
-      }),
+      (async () => {
+        // One at a time, so macOS asks for Keychain access once.
+        for (const [provider, { file, secret }] of Object.entries(PROVIDERS)) {
+          const key = await readSecret(file);
+          if (!key) continue;
+          await request('set_secret', { name: secret, value: key });
+          loaded.add(provider as KeyProvider);
+        }
+      })(),
     ]);
     return { startupError: null, sessionsPersist };
   } catch (err) {
@@ -107,20 +124,22 @@ async function startEngine(): Promise<Startup> {
   }
 }
 
-ipcMain.handle('save-key', async (_event, key: unknown) => {
+ipcMain.handle('save-key', async (_event, provider: unknown, key: unknown) => {
+  const { file, secret } = PROVIDERS[keyProvider(provider)];
   if (typeof key !== 'string' || !key.trim()) throw new Error('Paste a key first');
-  const secret = key.trim();
-  await request('set_secret', { name: 'anthropic_api_key', value: secret });
-  hasKey = true;
+  const value = key.trim();
+  await request('set_secret', { name: secret, value });
+  loaded.add(provider as KeyProvider);
   const remembered = await canRemember();
-  if (remembered) await writeSecret('anthropic.key', secret);
+  if (remembered) await writeSecret(file, value);
   return { remembered };
 });
-ipcMain.handle('has-key', () => hasKey);
-ipcMain.handle('clear-key', async () => {
-  rmSync(secretFile('anthropic.key'), { force: true });
-  await request('set_secret', { name: 'anthropic_api_key', value: null });
-  hasKey = false;
+ipcMain.handle('has-key', (_event, provider: unknown) => loaded.has(keyProvider(provider)));
+ipcMain.handle('clear-key', async (_event, provider: unknown) => {
+  const { file, secret } = PROVIDERS[keyProvider(provider)];
+  rmSync(secretFile(file), { force: true });
+  await request('set_secret', { name: secret, value: null });
+  loaded.delete(provider as KeyProvider);
 });
 
 function createWindow(started: Promise<Startup>) {
@@ -160,4 +179,18 @@ app.whenReady().then(() => {
   createWindow(startEngine());
 });
 app.on('window-all-closed', () => app.quit()); // macOS apps usually stay open here; quitting also stops the engine
-app.on('will-quit', () => engine?.kill());
+
+// The engine closes its Chrome and the project when asked, so nothing is orphaned; kill() only if it has not exited in two seconds.
+let quitting = false;
+app.on('before-quit', (event) => {
+  const child = engine;
+  if (quitting || !child) return;
+  quitting = true;
+  event.preventDefault();
+  const fallback = setTimeout(() => child.kill(), 2000);
+  child.once('exit', () => {
+    clearTimeout(fallback);
+    app.quit();
+  });
+  child.postMessage({ kind: 'shutdown' });
+});

@@ -1,11 +1,7 @@
-import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { Report as ReportData, ReportFriction, ReportMethods } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
 import { resetOutcome, stopText } from './activity.ts';
-import { call } from './engine.ts';
-import { Note } from './ui.tsx';
-
-export const usd = (amount: number) => `$${amount.toFixed(amount < 1 ? 4 : 2)}`;
+import { Note, Screenshot, usd } from './ui.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -13,7 +9,9 @@ function duration(ms: number | null) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-const OUTCOMES = {
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+const OUTCOMES: Record<Outcome, { text: string; style: string }> = {
   done: { text: 'Goal reached', style: 'bg-green-100 text-green-900' },
   abandoned: { text: 'Gave up', style: 'bg-amber-100 text-amber-900' },
   budget_exceeded: { text: 'Ran out of steps', style: 'bg-amber-100 text-amber-900' },
@@ -22,29 +20,25 @@ const OUTCOMES = {
   incomplete: { text: 'Did not finish', style: 'bg-stone-200 text-stone-800' },
 };
 
-function Screenshot({ path, step }: { path: string; step: number }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let current = true;
-    call('get_blob', { path }).then(
-      ({ mime, base64 }) => current && setSrc(`data:${mime};base64,${base64}`),
-      () => current && setFailed(true),
-    );
-    return () => {
-      current = false;
-    };
-  }, [path]);
-  if (failed) return <p className="text-sm text-stone-500">The screenshot could not be loaded.</p>;
-  if (!src) return <p className="text-sm text-stone-500">Loading screenshot...</p>;
-  return <img src={src} alt={`The page at step ${step}`} className="w-full rounded-lg border border-stone-200" />;
+function OutcomeChip({ outcome }: { outcome: Outcome }) {
+  return <span className={`whitespace-nowrap rounded-full px-3 py-0.5 text-xs font-semibold ${OUTCOMES[outcome].style}`}>{OUTCOMES[outcome].text}</span>;
 }
 
-function Friction({ friction }: { friction: ReportFriction }) {
+type Inspect = (personaId: string, seq?: number) => void;
+
+function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
+  return (
+    <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
+      {name}
+    </button>
+  );
+}
+
+function Friction({ friction, onInspect }: { friction: ReportFriction; onInspect: Inspect }) {
   return (
     <li className="rounded-lg border border-amber-300 bg-amber-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-        Step {friction.step_no} - severity {friction.severity} of 4
+        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no} - severity {friction.severity} of 4
       </p>
       <p className="mt-1 font-medium text-stone-900">{friction.what}</p>
       <p className="mt-1 text-sm text-stone-700">
@@ -55,11 +49,151 @@ function Friction({ friction }: { friction: ReportFriction }) {
       )}
       {friction.screenshot && (
         <div className="mt-3">
-          <Screenshot path={friction.screenshot} step={friction.step_no} />
+          <Screenshot path={friction.screenshot} alt={`The page at step ${friction.step_no}, as ${friction.persona_name} saw it`} />
         </div>
       )}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>
+  );
+}
+
+const Th = ({ children }: { children: ReactNode }) => (
+  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-stone-500">
+    {children}
+  </th>
+);
+
+/** Each segment's completion and friction, then the same two rates weighted by share (roadmap M2). */
+function SegmentTable({ report }: { report: ReportData }) {
+  const total = report.segments.reduce((sum, segment) => sum + segment.personas, 0);
+  const ofPersonas = (segment: ReportSegment, rate: number) => `${pct(rate)} (${Math.round(rate * segment.personas)} of ${segment.personas})`;
+  return (
+    <section aria-labelledby="segments-title" className="space-y-3">
+      <h3 id="segments-title" className="text-sm font-semibold text-stone-900">
+        Results by segment
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50">
+            <tr>
+              <Th>Segment</Th>
+              <Th>Share</Th>
+              <Th>Personas</Th>
+              <Th>Reached the goal</Th>
+              <Th>Reported friction</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {report.segments.map((segment) => (
+              <tr key={segment.id ?? segment.name}>
+                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
+                  {segment.name}
+                </th>
+                <td className="px-3 py-2">{segment.share}%</td>
+                <td className="px-3 py-2">{segment.personas}</td>
+                <td className="px-3 py-2">{ofPersonas(segment, segment.completion)}</td>
+                <td className="px-3 py-2">{ofPersonas(segment, segment.with_friction)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t border-stone-200 bg-stone-50">
+            <tr>
+              <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
+                Weighted by share
+              </th>
+              <td className="px-3 py-2">100%</td>
+              <td className="px-3 py-2">{total}</td>
+              <td className="px-3 py-2 font-medium">{pct(report.weighted.completion)}</td>
+              <td className="px-3 py-2 font-medium">{pct(report.weighted.with_friction)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <ul className="space-y-1 text-sm text-stone-600">
+        <li>
+          <span className="font-medium text-stone-900">Weighted completion {pct(report.weighted.completion)}.</span> Each segment counts by its share of the audience, not by how many personas it has.
+        </li>
+        <li>
+          <span className="font-medium text-stone-900">Weighted friction {pct(report.weighted.with_friction)}.</span> The share of people who ran into trouble, counted the same way.
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+function FrictionsBySegment({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
+  const known = new Set(report.segments.map((segment) => segment.id));
+  const groups = [
+    ...report.segments.map((segment) => ({ key: segment.id ?? segment.name, name: segment.name, items: report.frictions.filter((f) => f.segment_id === segment.id) })),
+    { key: 'other', name: 'Other', items: report.frictions.filter((f) => f.segment_id !== null && !known.has(f.segment_id)) },
+  ].filter((group) => group.items.length > 0);
+  return (
+    <section aria-labelledby="frictions-title">
+      <h3 id="frictions-title" className="mb-2 text-sm font-semibold text-stone-900">
+        Frictions found ({report.frictions.length})
+      </h3>
+      {groups.length === 0 ? (
+        <p className="text-sm text-stone-600">No persona reported any friction in this run.</p>
+      ) : (
+        <div className="space-y-5">
+          {groups.map((group) => (
+            <div key={group.key}>
+              <h4 className="mb-2 text-sm font-medium text-stone-800">
+                {group.name} ({group.items.length})
+              </h4>
+              <ol className="space-y-3">
+                {group.items.map((friction) => (
+                  <Friction key={friction.seq} friction={friction} onInspect={onInspect} />
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PersonaOutcomes({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
+  const segmentName = (persona: ReportPersona) => report.segments.find((segment) => segment.id === persona.segment_id)?.name ?? '';
+  return (
+    <section aria-labelledby="outcomes-title">
+      <h3 id="outcomes-title" className="mb-2 text-sm font-semibold text-stone-900">
+        What each persona did
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50">
+            <tr>
+              <Th>Persona</Th>
+              <Th>Segment</Th>
+              <Th>Device</Th>
+              <Th>Outcome</Th>
+              <Th>Steps</Th>
+              <Th>Frictions</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {report.personas.map((persona) => (
+              <tr key={persona.id}>
+                <th scope="row" className="px-3 py-2 text-left font-normal">
+                  <PersonaLink id={persona.id} name={persona.name} onInspect={onInspect} />
+                  <span className="block text-xs text-stone-500">{persona.job_title}</span>
+                </th>
+                <td className="px-3 py-2">{segmentName(persona)}</td>
+                <td className="px-3 py-2">{persona.device}</td>
+                <td className="px-3 py-2">
+                  <OutcomeChip outcome={persona.outcome} />
+                  {persona.outcome_text && <span className="mt-1 block max-w-xs break-words text-xs text-stone-500">{persona.outcome_text}</span>}
+                </td>
+                <td className="px-3 py-2">{persona.steps}</td>
+                <td className="px-3 py-2">{persona.frictions}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -68,11 +202,30 @@ const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key 
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
-/** What the run was allowed to do and what got in its way (idea.md §6.5), so a team can allow a host and run again. */
-function Methods({ methods }: { methods: ReportMethods }) {
+/** What the run was set up with, allowed to do and what got in its way (idea.md §6.5), so a team can change a setting and run again. */
+function Methods({ methods, personas }: { methods: ReportMethods; personas: ReportPersona[] }) {
   const none = 'None';
+  const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
+  const models = Object.entries(methods.models);
   const rows: [string, ReactNode][] = [
-    ['Logged in as', methods.role ?? 'Nobody: the persona browsed logged out'],
+    ['Seed', String(methods.seed)],
+    ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
+    ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}</ul>],
+    ['Budgets', `Stop at ${usd(methods.budgets.cost_usd)} or ${methods.budgets.wall_clock_min} minutes, ${methods.budgets.concurrency} browsers at a time`],
+    [
+      'Concurrency changes',
+      methods.concurrency_changes.length === 0 ? (
+        none
+      ) : (
+        <ul>
+          {methods.concurrency_changes.map((change, i) => (
+            <li key={i}>
+              Down to {change.concurrency}: {change.reason}
+            </li>
+          ))}
+        </ul>
+      ),
+    ],
     ['Allowed hosts', `${methods.allowed_hosts.join(', ')}. Every other host was blocked.`],
     [
       'Blocked requests',
@@ -94,9 +247,9 @@ function Methods({ methods }: { methods: ReportMethods }) {
         none
       ) : (
         <ul>
-          {methods.blocked.map((blocked) => (
-            <li key={blocked.step_no}>
-              Step {blocked.step_no}: {BLOCK_REASONS[blocked.reason] ?? blocked.reason}
+          {methods.blocked.map((blocked, i) => (
+            <li key={i}>
+              {name(blocked.persona_id)}, step {blocked.step_no}: {BLOCK_REASONS[blocked.reason] ?? blocked.reason}
               {blocked.detail && ` (${blocked.detail})`}, {blocked.resumed ? 'then resumed' : 'did not resume'}
             </li>
           ))}
@@ -136,31 +289,25 @@ function Methods({ methods }: { methods: ReportMethods }) {
   );
 }
 
-export function Report({ report }: { report: ReportData }) {
-  const outcome = OUTCOMES[report.outcome];
+export function Report({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
   const stats = [
+    ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
     ['Cost', usd(report.cost_usd)],
     ['Duration', duration(report.duration_ms)],
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
   return (
-    <section aria-labelledby="report-title" className="space-y-4 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+    <section aria-labelledby="report-title" className="space-y-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
       <h2 id="report-title" className="text-base font-semibold text-stone-900">
         Report
       </h2>
       <Note tone="info">{report.banner}</Note>
       <div>
-        <p className="text-sm text-stone-600">
-          {report.persona.name} ({report.persona.job_title}) tried to: {report.goal}
-        </p>
-        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-          <span className={`rounded-full px-3 py-0.5 text-xs font-semibold ${outcome.style}`}>{outcome.text}</span>
-          {report.outcome_text && <span className="text-stone-700">{report.outcome_text}</span>}
-        </p>
+        <p className="text-sm text-stone-600">The goal: {report.goal}</p>
         {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-stone-50 px-3 py-2">
             <dt className="text-xs text-stone-500">{label}</dt>
@@ -168,19 +315,10 @@ export function Report({ report }: { report: ReportData }) {
           </div>
         ))}
       </dl>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-stone-900">Frictions found ({report.frictions.length})</h3>
-        {report.frictions.length === 0 ? (
-          <p className="text-sm text-stone-600">The persona did not report any friction in this run.</p>
-        ) : (
-          <ol className="space-y-3">
-            {report.frictions.map((friction) => (
-              <Friction key={friction.seq} friction={friction} />
-            ))}
-          </ol>
-        )}
-      </div>
-      <Methods methods={report.methods} />
+      <SegmentTable report={report} />
+      <FrictionsBySegment report={report} onInspect={onInspect} />
+      <PersonaOutcomes report={report} onInspect={onInspect} />
+      <Methods methods={report.methods} personas={report.personas} />
     </section>
   );
 }

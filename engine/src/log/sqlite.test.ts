@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
-import type { NewEvent, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
+import { DEFAULT_SETTINGS } from '../settings.ts';
+import type { NewEvent, Persona, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
 import { openProject } from './sqlite.ts';
 
 const project: ProjectConfig = {
@@ -23,28 +24,40 @@ const project: ProjectConfig = {
   },
   goal: 'Post a job for a backend engineer',
   role: 'recruiter',
+  audience: null,
+  settings: DEFAULT_SETTINGS,
 };
 
 function snapshot(): Omit<RunConfig, 'run_id'> {
   return {
     seed: 42,
     project,
-    persona: BUILTIN_PERSONA,
-    model: { provider: 'anthropic', navigator: 'claude-haiku-5-5' },
-    step_budget: 40,
-    cost_budget_usd: 1,
-    screenshots: true,
-    session: null,
+    personas: [BUILTIN_PERSONA],
+    sessions: [],
     reset: false,
     pause_timeout_ms: 300000,
     app_version: '0.0.0',
   };
 }
 
+const personaOf = (id: string, segment_id: string | null = null): Persona => ({
+  ...BUILTIN_PERSONA,
+  id,
+  segment_id,
+  name: `Person ${id}`,
+});
+
 function tempDir(t: TestContext): string {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-sqlite-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+function userVersion(dir: string): unknown {
+  const raw = new DatabaseSync(join(dir, 'project.sqlite'));
+  const version = raw.prepare('PRAGMA user_version').get()?.user_version;
+  raw.close();
+  return version;
 }
 
 function step(run_id: string, step_no: number, persona_id = 'p-001'): NewEvent {
@@ -77,11 +90,12 @@ const sessionInfo = (role: string, verified_at: number | null = null): SessionIn
   expires_at: null,
 });
 
-test('reopening keeps the project, runs and events', (t) => {
+test('reopening keeps the project, the population, runs and events', (t) => {
   const dir = tempDir(t);
   const store = openProject(dir);
   assert.equal(store.getProject(), null);
   store.saveProject(project);
+  store.replacePersonas([BUILTIN_PERSONA]);
   const run = store.createRun(snapshot());
   const appended = [
     store.append({ run_id: run.run_id, round: 1, persona_id: null, poi_id: null, type: 'run.started', payload: { config: run } }),
@@ -92,6 +106,7 @@ test('reopening keeps the project, runs and events', (t) => {
 
   const reopened = openProject(dir);
   assert.deepEqual(reopened.getProject(), project);
+  assert.deepEqual(reopened.listPersonas(), [BUILTIN_PERSONA]);
   const edited = { ...project, description: 'Edited.' };
   reopened.saveProject(edited);
   assert.deepEqual(reopened.getProject(), edited);
@@ -103,9 +118,9 @@ test('reopening keeps the project, runs and events', (t) => {
   reopened.close();
 
   const raw = new DatabaseSync(join(dir, 'project.sqlite'));
-  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 2);
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
+  assert.equal(userVersion(dir), 3);
 });
 
 test('a v1 project upgrades on open and keeps its runs and events', (t) => {
@@ -115,21 +130,37 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
   const appended = store.append(step(run, 1));
   store.close();
 
-  // The v2 change is additive: without the session table the file is exactly a v1 file.
+  // The later changes are additive: without the session and persona tables the file is exactly a v1 file.
   const v1 = new DatabaseSync(join(dir, 'project.sqlite'));
-  v1.exec('DROP TABLE session; PRAGMA user_version = 1;');
+  v1.exec('DROP TABLE session; DROP TABLE persona; PRAGMA user_version = 1;');
   v1.close();
 
   const upgraded = openProject(dir);
   assert.deepEqual(upgraded.listSessions(), []);
+  assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.events(run), [appended]);
   upgraded.close();
-  const check = new DatabaseSync(join(dir, 'project.sqlite'));
-  assert.equal(check.prepare('PRAGMA user_version').get()?.user_version, 2);
-  check.close();
+  assert.equal(userVersion(dir), 3);
 });
 
-test('a project saved before M1 reads back with the M1 defaults', (t) => {
+test('a v2 project upgrades on open with an empty population', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  store.putSession(sessionInfo('recruiter'));
+  store.close();
+
+  const v2 = new DatabaseSync(join(dir, 'project.sqlite'));
+  v2.exec('DROP TABLE persona; PRAGMA user_version = 2;');
+  v2.close();
+
+  const upgraded = openProject(dir);
+  assert.deepEqual(upgraded.listPersonas(), []);
+  assert.deepEqual(upgraded.listSessions(), [sessionInfo('recruiter')]);
+  upgraded.close();
+  assert.equal(userVersion(dir), 3);
+});
+
+test('a project saved before M1 or M2 reads back with the defaults', (t) => {
   const store = openProject(tempDir(t));
   const before = {
     name: 'Gym',
@@ -138,11 +169,51 @@ test('a project saved before M1 reads back with the M1 defaults', (t) => {
     goal: 'Post a job for a backend engineer',
   };
   store.saveProject(before as unknown as ProjectConfig);
-  assert.deepEqual(store.getProject(), {
+  const read = store.getProject();
+  assert.deepEqual(read, {
     ...before,
+    audience: null,
+    settings: DEFAULT_SETTINGS,
     role: null,
     poi: { ...before.poi, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
   });
+  // Each read gets its own copy of the defaults, so a caller cannot change the shared constant.
+  assert.notEqual(read?.settings, DEFAULT_SETTINGS);
+  store.close();
+});
+
+test('the population keeps its order: replace, put and delete', (t) => {
+  const store = openProject(tempDir(t));
+  const [a, b, c] = [personaOf('p-1-01', 'seg-a'), personaOf('p-1-02', 'seg-a'), personaOf('p-2-01', 'seg-b')];
+  store.replacePersonas([a, b, c]);
+  assert.deepEqual(store.listPersonas(), [a, b, c]);
+
+  store.putPersona({ ...b, name: 'Edited' }); // an existing id keeps its place
+  store.putPersona(personaOf('p-3-01', 'seg-c')); // a new id goes last
+  assert.deepEqual(
+    store.listPersonas().map((p) => [p.id, p.name]),
+    [
+      ['p-1-01', 'Person p-1-01'],
+      ['p-1-02', 'Edited'],
+      ['p-2-01', 'Person p-2-01'],
+      ['p-3-01', 'Person p-3-01'],
+    ],
+  );
+
+  store.deletePersona('p-1-02');
+  assert.deepEqual(store.listPersonas().map((p) => p.id), ['p-1-01', 'p-2-01', 'p-3-01']);
+
+  store.replacePersonas([c, a]); // the list's order is the new order
+  assert.deepEqual(store.listPersonas(), [c, a]);
+  store.close();
+});
+
+test('replacing the population is all or nothing', (t) => {
+  const store = openProject(tempDir(t));
+  const kept = personaOf('p-1-01', 'seg-a');
+  store.replacePersonas([kept]);
+  assert.throws(() => store.replacePersonas([personaOf('p-2-01', 'seg-b'), personaOf('p-2-01', 'seg-b')]), /UNIQUE constraint/);
+  assert.deepEqual(store.listPersonas(), [kept]);
   store.close();
 });
 

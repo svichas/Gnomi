@@ -7,6 +7,7 @@ import type {
   EventType,
   GnomiEvent,
   LlmRole,
+  ModelChoice,
   NewEvent,
   PageFlags,
   PageSnapshot,
@@ -14,6 +15,7 @@ import type {
   RunConfig,
   RunRow,
   RunStatus,
+  Persona,
   SessionInfo,
 } from './types.ts';
 
@@ -39,6 +41,13 @@ export interface ProjectStore {
   listSessions(): SessionInfo[];
   /** Insert or replace by role. Metadata only: the storage state goes through SessionStore. */
   putSession(info: SessionInfo): void;
+  /** The current editable population, in segment then slot order. Runs freeze a copy in their snapshot. */
+  listPersonas(): Persona[];
+  /** Swaps the whole population in one transaction. */
+  replacePersonas(personas: Persona[]): void;
+  /** Insert or replace by id. */
+  putPersona(persona: Persona): void;
+  deletePersona(id: string): void;
   close(): void;
 }
 
@@ -48,8 +57,8 @@ export interface BlobStore {
   get(path: string): Promise<Uint8Array>;
 }
 
-/** session_key: 64 hex chars (AES-256) that encrypt recorded sessions; main keeps it in the OS keychain. */
-export type SecretName = 'anthropic_api_key' | 'session_key';
+/** Provider keys, plus session_key: 64 hex chars (AES-256) that encrypt recorded sessions. Main keeps all of them in the OS keychain. */
+export type SecretName = 'anthropic_api_key' | 'openai_api_key' | 'google_api_key' | 'session_key';
 
 export interface SecretsStore {
   get(name: SecretName): string | null;
@@ -120,15 +129,19 @@ export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: U
 
 export interface LlmRequest<T> {
   role: LlmRole;
-  model: string;
-  run_id: string;
+  model: ModelChoice;
+  run_id: string | null; // null for setup calls (proposing an audience, writing personas): priced, but not logged as run events
   persona_id: string | null;
   round: number;
+  purpose?: string; // a label for logs and scripted responders, e.g. 'propose_audience'
   system: string; // stable prefix, marked as a cache breakpoint
   user: UserPart[]; // volatile suffix
   schema: ZodType<T>;
   signal?: AbortSignal;
 }
+
+/** A scripted model's answer to one request (tests and GNOMI_FAKE_LLM). */
+export type Responder = (req: LlmRequest<unknown>) => unknown;
 
 export interface LlmResult<T> {
   object: T;

@@ -1,125 +1,93 @@
-import { useEffect, useState } from 'react';
-import type { EventOf, GnomiEvent, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
-import { isEnd, merge, toRows, waitingBlock } from './activity.ts';
-import type { Row, Tone } from './activity.ts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { GnomiEvent, Persona, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
+import { Activity } from './Activity.tsx';
+import { countStates, filterEvents, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';
+import type { Filters, PersonaState } from './activity.ts';
+import { BlockedBanner } from './Blocked.tsx';
 import { call, errorText, onEvent } from './engine.ts';
-import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { Report, usd } from './Report.tsx';
-import { Note, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
+import { Inspector } from './Inspector.tsx';
+import { Report } from './Report.tsx';
+import { Note, ProgressBar, secondaryButton, usd, when } from './ui.tsx';
 
-const TONES: Record<Tone, string> = {
-  plain: 'border-stone-200 bg-white',
-  friction: 'border-amber-300 bg-amber-50',
-  good: 'border-green-200 bg-green-50',
-  bad: 'border-red-200 bg-red-50',
-  alarm: 'border-2 border-red-500 bg-red-100',
-  notice: 'border-sky-200 bg-sky-50',
-  muted: 'border-transparent bg-transparent text-stone-500',
+const DOT: Record<PersonaState, string> = {
+  waiting: 'bg-stone-300',
+  active: 'bg-indigo-500 animate-pulse',
+  blocked: 'bg-red-500',
+  done: 'bg-green-500',
+  abandoned: 'bg-amber-500',
+  unfinished: 'bg-stone-400',
 };
 
-function ActivityItem({ row }: { row: Row }) {
+/** Everyone in the run at a glance; a click opens her inspector. */
+function PersonaGrid(props: { personas: Persona[]; segments: { id: string; name: string }[]; states: Map<string, PersonaState>; steps: Map<string, { steps: number }>; ended: boolean; onOpen(id: string): void }) {
+  const { personas, segments, states, steps, ended, onOpen } = props;
   return (
-    <li className={`rounded-lg border px-3 py-2 ${TONES[row.tone]}`}>
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="min-w-0 break-words text-sm">
-          <span className={`mr-2 text-xs font-semibold uppercase tracking-wide ${row.tone === 'alarm' ? 'text-red-800' : 'text-stone-500'}`}>{row.label}</span>
-          <span className={`${row.tone === 'alarm' ? 'font-semibold text-red-950' : 'font-medium text-stone-900'}`}>{row.title}</span>
-        </p>
-        {row.badge && <span className={`shrink-0 text-xs font-medium ${row.badge.ok ? 'text-green-700' : 'text-red-700'}`}>{row.badge.text}</span>}
-      </div>
-      {row.detail && <p className="mt-1 text-sm text-stone-700">{row.detail}</p>}
-      {row.quote && <p className="mt-1 text-sm italic text-stone-600">&ldquo;{row.quote}&rdquo;</p>}
-    </li>
-  );
-}
-
-/** The engine words a CAPTCHA block as "A recaptcha challenge is showing. ..."; the banner only needs the name of the challenge. */
-function challengeKind(detail: string): string | null {
-  const named = /^An? (.+?) challenge is showing/.exec(detail);
-  return named ? named[1] : detail.length <= 40 ? detail : null;
-}
-
-const waitText = (ms: number) => (ms >= 90_000 ? `${Math.round(ms / 60_000)} minutes` : `${Math.round(ms / 1000)} seconds`);
-
-/** A paused persona needs the user: a login to record again, or a CAPTCHA to turn off on staging. */
-function BlockedBanner(props: { blocked: EventOf<'persona.blocked'>; row: RunRow | undefined; runId: string; ending: boolean; onEnd(): void }) {
-  const { blocked, row, runId, ending, onEnd } = props;
-  const { reason } = blocked.payload;
-  const kind = challengeKind(blocked.payload.detail);
-  const name = row?.config.persona.name ?? 'The persona';
-  const resume = { run_id: runId, persona_id: blocked.persona_id ?? row?.config.persona.id ?? '' };
-  const role = row?.config.session?.role ?? row?.config.project.role ?? null;
-  const retry = useAction();
-  const recorder = useRecorder(async () => {
-    await call('resume_persona', resume);
-  });
-  const busy = retry.busy || recorder.busy || ending;
-
-  return (
-    <section role="alert" aria-label="The persona is waiting for you" className="space-y-3 rounded-xl border-2 border-red-300 bg-red-50 p-5">
-      {reason === 'session_expired' ? (
-        <>
-          <h2 className="text-base font-semibold text-red-950">{name}&rsquo;s login expired</h2>
-          <p className="text-sm text-red-900">Record the login again and the run carries on from where it stopped.</p>
-        </>
-      ) : (
-        <p className="text-sm text-red-950">
-          {name} hit a CAPTCHA{kind && ` (${kind})`}. Gnomi never solves these: turn the challenge off on staging or use the provider&rsquo;s test keys, then
-          retry.
-        </p>
-      )}
-      {row && <p className="text-xs text-red-900">Gnomi waits {waitText(row.config.pause_timeout_ms)} for you, then ends the run.</p>}
-      <RecordingPanel recorder={recorder} />
-      <div className="flex flex-wrap gap-3">
-        {reason === 'session_expired' ? (
-          <button type="button" onClick={() => role !== null && recorder.start(role)} disabled={busy || role === null || recorder.recording !== null} className={primaryButton}>
-            Re-record login
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() =>
-              retry.run(async () => {
-                await call('resume_persona', resume);
-                return null;
-              })
-            }
-            disabled={busy}
-            className={primaryButton}
-          >
-            Retry
-          </button>
-        )}
-        <button type="button" onClick={onEnd} disabled={busy} className={secondaryButton}>
-          End run
-        </button>
-      </div>
-      {retry.outcome && <Note tone={retry.outcome.ok ? 'ok' : 'error'}>{retry.outcome.text}</Note>}
-      {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
-    </section>
+    // Open for a handful of personas; with dozens it starts closed so the feed is in view.
+    <details open={personas.length <= 12} className="rounded-xl border border-stone-200 bg-white">
+      <summary className="cursor-pointer px-5 py-3 text-base font-semibold text-stone-900">Personas ({personas.length})</summary>
+      <ul className="grid max-h-72 gap-2 overflow-y-auto border-t border-stone-200 p-4 sm:grid-cols-2 lg:grid-cols-3">
+        {personas.map((persona) => {
+          const state = states.get(persona.id) ?? 'waiting';
+          const taken = steps.get(persona.id)?.steps ?? 0;
+          return (
+            <li key={persona.id}>
+              <button
+                type="button"
+                onClick={() => onOpen(persona.id)}
+                aria-label={`Inspect ${persona.name}`}
+                className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-left hover:border-indigo-300"
+              >
+                <span className="block truncate text-sm font-medium text-stone-900">{persona.name}</span>
+                <span className="block truncate text-xs text-stone-500">{segments.find((segment) => segment.id === persona.segment_id)?.name ?? persona.job_title}</span>
+                <span className="mt-1 flex items-center gap-2 text-xs text-stone-700">
+                  <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[state]}`} />
+                  {stateWord(state, ended)}
+                  {taken > 0 && ` - step ${taken}`}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
 function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | undefined; onRunEnded(): void }) {
+  const setup = useMemo(() => runSetup(row?.config), [row]);
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [filters, setFilters] = useState<Filters>({ persona: '', segment: '', category: '' });
+  const [inspecting, setInspecting] = useState<{ persona: string; seq: number | null } | null>(null);
+  const closeInspector = useCallback(() => setInspecting(null), []);
 
   useEffect(() => {
     let current = true;
+    let queue: GnomiEvent[] = [];
+    let timer: number | undefined;
+    // One render per 100 ms however many events arrive: fifty personas can produce hundreds a second (tech.md §11).
+    const flush = () => {
+      timer = undefined;
+      const batch = queue;
+      queue = [];
+      setEvents((have) => merge(have, batch));
+      if (batch.some(isEnd)) onRunEnded();
+    };
     const off = onEvent((event) => {
       if (event.run_id !== runId) return;
-      setEvents((have) => merge(have, [event]));
-      if (isEnd(event)) onRunEnded();
+      queue.push(event);
+      timer ??= window.setTimeout(flush, 100);
     });
-    call('get_events', { run_id: runId, after_seq: null }).then(
+    call('get_events', { run_id: runId, after_seq: null, persona_id: null }).then(
       (all) => current && setEvents((have) => merge(have, all)),
       (err) => current && setError(errorText(err)),
     );
     return () => {
       current = false;
       off();
+      window.clearTimeout(timer);
     };
   }, [runId]);
 
@@ -146,11 +114,35 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
     }
   }
 
-  const cost = events.reduce((sum, event) => (event.type === 'llm.call' ? sum + event.payload.cost_usd : sum), 0);
-  const step = events.reduce((last, event) => (event.type === 'persona.step' ? Math.max(last, event.payload.step_no) : last), 0);
-  const rows = toRows(events);
-  const waiting = waitingBlock(events);
-  const status = ended ? (events.some((event) => event.type === 'run.stopped') ? 'Stopped' : 'Finished') : waiting ? 'Waiting for you' : events.length ? 'Running' : 'Starting';
+  const { personas, segments } = setup;
+  const personaById = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
+  const states = useMemo(() => personaStates(events, personas), [events, personas]);
+  const counts = countStates(states);
+  const progress = useMemo(() => personaProgress(events), [events]);
+  const cost = useMemo(() => events.reduce((sum, event) => (event.type === 'llm.call' ? sum + event.payload.cost_usd : sum), 0), [events]);
+  const pace = events.findLast((event) => event.type === 'run.concurrency_changed');
+  const concurrency = pace?.type === 'run.concurrency_changed' ? pace.payload.concurrency : setup.concurrency;
+  const filtered = useMemo(() => filterEvents(events, filters, personaById), [events, filters, personaById]);
+  const rows = useMemo(() => toRows(filtered), [filtered]);
+  const waiting = waitingBlocks(events);
+  const finished = counts.done + counts.abandoned + counts.unfinished + (ended ? counts.blocked : 0);
+  const status = ended ? (events.some((event) => event.type === 'run.stopped') ? 'Stopped' : 'Finished') : waiting.length > 0 ? 'Waiting for you' : events.length ? 'Running' : 'Starting';
+  const inspected = inspecting ? personaById.get(inspecting.persona) : undefined;
+
+  const stats: [string, string][] = [
+    ['Status', status],
+    ['Personas finished', `${finished} of ${personas.length}`],
+    ['Cost so far', setup.costBudget ? `${usd(cost)} of ${usd(setup.costBudget)}` : usd(cost)],
+    ['Browsers at once', concurrency === null ? '1' : String(concurrency)],
+  ];
+  const chips: [string, number][] = [
+    ['Working', counts.active],
+    ['Done', counts.done],
+    ['Gave up', counts.abandoned],
+    [stateWord('blocked', ended), counts.blocked],
+    ['Waiting to start', counts.waiting],
+    ['Stopped early', counts.unfinished],
+  ];
 
   return (
     <div className="space-y-5">
@@ -158,11 +150,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-stone-900">Run {runId}</h2>
-            {row && (
-              <p className="mt-1 text-sm text-stone-600">
-                {row.config.persona.name} {ended ? 'tried to' : 'is trying to'}: {row.config.project.goal}
-              </p>
-            )}
+            {row && <p className="mt-1 text-sm text-stone-600">The goal: {row.config.project.goal}</p>}
           </div>
           {!ended && (
             <button type="button" onClick={stop} disabled={stopping} className={secondaryButton}>
@@ -170,45 +158,63 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
             </button>
           )}
         </div>
-        <dl className="mt-4 grid grid-cols-3 gap-3">
-          {[
-            ['Status', status],
-            ['Step', row ? `${step} of ${row.config.step_budget}` : String(step)],
-            ['Cost so far', usd(cost)],
-          ].map(([label, value]) => (
+        <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {stats.map(([label, value]) => (
             <div key={label} className="rounded-lg bg-stone-50 px-3 py-2">
               <dt className="text-xs text-stone-500">{label}</dt>
               <dd className="text-sm font-medium text-stone-900">{value}</dd>
             </div>
           ))}
         </dl>
-        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Stopping after the current step...</p>}
+        {setup.costBudget !== null && (
+          <div className="mt-3">
+            <ProgressBar value={cost} max={setup.costBudget} label="Cost against the budget" />
+          </div>
+        )}
+        <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
+          {chips.filter(([, n]) => n > 0).map(([label, n]) => (
+            <span key={label}>
+              {label} <span className="font-semibold text-stone-900">{n}</span>
+            </span>
+          ))}
+        </p>
+        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Stopping after the current steps...</p>}
       </section>
 
-      {waiting && <BlockedBanner blocked={waiting} row={row} runId={runId} ending={stopping} onEnd={stop} />}
+      {waiting.length > 0 && (
+        <BlockedBanner blocks={waiting} personas={personaById} roleOf={setup.roleOf} runId={runId} pauseMs={setup.pauseMs} ending={stopping} onEnd={stop} />
+      )}
       {error && <Note tone="error">{error}</Note>}
       {ended && !report && !error && <p className="text-sm text-stone-500">Building the report...</p>}
-      {report && <Report report={report} />}
+      {report && <Report report={report} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} />}
 
-      <section aria-labelledby="activity-title">
-        <h2 id="activity-title" className="mb-2 text-base font-semibold text-stone-900">
-          Activity
-        </h2>
-        {rows.length === 0 ? (
-          <p className="text-sm text-stone-500">Waiting for the persona to start...</p>
-        ) : (
-          <ol className="space-y-2">
-            {rows.map((r) => (
-              <ActivityItem key={r.seq} row={r} />
-            ))}
-          </ol>
-        )}
-      </section>
+      <PersonaGrid personas={personas} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
+      <Activity
+        rows={rows}
+        total={events.length}
+        personas={personas}
+        segments={segments}
+        filters={filters}
+        onFilters={setFilters}
+        onOpen={(id, seq) => setInspecting({ persona: id, seq })}
+      />
+      {inspected && inspecting && (
+        <Inspector
+          key={inspected.id}
+          runId={runId}
+          persona={inspected}
+          segment={segments.find((segment) => segment.id === inspected.segment_id)}
+          focusSeq={inspecting.seq}
+          ended={ended}
+          onClose={closeInspector}
+        />
+      )}
     </div>
   );
 }
 
 const STATUS_WORDS = { running: 'Running', finished: 'Finished', stopped: 'Stopped', interrupted: 'Interrupted' };
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 export function Run({ runId, runs, onSelect, onRunEnded }: { runId: string | null; runs: RunRow[]; onSelect(runId: string): void; onRunEnded(): void }) {
   return (
@@ -232,6 +238,7 @@ export function Run({ runId, runs, onSelect, onRunEnded }: { runId: string | nul
                     {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)}`}
                   </span>
                   <span className="block text-xs text-stone-500">{when(run.started_at)}</span>
+                  <span className="block text-xs text-stone-500">{count(runSetup(run.config).personas.length, 'persona')}</span>
                   <span className="mt-1 block truncate text-xs text-stone-600">{run.config.project.goal}</span>
                 </button>
               </li>

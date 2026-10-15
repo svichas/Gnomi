@@ -5,61 +5,58 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
-import type { EventPayloads, GnomiEvent, NewEvent, RunConfig } from '../types.ts';
+import { DEFAULT_SETTINGS } from '../settings.ts';
+import type {
+  Audience,
+  EventPayloads,
+  GnomiEvent,
+  NewEvent,
+  Persona,
+  ProjectConfig,
+  RunConfig,
+  RunSettings,
+  Segment,
+} from '../types.ts';
 import { buildReport, HYPOTHESIS_BANNER } from './build.ts';
+
+const url = 'http://localhost:3001/jobs/new';
+const startUrl = 'http://localhost:3001/';
+
+const project: ProjectConfig = {
+  name: 'Gym',
+  description: 'A demo ATS.',
+  poi: {
+    id: 'poi-gym',
+    type: 'web',
+    name: 'Gym',
+    start_url: startUrl,
+    allowed_hosts: [],
+    production_domains: [],
+    not_production: false,
+    reset_hook_url: null,
+  },
+  goal: 'Post a job for a backend engineer',
+  role: null,
+  audience: null,
+  settings: DEFAULT_SETTINGS,
+};
 
 const config: RunConfig = {
   run_id: 'r-0001',
   seed: 42,
-  project: {
-    name: 'Gym',
-    description: 'A demo ATS.',
-    poi: {
-      id: 'poi-gym',
-      type: 'web',
-      name: 'Gym',
-      start_url: 'http://localhost:3001/',
-      allowed_hosts: [],
-      production_domains: [],
-      not_production: false,
-      reset_hook_url: null,
-    },
-    goal: 'Post a job for a backend engineer',
-    role: null,
-  },
-  persona: BUILTIN_PERSONA,
-  model: { provider: 'anthropic', navigator: 'claude-haiku-5-5' },
-  step_budget: 40,
-  cost_budget_usd: 1,
-  screenshots: true,
-  session: null,
+  project,
+  personas: [BUILTIN_PERSONA],
+  sessions: [],
   reset: false,
   pause_timeout_ms: 300000,
   app_version: '0.0.0',
 };
 
-// A config logged before M1 has none of the session, role or allowed-host fields.
-const legacyConfig = {
-  run_id: 'r-0001',
-  seed: 42,
-  project: {
-    name: 'Gym',
-    description: 'A demo ATS.',
-    poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' },
-    goal: 'Post a job for a backend engineer',
-  },
-  persona: BUILTIN_PERSONA,
-  model: { provider: 'anthropic', navigator: 'claude-haiku-5-5' },
-  step_budget: 40,
-  cost_budget_usd: 1,
-  screenshots: true,
-  app_version: '0.0.0',
-} as unknown as RunConfig;
-
-const url = 'http://localhost:3001/jobs/new';
 const env = { run_id: 'r-0001', round: 1, persona_id: 'p-001', poi_id: 'poi-gym' } as const;
 const runEnv = { run_id: 'r-0001', round: 1, persona_id: null, poi_id: null } as const;
+const who = (persona_id: string) => ({ run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-gym' }) as const;
 const runStarted: NewEvent = { ...runEnv, type: 'run.started', payload: { config } };
+const startedAt: [number, NewEvent] = [1000, runStarted];
 
 function stepPayload(step_no: number, thought: string, screenshot: string | null): EventPayloads['persona.step'] {
   return {
@@ -91,59 +88,17 @@ function llmCall(cost_usd: number, input_tokens: number, output_tokens: number):
   };
 }
 
+function friction(step_no: number, what: string, severity = 2): EventPayloads['persona.friction_reported'] {
+  return { step_no, severity, what, expected: 'Something clearer.', where: { url, ref: null } };
+}
+
 // Each entry is [ts, event], in the order the engine would append them.
 type Script = Array<[number, NewEvent]>;
 
-function finishedRun(): Script {
-  return [
-    [1000, runStarted],
-    [1100, { ...env, type: 'persona.episode_started', payload: { poi_id: 'poi-gym', device: 'desktop', start_url: url } }],
-    // A friction logged before its step.
-    [
-      1200,
-      {
-        ...env,
-        type: 'persona.friction_reported',
-        payload: {
-          step_no: 1,
-          severity: 2,
-          what: 'The Save button is ambiguous.',
-          expected: 'A button that says what it does.',
-          where: { url, ref: 'e4' },
-        },
-      },
-    ],
-    [
-      1300,
-      { ...env, type: 'persona.step', payload: stepPayload(1, 'Looking for the way to post a job.', 'runs/r-0001/shots/p-001-0001.jpg') },
-    ],
-    [1350, { ...env, type: 'llm.call', payload: llmCall(0.25, 1200, 300) }],
-    [1400, { ...env, type: 'persona.step', payload: stepPayload(2, 'The form gives no error text.', null) }],
-    // A friction logged after its step.
-    [
-      1500,
-      {
-        ...env,
-        type: 'persona.friction_reported',
-        payload: {
-          step_no: 2,
-          severity: 3,
-          what: 'The required field gives no error.',
-          expected: 'An error under the field.',
-          where: { url, ref: 'e9' },
-        },
-      },
-    ],
-    // Cached input is reported apart from input_tokens and still counts as input.
-    [1550, { ...env, type: 'llm.call', payload: { ...llmCall(0.5, 800, 100), cache_read_tokens: 3000, cache_write_tokens: 500 } }],
-    [1700, { ...env, type: 'persona.goal_done', payload: { step_no: 2, summary: 'Posted the job.' } }],
-    [9000, { ...runEnv, type: 'run.finished', payload: {} }],
-    [9100, { ...runEnv, type: 'report.generated', payload: { path: 'runs/r-0001/report.json', friction_count: 2 } }],
-  ];
-}
-
 // The events as the store returns them: seq counts from 1, ts is the scripted one.
 const stored = (script: Script): GnomiEvent[] => script.map(([ts, event], i) => ({ ...event, seq: i + 1, ts }));
+
+// --- One persona (the built-in one, as M0 and M1 ran) ---
 
 const stepAt = (ts: number, step_no = 1): [number, NewEvent] => [
   ts,
@@ -154,7 +109,10 @@ const blockedAt = (ts: number, detail = 'reCAPTCHA on the sign-in page'): [numbe
   { ...env, type: 'persona.blocked', payload: { step_no: 1, reason: 'captcha', detail } },
 ];
 const resumedAt = (ts: number): [number, NewEvent] => [ts, { ...env, type: 'persona.resumed', payload: { step_no: 1 } }];
-const budgetAt = (ts: number): [number, NewEvent] => [ts, { ...env, type: 'signal.budget_exceeded', payload: { step_no: 1, budget: 1 } }];
+const budgetAt = (ts: number): [number, NewEvent] => [
+  ts,
+  { ...env, type: 'signal.budget_exceeded', payload: { step_no: 1, budget: 1 } },
+];
 const abandonAt = (ts: number): [number, NewEvent] => [
   ts,
   { ...env, type: 'persona.abandoned', payload: { step_no: 1, reason: 'Could not find the job form.' } },
@@ -164,34 +122,82 @@ const failureAt = (ts: number): [number, NewEvent] => [
   { ...env, type: 'signal.repeated_failure', payload: { step_no: 1, action: 'click', error: 'ref_not_found' } },
 ];
 
+function finishedRun(): Script {
+  return [
+    startedAt,
+    [1100, { ...env, type: 'persona.episode_started', payload: { poi_id: 'poi-gym', device: 'desktop', start_url: url } }],
+    // A friction logged before its step.
+    [1200, { ...env, type: 'persona.friction_reported', payload: friction(1, 'The Save button is ambiguous.') }],
+    [1300, { ...env, type: 'persona.step', payload: stepPayload(1, 'Looking for the way to post a job.', 'runs/r-0001/shots/p-001-0001.jpg') }],
+    [1350, { ...env, type: 'llm.call', payload: llmCall(0.25, 1200, 300) }],
+    [1400, { ...env, type: 'persona.step', payload: stepPayload(2, 'The form gives no error text.', null) }],
+    // A friction logged after its step.
+    [1500, { ...env, type: 'persona.friction_reported', payload: friction(2, 'The required field gives no error.', 3) }],
+    // Cached input is reported apart from input_tokens and still counts as input.
+    [1550, { ...env, type: 'llm.call', payload: { ...llmCall(0.5, 800, 100), cache_read_tokens: 3000, cache_write_tokens: 500 } }],
+    [1700, { ...env, type: 'persona.goal_done', payload: { step_no: 2, summary: 'Posted the job.' } }],
+    [9000, { ...runEnv, type: 'run.finished', payload: {} }],
+    [9100, { ...runEnv, type: 'report.generated', payload: { path: 'runs/r-0001/report.json', friction_count: 2 } }],
+  ];
+}
+
 test('a finished run folds into its outcome, frictions, totals and methods', () => {
   assert.deepEqual(buildReport(stored(finishedRun())), {
     run_id: 'r-0001',
     status: 'finished',
     stop_reason: null,
     goal: 'Post a job for a backend engineer',
-    poi: { name: 'Gym', start_url: 'http://localhost:3001/' },
-    persona: { id: 'p-001', name: 'Priya Natarajan', job_title: 'Recruiter', device: 'desktop' },
-    outcome: 'done',
-    outcome_text: 'Posted the job.',
+    poi: { name: 'Gym', start_url: startUrl },
+    personas: [
+      {
+        id: 'p-001',
+        name: 'Priya Natarajan',
+        job_title: 'Recruiter',
+        segment_id: null,
+        device: 'desktop',
+        outcome: 'done',
+        outcome_text: 'Posted the job.',
+        steps: 2,
+        frictions: 2,
+      },
+    ],
+    segments: [
+      {
+        id: null,
+        name: 'Built-in persona',
+        share: 100,
+        personas: 1,
+        outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+        completion: 1,
+        with_friction: 1,
+        frictions: 2,
+      },
+    ],
+    weighted: { completion: 1, with_friction: 1 },
     steps: 2,
     frictions: [
       {
         seq: 3,
+        persona_id: 'p-001',
+        persona_name: 'Priya Natarajan',
+        segment_id: null,
         step_no: 1,
         severity: 2,
         what: 'The Save button is ambiguous.',
-        expected: 'A button that says what it does.',
+        expected: 'Something clearer.',
         url,
         quote: 'Looking for the way to post a job.',
         screenshot: 'runs/r-0001/shots/p-001-0001.jpg',
       },
       {
         seq: 7,
+        persona_id: 'p-001',
+        persona_name: 'Priya Natarajan',
+        segment_id: null,
         step_no: 2,
         severity: 3,
         what: 'The required field gives no error.',
-        expected: 'An error under the field.',
+        expected: 'Something clearer.',
         url,
         quote: 'The form gives no error text.',
         screenshot: null,
@@ -206,12 +212,16 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     duration_ms: 8000,
     banner: HYPOTHESIS_BANNER,
     methods: {
-      role: null,
+      seed: 42,
+      roles: [],
+      models: { navigator: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
+      budgets: { cost_usd: 5, wall_clock_min: 60, concurrency: 12 },
       allowed_hosts: ['localhost'],
       blocked_requests: [],
       blocked: [],
       tripwires: [],
       reset: null,
+      concurrency_changes: [],
     },
   });
 });
@@ -219,47 +229,40 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
 test('a stopped run carries the stop reason with its detail, and a budget signal', () => {
   const report = buildReport(
     stored([
-      [1000, runStarted],
-      [1100, { ...env, type: 'persona.step', payload: stepPayload(1, 'Trying.', null) }],
-      [2000, { ...env, type: 'signal.budget_exceeded', payload: { step_no: 1, budget: 1 } }],
+      startedAt,
+      stepAt(1100),
+      budgetAt(2000),
       [2100, { ...runEnv, type: 'run.stopped', payload: { reason: 'cost_budget', detail: '$1.00 spent' } }],
     ]),
   );
   assert.equal(report.status, 'stopped');
   assert.equal(report.stop_reason, 'cost_budget: $1.00 spent');
-  assert.equal(report.outcome, 'budget_exceeded');
-  assert.equal(report.outcome_text, null);
+  assert.equal(report.personas[0].outcome, 'budget_exceeded');
+  assert.equal(report.personas[0].outcome_text, null);
   assert.equal(report.ended_at, 2100);
   assert.equal(report.duration_ms, 1100);
 });
 
-test('a run without an end event is still running and has no outcome', () => {
-  const report = buildReport(stored([[1000, runStarted], stepAt(1100)]));
+test('a run without an end event is still running and its persona has no outcome', () => {
+  const report = buildReport(stored([startedAt, stepAt(1100)]));
   assert.equal(report.status, 'running');
   assert.equal(report.stop_reason, null);
-  assert.equal(report.outcome, 'incomplete');
+  assert.equal(report.personas[0].outcome, 'incomplete');
   assert.equal(report.ended_at, null);
   assert.equal(report.duration_ms, null);
   assert.equal(report.steps, 1);
 });
 
 test('an abandoned persona reports the reason it gave up', () => {
-  const report = buildReport(
-    stored([
-      [1000, runStarted],
-      [1100, { ...env, type: 'persona.step', payload: stepPayload(1, 'Where is the form?', null) }],
-      [1200, { ...env, type: 'persona.abandoned', payload: { step_no: 1, reason: 'Could not find the job form.' } }],
-      [1300, { ...runEnv, type: 'run.finished', payload: {} }],
-    ]),
-  );
-  assert.equal(report.outcome, 'abandoned');
-  assert.equal(report.outcome_text, 'Could not find the job form.');
+  const report = buildReport(stored([startedAt, stepAt(1100), abandonAt(1200), [1300, { ...runEnv, type: 'run.finished', payload: {} }]]));
+  assert.equal(report.personas[0].outcome, 'abandoned');
+  assert.equal(report.personas[0].outcome_text, 'Could not find the job form.');
 });
 
 test('a block the persona resumes from keeps the outcome of the episode', () => {
   const report = buildReport(
     stored([
-      [1000, runStarted],
+      startedAt,
       stepAt(1100),
       blockedAt(1200),
       resumedAt(1300),
@@ -267,23 +270,23 @@ test('a block the persona resumes from keeps the outcome of the episode', () => 
       [1500, { ...env, type: 'persona.goal_done', payload: { step_no: 2, summary: 'Signed in and posted.' } }],
     ]),
   );
-  assert.equal(report.outcome, 'done');
+  assert.equal(report.personas[0].outcome, 'done');
   assert.deepEqual(report.methods.blocked, [
-    { step_no: 1, reason: 'captcha', detail: 'reCAPTCHA on the sign-in page', resumed: true },
+    { persona_id: 'p-001', step_no: 1, reason: 'captcha', detail: 'reCAPTCHA on the sign-in page', resumed: true },
   ]);
 });
 
 test('a block that is never resumed ends the outcome as blocked, with the detail as its text', () => {
-  const report = buildReport(stored([[1000, runStarted], stepAt(1100), blockedAt(1200, 'Redirected to /login')]));
-  assert.equal(report.outcome, 'blocked');
-  assert.equal(report.outcome_text, 'Redirected to /login');
+  const report = buildReport(stored([startedAt, stepAt(1100), blockedAt(1200, 'Redirected to /login')]));
+  assert.equal(report.personas[0].outcome, 'blocked');
+  assert.equal(report.personas[0].outcome_text, 'Redirected to /login');
   assert.deepEqual(report.methods.blocked, [
-    { step_no: 1, reason: 'captcha', detail: 'Redirected to /login', resumed: false },
+    { persona_id: 'p-001', step_no: 1, reason: 'captcha', detail: 'Redirected to /login', resumed: false },
   ]);
 });
 
 test('outcomes follow done > abandoned > repeated_failure > blocked > budget_exceeded > incomplete', () => {
-  const outcomeOf = (...tail: Script) => buildReport(stored([[1000, runStarted], stepAt(1100), ...tail])).outcome;
+  const outcomeOf = (...tail: Script) => buildReport(stored([startedAt, stepAt(1100), ...tail])).personas[0].outcome;
   assert.equal(outcomeOf(blockedAt(1200), budgetAt(1300)), 'blocked');
   assert.equal(outcomeOf(budgetAt(1200), blockedAt(1300)), 'blocked');
   assert.equal(outcomeOf(blockedAt(1200), failureAt(1300)), 'repeated_failure');
@@ -300,7 +303,7 @@ test('the methods appendix counts blocked requests per host, most first, ties A 
   ];
   const report = buildReport(
     stored([
-      [1000, runStarted],
+      startedAt,
       blockedRequest('ads.example.net', '/pixel'),
       blockedRequest('cdn.example.com', '/app.js'),
       blockedRequest('ads.example.net', '/beacon'),
@@ -318,7 +321,7 @@ test('the methods appendix counts blocked requests per host, most first, ties A 
 test('allowed hosts start with the start page host and drop duplicates', () => {
   const withHosts: RunConfig = {
     ...config,
-    project: { ...config.project, poi: { ...config.project.poi, allowed_hosts: ['cdn.example.com', 'localhost'] } },
+    project: { ...project, poi: { ...project.poi, allowed_hosts: ['cdn.example.com', 'localhost'] } },
   };
   const report = buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: withHosts } }]]));
   assert.deepEqual(report.methods.allowed_hosts, ['localhost', 'cdn.example.com']);
@@ -327,7 +330,7 @@ test('allowed hosts start with the start page host and drop duplicates', () => {
 test('tripwires and the reset hook are listed in the appendix', () => {
   const report = buildReport(
     stored([
-      [1000, runStarted],
+      startedAt,
       [1050, { ...runEnv, type: 'run.reset_called', payload: { url: 'https://staging.example/reset', status: 200, error: null } }],
       stepAt(1100),
       [1500, { ...env, type: 'containment.tripwire', payload: { kind: 'live_payment_key', detail: 'pk_live_ on /checkout' } }],
@@ -340,52 +343,286 @@ test('tripwires and the reset hook are listed in the appendix', () => {
   assert.deepEqual(report.methods.reset, { url: 'https://staging.example/reset', status: 200, error: null });
 });
 
-test('the role comes from the recorded session, else from the project', () => {
-  const session = {
-    role: 'recruiter',
-    start_url: url,
-    hosts: [],
-    recorded_at: 1,
-    verified_at: null,
-    expires_at: null,
-  };
-  const withSession: RunConfig = { ...config, session, project: { ...config.project, role: 'admin' } };
-  const withProjectRole: RunConfig = { ...config, project: { ...config.project, role: 'admin' } };
-  const roleOf = (c: RunConfig) => buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: c } }]])).methods.role;
-  assert.equal(roleOf(withSession), 'recruiter');
-  assert.equal(roleOf(withProjectRole), 'admin');
-});
-
-test('a run logged before M1 still folds, with no role and the start page host', () => {
-  const report = buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: legacyConfig } }], stepAt(1100)]));
-  assert.equal(report.steps, 1);
-  assert.deepEqual(report.methods, {
-    role: null,
-    allowed_hosts: ['localhost'],
-    blocked_requests: [],
-    blocked: [],
-    tripwires: [],
-    reset: null,
-  });
+test('without an audience the roles are the project role; with one, the roles of the segments in use', () => {
+  const soloRole = (role: string | null) =>
+    buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: { ...config, project: { ...project, role } } } }]])).methods.roles;
+  assert.deepEqual(soloRole('admin'), ['admin']);
+  assert.deepEqual(soloRole(null), []);
 });
 
 test('buildReport refuses a log without run.started', () => {
   assert.throws(() => buildReport(stored([stepAt(1100)])), /run\.started/);
 });
 
-test('a report rebuilt from the reopened log equals the report of the live run', (t) => {
+// --- A population: 2 segments, 6 personas ---
+
+const segment = (id: string, name: string, share: number, role: string | null): Segment => ({
+  id,
+  name,
+  description: `${name} at companies that sell to HR`,
+  share,
+  role,
+  usage_frequency: 'weekly',
+  typical_goals: ['post a job'],
+  mobile_share: 0,
+  patience: [2, 4],
+  tech_skill: [2, 4],
+  account_state: 'empty',
+  entry: 'direct',
+  goal_override: null,
+});
+
+const audienceOf = (segments: Segment[]): Audience => ({
+  seed: 99,
+  persona_count: 6,
+  segments,
+  company_size: [50, 500],
+  languages: { en: 1 },
+  accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 },
+});
+
+const person = (id: string, segment_id: string | null, name: string): Persona => ({ ...BUILTIN_PERSONA, id, segment_id, name });
+
+const POPULATION: Persona[] = [
+  person('p-1-01', 'seg-a', 'Ana Ruiz'),
+  person('p-1-02', 'seg-a', 'Ben Okoro'),
+  person('p-1-03', 'seg-a', 'Cleo Park'),
+  person('p-1-04', 'seg-a', 'Dev Shah'),
+  person('p-2-01', 'seg-b', 'Eli Marsh'),
+  person('p-2-02', 'seg-b', 'Fay Lindqvist'),
+];
+
+const populationConfig = (segments: Segment[], settings: RunSettings = DEFAULT_SETTINGS): RunConfig => ({
+  ...config,
+  personas: POPULATION,
+  project: { ...project, audience: audienceOf(segments), settings },
+});
+
+// Outcomes, per persona: a done, b abandoned, c repeated failure, d budget, e done, f blocked and never resumed.
+function populationScript(cfg: RunConfig): Script {
+  return [
+    [1000, { ...runEnv, type: 'run.started', payload: { config: cfg } }],
+    ...POPULATION.map((p, i): [number, NewEvent] => [1010 + i, { ...who(p.id), type: 'persona.created', payload: { persona: p } }]),
+    [1100, { ...who('p-1-01'), type: 'persona.step', payload: stepPayload(1, 'Ana looks for the job form.', 'runs/r-0001/shots/p-1-01-0001.jpg') }],
+    [1105, { ...who('p-1-01'), type: 'llm.call', payload: llmCall(0.25, 1000, 200) }],
+    [1110, { ...who('p-1-01'), type: 'persona.friction_reported', payload: friction(1, 'Save is ambiguous.') }],
+    [1120, { ...who('p-1-01'), type: 'persona.step', payload: stepPayload(2, 'Ana fills the form.', 'runs/r-0001/shots/p-1-01-0002.jpg') }],
+    [1130, { ...who('p-1-01'), type: 'persona.friction_reported', payload: friction(2, 'No error text.') }],
+    [1140, { ...who('p-1-01'), type: 'persona.goal_done', payload: { step_no: 2, summary: 'Posted the job.' } }],
+
+    [1200, { ...who('p-1-02'), type: 'persona.step', payload: stepPayload(1, 'Ben cannot find the form.', null) }],
+    [1210, { ...who('p-1-02'), type: 'persona.friction_reported', payload: friction(1, 'The form is hidden.') }],
+    [1220, { ...who('p-1-02'), type: 'persona.abandoned', payload: { step_no: 1, reason: 'Could not find the job form.' } }],
+
+    [1300, { ...who('p-1-03'), type: 'persona.step', payload: stepPayload(1, 'Cleo clicks the same button again.', null) }],
+    [1310, { ...who('p-1-03'), type: 'persona.friction_reported', payload: friction(1, 'The button does nothing.') }],
+    [1320, { ...who('p-1-03'), type: 'signal.repeated_failure', payload: { step_no: 1, action: 'click', error: 'ref_not_found' } }],
+
+    [1400, { ...who('p-1-04'), type: 'persona.step', payload: stepPayload(1, 'Dev waits for the page.', null) }],
+    [1410, { ...who('p-1-04'), type: 'signal.budget_exceeded', payload: { step_no: 1, budget: 1 } }],
+
+    [1500, { ...who('p-2-01'), type: 'persona.step', payload: stepPayload(1, 'Eli opens the posting page.', null) }],
+    [1510, { ...who('p-2-01'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Reviewed the posting.' } }],
+
+    [1600, { ...who('p-2-02'), type: 'persona.step', payload: stepPayload(1, 'Fay is asked to sign in.', 'runs/r-0001/shots/p-2-02-0001.jpg') }],
+    [1605, { ...who('p-2-02'), type: 'llm.call', payload: llmCall(0.5, 500, 100) }],
+    [1610, { ...who('p-2-02'), type: 'persona.friction_reported', payload: friction(1, 'The sign-in page is confusing.') }],
+    [1620, { ...who('p-2-02'), type: 'persona.blocked', payload: { step_no: 1, reason: 'captcha', detail: 'reCAPTCHA on the sign-in page' } }],
+
+    [9000, { ...runEnv, type: 'run.finished', payload: {} }],
+  ];
+}
+
+const recruiters = segment('seg-a', 'Recruiters', 60, 'recruiter');
+const managers = segment('seg-b', 'Hiring managers', 40, null);
+
+test('a population folds into per-persona outcomes and per-segment rates', () => {
+  const report = buildReport(stored(populationScript(populationConfig([recruiters, managers]))));
+  assert.deepEqual(
+    report.personas.map(({ id, outcome, outcome_text, steps, frictions }) => ({ id, outcome, outcome_text, steps, frictions })),
+    [
+      { id: 'p-1-01', outcome: 'done', outcome_text: 'Posted the job.', steps: 2, frictions: 2 },
+      { id: 'p-1-02', outcome: 'abandoned', outcome_text: 'Could not find the job form.', steps: 1, frictions: 1 },
+      { id: 'p-1-03', outcome: 'repeated_failure', outcome_text: 'The same click failed three times in a row (ref_not_found)', steps: 1, frictions: 1 },
+      { id: 'p-1-04', outcome: 'budget_exceeded', outcome_text: null, steps: 1, frictions: 0 },
+      { id: 'p-2-01', outcome: 'done', outcome_text: 'Reviewed the posting.', steps: 1, frictions: 0 },
+      { id: 'p-2-02', outcome: 'blocked', outcome_text: 'reCAPTCHA on the sign-in page', steps: 1, frictions: 1 },
+    ],
+  );
+  assert.deepEqual(report.segments, [
+    {
+      id: 'seg-a',
+      name: 'Recruiters',
+      share: 60,
+      personas: 4,
+      outcomes: { done: 1, abandoned: 1, budget_exceeded: 1, repeated_failure: 1, blocked: 0, incomplete: 0 },
+      completion: 0.25,
+      with_friction: 0.75,
+      frictions: 4,
+    },
+    {
+      id: 'seg-b',
+      name: 'Hiring managers',
+      share: 40,
+      personas: 2,
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 1, incomplete: 0 },
+      completion: 0.5,
+      with_friction: 0.5,
+      frictions: 1,
+    },
+  ]);
+  assert.deepEqual(report.weighted, { completion: 0.35, with_friction: 0.65 });
+  assert.equal(report.steps, 7);
+  assert.equal(report.frictions.length, 5);
+  assert.equal(report.cost_usd, 0.75);
+});
+
+test('changing the shares changes the weighted rates and leaves the segment rates alone', () => {
+  const admins = segment('seg-c', 'Admins', 20, 'admin'); // no personas in this run, so it is left out
+  const before = buildReport(
+    stored(populationScript(populationConfig([{ ...recruiters, share: 60 }, { ...managers, share: 20 }, admins]))),
+  );
+  const after = buildReport(
+    stored(populationScript(populationConfig([{ ...recruiters, share: 20 }, { ...managers, share: 60 }, admins]))),
+  );
+  assert.deepEqual(before.weighted, { completion: 0.3125, with_friction: 0.6875 });
+  assert.deepEqual(after.weighted, { completion: 0.4375, with_friction: 0.5625 });
+  const rates = (report: typeof before) => report.segments.map((s) => [s.id, s.completion, s.with_friction]);
+  assert.deepEqual(rates(after), rates(before));
+  assert.deepEqual(
+    before.segments.map((s) => s.id),
+    ['seg-a', 'seg-b'],
+  );
+});
+
+test('frictions carry the right persona and screenshot when two personas both have a step 1', () => {
+  const report = buildReport(stored(populationScript(populationConfig([recruiters, managers]))));
+  assert.deepEqual(
+    report.frictions.filter((f) => f.step_no === 1).map((f) => [f.persona_id, f.persona_name, f.segment_id, f.quote, f.screenshot]),
+    [
+      ['p-1-01', 'Ana Ruiz', 'seg-a', 'Ana looks for the job form.', 'runs/r-0001/shots/p-1-01-0001.jpg'],
+      ['p-1-02', 'Ben Okoro', 'seg-a', 'Ben cannot find the form.', null],
+      ['p-1-03', 'Cleo Park', 'seg-a', 'Cleo clicks the same button again.', null],
+      ['p-2-02', 'Fay Lindqvist', 'seg-b', 'Fay is asked to sign in.', 'runs/r-0001/shots/p-2-02-0001.jpg'],
+    ],
+  );
+});
+
+test('the methods list the roles in use, the models called, the budgets and the concurrency changes', () => {
+  const settings: RunSettings = {
+    ...DEFAULT_SETTINGS,
+    concurrency: 8,
+    cost_budget_usd: 2.5,
+    wall_clock_budget_min: 30,
+    routing: { ...DEFAULT_SETTINGS.routing, navigator: { provider: 'openai', model: 'gpt-6-luna' } },
+  };
+  const script = populationScript(populationConfig([recruiters, managers], settings));
+  script.splice(script.length - 1, 0, [8000, { ...runEnv, type: 'run.concurrency_changed', payload: { concurrency: 4, reason: 'rate limited by anthropic' } }]);
+  const { methods } = buildReport(stored(script));
+  assert.equal(methods.seed, 99); // the audience seed, not the run seed
+  assert.deepEqual(methods.roles, ['recruiter']); // the hiring managers segment has no role
+  assert.deepEqual(methods.models, { navigator: { provider: 'openai', model: 'gpt-6-luna' } }); // only navigator calls
+  assert.deepEqual(methods.budgets, { cost_usd: 2.5, wall_clock_min: 30, concurrency: 8 });
+  assert.deepEqual(methods.concurrency_changes, [{ concurrency: 4, reason: 'rate limited by anthropic' }]);
+});
+
+test('a population run reopened from the store folds to the same report', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-report-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const store = openProject(dir);
-  const { run_id: _run_id, ...snapshot } = config;
+  const { run_id: _run_id, ...snapshot } = populationConfig([recruiters, managers]);
   const run = store.createRun(snapshot);
-  const live = finishedRun().map(([, event]) => store.append(event));
+  const live = populationScript(populationConfig([recruiters, managers])).map(([, event]) => store.append(event));
   const original = buildReport(live);
-  assert.equal(original.frictions.length, 2);
+  assert.equal(original.frictions.length, 5);
   store.close();
 
   const reopened = openProject(dir);
   assert.deepEqual(reopened.events(run.run_id), live);
   assert.deepEqual(buildReport(reopened.events(run.run_id)), original);
   reopened.close();
+});
+
+// --- A run logged before M2: one `persona`, a top-level budget, no audience or settings ---
+
+// A persona as M1 logged it: no segment, pronouns or background.
+const { segment_id: _segment, pronouns: _pronouns, background: _background, ...oldFields } = BUILTIN_PERSONA;
+const oldPersona = oldFields as unknown as Persona;
+
+const oldConfig = {
+  run_id: 'r-0001',
+  seed: 1234,
+  project: {
+    name: 'Gym',
+    description: 'A demo ATS.',
+    poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    goal: 'Post a job for a backend engineer',
+    role: 'recruiter',
+  },
+  persona: oldPersona,
+  model: { provider: 'anthropic', navigator: 'claude-haiku-5-5' },
+  step_budget: 40,
+  cost_budget_usd: 1,
+  screenshots: true,
+  session: { role: 'recruiter', start_url: url, hosts: ['localhost'], recorded_at: 1, verified_at: null, expires_at: null },
+  reset: false,
+  pause_timeout_ms: 300000,
+  app_version: '0.0.0',
+} as unknown as RunConfig;
+
+function oldRun(withPersonaCreated: boolean): Script {
+  return [
+    [1000, { ...runEnv, type: 'run.started', payload: { config: oldConfig } }],
+    ...(withPersonaCreated ? [[1010, { ...env, type: 'persona.created', payload: { persona: oldPersona } }] as [number, NewEvent]] : []),
+    [1100, { ...env, type: 'persona.step', payload: stepPayload(1, 'Priya opens the form.', null) }],
+    [1150, { ...env, type: 'llm.call', payload: llmCall(0.25, 1200, 300) }],
+    [1200, { ...env, type: 'persona.goal_done', payload: { step_no: 1, summary: 'Posted the job.' } }],
+    [1300, { ...runEnv, type: 'run.finished', payload: {} }],
+  ];
+}
+
+const expectedOldReport = {
+  personas: [
+    {
+      id: 'p-001',
+      name: 'Priya Natarajan',
+      job_title: 'Recruiter',
+      segment_id: null,
+      device: 'desktop',
+      outcome: 'done',
+      outcome_text: 'Posted the job.',
+      steps: 1,
+      frictions: 0,
+    },
+  ],
+  segments: [
+    {
+      id: null,
+      name: 'Built-in persona',
+      share: 100,
+      personas: 1,
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+      completion: 1,
+      with_friction: 0,
+      frictions: 0,
+    },
+  ],
+  weighted: { completion: 1, with_friction: 0 },
+};
+
+test('a run logged before M2 still folds: one persona, the built-in segment and the old budget', () => {
+  const report = buildReport(stored(oldRun(false)));
+  assert.deepEqual(report.personas, expectedOldReport.personas);
+  assert.deepEqual(report.segments, expectedOldReport.segments);
+  assert.deepEqual(report.weighted, expectedOldReport.weighted);
+  assert.equal(report.methods.seed, 1234);
+  assert.deepEqual(report.methods.roles, ['recruiter']);
+  assert.deepEqual(report.methods.models, { navigator: { provider: 'anthropic', model: 'claude-haiku-5-5' } });
+  assert.deepEqual(report.methods.budgets, { cost_usd: 1, wall_clock_min: 60, concurrency: 1 });
+});
+
+test('a pre-M2 run whose persona was logged as persona.created folds the same way', () => {
+  const report = buildReport(stored(oldRun(true)));
+  assert.deepEqual(report.personas, expectedOldReport.personas);
+  assert.deepEqual(report.segments, expectedOldReport.segments);
 });

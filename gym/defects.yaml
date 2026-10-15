@@ -22,3 +22,75 @@
   affects: [recruiter]
   visual_only: false
   toggle: D03
+- id: D04
+  title: Assigning a non-user hiring manager leaves the job form and loses the draft
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [jobs/new, settings/users]
+  affects: [recruiter, admin]
+  visual_only: false
+  toggle: D04
+- id: D05
+  title: Decision buttons and feedback form sit below the tall resume on narrow screens
+  type: affordance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: ["reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D05
+- id: D06
+  title: Decision buttons are icon-only with no accessible name
+  type: label        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: ["reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D06
+- id: D07
+  title: Description is silently cut to 200 characters on save
+  type: content        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [jobs/new, "jobs/:id"]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D07
+- id: D08
+  title: Inviting an email that already exists shows a generic error
+  type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [settings/users]
+  affects: [admin]
+  visual_only: false
+  toggle: D08
+- id: D09
+  title: Candidates page takes 4 seconds to answer with no loading indication
+  type: performance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [candidates]
+  affects: [recruiter, hiring_manager]
+  visual_only: false
+  toggle: D09
+- id: D10
+  title: Field hints on the job form are light grey on white with poor contrast
+  type: visual        # flow | label | affordance | error-handling | performance | visual | content
+  severity: low
+  pages: [jobs/new]
+  affects: [recruiter]
+  visual_only: true
+  toggle: D10
+- id: D11
+  title: After sign-in the next page is ignored and the user lands on the dashboard
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [login, "reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D11
+- id: D12
+  title: Approval checkbox label is a double negative
+  type: label        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [settings/approvals]
+  affects: [admin]
+  visual_only: false
+  toggle: D12

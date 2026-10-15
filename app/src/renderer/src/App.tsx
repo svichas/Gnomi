@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { Audience, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
+import { AudienceTab } from './Audience.tsx';
 import { call, connected, errorText, stopped } from './engine.ts';
+import { initialDraft, toConfig } from './form.ts';
+import type { Draft, Form } from './form.ts';
 import { Project } from './Project.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
@@ -9,13 +13,14 @@ import { Note } from './ui.tsx';
 const TABS = [
   { id: 'settings', label: 'Settings' },
   { id: 'project', label: 'Project' },
+  { id: 'audience', label: 'Audience' },
   { id: 'run', label: 'Run' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
 
 export function App() {
   const [tab, setTab] = useState<Tab>('project');
-  const [ready, setReady] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null); // null until the project has been read; everything shows after that
   const [problem, setProblem] = useState<string | null>(null);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -29,22 +34,37 @@ export function App() {
       const { startupError, sessionsPersist } = await connected;
       setSessionsPersist(sessionsPersist);
       if (startupError) setProblem(`Gnomi could not start properly: ${startupError}`);
+      let loaded: ProjectInfo | null = null;
       try {
-        const loaded = await call('get_project', {});
+        loaded = await call('get_project', {});
         setInfo(loaded);
         const running = loaded.runs.find((run) => run.status === 'running'); // the page was reloaded mid-run
         if (running) {
           setRunId(running.run_id);
           setTab('run');
-        } else if (!(await window.gnomi.hasKey())) {
+        } else if (!(await Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai'), window.gnomi.hasKey('google')])).includes(true)) {
           setTab('settings');
         }
       } catch (err) {
         setProblem((was) => was ?? `Gnomi could not start properly: ${errorText(err)}`);
       }
-      setReady(true);
+      setDraft(initialDraft(loaded?.project));
     })();
   }, []);
+
+  // One project, edited on three tabs and saved as a whole: a tab's Save writes what the others hold too.
+  async function save(): Promise<ProjectConfig | string> {
+    if (!draft) return 'Gnomi is still starting.';
+    const config = toConfig(draft);
+    if (typeof config === 'string') return config;
+    await call('save_project', { project: config });
+    await refresh();
+    return config;
+  }
+
+  const setForm = (update: (form: Form) => Form) => setDraft((was) => was && { ...was, form: update(was.form) });
+  const setSettings = (settings: RunSettings) => setDraft((was) => was && { ...was, settings });
+  const setAudience = (audience: Audience | null) => setDraft((was) => was && { ...was, audience });
 
   return (
     <div className="min-h-screen">
@@ -78,17 +98,20 @@ export function App() {
             <Note tone="error">{problem}</Note>
           </div>
         )}
-        {!ready ? (
+        {!draft ? (
           <p className="text-sm text-stone-500">Starting Gnomi...</p>
         ) : (
-          // All three stay mounted so a half-typed form or a run in progress survives a tab switch.
+          // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
           <>
             <div role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'} className="max-w-2xl">
-              <Settings />
+              <Settings settings={draft.settings} onSettings={setSettings} save={save} />
             </div>
             <div role="tabpanel" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'} className="max-w-2xl">
               <Project
                 info={info}
+                draft={draft}
+                onForm={setForm}
+                save={save}
                 sessionsPersist={sessionsPersist}
                 onSaved={refresh}
                 onStarted={(id) => {
@@ -97,6 +120,9 @@ export function App() {
                   void refresh();
                 }}
               />
+            </div>
+            <div role="tabpanel" id="panel-audience" aria-labelledby="tab-audience" hidden={tab !== 'audience'}>
+              <AudienceTab audience={draft.audience} onAudience={setAudience} info={info} description={draft.form.description} save={save} refresh={refresh} />
             </div>
             <div role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
               <Run runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onRunEnded={refresh} />
