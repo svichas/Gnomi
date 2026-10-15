@@ -545,16 +545,16 @@ try {
     assert.ok(population, 'needs the population run above');
     const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
     const graph = page.getByRole('region', { name: 'Swarm graph' });
-    // The scripted run: personas, the Gym and its used and friction edges, no social rounds.
+    // The scripted swarm run above: personas, the Gym, its used and friction edges, and its social rounds.
     await tab('Run').click();
     await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: /r-0005/ }).click();
     await page.getByRole('tab', { name: 'Swarm' }).click();
     await graph.getByText(/^6 personas, 1 point of interest, [1-9]\d* connections$/).waitFor();
     assert.match(await graph.innerText(), /Used \([1-9]/);
     assert.match(await graph.innerText(), /Friction \([1-9]/);
-    assert.ok(await graph.getByRole('slider').isDisabled(), 'one round has nothing to scrub');
+    assert.ok(await graph.getByRole('slider').isEnabled(), 'its rounds can be scrubbed');
     await clickNode(page, 'persona:');
-    await inspector.getByRole('region', { name: 'Social memory' }).getByText('This run had no social rounds').waitFor();
+    await inspector.getByRole('region', { name: 'Social memory' }).getByText(/^Follows \(\d+\)$/).waitFor();
     await inspector.getByRole('button', { name: 'Close' }).click();
 
     // A synthetic social run of three rounds, written to the open project's log as the social engine would.

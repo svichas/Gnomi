@@ -5,7 +5,7 @@ import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveySchema
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';
-import type { EventOf, GnomiEvent } from '../types.ts';
+import type { EventOf, GnomiEvent, ProjectConfig } from '../types.ts';
 import { InvalidOutputError } from './gateway.ts';
 import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './scripted.ts';
 
@@ -140,7 +140,7 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
 });
 
 test('the demo socialiser reads the real social prompt and answers validly, mostly with silence, the same way each time', () => {
-  const project = { name: 'Gym ATS', description: '', poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }, goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS } as const;
+  const project = { name: 'Gym ATS', description: '', poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }, goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS } satisfies ProjectConfig;
   const line = (post_id: string) => ({ post_id, author: 'Ana Ruiz', text: 'Lost my draft.', agree: 0, disagree: 0, parent: null });
   const ask = (persona_id: string, ids: string[]) => {
     const user = socialParts({ persona: BUILTIN_PERSONA, project, round: 2, rounds: 5, end: null, steps: 3, frictions: [], opinion: null, posted: [], feed: ids.map(line) });

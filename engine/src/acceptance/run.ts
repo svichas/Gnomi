@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
 import { createGateway } from '../llm/gateway.ts';
-import { createScriptedGateway, DEMO_SCRIPT, DEMO_SURVEY } from '../llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_SCRIPT, DEMO_SOCIALISER, DEMO_SURVEY } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { buildReport } from '../report/build.ts';
@@ -236,9 +236,10 @@ async function runSeed(seed: number, data: Fixture, options: Options, pool: Brow
   allowance.signal.addEventListener('abort', cancel, { once: true });
   try {
     const record = createRecorder(store, () => {});
-    // shortcut: the rehearsal scripts the navigator only; add the social engine's scripted socialiser here when it lands.
-    const llm = guardedGateway(options, allowance, env, dir, record, { navigator: scriptedNavigator() }, (provider) => run?.throttle(provider));
+    const scripted = { navigator: scriptedNavigator(), socialiser: DEMO_SOCIALISER, judge: DEMO_JUDGE, author: DEMO_AUTHOR };
+    const llm = guardedGateway(options, allowance, env, dir, record, scripted, (provider) => run?.throttle(provider));
     const project = structuredClone(data.project);
+    project.settings.social = true; // the shared fixture leaves social rounds off for M2
     if (options.mode === 'live') project.settings.cost_budget_usd = Math.min(project.settings.cost_budget_usd, options.allowance_usd! - allowance.spent());
     store.saveProject(project);
     store.replacePersonas(data.personas);
