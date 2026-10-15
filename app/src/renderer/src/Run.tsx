@@ -11,7 +11,7 @@ import { missingUsageText, recordedCost } from './cost.ts';
 import { Inspector } from './Inspector.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { Report } from './Report.tsx';
-import { Note, ProgressBar, secondaryButton, usd, when } from './ui.tsx';
+import { Note, ProgressBar, Screenshot, secondaryButton, usd, when } from './ui.tsx';
 
 const DOT: Record<PersonaState, string> = {
   waiting: 'bg-stone-300',
@@ -198,7 +198,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
       {error && <Note tone="error">{error}</Note>}
       {ended && !report && !error && <p className="text-sm text-stone-500">Building the report...</p>}
       <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} />
-      {report && <Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} />}
+      {report && <Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} />}
 
       <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
       <Activity
