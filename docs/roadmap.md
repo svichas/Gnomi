@@ -78,6 +78,15 @@ Scripted tests establish execution and persistence, not live-model detection qua
 
 All M3 acceptance criteria (recall, precision, stability, control-run false positives) need live runs on Gym v2 and human theme mapping; none has been measured.
 
+**M4 is in progress** on branch `m4-social-swarm`, stacked on M3. The first batch adds:
+
+- Social rounds (off by default, a run setting with R rounds, default 5): usage slices that resume each episode, then a social phase. Also a seeded follow graph (6–12 follows, 70% within segment, 10% hubs), feeds of unseen followed posts plus two trending posts, one socialiser call per persona and phase (post, reply, react or stay silent) with opinion updates that cite feed posts, and harness-injected posts.
+- A live swarm tab: Sigma 4 + Graphology with ForceAtlas2 in a worker, used/talked/influenced/friction edges coloured by segment, edge-type and round filters, a time scrubber rebuilt from the log, click-to-inspect, feed threads and social memory in the inspector. The frame-rate check measured 120 fps with 200 personas, 10 POIs and 5,125 connections under live inserts on a development Mac.
+- Opinion spread in the report: posts tagged to themes in the judge call, seed posts, repeats, segments crossed, influence edges, sentiment by round, first-hand versus second-hand frictions, and post/narrative homogeneity in the methods appendix. Markdown and the HTML/PDF export include it.
+- An M4 acceptance mode ([guide](m4-acceptance.md)): an injected complaint over five seeds, same- versus cross-segment spread, an influence audit sheet and a replay check. The scripted rehearsal passes replay; spread and the influence audit need live runs and stay `NOT_RUN`.
+
+Live spread, influence plausibility and graph frame rate on a typical designer laptop are unmeasured.
+
 ---
 
 ## M0 — Walking skeleton: one persona finds one friction

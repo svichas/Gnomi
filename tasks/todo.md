@@ -93,3 +93,20 @@
 - Integration fix: report model calls ran after a projected-cost stop and spent past the cap ($1.10 against $1). Any run stop now skips them; the existing projected-cost regression caught it.
 - `npm test`: 462 passing (347 engine, 62 Gym, 53 app), no failures or skips. Typecheck, app build, main smoke (19 stages, including export: HTML 93 KB, PDF 404 KB, JSON 9 KB, Markdown 6 KB for the smoke run), project smoke and profile smoke all passed.
 - All model calls were scripted. M3 acceptance (recall, precision, stability, control run, 25 MB export for 50 personas with real screenshots) is unmeasured.
+
+## M4 — social swarm and live graph
+
+- [x] Commit the shared social contract and influence rule.
+- [x] Social engine: rounds, follow graph, feed, socialiser, influence, injection.
+- [x] Swarm graph and feed in the app.
+- [x] Opinion spread report and homogeneity.
+- [x] M4 acceptance runner (scripted rehearsal).
+- [x] Integrate, full checks, Electron verification, roadmap status.
+- [ ] Live M4 acceptance (influence audit, spread over five seeds, graph frame rate) once credentials and a spend allowance exist.
+
+## M4 first-batch results — 15 October 2026
+
+- Four worktree sessions (social engine, graph, spread report, acceptance) merged into `m4-social-swarm` without conflicts.
+- Integration fixes: the M4 rehearsal now enables social rounds and scripts the socialiser, judge and author; the swarm smoke stage now checks the real scripted swarm run (enabled scrubber, follows in the inspector) instead of assuming no rounds; a readonly fixture type in a scripted-provider test.
+- `npm test`: 518 passing (400 engine, 62 Gym, 56 app), no failures or skips. Typecheck, app build, main smoke (20 stages), project, profile and budget smokes passed. `perf:swarm`: 120 fps, p95 frame 9.3 ms, 200 personas, 10 POIs, 5,125 connections.
+- Scripted M4 rehearsal: replay PASS; spread and influence audit NOT_RUN (scripted opinions never move); frame rate measured separately. All model calls were scripted.

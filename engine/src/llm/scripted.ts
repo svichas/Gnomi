@@ -1,3 +1,4 @@
+import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import type { LlmAttempt, LlmGateway, LlmRequest, LlmResult, Recorder, Responder } from '../seams.ts';
 import type { LlmRole } from '../types.ts';
 import { InvalidOutputError, retryParts, transcriptRequest } from './gateway.ts';
@@ -61,6 +62,23 @@ export const DEMO_NAVIGATOR: Responder = (() => {
   };
 })();
 
+/**
+ * A plausible, mostly silent swarm with no model behind it: a draw seeded by run, persona and round sometimes reacts to or answers
+ * the top post of the feed, and sometimes posts. Every text says plainly that no model wrote it, and opinions never move.
+ */
+export const DEMO_SOCIALISER: Responder = (req) => {
+  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const feed = [...text.matchAll(/^\[post ([^\]\s]+)\]/gm)].map((m) => m[1]); // the feed lines of socialParts
+  const about = /about_poi_id: "([^"]+)"/.exec(req.system)?.[1] ?? null;
+  const next = mulberry32(fnv1a(`social/${req.run_id}/${req.persona_id}/${req.round}`));
+  const u = next();
+  const quiet = { thought: 'Scripted demo: no model read this feed.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
+  if (feed.length && u < 0.2) return { ...quiet, action: 'react', post_id: feed[0], reaction: next() < 0.7 ? 'agree' : 'disagree' };
+  if (feed.length && u < 0.3) return { ...quiet, action: 'reply', post_id: feed[0], text: 'Scripted demo reply: no model wrote this.', about_poi_id: about };
+  if (u < 0.35) return { ...quiet, action: 'post', text: 'Scripted demo post: no model wrote this, so it says nothing about the product.', about_poi_id: about };
+  return quiet;
+};
+
 /** The JSON object a report-model request carries as its one text part (report/models.ts). */
 function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   const part = req.user.find((p) => p.type === 'text');
@@ -71,15 +89,16 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction group the judge was shown, saying plainly that no model named it. */
+/** One theme per friction group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
 export const DEMO_JUDGE: Responder = (req) => {
-  const groups = (requestJson(req).groups ?? []) as { id: string }[];
+  const { groups = [], posts } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[] };
   return {
     themes: groups.map((group, i) => ({
       title: `Scripted demo theme ${i + 1}: no model named it`,
       description: `Scripted demo: no judge model ran, so this is friction group ${group.id} as the engine grouped it.`,
       group_ids: [group.id],
     })),
+    ...(posts ? { posts: groups.length > 0 ? posts.map((post) => ({ post_id: post.id, group_ids: [groups[0].id] })) : [] } : {}),
   };
 };
 

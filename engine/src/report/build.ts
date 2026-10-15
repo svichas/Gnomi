@@ -1,7 +1,8 @@
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
-import { analyseFrictions } from './themes.ts';
+import { buildSpread, homogeneity } from './spread.ts';
+import { analyseFrictions, type Context } from './themes.ts';
 import type {
   Audience,
   EventOf,
@@ -171,11 +172,14 @@ export function buildReport(events: GnomiEvent[]): Report {
   const weighted = (pick: (s: ReportSegment) => number) =>
     weight === 0 ? 0 : segments.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
 
-  const analysis = analyseFrictions(events, {
+  const ctx: Context = {
     poi_id: config.project.poi.id,
     personas: new Map(personas.map((p) => [p.id, { name: p.name, segment_id: p.segment_id }])),
     segments,
-  });
+  };
+  const analysis = analyseFrictions(events, ctx);
+  // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
+  const social = events.some((e) => e.type === 'social.post');
 
   const inUse = audience ? audience.segments.filter((s) => segments.some((seg) => seg.id === s.id)) : [];
   const roleOfUse = audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
@@ -235,6 +239,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     themes: analysis.themes,
     sentiment: analysis.sentiment,
     went_well: analysis.went_well,
+    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map([[config.project.poi.id, config.project.poi.name]])) } : {}),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,
@@ -276,6 +281,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       })),
       signal_thresholds: config.signals ?? null,
       limitations: analysis.limitations,
+      ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },
   };
 }

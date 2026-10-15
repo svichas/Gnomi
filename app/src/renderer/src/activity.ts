@@ -116,12 +116,28 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
     }
     case 'persona.opinion_changed': {
       const { sentiment, confidence, likes, frictions } = event.payload.after;
+      const posts = event.payload.cause.post_ids;
       return {
         seq, label: 'Opinion', tone: 'notice',
-        title: `Sentiment ${sentiment > 0 ? '+' : ''}${sentiment}; self-reported confidence ${Math.round(confidence * 100)}%`,
-        detail: `Likes: ${likes.join('; ') || 'none reported'}. Frictions: ${frictions.join('; ') || 'none reported'}.`,
+        title: `Sentiment ${sentiment > 0 ? '+' : ''}${sentiment}; self-reported confidence ${Math.round(confidence * 100)}%${posts.length ? `, after reading ${posts.length === 1 ? 'a post' : `${posts.length} posts`}` : ''}`,
+        detail: `Likes: ${likes.join('; ') || 'none reported'}. Frictions: ${frictions.join('; ') || 'none reported'}.${posts.length ? ` Cited posts: ${posts.join(', ')}.` : ''}`,
       };
     }
+    case 'run.round_started':
+      return { seq, label: `Round ${event.round}`, tone: 'muted', title: `Round ${event.round} started` };
+    case 'run.round_ended':
+      return { seq, label: `Round ${event.round}`, tone: 'muted', title: `Round ${event.round} ended` };
+    case 'social.feed_viewed': {
+      const n = event.payload.post_ids.length;
+      return { seq, label: 'Feed', tone: 'muted', title: n ? `Read ${n === 1 ? 'one new post' : `${n} new posts`} in the feed` : 'Found nothing new in the feed' };
+    }
+    case 'social.post': {
+      const { post_id, parent_id, text, injected } = event.payload;
+      const title = `${parent_id ? `Replied to post ${parent_id}` : 'Posted in the feed'}${injected ? ' (put there by the test harness)' : ''}`;
+      return { seq, label: parent_id ? 'Reply' : 'Post', tone: 'plain', title, detail: `Post ${post_id}`, quote: text };
+    }
+    case 'social.reaction':
+      return { seq, label: 'Reaction', tone: 'muted', title: `${event.payload.kind === 'agree' ? 'Agreed' : 'Disagreed'} with post ${event.payload.post_id}` };
     case 'persona.survey': {
       const { sentiment, confidence, likes, frictions, would_continue, reason } = event.payload;
       return {
@@ -259,13 +275,14 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
   return counts;
 }
 
-export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'outcomes' | 'blocks' | 'containment' | 'run';
+export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'social' | 'outcomes' | 'blocks' | 'containment' | 'run';
 
 export const CATEGORIES: Record<Category, string> = {
   steps: 'Steps',
   frictions: 'Frictions',
   signals: 'Detected signals',
   opinions: 'Opinions',
+  social: 'Feed, posts and reactions',
   outcomes: 'Finishes and give-ups',
   blocks: 'Blocked and resumed',
   containment: 'Blocked requests and safety stops',
@@ -284,6 +301,9 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'signal.small_target': 'signals',
   'persona.opinion_changed': 'opinions',
   'persona.survey': 'opinions',
+  'social.feed_viewed': 'social',
+  'social.post': 'social',
+  'social.reaction': 'social',
   'persona.goal_done': 'outcomes',
   'persona.abandoned': 'outcomes',
   'signal.budget_exceeded': 'outcomes',
@@ -294,6 +314,8 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'containment.tripwire': 'containment',
   'run.reset_called': 'run',
   'run.concurrency_changed': 'run',
+  'run.round_started': 'run',
+  'run.round_ended': 'run',
   'run.stopped': 'run',
   'run.finished': 'run',
   'llm.call': 'run',

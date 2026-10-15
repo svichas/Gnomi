@@ -1,5 +1,5 @@
 import { looksLikeStaging } from '@gnomi/engine/safety.ts';
-import { DEFAULT_SETTINGS } from '@gnomi/engine/settings.ts';
+import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/engine/settings.ts';
 import type { Audience, LlmRole, PersonaSchema, ProjectConfig, RunSettings, SessionInfo } from '@gnomi/engine/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
 import { profileProblem } from './profile.ts';
@@ -100,6 +100,8 @@ export function settingsProblem(settings: RunSettings): string | null {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) return 'Settings: concurrency must be a whole number from 1 to 32.';
   if (!(cost_budget_usd > 0)) return 'Settings: the cost budget must be more than zero.';
   if (!(wall_clock_budget_min > 0)) return 'Settings: the time budget must be more than zero minutes.';
+  const rounds = settings.rounds ?? 5;
+  if (settings.social && !(Number.isInteger(rounds) && rounds >= 1 && rounds <= MAX_ROUNDS)) return `Settings: social rounds must be a whole number from 1 to ${MAX_ROUNDS}.`;
   return null;
 }
 

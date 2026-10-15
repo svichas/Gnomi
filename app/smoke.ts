@@ -10,7 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
 import type { Page } from 'playwright-core';
+import { feedThreads, socialMemory } from '../engine/src/graph/feed.ts';
+import { buildGraph, graphAtRound } from '../engine/src/graph/index.ts';
+import { syntheticRun } from '../engine/src/graph/synthetic.ts';
+import { openProject } from '../engine/src/log/sqlite.ts';
 import { PROVIDER_DEFAULTS } from '../engine/src/settings.ts';
+import type { GnomiEvent } from '../engine/src/types.ts';
 import { startGym } from '../gym/server.ts';
 
 const appDir = import.meta.dirname;
@@ -34,6 +39,21 @@ async function stage(name: string, body: () => Promise<void>) {
     failures++;
     console.log(`FAIL  ${name}\n      ${(err instanceof Error ? err.message : String(err)).split('\n').slice(0, 3).join('\n      ')}`);
   }
+}
+
+/** Hovers and clicks the first node with this key prefix on the swarm canvas, found through the sigma instance on its container. */
+async function clickNode(page: Page, prefix: string): Promise<string> {
+  const canvas = page.locator('.sigma-container');
+  const box = (await canvas.boundingBox())!;
+  const node = await canvas.evaluate((element, prefix) => {
+    const sigma = (element as HTMLElement & { sigma: { getGraph(): { nodes(): string[] }; getNodeDisplayData(key: string): { x: number; y: number }; framedGraphToViewport(at: { x: number; y: number }): { x: number; y: number } } }).sigma;
+    const key = sigma.getGraph().nodes().find((candidate) => candidate.startsWith(prefix))!;
+    return { key, ...sigma.framedGraphToViewport(sigma.getNodeDisplayData(key)) };
+  }, prefix);
+  await page.mouse.move(box.x + node.x, box.y + node.y);
+  await page.getByRole('region', { name: 'Swarm graph' }).getByRole('status').waitFor(); // the hover card
+  await page.mouse.click(box.x + node.x, box.y + node.y);
+  return node.key.slice(prefix.length);
 }
 
 /** The report names at least one friction and its screenshot actually loaded (screenshots are fetched when they scroll into view). */
@@ -324,12 +344,14 @@ try {
 
   await stage('Settings: budgets save with the project', async () => {
     const settings = page.locator('#panel-settings');
-    assert.equal(await settings.getByText('Used from a later version.').count(), 3, 'the socialiser, judge and author are marked as not used yet');
+    assert.equal(await settings.getByText('Used from a later version.').count(), 2, 'the judge and author are marked as not used yet');
     await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('40');
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('concurrency must be a whole number from 1 to 32.').waitFor();
     await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('3');
     await settings.getByLabel('Cost budget (USD)', { exact: true }).fill('2');
+    await settings.getByLabel('Let personas read and post in a shared feed between stretches of use').check();
+    assert.equal(await settings.getByLabel('Rounds (1-10)', { exact: true }).inputValue(), '5');
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('Settings saved with the project.').waitFor();
     await page.screenshot({ path: join(shots, 'settings-models.png'), fullPage: true });
@@ -455,6 +477,16 @@ try {
       assert.match(await page.getByRole('region', { name: 'Run status' }).innerText(), /Personas finished\s+6 of 6/);
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /3 browsers at a time/);
       await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
+      // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
+      const activity = page.getByRole('region', { name: 'Activity' });
+      await activity.getByLabel('Kind of event').selectOption({ label: 'Feed, posts and reactions' });
+      await page.waitForFunction(() => {
+        const section = document.querySelector('section[aria-labelledby=activity-title]');
+        section?.scrollIntoView({ block: 'end' }); // the list holds only the rows on screen, and the first posts are at its end
+        return [...(section?.querySelectorAll('[role=listitem]') ?? [])].some((row) => row.textContent?.includes('Posted in the feed'));
+      }, null, { timeout: 30_000 });
+      await page.screenshot({ path: join(shots, 'activity-social.png') });
+      await activity.getByLabel('Kind of event').selectOption({ label: 'Everything' });
       population = true;
     } finally {
       await site.close();
@@ -564,6 +596,66 @@ try {
     await page.getByRole('button', { name: /r-0001/ }).click();
     await page.getByRole('heading', { name: 'Report' }).waitFor();
     await expectReport(page);
+  });
+  await stage('the swarm tab draws a run, scrubs its rounds, and a persona node opens the inspector with its social memory', async () => {
+    assert.ok(population, 'needs the population run above');
+    const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
+    const graph = page.getByRole('region', { name: 'Swarm graph' });
+    // The scripted swarm run above: personas, the Gym, its used and friction edges, and its social rounds.
+    await tab('Run').click();
+    await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: /r-0005/ }).click();
+    await page.getByRole('tab', { name: 'Swarm' }).click();
+    await graph.getByText(/^6 personas, 1 point of interest, [1-9]\d* connections$/).waitFor();
+    assert.match(await graph.innerText(), /Used \([1-9]/);
+    assert.match(await graph.innerText(), /Friction \([1-9]/);
+    assert.ok(await graph.getByRole('slider').isEnabled(), 'its rounds can be scrubbed');
+    await clickNode(page, 'persona:');
+    await inspector.getByRole('region', { name: 'Social memory' }).getByText(/^Follows \(\d+\)$/).waitFor();
+    await inspector.getByRole('button', { name: 'Close' }).click();
+
+    // A synthetic social run of three rounds, written to the open project's log as the social engine would.
+    const { config: synthetic, events } = syntheticRun({ personas: 12, pois: 3, rounds: 3, seed: 4 });
+    const store = openProject(join(tmp, 'smoke.gnomi'));
+    const { run_id: _, ...snapshot } = synthetic;
+    const config = store.createRun(snapshot);
+    const logged = [...events, { ...events.at(-1)!, seq: events.length + 1, persona_id: null, poi_id: null, type: 'run.finished', payload: {} } as GnomiEvent]
+      .map((event) => ({ ...event, run_id: config.run_id, ...(event.type === 'run.started' && { payload: { config } }) }) as GnomiEvent);
+    for (const { seq, ts, ...event } of logged) store.append(event);
+    store.finishRun(config.run_id, 'finished', null, 0);
+    store.close();
+    await page.reload();
+    await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
+    await tab('Run').click();
+    await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: new RegExp(config.run_id) }).click();
+    await page.getByRole('tab', { name: 'Swarm' }).click();
+    await graph.getByText(`12 personas, 3 points of interest, ${buildGraph(logged).edges.size} connections`).waitFor();
+    const feed = page.getByRole('region', { name: 'Feed' });
+    await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();
+    assert.ok(await feed.getByText('Injected by the test harness').count() >= 1, 'the injected post is labelled');
+    await page.screenshot({ path: join(shots, 'swarm.png') });
+
+    // Scrub back to round 1: the graph and the feed are rebuilt from the log up to that round.
+    const slider = graph.getByRole('slider');
+    await slider.focus();
+    await page.keyboard.press('Home');
+    await graph.getByText('Round 1 of 3').waitFor();
+    await graph.getByText(`${graphAtRound(logged, 1).edges.size} connections`, { exact: false }).waitFor();
+    await feed.getByRole('heading', { name: `Feed (${feedThreads(logged.filter((event) => event.round <= 1)).length} threads)` }).waitFor();
+    await page.keyboard.press('End');
+    await graph.getByText('Round 3 of 3 (latest)').waitFor();
+
+    const id = await clickNode(page, 'persona:');
+    const memory = socialMemory(logged, id);
+    const social = inspector.getByRole('region', { name: 'Social memory' });
+    await social.getByText(`Follows (${memory.follows.length})`).waitFor();
+    await social.getByText(`Posts seen (${memory.seen.length})`).waitFor();
+    await social.getByText(`Own posts (${memory.own.length})`).waitFor();
+    await social.screenshot({ path: join(shots, 'inspector-social.png') });
+    await inspector.getByRole('button', { name: 'Close' }).click();
+    const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
+    await page.screenshot({ path: join(shots, 'swarm-720.png'), fullPage: true });
+    await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
   });
 } finally {
   await app.close();

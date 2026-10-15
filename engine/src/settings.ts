@@ -1,4 +1,4 @@
-import type { ProviderId, Routing, RunSettings } from './types.ts';
+import type { Audience, ProviderId, Routing, RunSettings } from './types.ts';
 
 // Model defaults per provider and role (tech.md §10.2). Pure: the renderer imports these too.
 export const PROVIDER_DEFAULTS: Record<ProviderId, Routing> = {
@@ -47,4 +47,13 @@ export const DEFAULT_SETTINGS: RunSettings = {
   cost_budget_usd: 5,
   wall_clock_budget_min: 60,
   screenshots: true,
+  social: false,
+  rounds: 5,
 };
+
+export const MAX_ROUNDS = 10;
+
+/** R for a run (tech.md §6.4), or 0 when it has no social rounds: off in settings, or no audience to make a swarm. */
+export function socialRounds(settings: RunSettings, audience: Audience | null): number {
+  return settings.social && audience ? Math.min(MAX_ROUNDS, Math.max(1, Math.floor(settings.rounds ?? 5))) : 0;
+}

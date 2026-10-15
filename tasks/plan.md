@@ -69,3 +69,16 @@ M2 stays open only for live-provider measurements, which need local credentials 
 5. Export agent (app main process, export module): single-file HTML from the report components, JSON, PDF via `printToPDF`, Markdown.
 
 Overlaps to expect at merge: `agent/loop.ts` (2, 3), `llm` estimates (3, 4), `Report.tsx` (4, 5). Live recall/precision/stability acceptance needs paid runs; scripted and pure-function tests establish behaviour only.
+
+# M4 — social swarm and live graph
+
+M4 builds on the M3 branch (PR #3) as branch `m4-social-swarm`. The shared contract is committed first: `run.round_started|ended` (the envelope's `round`), `social.feed_viewed`, `social.post` (a reply is a post with `parent_id`, unlike tech.md's separate `social.reply`; `injected` marks harness posts), `social.reaction` (agree | disagree), `persona.created.follows`, `Persona.posting_propensity`, `RunConfig.injected_posts`, and the shared influence rule `engine/src/social/influence.ts`.
+
+## Agent ownership
+
+1. Social engine agent (`run.ts`, `agent/`, `engine/src/social/` except `influence.ts`, settings, estimate, scripted provider): rounds of usage slices and social phases, follow graph, feed selection, socialiser prompt and schema, opinion updates with cited posts, injected posts, cost/stop behaviour.
+2. Graph agent (app swarm tab, `engine/src/graph/`): projection, Sigma/Graphology live view, filters, scrubber, click-to-inspect, feed threads, social memory in the inspector, a 200-persona performance check.
+3. Spread report agent (`engine/src/report/`, `Report.tsx`): opinion spread per POI, posts tagged to themes in the judge call, first-hand versus second-hand frictions, homogeneity in the methods appendix.
+4. Acceptance agent (`engine/src/acceptance/`, docs): M4 mode with an injected complaint over five seeds, within- versus cross-segment spread, influence-edge audit sheet, scrubber replay check; scripted rehearsal only.
+
+Overlaps to expect at merge: the scripted provider (1, 3), `Report.tsx`/`App.tsx` navigation (2, 3), estimate (1, 3). Live acceptance (influence audit, spread over seeds) needs paid runs.

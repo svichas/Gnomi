@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
 import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
 import { groupProfiles } from '@gnomi/engine/report/dimensions.ts';
+import { socialMemory } from '@gnomi/engine/graph/feed.ts';
 import { Activity, ProfileFilters } from './Activity.tsx';
 import { countStates, filterEvents, filterPersonas, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';
 import type { Filters, PersonaState } from './activity.ts';
@@ -12,6 +13,7 @@ import { Inspector } from './Inspector.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
+import { Swarm } from './Swarm.tsx';
 import { Note, ProgressBar, Screenshot, secondaryButton, usd, when } from './ui.tsx';
 
 const DOT: Record<PersonaState, string> = {
@@ -69,6 +71,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const [filters, setFilters] = useState<Filters>({ persona: '', segment: '', category: '' });
   const [inspecting, setInspecting] = useState<{ persona: string; seq: number | null } | null>(null);
   const closeInspector = useCallback(() => setInspecting(null), []);
+  const openPersona = useCallback((id: string) => setInspecting({ persona: id, seq: null }), []);
+  const [view, setView] = useState<'activity' | 'swarm'>('activity');
 
   useEffect(() => {
     let current = true;
@@ -139,6 +143,11 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const finished = counts.done + counts.abandoned + counts.unfinished + (ended ? counts.blocked : 0);
   const status = ended ? (events.some((event) => event.type === 'run.stopped') ? 'Stopped' : 'Finished') : waiting.length > 0 ? 'Waiting for you' : events.length ? 'Running' : 'Starting';
   const inspected = inspecting ? personaById.get(inspecting.persona) : undefined;
+  const names = useMemo(() => new Map(personas.map((persona) => [persona.id, personaLabel(persona, setup.schema)])), [personas, setup.schema]);
+  const social = useMemo(() => {
+    if (!inspected || !events.some((event) => event.type === 'run.round_started' || event.type.startsWith('social.'))) return null; // a run without social rounds
+    return socialMemory(events, inspected.id);
+  }, [events, inspected]);
 
   const stats: [string, string][] = [
     ['Status', status],
@@ -198,20 +207,44 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
       )}
       {error && <Note tone="error">{error}</Note>}
       {ended && !report && !error && <p className="text-sm text-stone-500">Building the report...</p>}
-      {report && <ExportReport report={report} />}
-      <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} />
-      {report && <Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} />}
+      <div role="tablist" aria-label="Run views" className="flex gap-1 border-b border-stone-200">
+        {([['activity', 'Activity'], ['swarm', 'Swarm']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`run-tab-${id}`}
+            aria-selected={view === id}
+            aria-controls={`run-panel-${id}`}
+            onClick={() => setView(id)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 ${view === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-stone-600 hover:text-stone-900'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {/* The swarm mounts only while shown: its canvas needs a size, and it rebuilds from the log in milliseconds. */}
+      {view === 'swarm' && (
+        <div role="tabpanel" id="run-panel-swarm" aria-labelledby="run-tab-swarm">
+          <Swarm events={events} segments={segments} names={names} poi={frozenConfig?.project.poi} onOpen={openPersona} />
+        </div>
+      )}
+      <div role="tabpanel" id="run-panel-activity" aria-labelledby="run-tab-activity" hidden={view !== 'activity'} className="space-y-5">
+        {report && <ExportReport report={report} />}
+        <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} />
+        {report && <Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} />}
 
-      <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
-      <Activity
-        rows={rows}
-        total={events.length}
-        personas={shownPersonas}
-        segments={segments}
-        filters={filters}
-        onFilters={setFilters}
-        onOpen={(id, seq) => setInspecting({ persona: id, seq })}
-      />
+        <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
+        <Activity
+          rows={rows}
+          total={events.length}
+          personas={shownPersonas}
+          segments={segments}
+          filters={filters}
+          onFilters={setFilters}
+          onOpen={(id, seq) => setInspecting({ persona: id, seq })}
+        />
+      </div>
       {inspected && inspecting && (
         <Inspector
           key={inspected.id}
@@ -222,6 +255,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          social={social}
+          names={names}
           onClose={closeInspector}
         />
       )}

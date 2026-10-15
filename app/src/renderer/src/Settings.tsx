@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
+import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
 import type { LlmRole, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
 import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
@@ -17,7 +17,7 @@ const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
 const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
   navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
   persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
-  socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: false },
+  socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },
   judge: { label: 'Judge', hint: 'Groups and rates the findings.', used: false },
   author: { label: 'Author', hint: 'Writes the report text.', used: false },
 };
@@ -278,6 +278,22 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
             Show each page to the model as a screenshot
           </Check>
           <p className="pl-6 text-xs text-stone-500">Screenshots are always kept as evidence. Showing them to the model lets it see the page, and costs more.</p>
+        </div>
+      </Card>
+
+      <Card title="Social rounds">
+        <div className="space-y-4">
+          <Check checked={settings.social ?? false} onChange={(on) => set('social', on)}>
+            Let personas read and post in a shared feed between stretches of use
+          </Check>
+          <p className="pl-6 text-xs text-stone-500">
+            Each round, every persona uses the product for part of its steps, then reads posts from the people it follows and may post, reply or react. Most stay silent. Needs an audience: the built-in persona runs alone.
+          </p>
+          {settings.social && (
+            <Field label="Rounds (1-10)" hint="More rounds give opinions more chances to spread, with one socialiser call per persona each round.">
+              <NumberInput label="Rounds (1-10)" value={settings.rounds ?? 5} onChange={(v) => set('rounds', v)} min={1} max={MAX_ROUNDS} />
+            </Field>
+          )}
         </div>
       </Card>
 
