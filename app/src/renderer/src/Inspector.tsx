@@ -2,14 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
 import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
 import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
+import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
 import { Screenshot } from './ui.tsx';
 import { personaLabel, ProfileFields } from './ProfileFields.tsx';
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
-export function Inspector(props: { runId: string; persona: Persona; schema?: PersonaSchema; poi?: { id: string; name: string }; segment: Segment | undefined; focusSeq: number | null; ended: boolean; onClose(): void }) {
-  const { runId, persona, schema, poi, segment, focusSeq, ended, onClose } = props;
+export function Inspector(props: {
+  runId: string; persona: Persona; schema?: PersonaSchema; poi?: { id: string; name: string }; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  social: SocialMemory | null; // null: the run had no social rounds
+  names: Map<string, string>;
+  onClose(): void;
+}) {
+  const { runId, persona, schema, poi, segment, focusSeq, ended, social, names, onClose } = props;
   const name = personaLabel(persona, schema);
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +122,33 @@ export function Inspector(props: { runId: string; persona: Persona; schema?: Per
               {items.length ? <ul className="list-disc space-y-1 pl-4">{items.map((item, i) => <li key={i} className="break-words">{item}</li>)}</ul> : <p className="text-stone-500">None reported</p>}
             </div>)}
           </div>)}
+        </section>
+
+        <section aria-label="Social memory" className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Social memory</h3>
+          {!social ? (
+            <p className="text-sm text-stone-500">This run had no social rounds, so there is nothing to remember from the feed.</p>
+          ) : (
+            <div className="space-y-3 rounded-lg border border-stone-200 px-4 py-3 text-sm">
+              <div>
+                <h4 className="text-xs font-medium text-stone-500">Follows ({social.follows.length})</h4>
+                <p className="break-words">{social.follows.length ? social.follows.map((id) => names.get(id) ?? id).join(', ') : 'Nobody'}</p>
+              </div>
+              {([['Posts seen', social.seen], ['Own posts', social.own]] as const).map(([label, posts]) => <div key={label}>
+                <h4 className="text-xs font-medium text-stone-500">{label} ({posts.length})</h4>
+                {posts.length ? (
+                  <ul className="mt-1 max-h-48 space-y-2 overflow-y-auto">
+                    {posts.map(({ seq, persona_id, round, payload }) => (
+                      <li key={seq} className="break-words">
+                        <span className="text-xs text-stone-500">{names.get(persona_id ?? '') ?? persona_id}, round {round}{payload.parent_id ? ', a reply' : ''}{payload.injected ? ', injected by the test harness' : ''}: </span>
+                        {payload.text}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-stone-500">None</p>}
+              </div>)}
+            </div>
+          )}
         </section>
 
         <details aria-label="Profile" className="rounded-lg border border-stone-200">

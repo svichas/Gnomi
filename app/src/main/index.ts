@@ -16,9 +16,10 @@ app.on('second-instance', () => BrowserWindow.getAllWindows()[0]?.focus());
 const rendererUrl = process.env.ELECTRON_RENDERER_URL; // set by `electron-vite dev`
 
 // Only the bundled page and its own script and styles; the dev server also needs inline styles and a websocket.
+// worker-src blob: is the swarm layout, which ForceAtlas2 starts from a Blob of its own bundled code.
 const CSP = rendererUrl
-  ? "default-src 'self' 'unsafe-inline' ws://localhost:*; img-src data:"
-  : "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'";
+  ? "default-src 'self' 'unsafe-inline' ws://localhost:*; img-src data:; worker-src blob:"
+  : "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; worker-src blob:; base-uri 'none'; form-action 'none'";
 
 // Main is a protocol client of the engine over the utility process's parent port (engine/src/host.ts).
 let engine: UtilityProcess | undefined;
