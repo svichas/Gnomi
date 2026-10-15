@@ -33,6 +33,13 @@ export interface EpisodeDeps {
   tripwire: (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => void;
   /** Waits for RunHandle.resume, at most the pause timeout; stop() ends the wait. */
   waitForResume: () => Promise<'resumed' | 'timeout' | 'stopped'>;
+  /** The round the run is in, for every event and model call (tech.md §6.4). */
+  round: () => number;
+  /**
+   * Social rounds: after every `steps` steps the episode waits, page and memory intact, for its next usage slice. next() resolves
+   * with the persona's opinion as the social phase left it, or null when the run ended in between. Absent: one straight run.
+   */
+  slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null } | null> };
 }
 
 /**
@@ -47,7 +54,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   const poi_id = config.project.poi.id;
   const step_budget = stepBudget(persona);
   const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
-    record({ run_id, round: 1, persona_id: persona.id, poi_id, type, payload } as NewEvent);
+    record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
   const system = systemPrompt(persona, config.project, segment, step_budget);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
@@ -104,7 +111,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
     if (signal.aborted) return null;
     try {
-      const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: 1, system, user, schema, signal });
+      const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), system, user, schema, signal });
       return { snapshot, screenshot, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;
@@ -122,6 +129,11 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     if (first !== 'go') return first;
 
     for (let step_no = 1; step_no <= step_budget; step_no++) {
+      if (deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0) {
+        const next = await deps.slice.next();
+        if (!next) return 'stopped';
+        opinion = next.opinion;
+      }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
       let looked: Awaited<ReturnType<typeof look>>;

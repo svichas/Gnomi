@@ -1,14 +1,18 @@
-import { runEpisode, type EpisodeEnd } from './agent/loop.ts';
-import { surveyParts, surveySchema, surveySystemPrompt } from './agent/prompt.ts';
+import { runEpisode, stepBudget, type EpisodeEnd } from './agent/loop.ts';
+import { socialParts, socialSchema, socialSystemPrompt, surveyParts, surveySchema, surveySystemPrompt } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
+import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
+import { socialRounds } from './settings.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
+import { readBoard, selectFeed, type Board } from './social/feed.ts';
+import { followGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
-import type { EventPayloads, GnomiEvent, Persona, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo } from './types.ts';
+import type { EventPayloads, GnomiEvent, Opinion, Persona, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo } from './types.ts';
 
 export interface RunDeps {
   store: ProjectStore;
@@ -68,7 +72,10 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
 export function startRun(config: RunConfig, { store, blobs, browsers, llm, record, sessions }: RunDeps): RunHandle {
   const { run_id, project } = config;
   const { poi, settings } = project;
-  const base = { run_id, round: 1, persona_id: null, poi_id: null };
+  const base = { run_id, round: 1, persona_id: null, poi_id: null }; // round moves on with social rounds
+  // Social rounds (tech.md §6.4): R usage slices, each followed by a social phase. 0 runs one straight slice, as before M4.
+  const rounds = socialRounds(settings, project.audience);
+  const follows = rounds ? followGraph(config.personas, config.seed) : null;
   const hard = new AbortController(); // observed cost cap, stop(), tripwire or error: cancel model calls in flight
   const drain = new AbortController(); // every run-wide stop: no step or persona starts, paused personas wake
   let halted: EventPayloads['run.stopped'] | null = null;
@@ -185,7 +192,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         model: settings.routing.navigator,
         run_id,
         persona_id: persona.id,
-        round: 1,
+        round: base.round,
         purpose: 'survey',
         system: surveySystemPrompt(persona, project, segmentOf(persona, project)),
         user: surveyParts({
@@ -210,6 +217,30 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
   };
 
+  const ends = new Map<string, EpisodeEnd>(); // episodes that are over, which still take part in later social phases
+
+  const currentOpinion = (persona_id: string) =>
+    foldOpinions(store.events(run_id, { types: ['persona.opinion_changed'] })).find((o) => o.persona_id === persona_id && o.poi_id === poi.id)?.opinion ?? null;
+
+  // With social rounds an episode runs on across slices, page and memory intact; between slices it waits here for its turn.
+  const waiting = new Map<string, (go: boolean) => void>();
+  const yielded = new Map<string, () => void>();
+  const tasks = new Map<string, Promise<void>>();
+  const between = (persona_id: string) => () =>
+    new Promise<{ opinion: Opinion | null } | null>((resolve) => {
+      waiting.set(persona_id, (go) => resolve(go && !drain.signal.aborted ? { opinion: currentOpinion(persona_id) } : null));
+      yielded.get(persona_id)?.();
+    });
+  /** One persona's usage slice: starts its episode or wakes it, and settles when it has taken its steps or ended. */
+  const turn = (persona: Persona) => {
+    const gave = new Promise<void>((resolve) => yielded.set(persona.id, resolve));
+    const wake = waiting.get(persona.id);
+    waiting.delete(persona.id);
+    if (wake) wake(true);
+    else tasks.set(persona.id, episode(persona));
+    return Promise.race([gave, tasks.get(persona.id)!]);
+  };
+
   const episode = async (persona: Persona) => {
     const role = roleOf(persona, project);
     const session = role ? (config.sessions.find((s) => s.role === role) ?? null) : null;
@@ -228,22 +259,110 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       endStep,
       tripwire: tripwire(persona.id),
       waitForResume: waitForResume(persona.id),
+      round: () => base.round,
+      slice: rounds ? { steps: Math.ceil(stepBudget(persona) / rounds), next: between(persona.id) } : undefined,
     });
-    await survey(persona, end);
+    ends.set(persona.id, end);
+    await survey(persona, end); // when the episode ends, whichever round that is
+  };
+
+  const names = new Map(config.personas.map((p) => [p.id, p.name]));
+  // One socialiser call per persona and phase (tech.md §6.6), admitted like a step so a stop or the cost cap prevents it.
+  const socialise = async (persona: Persona, round: number, events: GnomiEvent[], board: Board, opinions: CurrentOpinion[]) => {
+    if (!beginStep()) return;
+    try {
+      const feed = selectFeed(board, persona.id, follows?.get(persona.id) ?? []);
+      const post_ids = feed.map((p) => p.post_id);
+      record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids } });
+      const own = events.filter((e) => e.persona_id === persona.id);
+      const opinionOf = (poi_id: string) => opinions.find((o) => o.persona_id === persona.id && o.poi_id === poi_id)?.opinion ?? null;
+      const posts = new Map(board.posts.map((p) => [p.post_id, p]));
+      const name = (id: string) => names.get(id) ?? id;
+      const { object } = await budgetedLlm.call({
+        role: 'socialiser',
+        model: settings.routing.socialiser,
+        run_id,
+        persona_id: persona.id,
+        round,
+        purpose: 'social',
+        system: socialSystemPrompt(persona, project, segmentOf(persona, project)),
+        user: socialParts({
+          persona,
+          project,
+          round,
+          rounds,
+          end: ends.get(persona.id) ?? null,
+          steps: own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output').length,
+          frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
+          opinion: opinionOf(poi.id),
+          posted: own.flatMap((e) => (e.type === 'social.post' ? [e.payload.text] : [])),
+          feed: feed.map(({ post_id, author, text, agree, disagree, parent_id }) => {
+            const parent = parent_id ? posts.get(parent_id) : undefined;
+            return { post_id, author: name(author), text, agree, disagree, parent: parent ? { author: name(parent.author), text: parent.text } : null };
+          }),
+        }),
+        schema: socialSchema(post_ids, [poi.id]),
+        signal: hard.signal,
+      });
+      if (hard.signal.aborted) return;
+      const { action, post_id, text, reaction, about_poi_id, opinion_updates } = object;
+      const mine = { ...base, persona_id: persona.id };
+      // The schema guarantees the text, post and reaction each action needs. A persona writes at most one post a round.
+      if (action === 'post' || action === 'reply') {
+        record({ ...mine, poi_id: about_poi_id, type: 'social.post', payload: { post_id: `r${round}-${persona.id}`, parent_id: action === 'reply' ? post_id : null, text: text!, about_poi_id } });
+      }
+      if (action === 'react') record({ ...mine, type: 'social.reaction', payload: { post_id: post_id!, kind: reaction! } });
+      for (const { poi_id, post_ids: cited, ...after } of opinion_updates) {
+        const before = opinionOf(poi_id);
+        if (sameOpinion(before, after)) continue;
+        record({ ...mine, poi_id, type: 'persona.opinion_changed', payload: { poi_id, before, after, cause: { step_ids: [], post_ids: [...new Set(cited)] } } });
+      }
+    } catch (err) {
+      // Two invalid answers leave the persona silent for this phase (tech.md §10.6); any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !hard.signal.aborted) throw err;
+    } finally {
+      endStep();
+    }
+  };
+
+  const socialPhase = async (round: number) => {
+    // Harness posts go in first, under ids no model post can have, so this round's feeds can show them.
+    (config.injected_posts ?? []).filter((p) => p.round === round).forEach((p, i) => {
+      record({ ...base, persona_id: p.persona_id, poi_id: p.poi_id, type: 'social.post', payload: { post_id: `inj-r${round}-${i + 1}`, parent_id: null, text: p.text, about_poi_id: p.poi_id, injected: true } });
+    });
+    // One snapshot for the phase: personas read side by side, so what they write now shows from the next round on.
+    const events = store.events(run_id, { types: ['social.post', 'social.reaction', 'social.feed_viewed', 'persona.opinion_changed', 'persona.step', 'persona.friction_reported'] });
+    const board = readBoard(events);
+    const opinions = foldOpinions(events);
+    await inParallel(config.personas, (persona) => socialise(persona, round, events, board, opinions));
   };
 
   // At most `concurrency` personas in flight, each with its own page; a paused persona keeps its slot and its page.
-  const schedule = async () => {
+  const inParallel = async (personas: Persona[], work: (persona: Persona) => Promise<void>) => {
     const running = new Set<Promise<void>>();
-    for (const persona of config.personas) {
+    for (const persona of personas) {
       while (running.size >= concurrency && !drain.signal.aborted) await Promise.race(running);
       if (drain.signal.aborted) break;
-      const tracked: Promise<void> = episode(persona)
+      const tracked: Promise<void> = work(persona)
         .catch((err) => halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true))
         .finally(() => running.delete(tracked));
       running.add(tracked);
     }
     await Promise.all(running);
+  };
+
+  const schedule = async () => {
+    if (!rounds) return inParallel(config.personas, episode);
+    for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
+      base.round = round;
+      record({ ...base, type: 'run.round_started', payload: {} });
+      await inParallel(config.personas.filter((p) => !ends.has(p.id)), turn);
+      if (!drain.signal.aborted) await socialPhase(round);
+      record({ ...base, type: 'run.round_ended', payload: {} });
+    }
+    // A stop leaves episodes waiting for a slice that will not come: they end now and close their pages.
+    for (const wake of waiting.values()) wake(false);
+    await Promise.allSettled(tasks.values());
   };
 
   const resetStaging = async (url: string | null) => {
@@ -266,7 +385,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     const clock = setTimeout(() => halt({ reason: 'wall_clock', detail: `the ${settings.wall_clock_budget_min}-minute limit was reached` }, false), settings.wall_clock_budget_min * 60_000);
     try {
       if (config.reset) await resetStaging(poi.reset_hook_url);
-      for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: { persona } });
+      for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
       await schedule();
     } catch (err) {
       halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true);

@@ -1,10 +1,12 @@
-import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme } from '../types.ts';
+import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim();
 const cell = (text: string) => line(text).replace(/\|/g, '\\|');
 const pct = (rate: number) => `${Math.round(rate * 100)}%`;
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 
 export function reportToMarkdown(report: Report): string {
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
@@ -29,6 +31,7 @@ export function reportToMarkdown(report: Report): string {
     ...themeLines(report),
     ...sentimentLines(report),
     ...wentWellLines(report),
+    ...spreadLines(report),
     '',
     '## Frictions',
     '',
@@ -131,6 +134,31 @@ function wentWellLines(report: Report): string[] {
   ];
 }
 
+function spreadLines(report: Report): string[] {
+  if (!report.spread) return [];
+  const name = (id: string) => line(report.personas.find((p) => p.id === id)?.name ?? id);
+  return [
+    '', '## Opinion spread', '',
+    "How talk travelled on the simulated feed. First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.",
+    ...(report.spread.length === 0 ? ['', 'No post was about a point of interest.'] : []),
+    ...report.spread.flatMap((poi) => [
+      '', `### About ${line(poi.name)}`, '', ...spreadToMarkdown(poi, name),
+      ...poi.themes.flatMap((t) => ['', `#### ${t.rank}. ${line(t.title)}`, '', ...spreadToMarkdown(t, name)]),
+    ]),
+  ];
+}
+
+function spreadToMarkdown(s: SpreadStats, name: (id: string) => string): string[] {
+  const crossed = s.segments.filter((g) => !g.seed).length;
+  return [
+    `- ${count(s.posts, 'post')}; first-hand: ${count(s.first_hand.length, 'persona')}; second-hand: ${count(s.second_hand.length, 'persona')}${s.second_hand.length > 0 ? ` (${s.second_hand.map(name).join(', ')})` : ''}`,
+    ...s.seeds.map((p) => `- Seed post by ${line(p.persona_name)}, round ${p.round}${p.injected ? ', injected by the test harness' : ''}: "${line(p.text)}" (#${p.seq})`),
+    `- Segments reached: ${s.segments.map((g) => `${line(g.name)} ${g.personas}${g.seed ? ' (seed)' : ''}`).join(', ') || 'none'}; crossed into ${count(crossed, 'other segment')}`,
+    `- Influence: ${s.influence.map((e) => `${name(e.from)} → ${name(e.to)} (round ${e.round}, ${signed(e.delta)}, #${e.seq})`).join('; ') || 'none'}`,
+    `- Mean sentiment by round, -2 to +2: ${s.sentiment.map((r) => `${r.round}: ${r.mean === null ? 'no opinions' : `${signed(r.mean)} (${count(r.personas, 'persona')})`}`).join('; ')}`,
+  ];
+}
+
 function segmentRow(s: ReportSegment): string {
   return `| ${cell(s.name)} | ${s.share}% | ${s.personas} | ${pct(s.completion)} | ${pct(s.with_friction)} |`;
 }
@@ -184,6 +212,10 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
+    ...(m.homogeneity ? [
+      `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
+      ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),
+    ] : []),
     ...(m.limitations?.length ? m.limitations.map((l) => `- Limitation: ${line(l)}`) : m.limitations ? ['- Limitations: none'] : []),
   ];
 }

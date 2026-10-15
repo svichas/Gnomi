@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { ModelChoice, Persona, RunSettings } from '../types.ts';
+import type { Audience, ModelChoice, Persona, RunSettings } from '../types.ts';
 import { estimateReport, estimateRun } from './estimate.ts';
 
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
@@ -68,4 +68,23 @@ test('the report adds one judge and one author call, priced on their own routing
 
 test('no personas, no estimate', () => {
   assert.deepEqual(estimateRun({ personas: [], settings: DEFAULT_SETTINGS }), { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] });
+});
+
+test('social rounds add one socialiser call per persona and round, only for a run with an audience', () => {
+  const audience: Audience = { seed: 1, persona_count: 2, segments: [], company_size: [50, 2000], languages: { en: 1 }, accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 } };
+  const people = [persona(3), persona(3)];
+  const social = { ...DEFAULT_SETTINGS, social: true, rounds: 5 };
+  const base = estimateRun({ personas: people, settings: DEFAULT_SETTINGS, audience });
+  // 2 personas × 5 rounds on Haiku at 3,000 in / 200 out: $0.0004 uncached; half cached 1,500 × $0.125 + 1,500 × $0.01 + 200 × $0.50 = $0.0003025.
+  // They are timed like steps, two personas at a time: 10 × 2 s ÷ 2 and 10 × 6 s ÷ 2.
+  const estimate = estimateRun({ personas: people, settings: social, audience });
+  assert.equal(estimate.calls, base.calls + 10);
+  close(estimate.cost_usd[0], base.cost_usd[0] + 10 * 0.0003025);
+  close(estimate.cost_usd[1], base.cost_usd[1] + 10 * 0.0004);
+  close(estimate.minutes[0], base.minutes[0] + (10 * 2) / 2 / 60);
+  close(estimate.minutes[1], base.minutes[1] + (10 * 6) / 2 / 60);
+  assert.deepEqual(estimateRun({ personas: people, settings: social }), base, 'the built-in persona has nobody to talk to');
+  assert.deepEqual(estimateRun({ personas: people, settings: { ...social, social: false }, audience }), base);
+  const mystery = estimateRun({ personas: people, settings: { ...social, routing: { ...social.routing, socialiser: { provider: 'openai', model: 'gpt-9-mystery' } } }, audience });
+  assert.deepEqual([mystery.calls, mystery.cost_usd, mystery.unpriced], [base.calls + 10, base.cost_usd, ['gpt-9-mystery']]);
 });

@@ -5,7 +5,7 @@ import type { LlmGateway, LlmRequest, LlmResult, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, Persona, ProjectConfig } from '../types.ts';
 import { addPersona, DEMO_PERSONA_WRITER, defaultAudience, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './index.ts';
-import { addedSeed, GENERATION, sampleTraits, TRAIT_KEYS } from './sample.ts';
+import { addedSeed, GENERATION, postingPropensity, sampleTraits, TRAIT_KEYS } from './sample.ts';
 import { choose, nameKey, TAKEN_LABEL, type Candidate } from './write.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { personaProfileIsCurrent } from '../profile/signature.ts';
@@ -152,6 +152,17 @@ test('the first sync writes each persona once; an unchanged second sync makes no
   assert.equal(reseeded.calls.length, 20, 'a new audience seed re-samples everyone');
   assert.deepEqual(ids(other.personas), ids(first.personas));
   assert.ok(other.personas.every((p, i) => p.seed !== first.personas[i].seed));
+});
+
+test('written personas carry a posting propensity sampled from their seed, mostly low, that moves no other trait', async () => {
+  const audience = await proposed();
+  const { personas } = await syncPersonas(audience, [], deps(gateway().llm));
+  for (const p of personas) assert.equal(p.posting_propensity, postingPropensity(p.seed));
+  const sample = Array.from({ length: 1_000 }, (_, i) => postingPropensity(i));
+  assert.ok(sample.every((x) => x >= 0 && x <= 1 && Number(x.toFixed(2)) === x));
+  assert.ok(sample.filter((x) => x < 0.5).length > 700, 'most personas rarely post');
+  assert.ok(sample.some((x) => x > 0.8), 'a few post readily');
+  assert.ok(personas.every((p) => personaProfileIsCurrent(p, { ...project, audience })), 'it is not a writer input, so profiles stay current');
 });
 
 test('country and employer traits reach the writer, survive persistence, and sync without another model call', async () => {

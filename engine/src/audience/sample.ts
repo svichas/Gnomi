@@ -146,6 +146,9 @@ function companySize(u: number, [a, b]: readonly [number, number]): number {
   return Math.min(hi, Math.max(lo, Math.round(raw / unit) * unit));
 }
 
+/** How readily a persona posts in social rounds (tech.md §6.6), 0–1 and mostly low; its own stream, so no other trait moves. */
+export const postingPropensity = (seed: number) => Math.round(mulberry32(fnv1a(`posting/${seed}`))() ** 3 * 100) / 100;
+
 /** The traits a seed gives in this segment and audience. Pure. */
 export function sampleTraits(segment: Segment, audience: Audience, seed: number): Traits {
   validateCountries(audience.countries);
