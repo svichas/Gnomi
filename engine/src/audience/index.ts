@@ -3,6 +3,9 @@ import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, 
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from './sample.ts';
 import { nameKey, writePersonas } from './write.ts';
+import { validateCountries } from './locations.ts';
+import { sampleProfile } from '../profile/sample.ts';
+import { profileSignature } from '../profile/signature.ts';
 
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';
@@ -87,6 +90,7 @@ interface Slot {
 
 /** Each segment's slots: its share of persona_count (at least 3) plus the personas added by hand, in index order. */
 function layout(audience: Audience, population: Persona[]): { segment: Segment; slots: Slot[] }[] {
+  validateCountries(audience.countries);
   const count = audience.persona_count;
   if (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS) throw new Error(`persona_count must be a whole number from 1 to ${MAX_PERSONAS}`);
   const counts = apportion(audience.segments.map((s) => s.share), count, MIN_PER_SEGMENT);
@@ -128,13 +132,14 @@ export async function syncPersonas(
   existing: Persona[],
   deps: AudienceDeps,
 ): Promise<{ personas: Persona[]; cost_usd: number }> {
+  const project = { ...deps.project, audience };
   const slots = layout(audience, existing).flatMap(({ segment, slots }) =>
-    slots.map((slot) => ({ ...slot, segment, traits: sampleTraits(segment, audience, slot.seed) })),
+    slots.map((slot) => ({ ...slot, segment, traits: { ...sampleTraits(segment, audience, slot.seed), attributes: sampleProfile(project.persona_schema, segment.id, slot.seed) }, signature: profileSignature(project, segment, slot.seed) })),
   );
-  // shortcut: an edited goal or segment description keeps the written fields; hash the writer's inputs into this check when stale goal readings matter.
-  const keep = (s: (typeof slots)[number]) => s.old !== null && sameTraits(s.old, s.traits);
-  const kept = slots.filter(keep).map((s) => s.old!);
-  const written = await writePersonas(slots.filter((s) => !keep(s)), takenNames(kept), deps);
+  // Presentation/report flags and private values do not change prose. Keep it and refresh the sampled stored values.
+  const keep = (s: (typeof slots)[number]) => s.old?.profile_signature === s.signature;
+  const kept = slots.filter(keep).map((s) => sameTraits(s.old!, s.traits) ? s.old! : { ...s.old!, ...s.traits });
+  const written = await writePersonas(slots.filter((s) => !keep(s)), takenNames(kept), { ...deps, project });
   const byId = new Map([...kept, ...written.personas].map((p) => [p.id, p]));
   return { personas: slots.map((s) => byId.get(s.id)!), cost_usd: written.cost_usd };
 }
@@ -148,8 +153,9 @@ export async function regeneratePersona(
 ): Promise<{ persona: Persona; cost_usd: number }> {
   const segment = segmentOf(audience, persona.segment_id);
   const seed = persona.seed + GENERATION;
-  const job = { id: persona.id, segment, seed, traits: sampleTraits(segment, audience, seed) };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population.filter((p) => p.id !== persona.id)), deps);
+  const project = { ...deps.project, audience };
+  const job = { id: persona.id, segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
+  const { personas, cost_usd } = await writePersonas([job], takenNames(population.filter((p) => p.id !== persona.id)), { ...deps, project });
   return { persona: personas[0], cost_usd };
 }
 
@@ -168,7 +174,8 @@ export async function addPersona(
   let index = 0;
   while (used.has(index)) index++;
   const seed = addedSeed(audience.seed, segment.id, index);
-  const job = { id: personaId(segment.id, index), segment, seed, traits: sampleTraits(segment, audience, seed) };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population), deps);
+  const project = { ...deps.project, audience };
+  const job = { id: personaId(segment.id, index), segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
+  const { personas, cost_usd } = await writePersonas([job], takenNames(population), { ...deps, project });
   return { persona: personas[0], cost_usd };
 }

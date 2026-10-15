@@ -1,4 +1,5 @@
 import type { Audience, Persona, Segment } from '@gnomi/engine/types.ts';
+import { validateCountries } from '@gnomi/engine/audience/locations.ts';
 
 // The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
 
@@ -24,6 +25,25 @@ export function rebalance(shares: number[], index: number, value: number): numbe
   return shares.map((_, i) => (i === index ? chosen : others[i < index ? i : i - 1]));
 }
 
+/** Country inputs use whole percentages; the engine also accepts proportional weights. */
+export function countryShares(countries: Record<string, number>): Record<string, number> {
+  const codes = Object.keys(countries);
+  const largest = Math.max(0, ...Object.values(countries));
+  const shares = apportion(Object.values(countries).map((weight) => largest ? weight / largest : 0), 100);
+  return Object.fromEntries(codes.map((code, i) => [code, shares[i]]));
+}
+
+export function setCountryShare(countries: Record<string, number>, code: string, value: number): Record<string, number> {
+  const entries = Object.entries({ ...countryShares(countries), [code]: countries[code] ?? 0 });
+  const shares = rebalance(entries.map(([, share]) => share), entries.findIndex(([key]) => key === code), value);
+  return Object.fromEntries(entries.map(([key], i) => [key, shares[i]]));
+}
+
+export function removeCountry(countries: Record<string, number>, code: string): Record<string, number> | undefined {
+  const rest = Object.fromEntries(Object.entries(countries).filter(([key]) => key !== code));
+  return Object.keys(rest).length ? countryShares(rest) : undefined;
+}
+
 export const newSeed = () => Math.floor(Math.random() * 2 ** 31);
 
 export function blankSegment(id: string, name: string, share: number): Segment {
@@ -46,13 +66,14 @@ export function blankSegment(id: string, name: string, share: number): Segment {
 
 /** The "start from one segment" audience: everyone in one segment, with the shape of the product's own description. */
 export function blankAudience(description: string): Audience {
-  // shortcut: population-wide distributions and company size are fixed defaults; offer editing when someone needs another mix
+  // Company size and accessibility keep the existing defaults until the profile schema editor.
   return {
     seed: newSeed(),
     persona_count: 50,
     segments: [{ ...blankSegment('seg-1', 'Everyone', 100), description }],
     company_size: [20, 1000],
     languages: { en: 1 },
+    countries: { US: 100 },
     accessibility: { none: 0.92, low_vision: 0.03, colour_blind: 0.03, screen_reader: 0.01, motor: 0.01 },
   };
 }
@@ -94,6 +115,7 @@ export function cleanAudience(audience: Audience): Audience {
       description: segment.description.trim(),
       typical_goals: segment.typical_goals.map((goal) => goal.trim()).filter(Boolean),
       goal_override: segment.goal_override?.trim() || null,
+      ...(segment.employers ? { employers: [...new Set(segment.employers.map((name) => name.trim()).filter(Boolean))] } : {}),
     })),
   };
 }
@@ -102,6 +124,9 @@ const whole = (n: number) => Number.isInteger(n);
 
 /** What is wrong with the audience, as a sentence, or null. */
 export function audienceProblem(audience: Audience): string | null {
+  try { validateCountries(audience.countries); } catch (error) {
+    return `Audience: ${error instanceof Error ? error.message : String(error)}`;
+  }
   if (audience.segments.length === 0) return 'Audience: add at least one segment.';
   if (audience.segments.some((segment) => !segment.name.trim())) return 'Audience: give every segment a name.';
   if (audience.segments.reduce((sum, segment) => sum + segment.share, 0) !== 100) return 'Audience: the segment shares must add up to 100%.';

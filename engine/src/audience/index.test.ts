@@ -7,6 +7,8 @@ import type { Audience, Persona, ProjectConfig } from '../types.ts';
 import { addPersona, DEMO_PERSONA_WRITER, defaultAudience, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './index.ts';
 import { addedSeed, GENERATION, sampleTraits, TRAIT_KEYS } from './sample.ts';
 import { choose, nameKey, TAKEN_LABEL, type Candidate } from './write.ts';
+import { getPersonaSchema } from '../profile/schema.ts';
+import { personaProfileIsCurrent } from '../profile/signature.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',
@@ -134,7 +136,7 @@ test('the first sync writes each persona once; an unchanged second sync makes no
   for (const p of first.personas) {
     const segment = audience.segments.find((s) => s.id === p.segment_id)!;
     const traits = sampleTraits(segment, audience, p.seed);
-    for (const k of TRAIT_KEYS) assert.equal(p[k], traits[k], `${p.id} ${k} is sampled, not written`);
+    for (const k of TRAIT_KEYS) assert.deepEqual(p[k], traits[k], `${p.id} ${k} is sampled, not written`);
   }
 
   const again = gateway();
@@ -150,6 +152,112 @@ test('the first sync writes each persona once; an unchanged second sync makes no
   assert.equal(reseeded.calls.length, 20, 'a new audience seed re-samples everyone');
   assert.deepEqual(ids(other.personas), ids(first.personas));
   assert.ok(other.personas.every((p, i) => p.seed !== first.personas[i].seed));
+});
+
+test('country and employer traits reach the writer, survive persistence, and sync without another model call', async () => {
+  const original = await proposed();
+  const audience: Audience = { ...original, countries: { DE: 100 }, segments: original.segments.map((s) => ({ ...s, employers: ['Northwind'] })) };
+  const { llm, calls } = gateway();
+  const first = await syncPersonas(audience, [], deps(llm));
+  assert.ok(first.personas.every((p) => p.country === 'DE' && p.city === 'Berlin' && p.timezone === 'Europe/Berlin' && p.language === 'de-DE' && p.employer === 'Northwind'));
+  assert.deepEqual(first.personas[0].languages, ['de-DE', 'en']);
+  assert.match(textOf(calls[0]), /"country":"DE"/);
+  assert.match(textOf(calls[0]), /"employer":"Northwind"/);
+  assert.match(textOf(calls[0]), /Keep the sampled location and employer/);
+  assert.match(first.personas[0].background, /Northwind/);
+  assert.match(first.personas[0].background, /Berlin/);
+
+  const second = gateway();
+  const synced = await syncPersonas(audience, structuredClone(first.personas), deps(second.llm));
+  assert.deepEqual(synced.personas, first.personas);
+  assert.equal(second.calls.length, 0, 'equal language arrays from disk do not force another write');
+
+  const changed = gateway();
+  const greek = await syncPersonas({ ...audience, countries: { GR: 100 } }, first.personas, deps(changed.llm));
+  assert.equal(changed.calls.length, first.personas.length);
+  assert.ok(greek.personas.every((p) => p.country === 'GR' && p.language === 'el-GR' && p.employer === 'Northwind'));
+});
+
+test('an invalid country distribution is rejected before the writer can spend even with no active segment', async () => {
+  const { llm, calls } = gateway();
+  const audience = { ...await proposed(), countries: { DE: 0 }, segments: [] };
+  await assert.rejects(syncPersonas(audience, [], deps(llm)), /country/i);
+  assert.equal(calls.length, 0);
+});
+
+test('writer signatures refresh changed goals and prompt attributes but preserve metadata-only edits', async () => {
+  const audience = await proposed();
+  const config = { ...project, audience, persona_schema: getPersonaSchema() };
+  const first = await syncPersonas(audience, [], deps(gateway().llm, { project: config }));
+  assert.ok(first.personas.every((p) => personaProfileIsCurrent(p, config)));
+  const reseeded = { ...config, audience: { ...audience, seed: audience.seed + 1 } };
+  assert.ok(first.personas.every((p) => !personaProfileIsCurrent(p, reseeded)), 'stored persona seeds must belong to the current audience seed');
+  const changed = { ...config, goal: 'Review applicants instead of creating a job' };
+  assert.ok(first.personas.every((p) => !personaProfileIsCurrent(p, changed)));
+  const writer = gateway();
+  const refreshed = await syncPersonas(audience, first.personas, deps(writer.llm, { project: changed }));
+  assert.equal(writer.calls.length, first.personas.length);
+  assert.ok(refreshed.personas.every((p) => personaProfileIsCurrent(p, changed)));
+  const metadata = structuredClone(changed);
+  metadata.persona_schema.attributes.forEach((a) => { a.show_on_card = !a.show_on_card; a.report_dimension = !a.report_dimension; });
+  metadata.audience.segments[0].role = 'a_different_recorded_login';
+  const quiet = gateway();
+  await syncPersonas(metadata.audience, refreshed.personas, deps(quiet.llm, { project: metadata }));
+  assert.equal(quiet.calls.length, 0);
+  metadata.persona_schema.attributes.find((a) => a.id === 'employer')!.enabled = false;
+  assert.ok(!personaProfileIsCurrent(refreshed.personas[0], metadata));
+  metadata.persona_schema.attributes[0].name = '';
+  assert.equal(personaProfileIsCurrent(refreshed.personas[0], metadata), false, 'temporarily invalid editor drafts hide stale prose instead of throwing');
+});
+
+test('disabled and prompt-private fields stay out of writer requests and do not leak from the demo biography', async () => {
+  const audience = await proposed();
+  audience.segments = audience.segments.map((s) => ({ ...s, employers: ['HIDDEN_EMPLOYER'] }));
+  const schema = getPersonaSchema();
+  schema.attributes.find((a) => a.id === 'employer')!.enabled = false;
+  schema.attributes.find((a) => a.id === 'pronouns')!.use_in_prompt = false;
+  schema.attributes.push({ id: 'private_note', name: 'Private note', group: 'work', type: 'text', description: 'Visible only on cards.', core: false, enabled: true, show_on_card: true, use_in_prompt: false, report_dimension: true, sampling: { default: { kind: 'fixed', value: 'HIDDEN_NOTE' }, by_segment: {} } });
+  const { llm, calls } = gateway();
+  const config = { ...project, audience, persona_schema: schema };
+  const result = await syncPersonas(audience, [], deps(llm, { project: config }));
+  assert.ok(result.personas.every((p) => p.attributes?.private_note === 'HIDDEN_NOTE'));
+  for (const req of calls) {
+    assert.doesNotMatch(JSON.stringify(req.user), /HIDDEN_EMPLOYER|HIDDEN_NOTE|"pronouns"/);
+  }
+  assert.ok(result.personas.every((p) => !p.background.includes('HIDDEN_EMPLOYER') && !p.background.includes('HIDDEN_NOTE')));
+  const updated = structuredClone(config);
+  updated.persona_schema.attributes.find((a) => a.id === 'private_note')!.sampling!.default = { kind: 'fixed', value: 'UPDATED_PRIVATE' };
+  assert.ok(result.personas.every((p) => !personaProfileIsCurrent(p, updated)), 'a run must not freeze outdated private samples under the changed schema');
+  const quiet = gateway();
+  const second = await syncPersonas(audience, result.personas, deps(quiet.llm, { project: updated }));
+  assert.equal(quiet.calls.length, 0, 'private data updates do not rewrite the biography');
+  assert.ok(second.personas.every((p) => p.attributes?.private_note === 'UPDATED_PRIVATE'));
+  assert.ok(second.personas.every((p, i) => p.background === result.personas[i].background && personaProfileIsCurrent(p, updated)));
+});
+
+test('50 generated personas reproduce weighted custom choices for two segment overrides within three binomial standard deviations', async () => {
+  const original = await proposed(50);
+  const audience = { ...original, segments: original.segments.slice(0, 2).map((segment) => ({ ...segment, share: 50 })) };
+  const schema = getPersonaSchema();
+  const weighted = (probability: number) => ({ kind: 'choices' as const, choices: [{ value: 'A', weight: probability }, { value: 'B', weight: 1 - probability }] });
+  schema.attributes.push({
+    id: 'preferred_workflow', name: 'Preferred workflow', description: 'Which workflow this person prefers.', group: 'work', type: 'choice',
+    core: false, enabled: true, show_on_card: true, use_in_prompt: true, report_dimension: true, choices: ['A', 'B'],
+    sampling: { default: weighted(0.5), by_segment: { [audience.segments[0].id]: weighted(0.8), [audience.segments[1].id]: weighted(0.2) } },
+  });
+  const config = { ...project, audience, persona_schema: schema };
+  const first = (await syncPersonas(audience, [], deps(gateway().llm, { project: config }))).personas;
+  assert.equal(first.length, 50);
+  for (const [index, probability] of [0.8, 0.2].entries()) {
+    const segment = first.filter((person) => person.segment_id === audience.segments[index].id);
+    assert.equal(segment.length, 25);
+    const observed = segment.filter((person) => person.attributes?.preferred_workflow === 'A').length;
+    // Sampling is probabilistic: accept ±3σ of Binomial(n, p), about a 99.7% normal-reference interval.
+    const tolerance = 3 * Math.sqrt(segment.length * probability * (1 - probability));
+    assert.ok(Math.abs(observed - segment.length * probability) <= tolerance, `${audience.segments[index].id}: ${observed}/25 vs ${probability * 100}% ± ${(tolerance / segment.length * 100).toFixed(1)} percentage points`);
+  }
+  const repeated = (await syncPersonas(structuredClone(audience), [], deps(gateway().llm, { project: structuredClone(config) }))).personas;
+  assert.deepEqual(repeated, first, 'same audience seed, schema, and segment rules reproduce the complete population');
 });
 
 test('changing one share rewrites only the slots it adds and drops the slots it removes', async () => {
@@ -197,6 +305,7 @@ test('a regenerated persona keeps its id, moves its seed one generation, and sur
   assert.equal(cost_usd, 0.01);
   assert.equal(persona.id, old.id);
   assert.equal(persona.seed, old.seed + GENERATION);
+  assert.equal(personaProfileIsCurrent(persona, { ...project, audience }), true, 'regenerated seeds still belong to the audience');
   assert.notDeepEqual(persona, old);
   assert.ok(!population.some((p) => p.id !== old.id && nameKey(p.name) === nameKey(persona.name)));
 
@@ -215,6 +324,7 @@ test('an added persona takes the next free slot, survives syncs and share change
   assert.equal(calls.length, 1);
   assert.equal(persona.id, 'p-seg1-12');
   assert.equal(persona.seed, addedSeed(audience.seed, 'seg-1', 11));
+  assert.equal(personaProfileIsCurrent(persona, { ...project, audience }), true, 'manually added slots remain current');
   const withExtra = [...population, persona];
 
   const same = gateway();

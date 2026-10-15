@@ -136,11 +136,11 @@ export function Summary(props: {
             {estimate && 'error' in estimate && <span className="text-stone-600">No estimate: {estimate.error}</span>}
             {estimate && !('error' in estimate) && (
               <span className="space-y-1">
-                <span className="block">
+                {estimate.unpriced.length === 0 && <span className="block">
                   {estimateText(estimate)}, about {estimate.calls.toLocaleString()} model calls.
-                </span>
+                </span>}
                 {estimate.unpriced.length > 0 && (
-                  <span className="block text-amber-800">No price is known for {estimate.unpriced.join(', ')}, so the cost is at least this much.</span>
+                  <span className="block text-amber-800">No price is known for {estimate.unpriced.join(', ')}. Choose a model with a known price in Settings before starting.</span>
                 )}
                 {estimate.cost_usd[1] > settings.cost_budget_usd && (
                   <span className="block text-amber-800">That may be more than your budget, so the run could stop early.</span>
@@ -149,7 +149,8 @@ export function Summary(props: {
             )}
           </Item>
           <Item label="Budgets">
-            Stops at {usd(settings.cost_budget_usd)} or {settings.wall_clock_budget_min} minutes, with {settings.concurrency} browsers at a time.
+            Recorded cost limit: {usd(settings.cost_budget_usd)}. Time limit: {settings.wall_clock_budget_min} minutes. Up to {settings.concurrency} browsers at a time.
+            <span className="mt-1 block text-xs text-stone-500">At the cost limit, new work stops and outstanding model requests are canceled. Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed the limit. Persona generation is charged separately.</span>
           </Item>
           <Item label="Allowed hosts">{hosts.join(', ')}. Everything else is blocked.</Item>
           <Item label="Production domains Gnomi must never touch">{poi.production_domains.length > 0 ? poi.production_domains.join(', ') : 'None listed.'}</Item>
@@ -170,7 +171,7 @@ export function Summary(props: {
           <button type="button" onClick={() => dialog.current?.close()} className={secondaryButton}>
             Cancel
           </button>
-          <button type="button" onClick={start} disabled={busy} className={primaryButton}>
+          <button type="button" onClick={start} disabled={busy || !estimate || 'error' in estimate || estimate.unpriced.length > 0} className={primaryButton}>
             {busy ? 'Starting...' : 'Start run'}
           </button>
         </div>

@@ -1,5 +1,6 @@
 // Traits come from code, never the model (tech.md §2.4), with integer and exactly rounded arithmetic so a seed means the same everywhere.
 import type { Audience, Persona, Segment, UsageFrequency } from '../types.ts';
+import { COUNTRY_PROFILES, validateCountries } from './locations.ts';
 
 /** FNV-1a, 32-bit, over UTF-16 code units: a stable string hash for deriving seeds. */
 export function fnv1a(text: string): number {
@@ -68,6 +69,12 @@ export type Traits = Pick<
   | 'company_size'
   | 'seniority'
   | 'motivation'
+  | 'country'
+  | 'city'
+  | 'timezone'
+  | 'languages'
+  | 'employer'
+  | 'attributes'
 >;
 
 export const TRAIT_KEYS = [
@@ -82,9 +89,18 @@ export const TRAIT_KEYS = [
   'company_size',
   'seniority',
   'motivation',
+  'country',
+  'city',
+  'timezone',
+  'languages',
+  'employer',
 ] as const satisfies readonly (keyof Traits)[];
 
-export const sameTraits = (persona: Persona, traits: Traits) => TRAIT_KEYS.every((k) => persona[k] === traits[k]);
+const equalValue = (a: unknown, b: unknown): boolean => Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((v, i) => v === b[i]) : a === b;
+export const sameTraits = (persona: Persona, traits: Traits) =>
+  TRAIT_KEYS.every((k) => equalValue(persona[k], traits[k])) &&
+  Object.keys(persona.attributes ?? {}).length === Object.keys(traits.attributes ?? {}).length &&
+  Object.entries(traits.attributes ?? {}).every(([key, value]) => equalValue(persona.attributes?.[key], value));
 
 const FAMILIARITY: Record<UsageFrequency, Persona['familiarity_with_category']> = {
   daily: 'high',
@@ -132,9 +148,10 @@ function companySize(u: number, [a, b]: readonly [number, number]): number {
 
 /** The traits a seed gives in this segment and audience. Pure. */
 export function sampleTraits(segment: Segment, audience: Audience, seed: number): Traits {
+  validateCountries(audience.countries);
   const next = mulberry32(fnv1a(`traits/${seed}`));
   // One draw per trait in a fixed order, so editing one distribution re-samples only that trait.
-  return {
+  const traits: Traits = {
     segment_id: segment.id,
     device: next() < segment.mobile_share ? 'mobile' : 'desktop',
     patience: between(next(), segment.patience),
@@ -147,4 +164,15 @@ export function sampleTraits(segment: Segment, audience: Audience, seed: number)
     seniority: pick(SENIORITY, next(), 'mid'),
     motivation: pick(MOTIVATION, next(), 3),
   };
+  // Separate streams preserve every existing draw when these optional distributions are introduced or edited.
+  if (audience.countries) {
+    const largest = Math.max(...Object.values(audience.countries));
+    const choices = sorted(audience.countries).map(([code, weight]) => [code, weight / largest] as const);
+    const code = pick(choices, mulberry32(fnv1a(`country/${seed}`))(), 'US');
+    const location = COUNTRY_PROFILES.find((p) => p.code === code)!;
+    Object.assign(traits, { country: code, city: location.city, timezone: location.timezone, languages: [...location.languages], language: location.languages[0] });
+  }
+  const employers = [...new Set(segment.employers?.map((name) => name.trim()).filter(Boolean))];
+  if (employers.length) traits.employer = employers[Math.floor(mulberry32(fnv1a(`employer/${seed}`))() * employers.length)];
+  return traits;
 }

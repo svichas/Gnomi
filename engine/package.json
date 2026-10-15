@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p .",
-    "cli": "node src/cli.ts"
+    "cli": "node src/cli.ts",
+    "acceptance": "node src/acceptance.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.80",

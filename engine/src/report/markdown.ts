@@ -1,4 +1,5 @@
 import type { Report, ReportFriction, ReportMethods, ReportSegment } from '../types.ts';
+import { formatAttributeValue } from './dimensions.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -24,6 +25,7 @@ export function reportToMarkdown(report: Report): string {
     ...report.segments.map(segmentRow),
     '',
     `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}.`,
+    ...dimensionLines(report),
     '',
     '## Frictions',
     '',
@@ -31,7 +33,10 @@ export function reportToMarkdown(report: Report): string {
     '',
     '## Cost and time',
     '',
-    `- Cost: $${report.cost_usd.toFixed(4)}`,
+    `- Recorded cost: $${report.cost_usd.toFixed(4)}`,
+    ...((report.unreported_usage_calls ?? 0) > 0 ? [
+      `- ${report.unreported_usage_calls} model call${report.unreported_usage_calls === 1 ? '' : 's'} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`,
+    ] : []),
     `- Tokens: ${report.input_tokens} in, ${report.output_tokens} out`,
     `- LLM calls: ${report.llm_calls}`,
     `- Duration: ${duration}`,
@@ -41,6 +46,20 @@ export function reportToMarkdown(report: Report): string {
     ...methodsToMarkdown(report.methods),
     '',
   ].join('\n');
+}
+
+function dimensionLines(report: Report): string[] {
+  if (!report.dimensions?.length) return [];
+  return [
+    '', '## Results by profile', '',
+    'Each row counts personas with that exact value, without segment weighting. Mean latest feeling uses each persona’s latest valid step feeling, from -2 to 2; personas without one are excluded. Lists are grouped as an ordered whole.',
+    ...report.dimensions.flatMap((dimension) => [
+      '', `### ${cell(dimension.name)}`, '',
+      '| Value | Personas | Completion | With friction | Mean latest feeling |',
+      '| --- | --- | --- | --- | --- |',
+      ...dimension.values.map((group) => `| ${cell(formatAttributeValue(group.value))} | ${group.personas} | ${pct(group.completion)} | ${pct(group.with_friction)} | ${group.sentiment === null ? 'No recorded feeling' : group.sentiment.toFixed(2)} |`),
+    ]),
+  ];
 }
 
 function segmentRow(s: ReportSegment): string {

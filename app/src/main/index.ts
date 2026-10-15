@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import { app, BrowserWindow, ipcMain, MessageChannelMain, safeStorage, session, utilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
+import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
+import { ProjectLibrary } from './projects.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -20,6 +22,19 @@ const CSP = rendererUrl
 let engine: UtilityProcess | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
+let library: ProjectLibrary;
+let currentProjectId = '';
+let changingProject = false;
+
+const catalog = (): ProjectCatalog => ({ projects: library.list(), currentId: currentProjectId });
+const lastProjectFile = () => join(app.getPath('userData'), 'current-project');
+
+async function openManagedProject(id: string) {
+  const project = await request('open_project', { dir: library.directory(id) });
+  currentProjectId = id;
+  writeFileSync(lastProjectFile(), id);
+  return project;
+}
 
 function request<M extends Method>(method: M, params: Api[M]['params']): Promise<Api[M]['result']> {
   return new Promise((resolve, reject) => {
@@ -101,13 +116,22 @@ async function startEngine(): Promise<Startup> {
       for (const waiting of pending.values()) waiting.reject(new Error(`The engine stopped (exit code ${code})`));
       pending.clear();
     });
-    // shortcut: one fixed project folder; add a project picker when more than one project is needed (M6 import/export).
-    const dir = process.env.GNOMI_PROJECT_DIR || join(app.getPath('userData'), 'projects', 'Default.gnomi');
+    const override = process.env.GNOMI_PROJECT_DIR;
+    library = new ProjectLibrary(join(app.getPath('userData'), 'projects'), override);
     const sessionKey = await loadSessionKey();
     sessionsPersist = sessionKey.remembered;
     await request('set_secret', { name: 'session_key', value: sessionKey.key });
     await Promise.all([
-      request('open_project', { dir }),
+      (async () => {
+        if (override) {
+          await request('open_project', { dir: override });
+          currentProjectId = 'development';
+        } else {
+          const entries = library.list();
+          const previous = existsSync(lastProjectFile()) ? readFileSync(lastProjectFile(), 'utf8') : '';
+          await openManagedProject(entries.find((entry) => entry.id === previous)?.id ?? entries[0]?.id ?? library.create('Untitled project').id);
+        }
+      })(),
       (async () => {
         // One at a time, so macOS asks for Keychain access once.
         for (const [provider, { file, secret }] of Object.entries(PROVIDERS)) {
@@ -140,6 +164,57 @@ ipcMain.handle('clear-key', async (_event, provider: unknown) => {
   rmSync(secretFile(file), { force: true });
   await request('set_secret', { name: secret, value: null });
   loaded.delete(provider as KeyProvider);
+});
+
+ipcMain.handle('list-projects', () => catalog());
+ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<ProjectActionResult> => {
+  if (!input || !['create', 'open', 'rename', 'duplicate', 'delete', 'export'].includes(input.action)) throw new Error('Unknown project action.');
+  if (changingProject) throw new Error('Another project action is still finishing.');
+  if (input.action !== 'create') library.directory(input.id); // validates opaque IDs before any side effect
+  changingProject = true;
+  const previous = currentProjectId;
+  let closed = false;
+  try {
+    let destination: string | undefined;
+    if (input.action === 'export') {
+      const result = await dialog.showOpenDialog({ title: 'Export project folder', buttonLabel: 'Export here', properties: ['openDirectory', 'createDirectory'] });
+      if (result.canceled || !result.filePaths[0]) return { catalog: catalog(), project: null, canceled: true };
+      destination = result.filePaths[0];
+    }
+    // Closing is the engine's authoritative idle check and checkpoints its SQLite database.
+    // With no project open, renderer requests cannot mutate one while files are copied or moved.
+    await request('close_project', {});
+    closed = true;
+    let selected = previous;
+    let exportedTo: string | undefined;
+    switch (input.action) {
+      case 'create': selected = library.create(input.name).id; break;
+      case 'open': selected = input.id; break;
+      case 'rename': library.rename(input.id, input.name); break;
+      case 'duplicate': selected = library.duplicate(input.id, input.name).id; break;
+      case 'export': exportedTo = library.exportFolder(input.id, destination!); break;
+      case 'delete': {
+        await library.trash(input.id, (path) => shell.trashItem(path));
+        if (input.id === previous) selected = library.list()[0]?.id ?? library.create('Untitled project').id;
+        break;
+      }
+    }
+    const project = await openManagedProject(selected);
+    closed = false;
+    return { catalog: catalog(), project, ...(exportedTo ? { exportedTo } : {}) };
+  } catch (err) {
+    if (closed) {
+      try {
+        const fallback = library.list().find((entry) => entry.id === previous)?.id ?? library.list()[0]?.id ?? library.create('Untitled project').id;
+        await openManagedProject(fallback);
+      } catch {
+        throw new Error('The project action failed and the previous project could not be reopened. Restart Gnomi.');
+      }
+    }
+    throw err;
+  } finally {
+    changingProject = false;
+  }
 });
 
 function createWindow(started: Promise<Startup>) {

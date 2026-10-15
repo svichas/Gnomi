@@ -3,4 +3,5 @@ out/
 dist/
 *.gnomi/
 test-results/
+acceptance-results/
 .DS_Store

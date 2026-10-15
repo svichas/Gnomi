@@ -126,13 +126,24 @@ test('reportToMarkdown carries the banner, the goal, the segment table and the t
     '| Recruiters | 60% | 2 | 50% | 100% |',
     '| Hiring managers | 40% | 1 | 0% | 100% |',
     '**Weighted by share:** completion 30%, with friction 100%.',
-    '- Cost: $0.7500',
+    '- Recorded cost: $0.7500',
     '- Tokens: 2000 in, 400 out',
     '- LLM calls: 2',
     '- Duration: 8.0 s',
   ]) {
     assert.ok(md.includes(expected), expected);
   }
+});
+
+test('report export distinguishes recorded spend from calls with missing provider usage', () => {
+  const md = reportToMarkdown({ ...report, unreported_usage_calls: 2 });
+  assert.match(md, /Recorded cost: \$0\.7500/);
+  assert.match(md, /2 model calls did not report complete usage/);
+  assert.match(md, /Canceled or failed requests may still incur provider charges/);
+  assert.match(md, /Actual charges may exceed the recorded cost/);
+  assert.doesNotMatch(reportToMarkdown(report), /did not report complete usage/);
+  assert.doesNotMatch(reportToMarkdown({ ...report, unreported_usage_calls: 0 }), /did not report complete usage/);
+  assert.match(reportToMarkdown({ ...report, unreported_usage_calls: 1 }), /1 model call did not report complete usage/);
 });
 
 test('frictions are grouped by segment, then persona, and numbered across the groups', () => {

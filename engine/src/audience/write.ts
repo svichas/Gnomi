@@ -4,6 +4,8 @@ import type { LlmRequest } from '../seams.ts';
 import type { Persona, ProjectConfig, Segment, UsageFrequency } from '../types.ts';
 import type { AudienceDeps } from './index.ts';
 import { fnv1a, mulberry32, type Traits } from './sample.ts';
+import { getPersonaSchema, isAttributeEnabled, profileEntries } from '../profile/schema.ts';
+import { profileSignature } from '../profile/signature.ts';
 
 const text = z.string().trim().min(1);
 const candidate = z.object({
@@ -21,22 +23,24 @@ export type Candidate = z.infer<typeof candidate>;
 
 // Lines the demo writer reads back; keep them in step with DEMO_PERSONA_WRITER.
 export const TRAITS_LABEL = 'Sampled traits: ';
+export const WRITTEN_LABEL = 'Written fields: ';
 export const TAKEN_LABEL = 'Names already taken in this population, so choose others: ';
 
 export const WRITER_SYSTEM = `Gnomi simulates the people who use a product, so a product team can find usability problems before real users meet them. This step writes one person from traits that code has already sampled for them. The traits are fixed facts about the person: write someone they fit, and do not change, contradict or exaggerate them.
 
-Write four different candidates for this person, each with a probability: how likely it is that a real person with exactly these traits, in this segment, is this candidate. The four probabilities sum to 1. Make the candidates genuinely different from each other (name, job, the employer's industry, history, situation, way of talking), and include realistic but less typical people, not only the most obvious one: a candidate with a low probability is welcome.
+Write four different candidates for this person, each with a probability: how likely it is that a real person with exactly these traits, in this segment, is this candidate. The four probabilities sum to 1. Vary their active attributes, histories and ways of talking. Include realistic but less typical people, not only the most obvious one: a candidate with a low probability is welcome.
 
 Each candidate has:
-- name: a full name that fits the first language, the pronouns and where such a person plausibly lives, with the variety real names have; never a famous person or a placeholder.
-- job_title: a real title held by someone in this segment at this seniority.
-- industry: the employer's industry, specific ("regional freight forwarding", not "business").
-- background: 80 to 150 words in the first person, as the person would tell it to an interviewer: how they came to this job, what a normal week looks like, the tools they use today and what bothers them about them, and what they would not put up with. It follows from every trait: seniority, company size, tech skill, familiarity with this kind of product, device, motivation, and any accessibility need, described by how they work (zoom, a screen reader, the keyboard) rather than as a label.
-- context_of_use: one sentence on when, where and on what device they meet the product this time.
+- name: a full name that fits the first language and the person's life, with the variety real names have; never a famous person or a placeholder. When a city and country are sampled, this person lives there.
+- job_title: when listed in Written fields, a real title held by someone in this segment, respecting seniority only if supplied; otherwise "Not specified".
+- industry: when listed in Written fields, the employer's specific industry; otherwise "Not specified".
+- background: 150 to 250 words in the first person, as the person would tell it to an interviewer: how they came to this work, a normal week, and what they would not put up with. Use only the supplied prompt attributes; do not infer a value for an omitted attribute or reintroduce it through the biography, voice or context.
+- context_of_use: when listed in Written fields, one sentence on when, where and on what device they meet the product this time; otherwise "Not specified".
 - goal_interpretation: one or two sentences in the first person on how this person reads the task: what they think it asks, what they care about, and what done looks like to them.
 - voice: one or two sentences on how they think and write: tone, length, the words they reach for, and the language they think in.
 
 Rules:
+- Only attributes in Sampled traits and Prompt attributes are available. Never infer omitted attributes in any output field. When pronouns are omitted, use neutral language. Output slots absent from Written fields remain "Not specified" and do not appear in the biography or voice.
 - Each person is an individual, not a representative of a group. No stereotypes, no national, cultural, gender or disability caricature, and no demographic labels such as "as a woman" or "as a non-native speaker": the name, the situation and the voice carry who they are.
 - Keep behaviour mild and grounded in the traits. Low patience means stopping sooner, not rudeness; low tech skill means working with what is on screen, not helplessness. Most people are reasonable and busy.
 - A first language other than English shapes the name and the voice, not the quality of their English. Write every field in English.
@@ -67,16 +71,24 @@ export function languageName(code: string): string {
   }
 }
 
-export function writerUser(project: ProjectConfig, segment: Segment, traits: Traits, taken: string[] | null): string {
+export function writerUser(project: ProjectConfig, segment: Segment, traits: Traits, taken: string[] | null, seed?: number): string {
   const goals = segment.typical_goals.length ? ` People in this segment usually come to: ${segment.typical_goals.join('; ')}.` : '';
+  const schema = getPersonaSchema(project.persona_schema);
+  const entries = profileEntries({ ...traits, seed } as Persona, schema, 'prompt');
+  const values = Object.fromEntries(entries.map(({ attribute, value }) => [attribute.id, value]));
+  const descriptors = schema.attributes.filter((a) => a.enabled && a.use_in_prompt).map((a) => `${a.id} (${a.group}, ${a.type}): ${a.description}`);
+  const ignored = ['job_title', 'industry', 'context_of_use'].filter((id) => !isAttributeEnabled(schema, id, 'prompt'));
   return [
     `The product: ${project.name}.${project.description ? ` ${project.description}` : ''}`,
     `Their segment: ${segment.name}. ${segment.description}`,
     `They use the product ${FREQUENCY[segment.usage_frequency]}, usually arriving ${ENTRY[segment.entry]}, ${ACCOUNT[segment.account_state]}.${goals}`,
     `The task they will attempt: "${segment.goal_override ?? project.goal}"`,
     '',
-    `${TRAITS_LABEL}${JSON.stringify({ ...traits, segment_id: undefined })}`,
-    `tech_skill, patience and motivation run from 1 (low) to 5 (high); language is their first language (${languageName(traits.language)}); company_size counts employees.`,
+    `${TRAITS_LABEL}${JSON.stringify(values)}`,
+    `${WRITTEN_LABEL}${JSON.stringify(['name', 'job_title', 'industry', 'background', 'context_of_use', 'goal_interpretation', 'voice'].filter((id) => isAttributeEnabled(schema, id, 'prompt')))}`,
+    `Prompt attributes:\n${descriptors.join('\n')}`,
+    ...(ignored.length ? [`These output slots are unused: ${ignored.join(', ')}. Set them to "Not specified" and do not infer or mention their values in other output fields.`] : []),
+    ...(values.country || values.employer ? ['Keep the sampled location and employer fixed wherever provided; the biography, context and voice must agree with them. Languages are ordered preferences, with the first language used for thoughts.'] : []),
     ...(taken ? ['', `${TAKEN_LABEL}${JSON.stringify(taken)}`] : []),
   ].join('\n');
 }
@@ -119,7 +131,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
         round: 0,
         purpose: 'write_persona',
         system: WRITER_SYSTEM,
-        user: [{ type: 'text', text: writerUser(deps.project, job.segment, job.traits, avoid) }],
+        user: [{ type: 'text', text: writerUser(deps.project, job.segment, job.traits, avoid, job.seed) }],
         schema: writeSchema,
         signal,
       };
@@ -163,6 +175,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
       goal_interpretation: c.goal_interpretation,
       voice: c.voice,
       seed: job.seed,
+      profile_signature: profileSignature(deps.project, job.segment, job.seed),
     };
   };
   const clashed: number[] = [];

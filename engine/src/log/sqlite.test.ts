@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
+import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { NewEvent, Persona, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
 import { openProject } from './sqlite.ts';
@@ -121,6 +122,25 @@ test('reopening keeps the project, the population, runs and events', (t) => {
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
   assert.equal(userVersion(dir), 3);
+});
+
+test('profile schemas and typed persona values survive reopening without rewriting legacy records', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  const configured = { ...project, persona_schema: getPersonaSchema() };
+  const person = { ...BUILTIN_PERSONA, attributes: { decision_role: 'user', tools_today: ['Sheets'], enabled: false, score: 0 }, profile_signature: 'writer-input-v1' };
+  store.saveProject(configured);
+  store.putPersona(person);
+  const run = store.createRun({ ...snapshot(), project: configured, personas: [person] });
+  store.close();
+  const reopened = openProject(dir);
+  assert.deepEqual(reopened.getProject(), configured);
+  assert.deepEqual(reopened.listPersonas(), [person]);
+  assert.deepEqual(reopened.listRuns()[0].config, run);
+  reopened.saveProject(project);
+  assert.equal(reopened.getProject()?.persona_schema, undefined);
+  assert.deepEqual(reopened.listRuns()[0].config.project.persona_schema, configured.persona_schema);
+  reopened.close();
 });
 
 test('a v1 project upgrades on open and keeps its runs and events', (t) => {

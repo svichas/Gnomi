@@ -1,6 +1,10 @@
-import { useState } from 'react';
-import type { DiversityReport, Persona, Segment } from '@gnomi/engine/types.ts';
+import { useEffect, useState } from 'react';
+import type { DiversityReport, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
+import { attributeValue, getPersonaSchema, isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
+import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
+import { ProfileFields, personaLabel } from './ProfileFields.tsx';
+import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
 import { Bars, Card, Field, inputClass, Note, primaryButton, secondaryButton } from './ui.tsx';
 
 const ACCESSIBILITY: Record<Persona['accessibility_needs'], string> = {
@@ -15,26 +19,32 @@ const percent = (x: number) => `${Math.round(x * 100)}%`;
 const SCALE = ['1', '2', '3', '4', '5'];
 
 /** How the generated population is spread, so a skew is visible before anyone is paid to browse (idea.md §11). */
-export function Distribution({ personas }: { personas: Persona[] }) {
+export function Distribution({ personas, schema }: { personas: Persona[]; schema?: PersonaSchema }) {
+  const custom = getPersonaSchema(schema).attributes.filter((attribute) => !DEFAULT_IDS.has(attribute.id) && attribute.enabled && attribute.show_on_card && (attribute.type === 'choice' || attribute.type === 'boolean'));
   return (
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-      <Bars title="Devices" entries={distribution(personas, (p) => p.device, ['desktop', 'mobile'])} />
-      <Bars title="First languages" entries={distribution(personas, (p) => languageName(p.language))} />
-      <Bars title="Accessibility needs" entries={distribution(personas, (p) => ACCESSIBILITY[p.accessibility_needs], Object.values(ACCESSIBILITY))} />
-      <Bars title="Patience (1-5)" entries={distribution(personas, (p) => String(p.patience), SCALE)} />
-      <Bars title="Tech skill (1-5)" entries={distribution(personas, (p) => String(p.tech_skill), SCALE)} />
+      {isAttributeEnabled(schema, 'device', 'card') && <Bars title="Devices" entries={distribution(personas, (p) => p.device, ['desktop', 'mobile'])} />}
+      {isAttributeEnabled(schema, 'languages', 'card') && <Bars title="First languages" entries={distribution(personas, (p) => languageName(p.language))} />}
+      {isAttributeEnabled(schema, 'country', 'card') && personas.some((p) => p.country) && <Bars title="Countries" entries={distribution(personas, (p) => p.country ? countryName(p.country) : 'Not set')} />}
+      {isAttributeEnabled(schema, 'accessibility_needs', 'card') && <Bars title="Accessibility needs" entries={distribution(personas, (p) => ACCESSIBILITY[p.accessibility_needs], Object.values(ACCESSIBILITY))} />}
+      {isAttributeEnabled(schema, 'patience', 'card') && <Bars title="Patience (1-5)" entries={distribution(personas, (p) => String(p.patience), SCALE)} />}
+      {isAttributeEnabled(schema, 'tech_skill', 'card') && <Bars title="Tech skill (1-5)" entries={distribution(personas, (p) => String(p.tech_skill), SCALE)} />}
+      {custom.map((attribute) => <Bars key={attribute.id} title={attribute.name} entries={distribution(personas, (persona) => {
+        const value = attributeValue(persona, attribute);
+        return value === undefined ? 'Not generated yet' : formatAttribute(attribute, value);
+      })} />)}
     </div>
   );
 }
 
-export function Diversity({ report, personas }: { report: DiversityReport; personas: Persona[] }) {
-  const name = (id: string) => personas.find((p) => p.id === id)?.name ?? id;
+export function Diversity({ report, personas, schema }: { report: DiversityReport; personas: Persona[]; schema?: PersonaSchema }) {
+  const name = (id: string) => { const persona = personas.find((p) => p.id === id); return persona ? personaLabel(persona, schema) : id; };
   return (
     <div className="space-y-2">
       <p className="text-sm text-stone-700">
         How alike the personas read: {percent(report.mean_similarity)} on average, {percent(report.max_similarity)} at most
         {report.most_similar && ` (${name(report.most_similar[0])} and ${name(report.most_similar[1])})`}.
-        {report.duplicate_names.length > 0 && ` Names used twice: ${report.duplicate_names.join(', ')}.`}
+        {isAttributeEnabled(schema, 'name', 'card') && report.duplicate_names.length > 0 && ` Names used twice: ${report.duplicate_names.join(', ')}.`}
       </p>
       {report.warning && <Note tone="info">{report.warning}</Note>}
     </div>
@@ -49,17 +59,23 @@ const WRITTEN = [
   ['goal_interpretation', 'How they read the goal'],
   ['voice', 'Voice'],
 ] as const;
+const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
+const CARD_SUMMARY = ['job_title', 'employer', 'country', 'city', 'timezone', 'languages', 'device', 'tech_skill', 'patience'];
 
 /** One persona: the sampled traits are shown, only the written fields can be edited by hand. */
-function PersonaCard(props: { persona: Persona; allotted: boolean; busy: boolean; onEdit(persona: Persona): Promise<boolean>; onRegenerate(): void; onRemove(): void }) {
-  const { persona, allotted, busy, onEdit, onRegenerate, onRemove } = props;
+function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: boolean; allotted: boolean; busy: boolean; onEdit(persona: Persona): Promise<boolean>; onRegenerate(): void; onRemove(): void }) {
+  const { persona, schema, stale, allotted, busy, onEdit, onRegenerate, onRemove } = props;
   const [draft, setDraft] = useState<Persona | null>(null);
+  useEffect(() => { if (stale) setDraft(null); }, [stale]);
+  const name = personaLabel(persona, schema);
+  const summary = [...CARD_SUMMARY, ...getPersonaSchema(schema).attributes.filter((attribute) => !DEFAULT_IDS.has(attribute.id)).map((attribute) => attribute.id)];
+  const written = WRITTEN.filter(([key]) => isAttributeEnabled(schema, key, 'card'));
   return (
-    <li className="space-y-2 rounded-lg border border-stone-200 p-4 text-sm">
-      {draft ? (
+    <li aria-label={`${name} persona`} className="space-y-2 rounded-lg border border-stone-200 p-4 text-sm">
+      {draft && !stale ? (
         <div className="space-y-3">
-          {WRITTEN.map(([key, label]) => (
-            <Field key={key} label={`${label} (${persona.name})`}>
+          {written.map(([key, label]) => (
+            <Field key={key} label={`${label} (${name})`}>
               {key === 'name' || key === 'job_title' ? (
                 <input value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} className={inputClass} />
               ) : (
@@ -70,9 +86,9 @@ function PersonaCard(props: { persona: Persona; allotted: boolean; busy: boolean
           <div className="flex gap-3">
             <button
               type="button"
-              disabled={busy}
-              onClick={() => void onEdit(draft).then((saved) => saved && setDraft(null))}
-              aria-label={`Save edits to ${persona.name}`}
+              disabled={busy || stale}
+              onClick={() => { if (!stale) void onEdit(draft).then((saved) => saved && setDraft(null)); }}
+              aria-label={`Save edits to ${name}`}
               className={primaryButton}
             >
               Save edits
@@ -86,34 +102,23 @@ function PersonaCard(props: { persona: Persona; allotted: boolean; busy: boolean
         <>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="font-semibold text-stone-900">
-              {persona.name} <span className="font-normal text-stone-500">({persona.pronouns})</span>
-            </p>
-            <p className="text-xs text-stone-500">
-              {persona.device}, {languageName(persona.language)}
+              {name} {isAttributeEnabled(schema, 'pronouns', 'card') && <span className="font-normal text-stone-500">({persona.pronouns})</span>}
             </p>
           </div>
-          <p className="text-stone-700">
-            {persona.job_title}, {persona.seniority} level, {persona.industry}, {persona.company_size} employees
-          </p>
-          <p className="text-xs text-stone-500">
-            Tech skill {persona.tech_skill}/5, patience {persona.patience}/5, motivation {persona.motivation}/5, {persona.familiarity_with_category} familiarity with the
-            category, accessibility: {ACCESSIBILITY[persona.accessibility_needs].toLowerCase()}, seed {persona.seed}
-          </p>
-          <p className="text-stone-700">{persona.background}</p>
-          <p className="text-stone-600">
-            <span className="font-medium">Reads the goal as:</span> {persona.goal_interpretation}
-          </p>
-          <p className="text-stone-600">
-            <span className="font-medium">Voice:</span> {persona.voice}
-          </p>
+          <ProfileFields persona={persona} schema={schema} only={summary} stale={stale} />
+          {stale ? <p className="text-sm text-amber-800">Regenerate this persona to update their biography and voice.</p> : <ProfileFields persona={persona} schema={schema} only={[...NARRATIVE_FIELDS]} />}
+          <details className="border-t border-stone-100 pt-2">
+            <summary className="cursor-pointer text-sm font-medium text-indigo-700">Full profile</summary>
+            <div className="pt-3"><ProfileFields persona={persona} schema={schema} except={[...summary, ...NARRATIVE_FIELDS, 'name', 'pronouns']} stale={stale} /></div>
+          </details>
           <div className="flex flex-wrap gap-2 pt-1">
-            <button type="button" onClick={() => setDraft(persona)} disabled={busy} aria-label={`Edit ${persona.name}`} className={secondaryButton}>
+            <button type="button" onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} className={secondaryButton}>
               Edit
             </button>
-            <button type="button" onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${persona.name}`} className={secondaryButton}>
+            <button type="button" onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} className={secondaryButton}>
               Regenerate
             </button>
-            <button type="button" onClick={onRemove} disabled={busy} aria-label={`Remove ${persona.name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} className={secondaryButton}>
+            <button type="button" onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} className={secondaryButton}>
               Remove
             </button>
           </div>
@@ -131,6 +136,8 @@ function PersonaCard(props: { persona: Persona; allotted: boolean; busy: boolean
 /** The generated population, grouped by segment, with the editing the engine offers (idea.md §6.3). */
 export function PersonaList(props: {
   personas: Persona[];
+  schema?: PersonaSchema;
+  stale?: Set<string>;
   segments: Segment[];
   diversity: DiversityReport | null;
   audienceSeed: number | null; // the saved audience's, to tell hand-added personas from the ones its shares allot
@@ -140,7 +147,7 @@ export function PersonaList(props: {
   onRemove(id: string): void;
   onAdd(segmentId: string): void;
 }) {
-  const { personas, segments, diversity, audienceSeed, busy, onEdit, onRegenerate, onRemove, onAdd } = props;
+  const { personas, schema, stale, segments, diversity, audienceSeed, busy, onEdit, onRegenerate, onRemove, onAdd } = props;
   const known = new Set(segments.map((segment) => segment.id));
   const groups = [
     ...segments.map((segment) => ({ id: segment.id, name: segment.name, people: personas.filter((p) => p.segment_id === segment.id) })),
@@ -149,8 +156,9 @@ export function PersonaList(props: {
   return (
     <Card title={`Personas (${personas.length})`}>
       <div className="space-y-5">
-        <Distribution personas={personas} />
-        {diversity && <Diversity report={diversity} personas={personas} />}
+        {!!stale?.size && <p className="text-sm text-amber-800">Distributions show the last generated population. Generate personas to apply the current rules.</p>}
+        <Distribution personas={personas} schema={schema} />
+        {diversity && <Diversity report={diversity} personas={personas} schema={schema} />}
         {groups.map((group) => (
           <details key={group.id ?? 'other'} open={groups.length === 1 || group === groups[0]} className="rounded-lg border border-stone-200">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-stone-900">
@@ -162,6 +170,8 @@ export function PersonaList(props: {
                   <PersonaCard
                     key={persona.id}
                     persona={persona}
+                    schema={schema}
+                    stale={stale?.has(persona.id) ?? false}
                     allotted={!addedByHand(persona, audienceSeed)}
                     busy={busy}
                     onEdit={onEdit}

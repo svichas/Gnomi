@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { z } from 'zod';
 import { stepSchema } from '../agent/prompt.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
-import type { LlmRequest, Recorder } from '../seams.ts';
+import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent } from '../types.ts';
 import { InvalidOutputError } from './gateway.ts';
 import { createScriptedGateway, DEMO_NAVIGATOR } from './scripted.ts';
@@ -91,6 +91,24 @@ test('a setup call is priced but records nothing', async () => {
   assert.deepEqual([events.length, transcripts.length], [0, 0]);
 });
 
+test('scripted attempt notifications include setup costs and can stop paid invalid retries', async () => {
+  const { record, events } = recorder();
+  const seen: LlmAttempt[] = [];
+  const controller = new AbortController();
+  const gateway = createScriptedGateway([{ thought: 'bad', feeling: 9 }, { thought: 'ok', feeling: 0 }], record, { costPerCall: 0.25 });
+  await assert.rejects(gateway.call(request({ signal: controller.signal, onAttempt(attempt) {
+    seen.push(attempt);
+    assert.equal(events.length, 1);
+    controller.abort(new Error('budget'));
+  } })), /budget/);
+  assert.equal(seen.length, 1);
+  assert.deepEqual([seen[0].payload.usage_reported, seen[0].payload.cost_usd], [true, 0.25]);
+  const result = await gateway.call(request({ run_id: null, onAttempt: (attempt) => seen.push(attempt) }));
+  assert.equal(result.object.thought, 'ok', 'cancellation did not consume the next scripted answer');
+  assert.equal(events.length, 1);
+  assert.equal(seen.length, 2);
+});
+
 test('the demo navigator plays scroll, a labelled friction, then abandon, for each persona on its own', async () => {
   const gateway = createScriptedGateway({ navigator: DEMO_NAVIGATOR }, recorder().record);
   const step = async (persona_id: string, run_id = 'r-demo-1') => (await gateway.call({ ...request({ run_id, persona_id }), schema: stepSchema(BUILTIN_PERSONA) })).object;
@@ -104,6 +122,12 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
   assert.deepEqual(b1, a1);
   assert.equal(a2.action.type, 'scroll');
   assert.match(a2.friction?.what ?? '', /scripted demo/);
+  assert.deepEqual(a2.opinion, {
+    sentiment: -1,
+    confidence: 0.5,
+    likes: ['Sample like from the scripted demo: clear navigation; no model assessed this page'],
+    frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
+  });
   assert.deepEqual(b2, a2);
   assert.equal(a3.action.type, 'abandon');
   assert.match(a3.thought + a3.action.text, /Scripted demo/);

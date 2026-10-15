@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, mock, test } from 'node:test';
 import { z } from 'zod';
-import type { LlmRequest, Recorder, SecretName } from '../seams.ts';
+import type { LlmAttempt, LlmRequest, Recorder, SecretName } from '../seams.ts';
 import type { EventOf, GnomiEvent, ModelChoice, ProviderId } from '../types.ts';
 import { createGateway, InvalidOutputError, testProviderKey } from './gateway.ts';
 import type { Clock } from './limiter.ts';
@@ -149,6 +149,7 @@ test('one call: cached system prefix, screenshot, low effort, native schema, cos
     cache_write_tokens: 0,
     cost_usd: result.cost_usd,
     latency_ms: 0,
+    usage_reported: true,
     status: 'ok',
     error: null,
   });
@@ -253,6 +254,73 @@ test('an invalid output is retried once with the validation error appended', asy
   const retry = sent.bodies[1].messages[0].content.at(-1);
   assert.match(retry.text, /^That answer did not match the required format: .*feeling/s);
   assert.ok(Math.abs(result.cost_usd - 2 * 0.00023) < 1e-12, 'both attempts are paid for');
+});
+
+test('each paid attempt notifies after recording, and cancellation suppresses an invalid-output retry', async () => {
+  const sent = stubFetch(() => anthropicMessage('{"thought":"bad","feeling":9}'), () => anthropicMessage(OK));
+  const { gateway, calls } = setup();
+  const controller = new AbortController();
+  const seen: LlmAttempt[] = [];
+  await assert.rejects(gateway.call(request({ signal: controller.signal, onAttempt(attempt) {
+    seen.push(attempt);
+    assert.equal(calls.length, seen.length, 'the ledger exists before budget observers run');
+    controller.abort(new Error('recorded budget reached'));
+  } })), /recorded budget reached/);
+  assert.equal(sent.urls.length, 1);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].payload.usage_reported, true);
+  assert.equal(seen[0].payload.status, 'invalid_output');
+  assert.ok(seen[0].payload.cost_usd > 0);
+});
+
+test('setup attempt callbacks receive redacted transcripts and preserve successful results when the observer cancels', async () => {
+  stubFetch(() => anthropicMessage(JSON.stringify({ thought: KEY, feeling: 0 })));
+  const { gateway, calls } = setup();
+  const controller = new AbortController();
+  const seen: LlmAttempt[] = [];
+  const result = await gateway.call(request({ run_id: null, system: KEY, signal: controller.signal, onAttempt(attempt) {
+    seen.push(attempt);
+    controller.abort();
+  } }));
+  assert.equal(result.object.thought, KEY, 'the original successful result is not discarded by accounting');
+  assert.equal(calls.length, 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].payload.usage_reported, true);
+  assert.equal(seen[0].payload.cost_usd, result.cost_usd);
+  assert.doesNotMatch(JSON.stringify(seen[0].transcript), new RegExp(KEY));
+  assert.match(JSON.stringify(seen[0].transcript), /\[redacted\]/);
+});
+
+test('successful Google and local responses with partial usage remain incomplete while retaining known tokens', async () => {
+  const google = (usageMetadata?: Record<string, number>) => Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: OK }] }, finishReason: 'STOP', index: 0 }], ...(usageMetadata ? { usageMetadata } : {}) });
+  stubFetch(
+    () => google({ promptTokenCount: 1_000 }),
+    () => google({ candidatesTokenCount: 200 }),
+    () => google(),
+    () => google({ promptTokenCount: 0, candidatesTokenCount: 0 }),
+    () => google({ promptTokenCount: 1_000, candidatesTokenCount: 200, totalTokenCount: 1_250 }),
+    async () => { const body = await chatCompletion(OK).json(); body.usage = { prompt_tokens: 1_000 }; return Response.json(body); },
+  );
+  const { gateway, calls } = setup();
+  for (let i = 0; i < 5; i++) await gateway.call(request({ model: { provider: 'google', model: 'gemini-3.5-flash-lite' } }));
+  await gateway.call(request({ model: { provider: 'openai_compatible', model: 'test-local' } }));
+  assert.deepEqual(calls.map((call) => [call.event.payload.input_tokens, call.event.payload.output_tokens, call.event.payload.usage_reported]), [
+    [1_000, 0, false], [0, 200, false], [0, 0, false], [0, 0, true], [1_000, 200, false], [1_000, 0, false],
+  ]);
+  assert.ok(calls[0].event.payload.cost_usd > 0 && calls[1].event.payload.cost_usd > 0, 'known partial charges are still counted');
+});
+
+test('requests aborted before dispatch record no attempt, including after a limiter wait', async () => {
+  const sent = stubFetch(() => anthropicMessage(OK));
+  const already = new AbortController();
+  already.abort(new Error('already stopped'));
+  const first = setup();
+  let notified = 0;
+  await assert.rejects(first.gateway.call(request({ signal: already.signal, onAttempt: () => notified++ })), /already stopped/);
+  const waiting = new AbortController();
+  const second = setup({ limits: { anthropic: { rpm: 0.5, tpm: 1_000_000 } }, sleep: async () => { waiting.abort(new Error('stopped while queued')); } });
+  await assert.rejects(second.gateway.call(request({ signal: waiting.signal, onAttempt: () => notified++ })), /stopped while queued/);
+  assert.deepEqual([sent.urls.length, first.calls.length, second.calls.length, notified], [0, 0, 0, 0]);
 });
 
 test('a second invalid output throws InvalidOutputError after recording both attempts', async () => {
@@ -379,10 +447,14 @@ test('the abort signal cancels the request', async () => {
   mock.method(globalThis, 'fetch', (_url: string, init: RequestInit) => new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason))));
   const { gateway, calls } = setup();
   const controller = new AbortController();
-  const call = gateway.call(request({ signal: controller.signal }));
+  const attempts: LlmAttempt[] = [];
+  const call = gateway.call(request({ signal: controller.signal, onAttempt: (attempt) => attempts.push(attempt) }));
   setTimeout(() => controller.abort(), 10);
   await assert.rejects(call);
   assert.equal(calls[0].event.payload.status, 'error');
+  assert.equal(calls[0].event.payload.usage_reported, false, 'an aborted request without returned usage is not a known-free request');
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].payload.cost_usd, 0);
 });
 
 test('stopping the run while a call waits to retry ends the call', async () => {
@@ -396,6 +468,15 @@ test('stopping the run while a call waits to retry ends the call', async () => {
   });
   await assert.rejects(gateway.call(request({ signal: controller.signal })));
   assert.equal(sent.urls.length, 1, 'no second request after the stop');
+});
+
+test('a retry wait that resolves after cancellation cannot dispatch another attempt', async () => {
+  const controller = new AbortController();
+  const sent = stubFetch(() => anthropicError(429, 'rate_limit_error', 'Rate limited'), () => anthropicMessage(OK));
+  const { gateway, calls } = setup({ sleep: async () => { controller.abort(new Error('cancelled in backoff')); } });
+  await assert.rejects(gateway.call(request({ signal: controller.signal })), /cancelled in backoff/);
+  assert.equal(sent.urls.length, 1);
+  assert.deepEqual(calls.map((call) => call.event.payload.usage_reported), [false]);
 });
 
 test('an unpriced cloud model is refused before any request, but a local one is free', async () => {

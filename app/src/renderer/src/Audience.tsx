@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, Persona, ProjectConfig } from '@gnomi/engine/types.ts';
+import type { Audience, Persona, PersonaSchema, ProjectConfig } from '@gnomi/engine/types.ts';
+import { personaProfileIsCurrent } from '@gnomi/engine/profile/signature.ts';
 import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, personaMinimum, removeSegment, setShare } from './audience.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
 import { PersonaList } from './Personas.tsx';
+import { ProfileEditor } from './ProfileEditor.tsx';
+import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
 import { Card, Field, Note, NumberInput, primaryButton, ProgressBar, secondaryButton, usd, useAction } from './ui.tsx';
 
@@ -12,18 +15,26 @@ import { Card, Field, Note, NumberInput, primaryButton, ProgressBar, secondaryBu
 export function AudienceTab(props: {
   audience: Audience | null;
   onAudience(audience: Audience | null): void;
+  schema?: PersonaSchema;
+  onSchema(schema: PersonaSchema): void;
   info: ProjectInfo | null;
   description: string; // the product sentence, the starting point of a one-segment audience
+  projectName: string;
+  goal: string;
   save(): Promise<ProjectConfig | string>;
   refresh(): Promise<void>;
 }) {
-  const { audience, onAudience, info, description, save, refresh } = props;
+  const { audience, onAudience, schema, onSchema, info, description, projectName, goal, save, refresh } = props;
   const plan = useAction();
   const people = useAction();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const sessions = info?.sessions ?? [];
   const personas = info?.personas ?? [];
-  const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null);
+  const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema);
+  const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
+  const stale = new Set(personas.filter((persona) => {
+    try { return !!profileProject && !personaProfileIsCurrent(persona, profileProject); } catch { return true; }
+  }).map((persona) => persona.id));
 
   // Only while this tab is generating: a late message must not bring the bar back.
   useEffect(() => onProgress(({ done, total }) => setProgress((was) => was && { done, total })), []);
@@ -66,6 +77,8 @@ export function AudienceTab(props: {
   // One persona at a time through the engine, then the population is read again.
   const change = (text: (cost: number) => string, request: () => Promise<{ cost_usd: number } | null>) =>
     people.run(async () => {
+      const problem = await saved();
+      if (problem) return { ok: false, text: problem };
       const result = await request();
       await refresh();
       return { ok: true, text: text(result?.cost_usd ?? 0) };
@@ -89,8 +102,8 @@ export function AudienceTab(props: {
         {audience === null ? (
           <div className="space-y-4">
             <p className="text-sm text-stone-600">
-              Say who the product is for. Gnomi can propose segments from your product description and goal, or you can start from one segment and build from there. Without an
-              audience, every run uses one built-in persona.
+              Say who the product is for. Gnomi can propose segments from your product description and goal, or you can start from one segment and build from there.
+              {schema ? ' Your profile attributes are saved. Build an audience and generate its personas before running.' : ' Without an audience, every run uses one built-in persona.'}
             </p>
             <div className="flex flex-wrap gap-3">
               <button type="button" onClick={propose} disabled={plan.busy} className={primaryButton}>
@@ -122,6 +135,8 @@ export function AudienceTab(props: {
                 </button>
               </div>
             </div>
+
+            <CountryMix countries={audience.countries} onChange={(countries) => onAudience({ ...audience, countries })} />
 
             <ul aria-label="Segments" className="space-y-4">
               {segments.map((segment) => (
@@ -170,10 +185,16 @@ export function AudienceTab(props: {
         )}
       </Card>
 
+      {audience && <ProfileEditor schema={schema} segments={segments} onSchema={onSchema} disabled={people.busy || plan.busy} />}
+
+      {stale.size > 0 && <Note tone="info">{stale.size} {stale.size === 1 ? 'persona needs' : 'personas need'} regeneration after profile changes. Their old biographies and voices are hidden until you generate personas.</Note>}
+
       {people.outcome && <Note tone={people.outcome.ok ? 'ok' : 'error'}>{people.outcome.text}</Note>}
       {audience !== null && personas.length > 0 && (
         <PersonaList
           personas={personas}
+          schema={schema}
+          stale={stale}
           segments={segments}
           diversity={info?.diversity ?? null}
           audienceSeed={info?.project?.audience?.seed ?? null}

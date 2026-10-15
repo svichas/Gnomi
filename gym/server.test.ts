@@ -106,6 +106,27 @@ describe("Gym ATS", () => {
       assert.match(page.body, /&#60;img/);
     }));
 
+  it("/locale echoes the request language with every defect setting and is linked from Settings", async () => {
+    for (const defects of ["all", "none"]) {
+      await withGym(defects, async (url) => {
+        const page = await request(url, "/locale", { headers: { "Accept-Language": "de-DE,en-GB;q=0.9" } });
+        assert.equal(page.status, 200);
+        assert.match(page.body, /<h1>Locale echo<\/h1>/);
+        assert.match(page.body, /id="locale-http-language">Accept-Language: de-DE,en-GB;q=0.9<\/p>/);
+        assert.match((await request(url, "/settings")).body, /<a href="\/locale">Locale echo<\/a>/);
+      });
+    }
+  });
+
+  it("/locale escapes the request header as text rather than executable markup", () =>
+    withGym("none", async (url) => {
+      const header = 'de-DE,<script>alert("header")</script>';
+      const page = await request(url, "/locale", { headers: { "Accept-Language": header } });
+      assert.equal(page.status, 200);
+      assert.doesNotMatch(page.body, /<script>alert/);
+      assert.match(page.body, /de-DE,&#60;script&#62;alert\(&#34;header&#34;\)&#60;\/script&#62;/);
+    }));
+
   it("rejects unknown defect ids", () => assert.rejects(startGym({ port: 0, defects: "D99" }), /Unknown defect D99/));
 
   it("defects.yaml has a toggle for each defect", async () => {

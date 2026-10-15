@@ -341,6 +341,7 @@ function createApp(config: Config) {
     if (path === "/settings/users") return send(res, 200, usersPage(c, store.users, { email: "", role: "recruiter" }));
     if (path === "/settings/approvals") return send(res, 200, approvalsPage(c, store.approvals));
     if (path === "/billing") return send(res, 200, billingPage(c));
+    if (path === "/locale") return send(res, 200, localePage(c, req.headers["accept-language"] ?? "Not sent"));
     if (found) return send(res, 200, jobPage(c, found, url.searchParams.has("published")));
     send(res, 404, notFoundPage(c));
   };
@@ -644,8 +645,26 @@ function settingsPage(c: Ctx): string {
 <li><a href="/settings/users">Users</a></li>
 <li><a href="/settings/approvals">Approvals</a></li>
 <li><a href="/billing">Billing</a></li>
+<li><a href="/locale">Locale echo</a></li>
 </ul>
 </section>`);
+}
+
+function localePage(c: Ctx, acceptLanguage: string): string {
+  return layout(c, "settings", "Locale echo", `
+<h1>Locale echo</h1>
+<section class="card" aria-label="Browser environment">
+<p>This page shows the language sent to the server and the settings exposed by this browser.</p>
+<p id="locale-http-language">Accept-Language: ${esc(acceptLanguage)}</p>
+<p id="locale-language">Browser locale: Waiting for JavaScript</p>
+<p id="locale-languages">Browser languages: Waiting for JavaScript</p>
+<p id="locale-timezone">Browser timezone: Waiting for JavaScript</p>
+</section>
+<script>
+document.getElementById("locale-language").textContent = "Browser locale: " + navigator.language;
+document.getElementById("locale-languages").textContent = "Browser languages: " + navigator.languages.join(", ");
+document.getElementById("locale-timezone").textContent = "Browser timezone: " + Intl.DateTimeFormat().resolvedOptions().timeZone;
+</script>`);
 }
 
 function billingPage(c: Ctx): string {

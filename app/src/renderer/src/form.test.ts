@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '@gnomi/engine/settings.ts';
 import type { ProjectConfig, RunSettings, SessionInfo } from '@gnomi/engine/types.ts';
+import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
 import { blankAudience } from './audience.ts';
 import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, startHost, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
@@ -121,4 +122,18 @@ test('the audience goes into the project cleaned up, or stops the save with a se
   assert.equal(config.audience?.segments[0].name, 'Recruiters');
   assert.equal(config.audience?.segments[0].goal_override, null);
   assert.match(String(toConfig(form({}, { audience: { ...audience, persona_count: 2 } }))), /^Audience: the persona count/);
+});
+
+test('profile schemas round-trip only when configured and invalid schemas stop project save', () => {
+  assert.equal(Object.hasOwn(initialDraft(null), 'persona_schema'), false);
+  const original = toConfig(form());
+  assert.ok(typeof original !== 'string');
+  assert.equal(Object.hasOwn(original, 'persona_schema'), false);
+  const persona_schema = getPersonaSchema();
+  persona_schema.attributes.find((attribute) => attribute.id === 'employer')!.enabled = false;
+  const configured = toConfig(form({}, { persona_schema }));
+  assert.ok(typeof configured !== 'string');
+  assert.deepEqual(initialDraft(configured).persona_schema, persona_schema);
+  persona_schema.attributes.find((attribute) => attribute.id === 'name')!.enabled = false;
+  assert.match(String(toConfig(form({}, { persona_schema }))), /^Audience:.*Core/);
 });

@@ -1,6 +1,8 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
+import { personaEnvironment } from '../audience/locations.ts';
+import { sameOpinion } from '../opinion/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
-import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
+import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
 
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'stopped';
@@ -20,7 +22,7 @@ export interface EpisodeDeps {
   llm: LlmGateway;
   blobs: BlobStore;
   record: Recorder;
-  /** Aborted by stop() or a tripwire: the in-flight model call is cancelled. */
+  /** Aborted by the recorded cost cap, stop(), a tripwire or an error; in-flight model calls are cancelled. */
   signal: AbortSignal;
   /** Asks to start a step; false once a run-wide stop (user, tripwire, cost or wall clock) means no new step may begin. */
   beginStep: () => boolean;
@@ -48,6 +50,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   const system = systemPrompt(persona, config.project, segment, step_budget);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
+  let opinion: Opinion | null = null;
   let failKey = '';
   let failStreak = 0;
 
@@ -59,6 +62,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   // continues on a fresh page at the last unblocked URL, memory intact. 'go' means carry on.
   const inspect = async (step_no: number, url: string): Promise<'go' | EpisodeEnd> => {
     for (;;) {
+      if (signal.aborted) return 'stopped';
       const flags = await page.inspect();
       if (flags.live_key) {
         deps.tripwire('live_payment_key', `A live payment key (${flags.live_key}…) is on ${url}, so this looks like production.`);
@@ -78,7 +82,9 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
       const wake = await waiting;
       if (wake !== 'resumed') return wake === 'timeout' ? 'blocked' : 'stopped';
       await page.close().catch(() => {});
+      if (signal.aborted) return 'stopped';
       page = await deps.openPage();
+      if (signal.aborted) return 'stopped';
       await page.goto(lastGoodUrl);
       url = lastGoodUrl;
       emit('persona.resumed', { step_no });
@@ -92,7 +98,8 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     const shot = await page.screenshot();
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    if (signal.aborted) return null;
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: 1, system, user, schema, signal });
       return { snapshot, screenshot, output: object as StepOutput | null };
@@ -105,8 +112,9 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   };
 
   try {
+    if (signal.aborted) return 'stopped';
     await page.goto(startUrl);
-    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl });
+    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona) });
     const first = await inspect(0, startUrl);
     if (first !== 'go') return first;
 
@@ -119,7 +127,8 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
       } finally {
         deps.endStep();
       }
-      if (!looked) return 'stopped';
+      // A provider may return successfully after cancellation. Its usage stays logged, but the answer must not act.
+      if (!looked || signal.aborted) return 'stopped';
       const { snapshot, screenshot, output } = looked;
 
       const action: Action = output?.action ?? { type: 'wait', ref: null, text: null };
@@ -131,7 +140,12 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
           : await page.act(action);
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
-      emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
+        const after = structuredClone(output.opinion);
+        emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recordedStep.seq], post_ids: [] } });
+        opinion = structuredClone(after);
+      }
       const friction = output?.friction ?? null;
       if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url: snapshot.url, ref: action.ref } });
 

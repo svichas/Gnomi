@@ -204,6 +204,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       },
     ],
     cost_usd: 0.75,
+    unreported_usage_calls: 0,
     llm_calls: 2,
     input_tokens: 5500,
     output_tokens: 400,
@@ -224,6 +225,24 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       concurrency_changes: [],
     },
   });
+});
+
+test('recorded cost keeps known charges and counts only explicitly missing usage', () => {
+  const script: Script = [
+    startedAt,
+    [1100, { ...env, type: 'llm.call', payload: { ...llmCall(0.25, 100, 20), usage_reported: true } }],
+    [1200, { ...env, type: 'llm.call', payload: { ...llmCall(0.05, 50, 0), usage_reported: false, status: 'error', error: 'Canceled' } }],
+    [1300, { ...env, type: 'llm.call', payload: { ...llmCall(0, 0, 0), usage_reported: false, status: 'invalid_output', error: 'No usage returned' } }],
+    // Old logs do not say whether usage was returned, even for failed calls.
+    [1400, { ...env, type: 'llm.call', payload: { ...llmCall(0, 0, 0), status: 'error', error: 'Legacy error' } }],
+    [1500, { ...runEnv, type: 'run.stopped', payload: { reason: 'user', detail: null } }],
+  ];
+  const report = buildReport(stored(script));
+  assert.equal(report.cost_usd, 0.3);
+  assert.equal(report.unreported_usage_calls, 2);
+  assert.equal(report.llm_calls, 4);
+  assert.deepEqual([report.input_tokens, report.output_tokens], [150, 20]);
+  assert.equal(buildReport(stored(finishedRun())).unreported_usage_calls, 0);
 });
 
 test('a stopped run carries the stop reason with its detail, and a budget signal', () => {

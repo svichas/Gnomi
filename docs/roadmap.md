@@ -37,6 +37,37 @@ M0 Walking skeleton ──► M1 Real staging apps ──► M2 Audience ──�
 
 Total: about 27 weeks of calendar time with two engineers, roughly seven months to a shippable 1.0. M5 can run in parallel with M4 if a third engineer joins.
 
+## Implementation status — 15 October 2026
+
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented. **M2 remains in progress; M3 has not started.** The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
+
+The first M2 gap-closure batch adds:
+
+- Country mixes and optional per-segment employer lists, deterministic sampling, and country/city/timezone/language/employer displays on persona cards and in the inspector.
+- Persona-specific browser locale, timezone, ordered language preferences and `Accept-Language`; the navigator prompt requires thoughts in the persona's first language. The Gym's `/locale` page and a real-browser regression cover Germany → `de-DE`, `Europe/Berlin` and German-first language preferences.
+- A local project home with create, open, rename, duplicate, delete to Trash and folder export. Duplicates carry configuration and personas; exports also carry run history and screenshots. Neither includes recorded logins or provider keys. Project switches refuse active runs, recording and pending project work; unsaved edits require Save, Discard or Cancel.
+
+Country sampling currently uses one reference city per supported country (14 countries), not a demographic distribution within countries. Legacy personas retain their language and use UTC when no timezone was stored. Folder export is available; ZIP packaging and import remain M6.
+
+The second gap-closure batch adds:
+
+- A versioned profile schema and editor with protected core attributes, independent card/prompt/report switches, custom text/number/choice/boolean/list attributes, per-segment sampling rules and validated JSON templates. The shipped schema covers all eight profile groups, including decision role, tools and prior tools, work context and psychology; defaults are editable assumptions.
+- Deterministic attribute sampling and biography freshness checks. Changed model inputs require refreshed prose; display-only edits reuse biographies, and private sampled fields refresh without a writer call. Disabled fields are excluded from profile output and model input. New runs freeze the schema and population; legacy logs remain readable.
+- Profile dimensions in reports and Markdown, with completion, friction share and mean latest feeling by exact attribute value. Shared filters narrow report evidence, the persona roster and activity while keeping full-run totals explicitly labelled.
+- Structured current opinions in the inspector: sentiment, self-reported confidence, likes, frictions and a link to the source step. The engine records changed snapshots from the existing navigator response, without an additional model call; old runs without opinions show an empty state.
+
+The third batch adds:
+
+- A recorded-cost check after every model attempt, including paid invalid outputs. At the cap, the engine cancels outstanding requests, suppresses retries and discards late answers before browser action dispatch. Already-started actions and late returned usage remain in the report.
+- Recorded-cost labels and missing-usage notices in the live meter, report and Markdown export. Provider SDK defaults do not turn missing usage into a known zero charge. Unpriced models are blocked in preflight.
+- An opt-in [M2 acceptance runner](m2-acceptance.md) with a frozen 50-person population, all Gym v1 defects, a German locale probe, retained transcripts/screenshots, report replay checks and evidence review sheets. Scripted rehearsals verify execution; they cannot pass live-provider criteria. The fixture excludes live persona-generation cost and quality.
+
+The no-cost rehearsal verified 50 terminal episodes at peak concurrency 12, the actual German browser environment, and both report replays. All live-model criteria remain `NOT_RUN`; no paid calls were made. Verification details are in [the task results](../tasks/todo.md#third-batch-results--15-october-2026).
+
+**Still required for M2:** live-provider acceptance measurements. On 15 October the user chose to preserve concurrency and stop immediately at the recorded cost cap: cancel outstanding requests and dispatch no further requests, retries or browser actions. Already-started browser actions may finish, and already-billable provider calls may exceed the cap. Late returned usage belongs in the report; calls without complete usage must be flagged as uncertain charges. This replaces the original ambiguous “within one step” budget rule below.
+
+Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time, profile adherence or language compliance. Default prior-tool lists are empty until configured, and language values represent ordered preferences rather than proficiency scores.
+
 ---
 
 ## M0 — Walking skeleton: one persona finds one friction
@@ -127,7 +158,7 @@ Total: about 27 weeks of calendar time with two engineers, roughly seven months 
 - Sampled populations are diverse: no two personas share name and background; the diversity check reports pairwise similarity and warns above a threshold.
 - A persona with country Germany reaches the Gym's locale echo page with a German locale, Berlin time and German first in `Accept-Language`, and its thoughts in the activity panel are in German.
 - Switching an attribute off removes it from cards, prompts and the report; adding a custom choice attribute with per-segment shares produces those shares across 50 personas within sampling error, and it appears as a filter in the report.
-- The run stops within one step of the budget being hit and still produces a report.
+- As soon as recorded spend reaches the cost cap, the run cancels outstanding model requests and starts no further requests, retries or browser actions. Already-started browser actions may finish. The run still produces a report containing all returned usage and flags calls with incomplete usage; the cap is a cancellation threshold, not a guarantee of final provider charges under concurrency.
 
 **Demo script.** Type "An ATS for 50–2,000-employee companies" → five segment cards appear → drag recruiters to 60% → open Hiring managers → regenerate one persona → Start → watch 12 personas in parallel → the cost meter climbs → open a persona mid-run.
 

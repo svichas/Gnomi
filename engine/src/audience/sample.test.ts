@@ -120,3 +120,44 @@ test('editing one distribution re-samples only that trait, and key order does no
   const reordered = { ...audience, languages: Object.fromEntries(Object.entries(audience.languages).reverse()) };
   assert.deepEqual(slots(reordered, 300), before);
 });
+
+test('a country supplies coherent location and languages without changing unrelated seeded traits', () => {
+  const germany: Audience = { ...audience, countries: { DE: 1 } };
+  const before = slots(audience, 50);
+  const after = slots(germany, 50);
+  for (const [i, traits] of after.entries()) {
+    assert.equal(traits.country, 'DE');
+    assert.equal(traits.city, 'Berlin');
+    assert.equal(traits.timezone, 'Europe/Berlin');
+    assert.deepEqual(traits.languages, ['de-DE', 'en']);
+    assert.equal(traits.language, traits.languages[0]);
+    const { country, city, timezone, languages, language, ...unchanged } = traits;
+    const { language: oldLanguage, ...old } = before[i];
+    assert.deepEqual(unchanged, old);
+  }
+  assert.deepEqual(slots(structuredClone(germany), 50), after);
+  after[0].languages!.push('fr');
+  assert.deepEqual(slots(germany, 1)[0].languages, ['de-DE', 'en'], 'profiles and other personas never share a mutable language array');
+  assert.deepEqual(after[1].languages, ['de-DE', 'en']);
+});
+
+test('country shares are sampled reproducibly, independently of key order and employer selection', () => {
+  const mixed: Audience = { ...audience, countries: { DE: 60, GR: 30, US: 10, GB: 0 } };
+  const sample = slots(mixed, 2000);
+  for (const [country, share] of Object.entries(mixed.countries!)) {
+    assert.ok(Math.abs(sample.filter((p) => p.country === country).length / sample.length - share / 100) < 0.035, country);
+  }
+  assert.deepEqual(slots({ ...mixed, countries: { US: 10, GB: 0, GR: 30, DE: 60 } }, 2000), sample);
+  const withEmployers = slots({ ...mixed, segments: [{ ...segment, employers: ['Acme', 'Northwind'] }] }, 2000);
+  assert.ok(withEmployers.every((p) => ['Acme', 'Northwind'].includes(p.employer!)));
+  assert.ok(Math.abs(withEmployers.filter((p) => p.employer === 'Acme').length / 2000 - 0.5) < 0.04);
+  withEmployers.forEach(({ employer, ...p }, i) => assert.deepEqual(p, sample[i]));
+});
+
+test('configured country shares reject unknown countries, negative, nonfinite and empty distributions', () => {
+  const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: -1 }, { DE: NaN }, { DE: Infinity }, { DE: 0 }, {}, { DE: 1, ZZ: 0 }];
+  for (const countries of invalid) {
+    assert.throws(() => sampleTraits(segment, { ...audience, countries }, 1), /countr/i);
+  }
+  assert.equal(sampleTraits(segment, { ...audience, countries: { DE: Number.MAX_VALUE, GR: Number.MAX_VALUE } }, 1).country?.length, 2);
+});

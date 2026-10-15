@@ -1,4 +1,6 @@
-import type { Action, ActionTarget, EventOf, GnomiEvent, Persona, RunConfig, Segment, SessionInfo } from '@gnomi/engine/types.ts';
+import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/engine/types.ts';
+import { profileEntries } from '@gnomi/engine/profile/schema.ts';
+import { attributeKey } from '@gnomi/engine/report/dimensions.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -63,7 +65,7 @@ function describeAction(action: Action, target: ActionTarget | null): string {
 
 const STOP_REASONS = {
   user: 'You stopped the run',
-  cost_budget: 'The run reached its cost limit',
+  cost_budget: 'The run stopped for its cost budget',
   wall_clock: 'The run reached its time limit',
   tripwire: 'The run was halted by a safety check',
   error: 'The run stopped because of an error',
@@ -111,6 +113,14 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
     case 'persona.friction_reported': {
       const { step_no, severity, what, expected } = event.payload;
       return { seq, label: `Step ${step_no}`, tone: 'friction', title: `Friction, severity ${severity} of 4: ${what}`, detail: `Expected: ${expected}` };
+    }
+    case 'persona.opinion_changed': {
+      const { sentiment, confidence, likes, frictions } = event.payload.after;
+      return {
+        seq, label: 'Opinion', tone: 'notice',
+        title: `Sentiment ${sentiment > 0 ? '+' : ''}${sentiment}; self-reported confidence ${Math.round(confidence * 100)}%`,
+        detail: `Likes: ${likes.join('; ') || 'none reported'}. Frictions: ${frictions.join('; ') || 'none reported'}.`,
+      };
     }
     case 'persona.blocked': {
       const { step_no, reason, detail } = event.payload;
@@ -217,11 +227,12 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
   return counts;
 }
 
-export type Category = 'steps' | 'frictions' | 'outcomes' | 'blocks' | 'containment' | 'run';
+export type Category = 'steps' | 'frictions' | 'opinions' | 'outcomes' | 'blocks' | 'containment' | 'run';
 
 export const CATEGORIES: Record<Category, string> = {
   steps: 'Steps',
   frictions: 'Frictions',
+  opinions: 'Opinions',
   outcomes: 'Finishes and give-ups',
   blocks: 'Blocked and resumed',
   containment: 'Blocked requests and safety stops',
@@ -232,6 +243,7 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'persona.step': 'steps',
   'persona.episode_started': 'steps',
   'persona.friction_reported': 'frictions',
+  'persona.opinion_changed': 'opinions',
   'persona.goal_done': 'outcomes',
   'persona.abandoned': 'outcomes',
   'signal.budget_exceeded': 'outcomes',
@@ -247,21 +259,44 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'llm.call': 'run',
 };
 
-export interface Filters {
+export interface ProfileFilter {
+  dimension?: string;
+  value?: string; // typed JSON key, or '' for every value
+}
+
+export interface Filters extends ProfileFilter {
   persona: string; // a persona id, or '' for everyone
   segment: string; // a segment id, or ''
   category: Category | ''; // '' for every kind of event
 }
 
+export function matchesProfileValues(attributes: Record<string, AttributeValue> | undefined, filter: ProfileFilter): boolean {
+  if (!filter.dimension || !filter.value) return true;
+  const value = attributes?.[filter.dimension];
+  return value !== undefined && attributeKey(value) === filter.value;
+}
+
+/** Shared by the activity feed and the inspector roster; only enabled report dimensions are filterable. */
+export function filterPersonas(personas: Persona[], filters: ProfileFilter & { persona?: string; segment?: string }, schema?: PersonaSchema): Persona[] {
+  return personas.filter((persona) => {
+    if (filters.persona && filters.persona !== persona.id) return false;
+    if (filters.segment && filters.segment !== persona.segment_id) return false;
+    if (!filters.dimension || !filters.value) return true;
+    const attributes = Object.fromEntries(profileEntries(persona, schema, 'report').map(({ attribute, value }) => [attribute.id, value]));
+    return matchesProfileValues(attributes, filters);
+  });
+}
+
 /** The events a filter lets through; run-level events have no persona, so a persona or segment filter hides them. */
-export function filterEvents(events: GnomiEvent[], filters: Filters, personas: Map<string, Persona>): GnomiEvent[] {
-  if (!filters.persona && !filters.segment && !filters.category) return events;
+export function filterEvents(events: GnomiEvent[], filters: Filters, personas: Map<string, Persona>, schema?: PersonaSchema): GnomiEvent[] {
+  const byProfile = !!filters.dimension && !!filters.value;
+  if (!filters.persona && !filters.segment && !filters.category && !byProfile) return events;
+  const allowed = new Set(filterPersonas([...personas.values()], filters, schema).map((persona) => persona.id));
   return events.filter((event) => {
     if (filters.category && CATEGORY_OF[event.type] !== filters.category) return false;
-    if (!filters.persona && !filters.segment) return true;
+    if (!filters.persona && !filters.segment && !byProfile) return true;
     if (event.persona_id === null) return false;
-    if (filters.persona && event.persona_id !== filters.persona) return false;
-    return !filters.segment || personas.get(event.persona_id)?.segment_id === filters.segment;
+    return allowed.has(event.persona_id);
   });
 }
 
@@ -280,6 +315,7 @@ export interface RunSetup {
   costBudget: number | null;
   concurrency: number | null;
   pauseMs: number | null;
+  schema?: PersonaSchema;
   /** The login a persona uses: her segment's, or the project's for the built-in persona. */
   roleOf(persona: Persona | undefined): string | null;
 }
@@ -294,6 +330,7 @@ export function runSetup(config: RunConfig | undefined): RunSetup {
     costBudget: config?.project.settings?.cost_budget_usd ?? old.cost_budget_usd ?? null,
     concurrency: config?.project.settings?.concurrency ?? null,
     pauseMs: config?.pause_timeout_ms ?? null,
+    schema: config?.project.persona_schema,
     roleOf(persona) {
       const segment = segments.find((candidate) => candidate.id === persona?.segment_id);
       return segment ? segment.role : (old.session?.role ?? config?.project.role ?? null);

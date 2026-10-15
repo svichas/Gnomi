@@ -386,6 +386,10 @@ Configuration (edited in the UI, versioned by run snapshot):
 
 The persona schema makes the profile generic for the engine: the sampler walks the enabled attributes and draws each from its per-segment rule with the seeded generator; the persona writer receives the drawn values and the descriptions and writes the biography and voice; the prompt builder renders every enabled attribute with `use_in_prompt` as YAML in its group; and the report groups frictions and sentiment by every attribute flagged `report_dimension`. The engine itself reads only the core attributes by name (country, timezone, languages, device, tech skill, patience, goal interpretation, voice, biography, seed), which is why those cannot be removed. Schemas can be exported as templates (JSON) and imported into other projects; Gnomi ships the default template. Duplicating a run copies the snapshot; the comparison view diffs two snapshots and two reports.
 
+**M2 implementation:** the version-1 schema lives in `ProjectConfig.persona_schema` inside the existing project JSON, rather than requiring another SQLite table. Existing typed persona fields retain their sampling sources; additional default and custom values live in `Persona.attributes`. Each sampled attribute has its own seed stream. `enabled` governs every projection, `show_on_card` governs cards, `use_in_prompt` governs model input, and `report_dimension` governs grouping and filtering. Core fields must remain enabled in prompts. Templates are strictly validated before use; rules can be fixed, numeric ranges or weighted choices with segment overrides. List values are lists of text and group as an ordered whole.
+
+Writer-input signatures detect stale generated prose. A refresh reuses biographies after card/report-only edits and updates private sampled values without another writer call; model-input changes require rewritten biographies before a run. New runs deep-copy the project, population and session metadata and materialize the default schema. Old logs without a schema retain their earlier report shape. Profile group rates use the number of personas with that exact value; mean latest feeling excludes personas with no recorded step. Filtered details retain explicitly labelled full-run totals. Default demographic/work/psychology rules are editable starting assumptions, not measured audience distributions.
+
 The log:
 
 | Table | Purpose | Key columns |
@@ -508,11 +512,17 @@ The output schema for a browser step:
     "severity": 3,
     "what": "Inviting a manager navigated away from the job form",
     "expected": "To invite without leaving the form"
+  },
+  "opinion": {
+    "sentiment": -1,
+    "confidence": 0.6,
+    "likes": [],
+    "frictions": ["Inviting a manager interrupted my draft"]
   }
 }
 ```
 
-`friction` is optional and `feeling` is −2…+2. Structured output is enforced with a schema per action phase (browse, social, survey, static-design), using the provider's native structured-output mode (see [§10](#10-llm-provider-abstraction-and-model-routing)).
+`friction` and `opinion` are nullable and `feeling` is −2…+2. Opinion is a complete self-reported snapshot, supplied only when firsthand evidence changes the persona's view: integer sentiment −2…+2, confidence 0…1, and at most five likes and five frictions (500 characters each). It describes what was already observed, not the result of the action about to happen. The engine emits `persona.opinion_changed` only when the snapshot changes, linking it to the recorded step sequence; the inspector folds these events by run, persona and POI. No extra model call is added. Older responses may omit opinion and older logs display an empty opinion state. Strict provider JSON schemas still require the nullable key. Structured output is enforced with a schema per action phase (browse, social, survey, static-design), using the provider's native structured-output mode (see [§10](#10-llm-provider-abstraction-and-model-routing)).
 
 ### 6.2 Perception
 
@@ -700,8 +710,8 @@ Mocking tools for the team's own code (service-worker mocks, OpenAPI mock server
 ### 9.5 Cost and speed
 
 - **Budgets.** A run has a cost budget (USD), a wall-clock budget, and per-persona step and time budgets. The pre-run summary estimates cost from the cost model in [§10.4](#104-cost-model) and the persona count.
-- **Live cost meter.** Every `llm.call` event carries the provider's usage fields (input, output and cache-read tokens) and the price table in effect; the meter sums them. For providers that do not return usage, the gateway counts tokens locally and marks the figure as an estimate.
-- **Stopping rules.** Budget reached → the scheduler stops starting new episodes, lets in-flight steps finish, runs the survey for personas that touched a POI, and produces a report marked "stopped at budget". Wall clock → same. Saturation is shown, not enforced, in v1.
+- **Live cost meter.** Every `llm.call` event carries the returned usage fields (input, output and cache-read/write tokens) and their priced cost; the meter sums recorded costs. New events mark whether complete usage was reported. Missing usage is counted and shown as possible unreported charges, never presented as proof of zero billing. Legacy events without that marker retain their recorded totals.
+- **Stopping rules.** Recorded cost cap reached → cancel outstanding model requests and dispatch no further requests, retries or browser actions. Already-started browser actions may finish and remain in the log. Late returned provider usage is included before the final report is built. Concurrent calls may already be billable and may exceed the threshold; cancellation does not guarantee a provider bill cap. Wall-clock stops prevent further steps and let current steps finish. The end-of-episode survey is M3 work; no extra paid survey is sent after a cost stop. Saturation is shown, not enforced, in v1.
 - **Model routing.** Navigation and social steps run on a cheap model; survey, clustering and report writing on a strong one. Defaults per provider are in [§10.2](#102-model-routing).
 - **Prompt caching.** The stable prefix (framing, persona card, rules, protocol) is identical for every step of a persona and is marked as a cache breakpoint where the provider supports it; the volatile suffix is kept under ~6k tokens.
 - **Concurrency and rate limits.** A token-bucket limiter per provider (requests and tokens per minute, configured per provider tier in settings with conservative defaults) and an adaptive concurrency that backs off on 429s. Twelve concurrent personas is the default; the engine raises it automatically up to 32 when free memory allows, reserving about 200 MB per persona, and lowers it when the provider throttles. Personas run headless, so 30 sessions cost CPU only while pages load and otherwise wait on the model. Thirty personas is roughly 450 calls a minute, which fits Anthropic's entry tier for Haiku with caching and needs the next account tier for mid-tier models ([§10.4](#104-cost-model)).
@@ -802,7 +812,7 @@ A 200-persona run is about four times these figures. The default routing keeps a
 
 - A **dated price table** keyed by model id (input, cache read, cache write, output, long-context bands, effective dates) ships with the app and can be edited in settings; the methods appendix records which table version priced a run.
 - The **pre-run estimate** multiplies the persona count, step budgets and round count by the tokens-per-call averages measured on the Gym for the chosen models, and shows a range. During a run the estimate is replaced by the running average, so the projection tightens.
-- **Stopping**: hard caps per run and per persona in dollars, checked before each call against the projected cost of that call; provider spend-limit errors stop the run immediately with a clear message.
+- **Stopping**: M2 has a run-wide recorded-dollar cancellation threshold and per-persona step budgets. The scheduler may stop conservatively before a new step using observed average cost and outstanding steps; every provider attempt, including invalid outputs, also triggers a synchronous recorded-cost check before any return or retry. Reaching the cap cancels pending requests and prevents new actions. Already-billable calls can produce late usage or unreported charges, so this is not a strict final-bill bound. Provider spend-limit errors stop the run with a clear message. Per-persona dollar caps are not implemented.
 
 ### 10.6 Structured output
 

@@ -91,7 +91,7 @@ try {
     }
   });
 
-  await stage('the page is isolated: no Node, a three-method bridge, a strict CSP', async () => {
+  await stage('the page is isolated: no Node, a bounded bridge, a strict CSP', async () => {
     const seen = await page.evaluate(async () => {
       const script = document.createElement('script');
       script.textContent = 'window.inlineScriptRan = true';
@@ -104,7 +104,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -279,6 +279,10 @@ try {
     await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
     await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
     await audience.getByLabel('Number of personas', { exact: true }).fill('6');
+    await audience.getByRole('button', { name: 'Remove country United States' }).click();
+    await audience.getByLabel('Add country').selectOption('DE');
+    await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
+    await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
     // The generation may be quick, so a page observer keeps what the progress bar showed.
     await page.evaluate(() => {
       const seen: string[] = [];
@@ -295,8 +299,15 @@ try {
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
     await audience.getByText('Recruiters (3)').waitFor();
     await audience.getByText('Hiring managers (3)').waitFor();
-    const cards = audience.locator('details li');
+    const personaSection = audience.getByRole('heading', { name: 'Personas (6)', exact: true }).locator('..');
+    const cards = personaSection.getByRole('listitem', { name: / persona$/, includeHidden: true });
     assert.equal(await cards.count(), 6);
+    await audience.getByText('Hiring managers (3)', { exact: true }).click();
+    for (const text of await cards.allInnerTexts()) {
+      for (const value of ['Berlin', 'Germany', 'Europe/Berlin', 'de-DE, en']) assert.ok(text.includes(value), `missing ${value}`);
+    }
+    assert.equal(await cards.filter({ has: page.locator('dd').filter({ hasText: /^Example GmbH$/ }) }).count(), 3);
+    assert.equal(await cards.filter({ has: page.locator('dd').filter({ hasText: /^Beispiel AG$/ }) }).count(), 3);
     await audience.getByRole('heading', { name: 'Personas (6)' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, 'personas.png') });
 
@@ -313,9 +324,10 @@ try {
     await audience.getByRole('button', { name: 'Add a persona to Recruiters' }).click();
     await audience.getByRole('heading', { name: 'Personas (7)' }).waitFor();
     assert.equal(await hint.count(), 6, 'the added persona has no hint');
-    await audience.locator('details').first().locator('li').last().getByRole('button', { name: /^Remove / }).click();
+    const recruiters = audience.locator('details').filter({ has: page.getByText(/^Recruiters \(\d+\)$/, { exact: true }) });
+    await recruiters.locator('li').last().getByRole('button', { name: /^Remove / }).click();
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
-    await audience.locator('details').first().locator('li').nth(1).getByRole('button', { name: /^Remove / }).click(); // not the renamed one
+    await recruiters.locator('li').nth(1).getByRole('button', { name: /^Remove / }).click(); // not the renamed one
     await audience.getByRole('heading', { name: 'Personas (5)' }).waitFor();
     await audience.getByRole('button', { name: 'Generate personas' }).click();
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor({ timeout: 120_000 });
@@ -332,7 +344,8 @@ try {
     const text = await summary.innerText();
     assert.match(text, /6 personas: 3 Recruiters, 3 Hiring managers/);
     assert.match(text, /About \$[\d.]+(–\$[\d.]+)? and \d+(–\d+)? minutes?/);
-    assert.match(text, /Stops at \$2\.00 or 60 minutes, with 3 browsers at a time/);
+    assert.match(text, /Recorded cost limit: \$2\.00\. Time limit: 60 minutes\. Up to 3 browsers at a time/);
+    assert.match(text, /billed cost can exceed the limit/);
     await page.screenshot({ path: join(shots, 'summary-estimate.png') });
     await summary.getByRole('button', { name: 'Cancel' }).click();
     await summary.waitFor({ state: 'hidden' });
@@ -367,7 +380,17 @@ try {
     await image.waitFor();
     await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
     await inspector.getByText('Full profile').click();
-    assert.match(await inspector.innerText(), /Background/);
+    assert.match(await inspector.innerText(), /Biography/);
+    assert.match(await inspector.innerText(), /Germany/);
+    assert.match(await inspector.innerText(), /Europe\/Berlin/);
+    const opinions = inspector.getByRole('region', { name: 'Current opinions' });
+    assert.match(await opinions.innerText(), /Sentiment\s+-1 of −2 to \+2/);
+    assert.match(await opinions.innerText(), /Self-reported confidence\s+50%/);
+    assert.match(await opinions.innerText(), /Likes[\s\S]+Sample like from the scripted demo/);
+    assert.match(await opinions.innerText(), /Frictions[\s\S]+Sample friction from the scripted demo/);
+    await opinions.getByRole('button', { name: 'View source step 2' }).click();
+    const evidence = inspector.getByRole('region', { name: 'Timeline' }).locator('li.ring-2');
+    assert.match(await evidence.innerText(), /Step 2[\s\S]+Scripted demo: logging a sample friction/i);
     await page.screenshot({ path: join(shots, 'inspector.png') });
     await page.keyboard.press('Escape');
     await inspector.waitFor({ state: 'detached' });

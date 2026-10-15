@@ -4,6 +4,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { getPersonaSchema } from '../profile/schema.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',
@@ -62,7 +63,7 @@ test('behaviour rules and the action vocabulary follow the traits', () => {
   const system = systemPrompt(sam, project, null, 12);
   assert.match(system, /Sam has very little patience and gives up after one or two steps .* after about 12 actions/);
   assert.match(system, /Sam is not technical: never types web addresses/);
-  assert.match(system, /on a phone, using one hand/);
+  assert.match(system, /on a phone, using a smaller screen and touch controls/);
   assert.match(system, /jargon means little/);
   assert.match(system, /Sam uses a screen reader/);
   assert.doesNotMatch(system, /navigate:/);
@@ -161,4 +162,27 @@ test('pronouns, background, a second language and the segment shape the card wit
   const he = systemPrompt({ ...kai, pronouns: 'he' }, project, null, 60);
   assert.match(he, /pronouns: he\/him/);
   assert.match(he, /in his own voice/);
+});
+
+test('the prompt keeps the sampled country and employer and explicitly asks for thoughts in the primary language', () => {
+  const german: Persona = { ...BUILTIN_PERSONA, country: 'DE', city: 'Berlin', timezone: 'Europe/Berlin', languages: ['de-DE', 'en'], language: 'en', employer: 'Northwind' };
+  const system = systemPrompt(german, project, null, 30);
+  assert.match(system, /country: Germany \(DE\)/);
+  assert.match(system, /city: Berlin/);
+  assert.match(system, /timezone: Europe\/Berlin/);
+  assert.match(system, /employer: Northwind/);
+  assert.match(system, /languages: de-DE, en/);
+  assert.match(system, /thought:.*in German \(Germany\) \(de-DE\)/);
+  assert.match(systemPrompt({ ...BUILTIN_PERSONA, language: 'el' }, project, null, 30), /thought:.*in Greek \(el\)/);
+});
+
+test('disabled fields and prompt-private attributes are absent from both profile text and behavior rules', () => {
+  const persona_schema = getPersonaSchema();
+  for (const id of ['pronouns', 'job_title', 'industry', 'employer', 'company_size', 'accessibility_needs', 'familiarity_with_category', 'motivation', 'context_of_use']) persona_schema.attributes.find((a) => a.id === id)!.use_in_prompt = false;
+  persona_schema.attributes.push({ id: 'region', name: 'Region', group: 'work', type: 'text', description: 'Where they work.', core: false, enabled: true, show_on_card: true, use_in_prompt: true, report_dimension: true, sampling: { default: { kind: 'fixed', value: 'EMEA' }, by_segment: {} } });
+  const person: Persona = { ...BUILTIN_PERSONA, employer: 'PRIVATE_EMPLOYER', job_title: 'PRIVATE_JOB', industry: 'PRIVATE_INDUSTRY', context_of_use: 'PRIVATE_CONTEXT', accessibility_needs: 'screen_reader', attributes: { region: 'EMEA', secret: 'PRIVATE_CUSTOM' }, background: 'I work on hiring processes.', voice: 'Clear, short sentences.', goal_interpretation: 'Finish this task with minimal effort.' };
+  const prompt = systemPrompt(person, { ...project, persona_schema }, null, 30);
+  assert.doesNotMatch(prompt, /PRIVATE_|screen reader|uses products like this|240-person|pronouns:/);
+  assert.match(prompt, /in their own voice/);
+  assert.match(prompt, /region: EMEA/);
 });

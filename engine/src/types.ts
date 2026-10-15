@@ -5,6 +5,34 @@ export type Device = 'desktop' | 'mobile';
 
 export type AccessibilityNeed = 'none' | 'low_vision' | 'colour_blind' | 'screen_reader' | 'motor';
 
+export type AttributeValue = string | number | boolean | string[];
+export type ProfileGroup = 'identity' | 'work' | 'capability' | 'context' | 'psychology' | 'intent' | 'voice' | 'biography';
+export type AttributeSamplingRule =
+  | { kind: 'fixed'; value: AttributeValue }
+  | { kind: 'range'; min: number; max: number; integer: boolean }
+  | { kind: 'choices'; choices: { value: string | boolean; weight: number }[] };
+
+/** Built-in fields retain their existing source when sampling is null. Custom fields always have a rule. */
+export interface ProfileAttribute {
+  id: string;
+  name: string;
+  group: ProfileGroup;
+  type: 'text' | 'number' | 'choice' | 'boolean' | 'list';
+  description: string;
+  core: boolean;
+  enabled: boolean;
+  show_on_card: boolean;
+  use_in_prompt: boolean;
+  report_dimension: boolean;
+  choices?: string[];
+  sampling: { default: AttributeSamplingRule; by_segment: Record<string, AttributeSamplingRule> } | null;
+}
+
+export interface PersonaSchema {
+  version: 1;
+  attributes: ProfileAttribute[];
+}
+
 // One simulated person (idea.md §8.2). Traits are sampled in code from the segment's ranges first; the
 // written fields (name, job title, background, context, goal interpretation, voice) come from the model after.
 export interface Persona {
@@ -21,6 +49,11 @@ export interface Persona {
   familiarity_with_category: 'low' | 'medium' | 'high';
   device: Device;
   language: string; // first language, BCP 47
+  country?: string; // ISO 3166-1 alpha-2; absent on personas created before country sampling
+  city?: string;
+  timezone?: string; // IANA timezone, e.g. Europe/Berlin
+  languages?: string[]; // ordered BCP 47 preferences, first is also the browser locale
+  employer?: string; // sampled from the segment's optional employer list
   accessibility_needs: AccessibilityNeed;
   context_of_use: string;
   background: string; // a short narrative of who this person is, written from the sampled traits
@@ -28,6 +61,8 @@ export interface Persona {
   motivation: number; // 1–5
   voice: string;
   seed: number;
+  attributes?: Record<string, AttributeValue>; // custom and additional default fields, sampled from persona_schema
+  profile_signature?: string; // writer input identity; stale biographies must be regenerated after profile changes
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'google' | 'openai_compatible';
@@ -67,6 +102,7 @@ export interface Segment {
   account_state: 'empty' | 'populated';
   entry: 'direct' | 'email_link' | 'shared_link';
   goal_override: string | null; // replaces the project goal for this segment
+  employers?: string[]; // optional organisations to spread this segment's personas across
 }
 
 export interface Audience {
@@ -76,6 +112,7 @@ export interface Audience {
   company_size: [min: number, max: number]; // employees at the companies the product sells to
   // Population-wide distributions the user can see (idea.md §11, "Bias in personas"); each sums to 1.
   languages: Record<string, number>; // first language → share
+  countries?: Record<string, number>; // supported ISO country code → weight; replaces language-only sampling when set
   accessibility: Record<AccessibilityNeed, number>;
 }
 
@@ -114,6 +151,7 @@ export interface ProjectConfig {
   role: string | null; // the login the built-in persona uses when there is no audience; segments carry their own
   audience: Audience | null; // null runs the single built-in persona, as in M0 and M1
   settings: RunSettings;
+  persona_schema?: PersonaSchema; // absent on older projects: use the shipped default schema
 }
 
 // A recorded login (tech.md §9.1). The cookies and storage themselves stay in the engine and are encrypted on disk.
@@ -196,6 +234,14 @@ export interface PageSnapshot {
   hash: string;
 }
 
+/** The persona's self-reported view of one POI, distinct from a momentary step feeling. */
+export interface Opinion {
+  sentiment: number; // integer −2…+2
+  confidence: number; // 0…1, self-reported certainty, not calibrated confidence
+  likes: string[];
+  frictions: string[];
+}
+
 export interface EventPayloads {
   'run.started': { config: RunConfig };
   'run.reset_called': { url: string; status: number | null; error: string | null };
@@ -203,7 +249,7 @@ export interface EventPayloads {
   'run.stopped': { reason: 'user' | 'cost_budget' | 'wall_clock' | 'tripwire' | 'error'; detail: string | null };
   'run.concurrency_changed': { concurrency: number; reason: string }; // e.g. backing off after a provider's rate limit
   'persona.created': { persona: Persona };
-  'persona.episode_started': { poi_id: string; device: Device; start_url: string };
+  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[] };
   'persona.step': {
     step_no: number;
     action: Action;
@@ -221,6 +267,12 @@ export interface EventPayloads {
     what: string;
     expected: string;
     where: { url: string; ref: string | null };
+  };
+  'persona.opinion_changed': {
+    poi_id: string;
+    before: Opinion | null;
+    after: Opinion;
+    cause: { step_ids: number[]; post_ids: string[] }; // step event seqs within this run and persona
   };
   'persona.goal_done': { step_no: number; summary: string };
   'persona.abandoned': { step_no: number; reason: string };
@@ -240,6 +292,7 @@ export interface EventPayloads {
     cache_write_tokens: number;
     cost_usd: number;
     latency_ms: number;
+    usage_reported?: boolean; // false means provider usage was absent/incomplete; cost may understate billing
     status: 'ok' | 'error' | 'invalid_output';
     error: string | null;
   };
@@ -278,13 +331,21 @@ export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failu
 export interface ReportPersona {
   id: string;
   name: string;
-  job_title: string;
+  job_title?: string; // omitted when disabled in the run's frozen profile schema
   segment_id: string | null;
   device: Device;
   outcome: Outcome;
   outcome_text: string | null;
   steps: number;
   frictions: number;
+  attributes?: Record<string, AttributeValue>; // enabled report dimensions only
+}
+
+export interface ReportDimension {
+  id: string;
+  name: string;
+  type: ProfileAttribute['type'];
+  values: { value: AttributeValue; personas: number; completion: number; with_friction: number; sentiment: number | null }[];
 }
 
 export interface ReportSegment {
@@ -306,11 +367,13 @@ export interface Report {
   poi: { name: string; start_url: string };
   personas: ReportPersona[]; // in start order
   segments: ReportSegment[];
+  dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values
   weighted: { completion: number; with_friction: number }; // Σ share × rate over segments: each segment counts by its share, not its persona count
   steps: number; // all personas together
   frictions: ReportFriction[]; // in seq order
   cost_usd: number;
   llm_calls: number;
+  unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports
   input_tokens: number;
   output_tokens: number;
   started_at: number;

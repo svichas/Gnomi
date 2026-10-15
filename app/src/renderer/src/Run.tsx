@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { GnomiEvent, Persona, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
-import { Activity } from './Activity.tsx';
-import { countStates, filterEvents, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';
+import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
+import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
+import { groupProfiles } from '@gnomi/engine/report/dimensions.ts';
+import { Activity, ProfileFilters } from './Activity.tsx';
+import { countStates, filterEvents, filterPersonas, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';
 import type { Filters, PersonaState } from './activity.ts';
 import { BlockedBanner } from './Blocked.tsx';
 import { call, errorText, onEvent } from './engine.ts';
+import { missingUsageText, recordedCost } from './cost.ts';
 import { Inspector } from './Inspector.tsx';
+import { personaLabel } from './ProfileFields.tsx';
 import { Report } from './Report.tsx';
 import { Note, ProgressBar, secondaryButton, usd, when } from './ui.tsx';
 
@@ -19,14 +23,15 @@ const DOT: Record<PersonaState, string> = {
 };
 
 /** Everyone in the run at a glance; a click opens her inspector. */
-function PersonaGrid(props: { personas: Persona[]; segments: { id: string; name: string }[]; states: Map<string, PersonaState>; steps: Map<string, { steps: number }>; ended: boolean; onOpen(id: string): void }) {
-  const { personas, segments, states, steps, ended, onOpen } = props;
+function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segments: { id: string; name: string }[]; states: Map<string, PersonaState>; steps: Map<string, { steps: number }>; ended: boolean; onOpen(id: string): void }) {
+  const { personas, schema, segments, states, steps, ended, onOpen } = props;
   return (
     // Open for a handful of personas; with dozens it starts closed so the feed is in view.
     <details open={personas.length <= 12} className="rounded-xl border border-stone-200 bg-white">
       <summary className="cursor-pointer px-5 py-3 text-base font-semibold text-stone-900">Personas ({personas.length})</summary>
       <ul className="grid max-h-72 gap-2 overflow-y-auto border-t border-stone-200 p-4 sm:grid-cols-2 lg:grid-cols-3">
         {personas.map((persona) => {
+          const name = personaLabel(persona, schema);
           const state = states.get(persona.id) ?? 'waiting';
           const taken = steps.get(persona.id)?.steps ?? 0;
           return (
@@ -34,11 +39,11 @@ function PersonaGrid(props: { personas: Persona[]; segments: { id: string; name:
               <button
                 type="button"
                 onClick={() => onOpen(persona.id)}
-                aria-label={`Inspect ${persona.name}`}
+                aria-label={`Inspect ${name}`}
                 className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-left hover:border-indigo-300"
               >
-                <span className="block truncate text-sm font-medium text-stone-900">{persona.name}</span>
-                <span className="block truncate text-xs text-stone-500">{segments.find((segment) => segment.id === persona.segment_id)?.name ?? persona.job_title}</span>
+                <span className="block truncate text-sm font-medium text-stone-900">{name}</span>
+                <span className="block truncate text-xs text-stone-500">{segments.find((segment) => segment.id === persona.segment_id)?.name ?? (isAttributeEnabled(schema, 'job_title', 'card') ? persona.job_title : '')}</span>
                 <span className="mt-1 flex items-center gap-2 text-xs text-stone-700">
                   <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[state]}`} />
                   {stateWord(state, ended)}
@@ -54,8 +59,9 @@ function PersonaGrid(props: { personas: Persona[]; segments: { id: string; name:
 }
 
 function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | undefined; onRunEnded(): void }) {
-  const setup = useMemo(() => runSetup(row?.config), [row]);
   const [events, setEvents] = useState<GnomiEvent[]>([]);
+  const frozenConfig = events.find((event) => event.type === 'run.started')?.payload.config ?? row?.config;
+  const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -119,10 +125,14 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const states = useMemo(() => personaStates(events, personas), [events, personas]);
   const counts = countStates(states);
   const progress = useMemo(() => personaProgress(events), [events]);
-  const cost = useMemo(() => events.reduce((sum, event) => (event.type === 'llm.call' ? sum + event.payload.cost_usd : sum), 0), [events]);
+  const usage = useMemo(() => recordedCost(events), [events]);
+  const cost = usage.cost_usd;
   const pace = events.findLast((event) => event.type === 'run.concurrency_changed');
   const concurrency = pace?.type === 'run.concurrency_changed' ? pace.payload.concurrency : setup.concurrency;
-  const filtered = useMemo(() => filterEvents(events, filters, personaById), [events, filters, personaById]);
+  const groups = useMemo(() => setup.schema ? groupProfiles(personas, setup.schema) : [], [personas, setup.schema]);
+  const profileFilter = useMemo(() => ({ dimension: filters.dimension, value: filters.value }), [filters.dimension, filters.value]);
+  const shownPersonas = useMemo(() => filterPersonas(personas, profileFilter, setup.schema), [personas, profileFilter, setup.schema]);
+  const filtered = useMemo(() => filterEvents(events, filters, personaById, setup.schema), [events, filters, personaById, setup.schema]);
   const rows = useMemo(() => toRows(filtered), [filtered]);
   const waiting = waitingBlocks(events);
   const finished = counts.done + counts.abandoned + counts.unfinished + (ended ? counts.blocked : 0);
@@ -132,7 +142,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const stats: [string, string][] = [
     ['Status', status],
     ['Personas finished', `${finished} of ${personas.length}`],
-    ['Cost so far', setup.costBudget ? `${usd(cost)} of ${usd(setup.costBudget)}` : usd(cost)],
+    ['Recorded cost', setup.costBudget ? `${usd(cost)} of ${usd(setup.costBudget)}` : usd(cost)],
     ['Browsers at once', concurrency === null ? '1' : String(concurrency)],
   ];
   const chips: [string, number][] = [
@@ -168,7 +178,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
         </dl>
         {setup.costBudget !== null && (
           <div className="mt-3">
-            <ProgressBar value={cost} max={setup.costBudget} label="Cost against the budget" />
+            <ProgressBar value={Math.min(cost, setup.costBudget)} max={setup.costBudget} label="Recorded cost against the budget" />
           </div>
         )}
         <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
@@ -178,7 +188,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
             </span>
           ))}
         </p>
-        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Stopping after the current steps...</p>}
+        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Canceling outstanding model requests. Browser actions already started may finish.</p>}
+        {missingUsageText(usage.unreported_usage_calls) && <p className="mt-3 text-sm text-amber-800" role="status">{missingUsageText(usage.unreported_usage_calls)}</p>}
       </section>
 
       {waiting.length > 0 && (
@@ -186,13 +197,14 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
       )}
       {error && <Note tone="error">{error}</Note>}
       {ended && !report && !error && <p className="text-sm text-stone-500">Building the report...</p>}
-      {report && <Report report={report} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} />}
+      <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} />
+      {report && <Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} />}
 
-      <PersonaGrid personas={personas} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
+      <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={(id) => setInspecting({ persona: id, seq: null })} />
       <Activity
         rows={rows}
         total={events.length}
-        personas={personas}
+        personas={shownPersonas}
         segments={segments}
         filters={filters}
         onFilters={setFilters}
@@ -203,6 +215,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
           key={inspected.id}
           runId={runId}
           persona={inspected}
+          schema={setup.schema}
+          poi={frozenConfig?.project.poi}
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
@@ -235,7 +249,7 @@ export function Run({ runId, runs, onSelect, onRunEnded }: { runId: string | nul
                 >
                   <span className="block font-medium text-stone-900">{run.run_id}</span>
                   <span className="block text-xs text-stone-500">
-                    {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)}`}
+                    {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)} recorded`}
                   </span>
                   <span className="block text-xs text-stone-500">{when(run.started_at)}</span>
                   <span className="block text-xs text-stone-500">{count(runSetup(run.config).personas.length, 'persona')}</span>

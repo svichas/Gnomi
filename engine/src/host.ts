@@ -2,6 +2,7 @@
 // library, tech.md §16.2): the parent port is a global on `process`, and main hands over one
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
+import { validateCountries } from './audience/locations.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
@@ -9,6 +10,8 @@ import { createScriptedGateway, DEMO_NAVIGATOR } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { validatePersonaSchema } from './profile/schema.ts';
+import { personaProfileIsCurrent } from './profile/signature.ts';
 import { buildReport } from './report/build.ts';
 import { createRecorder, newRunConfig, roleOf, startRun, type RunHandle } from './run.ts';
 import { allowedHosts, checkTarget } from './safety.ts';
@@ -36,6 +39,7 @@ const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretNam
 const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
+let projectRequests = 0; // includes awaited persona writes and run preflight, before a RunHandle exists
 let open: { store: ProjectStore; blobs: BlobStore; record: Recorder } | null = null;
 let browsers: Promise<BrowserPool> | null = null;
 let sessions: SessionStore | null = null; // while a project is open and main has sent the session key
@@ -116,19 +120,22 @@ async function verify(config: ProjectConfig, role: string) {
   return { result, info: result.ok ? { ...saved.info, verified_at: now } : saved.info };
 }
 
-function info(): ProjectInfo {
-  const { store } = current();
+function readInfo(store: ProjectStore, unlocked: boolean): ProjectInfo {
+  const config = store.getProject();
+  if (config?.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
   const personas = store.listPersonas();
   return {
     dir: store.dir,
-    project: store.getProject(),
+    project: config,
     persona: BUILTIN_PERSONA,
     personas,
     diversity: personas.length ? diversityReport(personas) : null,
     runs: store.listRuns(),
-    sessions: sessions?.list() ?? [],
+    sessions: unlocked ? store.listSessions() : [],
   };
 }
+
+const info = () => readInfo(current().store, sessions !== null);
 
 /** Lets the process exit: runs stop, the recorder and the browsers close, the project closes. Main sends it before quitting. */
 async function shutdown() {
@@ -149,6 +156,12 @@ function broadcast(msg: EngineToClient) {
   for (const client of clients) client.send(msg);
 }
 
+function canSwitchProject() {
+  if (runs.size) throw new Error('Stop the current run before switching projects');
+  if (recording) throw new Error('Save or cancel the login recording before switching projects');
+  if (projectRequests) throw new Error('Wait for the current project task to finish before switching projects');
+}
+
 const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] | Promise<Api[M]['result']> } = {
   set_secret({ name, value }) {
     if (value) secrets.set(name, value);
@@ -157,16 +170,30 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return null;
   },
   open_project({ dir }) {
-    if (runs.size) throw new Error('Stop the current run before switching projects');
-    if (recording) throw new Error('Save or cancel the login recording before switching projects');
-    open?.store.close();
+    canSwitchProject();
+    // Validate/open first: a bad destination must not leave the current project with a closed database.
     const store = openProject(dir);
+    let loaded: ProjectInfo;
+    try { loaded = readInfo(store, secrets.has('session_key')); } catch (error) {
+      store.close();
+      throw error;
+    }
+    open?.store.close();
     open = { store, blobs: createFsBlobStore(dir), record: createRecorder(store, (event) => broadcast({ kind: 'event', event })) };
     refreshSessions();
-    return info();
+    return loaded;
+  },
+  close_project() {
+    canSwitchProject();
+    open?.store.close();
+    open = null;
+    sessions = null;
+    return null;
   },
   get_project: () => info(),
   save_project({ project }) {
+    validateCountries(project.audience?.countries);
+    if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
     current().store.saveProject(project);
     return null;
   },
@@ -223,6 +250,12 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (reset && !config.poi.reset_hook_url) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
+    if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
+    if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
+    if (config.audience && personas.some((person) =>
+      // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
+      !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
+    )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
     const navigator = config.settings.routing.navigator.provider;
     if (!FAKE_LLM && navigator === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
     if (!FAKE_LLM && navigator !== 'openai_compatible' && !secrets.get(KEYS[navigator].secret)) throw new Error(`Add ${KEYS[navigator].label} key in Settings: the navigator runs on it`);
@@ -307,11 +340,15 @@ function serve(transport: Transport) {
   clients.add(transport);
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
+    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret';
+    if (projectTask) projectRequests++;
     try {
       const handler = handlers[msg.method] as (params: unknown) => unknown;
       transport.send({ kind: 'response', id: msg.id, ok: true, result: await handler(msg.params) });
     } catch (err) {
       transport.send({ kind: 'response', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      if (projectTask) projectRequests--;
     }
   });
 }
