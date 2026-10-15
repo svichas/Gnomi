@@ -34,7 +34,7 @@ try {
   page.setDefaultTimeout(20_000);
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const tab = (name: string) => page.getByRole('tab', { name, exact: true }).click();
+  const tab = (name: string) => page.locator(`#tab-${({ Project: 'project', Settings: 'settings', Audience: 'audience', Run: 'run' } as Record<string, string>)[name]}`).click();
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
   await tab('Project');
   await page.getByLabel('Project name', { exact: true }).fill('Profile Gym');
@@ -45,8 +45,9 @@ try {
   await page.getByText('Project saved.', { exact: true }).waitFor();
   await tab('Audience');
   const audience = page.locator('#panel-audience');
-  await audience.getByRole('button', { name: 'Start from one segment' }).click();
+  await audience.getByRole('button', { name: 'Build my own' }).click();
   await audience.getByLabel('Number of personas', { exact: true }).fill('6');
+  await audience.getByText('Reproducibility options', { exact: true }).click();
   await audience.getByLabel('Seed', { exact: true }).fill('42');
   await audience.getByLabel('Segment name', { exact: true }).fill('Recruiters');
   await audience.getByLabel('Employers for Recruiters').fill('Northwind');
@@ -55,6 +56,7 @@ try {
   await audience.getByLabel('Who they are', { exact: true }).nth(1).fill('People buying hiring software');
   await audience.getByLabel('Employers for Buyers').fill('Contoso');
 
+  await audience.locator('summary').filter({ hasText: 'Customize persona attributes' }).click();
   const editor = audience.getByRole('heading', { name: 'Profile attributes', exact: true }).locator('..');
   const attribute = (name: string) => editor.getByRole('listitem', { name: `${name} attribute`, exact: true });
   const group = async (name: string) => {
@@ -147,7 +149,9 @@ try {
   await tab('Project');
   await page.getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Start run', exact: true }).click();
+  await page.getByRole('tab', { name: 'Report', exact: true }).click({ timeout: 120_000 });
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor({ timeout: 120_000 });
+  await page.locator('summary').filter({ hasText: 'Audience filters' }).click();
   await page.getByLabel('Profile dimension', { exact: true }).selectOption({ label: 'Procurement region' });
   await page.getByLabel('Profile value', { exact: true }).selectOption({ label: 'EMEA' });
   await page.getByText('Showing 3 of 6 personas', { exact: false }).waitFor();

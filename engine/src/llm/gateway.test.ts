@@ -150,6 +150,8 @@ test('one call: cached system prefix, screenshot, low effort, native schema, cos
     cache_write_tokens: 0,
     cost_usd: result.cost_usd,
     latency_ms: 0,
+    reasoning_tokens: undefined,
+    queue_ms: 0,
     usage_reported: true,
     status: 'ok',
     error: null,
@@ -206,6 +208,7 @@ test('each provider gets its own client, key, schema format and token accounting
 });
 
 test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema in the prompt, text only, its own price', async () => {
+  const warnings = mock.method(process, 'emitWarning', () => {});
   // DeepSeek's usage: 1,000 tokens in, 400 of them cache hits, 200 out.
   const completion = (text: string) =>
     Response.json({
@@ -235,6 +238,7 @@ test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema
   ]);
   assert.ok(Math.abs(result.cost_usd - 2 * 0.0004224) < 1e-12, `${result.cost_usd}`);
   assert.doesNotMatch(calls[1].transcript, new RegExp(KEYS.deepseek));
+  assert.deepEqual(warnings.mock.calls.map(({ arguments: [warning] }) => String(warning)), [], 'DeepSeek JSON mode must not request unsupported structured outputs');
 });
 
 test('a role sets how hard the model thinks and how much room it has', async () => {
@@ -256,12 +260,14 @@ test('a role sets how hard the model thinks and how much room it has', async () 
   assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
 });
 
-test('a missing key fails before any request, and the message names the provider', async () => {
+test('a missing key fails before any request with provider-neutral guidance', async () => {
   const sent = stubFetch();
   const { gateway, calls } = setup({ keys: {}, localBaseUrl: null });
-  await assert.rejects(gateway.call(request()), /No Anthropic API key is saved/);
-  await assert.rejects(gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } })), /No OpenAI API key is saved/);
-  await assert.rejects(gateway.call(request({ model: { provider: 'google', model: 'gemini-3.5-flash-lite' } })), /No Google API key is saved/);
+  const missingKey = { message: 'The selected AI provider is not connected. Open Settings to add its API key or choose a connected provider under Model choices.' };
+  await assert.rejects(gateway.call(request()), missingKey);
+  await assert.rejects(gateway.call(request({ model: { provider: 'openai', model: 'gpt-6-luna' } })), missingKey);
+  await assert.rejects(gateway.call(request({ model: { provider: 'google', model: 'gemini-3.5-flash-lite' } })), missingKey);
+  await assert.rejects(gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-flash' } })), missingKey);
   await assert.rejects(gateway.call(request({ model: { provider: 'openai_compatible', model: 'gemma4:e4b' } })), /No local endpoint is set/);
   assert.deepEqual([sent.urls.length, calls.length], [0, 0]);
 });

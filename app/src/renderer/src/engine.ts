@@ -1,12 +1,12 @@
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import type { GnomiEvent } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, PersonaProgress } from '@gnomi/engine/types.ts';
 
 // The engine client: typed requests over the MessagePort that main hands to the page (tech.md §11).
 let port: MessagePort | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
 const listeners = new Set<(event: GnomiEvent) => void>();
-const progressListeners = new Set<(progress: { done: number; total: number }) => void>();
+const progressListeners = new Set<(progress: PersonaProgress) => void>();
 
 const STOPPED = 'The engine stopped unexpectedly. Quit and reopen Gnomi to continue.';
 let closed = false;
@@ -60,7 +60,7 @@ export function onEvent(listener: (event: GnomiEvent) => void): () => void {
 }
 
 /** Progress of a long request (writing personas), from now on; returns the unsubscribe function. */
-export function onProgress(listener: (progress: { done: number; total: number }) => void): () => void {
+export function onProgress(listener: (progress: PersonaProgress) => void): () => void {
   progressListeners.add(listener);
   return () => progressListeners.delete(listener);
 }

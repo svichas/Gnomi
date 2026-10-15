@@ -1,0 +1,25 @@
+# Project-first UI
+
+The desktop app follows the supplied `brand.md`: Paper canvas, Olive actions, the supplied logo, local Inter, quiet rules, and no decorative shadows. The project chooser is a simple list with a single create action; project management lives in a compact dropdown anchored to a centered, 40px overflow button. It closes on outside clicks, focus leaving the control, window blur, Escape, or selecting an action. Tab moves through its actions; Escape and returning from a dialog restore focus to the overflow button. The active project reopens on launch. Returning to the list keeps the draft; switching projects retains the existing save/discard/cancel protection.
+
+Within a project, Setup → Audience → Activity establishes the journey. Settings remain available separately. Setup leads with product, test URL and goal; login, network and reset controls are progressively disclosed. Existing safety confirmation and run review stay intact. Each screen has a visible way back. Configured projects can revisit any step.
+
+Settings keeps provider and model dropdowns for each task in the collapsed Model choices accordion, with recommended models and a custom-model option. When only one provider is connected, tasks assigned to unavailable providers use that provider's defaults. This also applies when reopening older projects; valid model choices are preserved. With several connected providers, Gnomi keeps explicit choices rather than guessing a replacement. Missing-key errors refer to the selected AI provider and point to Settings.
+
+Activity leads with a compact run summary and a timeline. Persona initials and event icons identify each row; quotes and short actions fit one line. Clicking a persona's name or avatar opens their profile side panel with all their activity in the current run, regardless of feed filters. Clicking/tapping the rest of a row, or pressing Enter/Space on its activity control, toggles inline details; hover and focus alone keep them collapsed. Details are dismissible with Escape, and the expanded row also links to the persona evidence for that step. Timestamps, filter reset, empty states and explicit status labels keep the stream understandable. Reports and the social graph are separate views so they do not bury activity.
+
+Highlights hide routine feed reads, reactions and round markers. All events and explicit event filters retain access to them. Safety stops and failed actions always keep their outcome visible, even if a thought is attached. The inspector uses a native modal for focus containment and return. Run-view tabs support arrow keys, Home and End.
+
+The packaged app loads its logo and Inter font locally. HTML/PDF exports embed both assets so reports remain portable and make no network requests. The existing screenshot size budget is unchanged.
+
+Acceptance: create/open/switch projects; remember selection across reload and restart; preserve dirty drafts; complete a scripted run; inspect persona evidence from names and avatars; expand timeline details only on click/tap or keyboard activation; filter and clear; stop a run; view report; render without overflow at 320, 768, 1024 and 1440 px; respect reduced motion. Use disposable Electron data and scripted personas for verification.
+
+Run `npm run smoke:ui -w @gnomi/app` for the focused journey, brand-asset, timeline, restart and responsive checks. Screenshots are written to `app/test-results/revamp-*.png`. Existing `smoke`, `smoke:projects`, `smoke:profiles`, `smoke:budget`, and `perf:swarm` scripts follow the updated navigation.
+
+Run `npm run smoke:providers -w @gnomi/app` for provider assignment, existing-project recovery, audience generation, model customization and responsive model controls. It uses disposable keys and scripted responses, with screenshots in `app/test-results/provider-models-*.png`.
+
+Audience preparation has three explicit steps: define the audience, generate its personas, then review the run. A prominent Generate personas action appears above the segment editor. Review stays disabled while a setup task is running or personas are missing or stale; Setup directs an audience with no personas back to the builder. The built-in-persona shortcut remains available when no audience is configured.
+
+Both generation tasks display local SVG profile illustrations with gentle CSS motion, disabled for reduced-motion preferences. Audience planning is indeterminate. Persona generation shows the engine's completed/total count inside the illustration, plus a progress bar; that total covers the new or changed personas being written. Full draft progress shows “Finishing touches” until validation and saving complete. Errors clear the loading state and leave the form available for retry.
+
+Run `npm run smoke:audience -w @gnomi/app` for loading, required generation, progress, failure/retry, completion, narrow layouts, and reduced motion. The test holds requests and injects progress messages to inspect intermediate UI states, then releases requests to the real scripted engine. It uses disposable data and no paid model calls. Screenshots are saved as `app/test-results/audience-*.png`.

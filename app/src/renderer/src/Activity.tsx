@@ -1,45 +1,39 @@
-import { forwardRef } from 'react';
+import { forwardRef, useId, useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { Persona, Segment } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import type { ProfileGroups } from '@gnomi/engine/report/dimensions.ts';
-import { CATEGORIES, TONE_CLASSES } from './activity.ts';
+import { CATEGORIES, isTimelineHighlight, timelineSummary } from './activity.ts';
 import type { Category, Filters, ProfileFilter, Row } from './activity.ts';
 import { Field, inputClass } from './ui.tsx';
+import { Icon, PersonaAvatar } from './Icon.tsx';
 
-function Body({ row, who }: { row: Row; who: string | null }) {
-  const alarm = row.tone === 'alarm';
+/** Persona controls open the full profile; the rest of the row toggles inline activity details. */
+export function ActivityItem({ row, who, onOpen }: { row: Row; who: string | null; onOpen?(personaId: string, seq: number | null): void }) {
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  const personaId = row.persona_id;
+  const openProfile = personaId !== null && onOpen ? () => onOpen(personaId, null) : undefined;
+  const icon = row.tone === 'alarm' || row.tone === 'bad' || row.tone === 'friction' || row.badge?.ok === false ? 'alert' : row.tone === 'good' ? 'check' : row.quote ? 'message' : 'activity';
+  const marker = <>{who ? <PersonaAvatar name={who} id={personaId ?? who} /> : <span className="system-avatar"><Icon name={icon} size={16} /></span>}{who && <span className={`event-icon event-${icon}`}><Icon name={icon} size={10} /></span>}</>;
   return (
-    <>
-      <span className="flex items-baseline justify-between gap-3">
-        <span className="min-w-0 break-words text-sm">
-          {who && <span className="mr-2 font-semibold text-stone-900">{who}</span>}
-          <span className={`mr-2 text-xs font-semibold uppercase tracking-wide ${alarm ? 'text-red-800' : 'text-stone-500'}`}>{row.label}</span>
-          <span className={alarm ? 'font-semibold text-red-950' : 'font-medium text-stone-900'}>{row.title}</span>
-        </span>
-        {row.badge && <span className={`shrink-0 text-xs font-medium ${row.badge.ok ? 'text-green-700' : 'text-red-700'}`}>{row.badge.text}</span>}
-      </span>
-      {row.detail && <span className="mt-1 block text-sm text-stone-700">{row.detail}</span>}
-      {row.quote && <span className="mt-1 block text-sm italic text-stone-600">&ldquo;{row.quote}&rdquo;</span>}
-    </>
-  );
-}
-
-/** One line of the feed. With a persona behind it, it is a button that opens her inspector at that step. */
-export function ActivityItem({ row, who, onOpen }: { row: Row; who: string | null; onOpen?(personaId: string, seq: number): void }) {
-  const className = `block w-full rounded-lg border px-3 py-2 text-left ${TONE_CLASSES[row.tone]}`;
-  if (row.persona_id !== null && onOpen) {
-    const personaId = row.persona_id;
-    return (
-      <button type="button" onClick={() => onOpen(personaId, row.seq)} className={`${className} hover:border-indigo-300`}>
-        <Body row={row} who={who} />
-      </button>
-    );
-  }
-  return (
-    <div className={className}>
-      <Body row={row} who={who} />
+    <div className={`timeline-item tone-${row.tone}`} data-expanded={expanded || undefined}
+      onKeyDown={(event) => { if (event.key === 'Escape' && expanded) { setExpanded(false); event.stopPropagation(); } }}>
+      <div className="timeline-header">
+        {who && openProfile ? <button type="button" className="timeline-marker timeline-persona" aria-label={`View ${who}'s profile`} aria-haspopup="dialog" onClick={openProfile}>{marker}</button> : <span className="timeline-marker">{marker}</span>}
+        <span className="timeline-copy"><span className="timeline-byline" id={`${detailId}-byline`}>{who && openProfile ? <button type="button" className="timeline-persona timeline-persona-name" aria-haspopup="dialog" onClick={openProfile}>{who}</button> : <strong>{who ?? 'Gnomi'}</strong>}<span className="event-label">{row.label}</span></span><span className="timeline-one-line" id={`${detailId}-summary`}>{timelineSummary(row)}</span></span>
+        {row.ts !== undefined && <time dateTime={new Date(row.ts).toISOString()} className="timeline-time">{new Date(row.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>}
+        <span className="timeline-chevron"><Icon name="chevron" size={14} /></span>
+        <button type="button" className="timeline-trigger" aria-labelledby={`${detailId}-byline ${detailId}-summary`} aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded((current) => !current)} />
+      </div>
+      <div id={detailId} hidden={!expanded} className="timeline-detail">
+        <p className="timeline-action">{row.title}</p>
+        {row.quote && <blockquote>“{row.quote}”</blockquote>}
+        {row.detail && <p>{row.detail}</p>}
+        {row.badge && <p className={row.badge.ok ? 'timeline-success' : 'timeline-error'}><Icon name={row.badge.ok ? 'check' : 'alert'} size={14} />{row.badge.ok ? 'Action completed' : row.badge.text}</p>}
+        {personaId !== null && onOpen && <button type="button" className="text-link" onClick={() => onOpen(personaId, row.seq)}>View persona & evidence<Icon name="arrow" size={14} /></button>}
+      </div>
     </div>
   );
 }
@@ -53,7 +47,7 @@ export function ProfileFilters({ groups, filter, onChange }: { groups: ProfileGr
   const selected = groups.find((group) => group.attribute.id === filter.dimension);
   if (!groups.length) return null;
   return (
-    <section aria-label="Profile filters" className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+    <section aria-label="Profile filters" className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Profile dimension">
           <select value={filter.dimension ?? ''} onChange={(event) => onChange({ dimension: event.target.value, value: '' })} className={inputClass}>
@@ -69,6 +63,7 @@ export function ProfileFilters({ groups, filter, onChange }: { groups: ProfileGr
         </Field>
       </div>
       <p className="text-xs text-stone-500">Filters apply to report details, personas and activity. Run totals and grouped results always describe the full run.</p>
+      {filter.dimension && <button type="button" className="text-link" onClick={() => onChange({ dimension: '', value: '' })}>Clear audience filter</button>}
     </section>
   );
 }
@@ -81,17 +76,22 @@ export function Activity(props: {
   segments: Segment[];
   filters: Filters;
   onFilters(filters: Filters): void;
-  onOpen(personaId: string, seq: number): void;
+  onOpen(personaId: string, seq: number | null): void;
 }) {
   const { rows, total, personas, segments, filters, onFilters, onOpen } = props;
   const byId = new Map(personas.map((persona) => [persona.id, persona]));
+  const [showFilters, setShowFilters] = useState(false);
+  const [allEvents, setAllEvents] = useState(false);
+  // An explicit event category shows every matching event, including routine ones.
+  const routineVisible = allEvents || !!filters.category;
+  const visibleRows = routineVisible ? rows : rows.filter(isTimelineHighlight);
+  const activeFilters = !!(filters.persona || filters.segment || filters.category);
   const set = (change: Partial<Filters>) => onFilters({ ...filters, ...change });
   return (
     <section aria-labelledby="activity-title" className="space-y-3">
-      <h2 id="activity-title" className="text-base font-semibold text-stone-900">
-        Activity
-      </h2>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{visibleRows.length}</span></h2><p>Little moments. A clearer picture.</p></div><div className="flex items-center gap-3">{activeFilters && <button type="button" className="text-link" onClick={() => set({ persona: '', segment: '', category: '' })}>Clear filters</button>}<button type="button" className="quiet-button" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</button></div></div>
+      <div id="activity-filters" hidden={!showFilters}>
+      <div className="filter-bar grid gap-3 sm:grid-cols-3">
         <Field label="Persona">
           <select value={filters.persona} onChange={(e) => set({ persona: e.target.value })} className={inputClass}>
             <option value="">Everyone</option>
@@ -123,20 +123,21 @@ export function Activity(props: {
           </select>
         </Field>
       </div>
-      {rows.length === 0 ? (
-        <p className="text-sm text-stone-500">{total === 0 ? 'Waiting for the personas to start...' : 'Nothing matches these filters.'}</p>
+      </div>
+      <div className="timeline-options"><div role="group" aria-label="Timeline detail" className="segmented-control"><button type="button" aria-pressed={!routineVisible} onClick={() => { setAllEvents(false); set({ category: '' }); }}>Highlights</button><button type="button" aria-pressed={routineVisible} onClick={() => { setAllEvents(true); set({ category: '' }); }}>All events</button></div><p className="timeline-hint">Newest first · Click an activity for details or a persona for their profile.</p></div>
+      {visibleRows.length === 0 ? (
+        <div className="empty-state compact"><Icon name="message" size={28} /><h3>{total === 0 ? 'The story is about to start.' : 'No moments match these filters.'}</h3><p>{total === 0 ? 'Actions and thoughts will appear here as people explore.' : 'Try another filter to see more of the experience.'}</p></div>
       ) : (
         <Virtuoso
           useWindowScroll
-          data={rows}
+          data={visibleRows}
           components={{ List }}
           computeItemKey={(_, row) => row.seq}
           itemContent={(_, row) => {
             const persona = row.persona_id === null ? undefined : byId.get(row.persona_id);
-            const segment = segments.find((candidate) => candidate.id === persona?.segment_id);
             return (
-              <div role="listitem" className="pb-2">
-                <ActivityItem row={row} who={persona ? (segment ? `${persona.name} (${segment.name})` : persona.name) : null} onOpen={onOpen} />
+              <div role="listitem" className="timeline-row">
+                <ActivityItem row={row} who={persona?.name ?? (row.persona_id ? 'Simulated user' : null)} onOpen={onOpen} />
               </div>
             );
           }}

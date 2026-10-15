@@ -25,7 +25,7 @@ const DEEPSEEK_URL = 'https://api.deepseek.com';
 const chatCompletions = (provider: ProviderId) => provider === 'deepseek' || provider === 'openai_compatible';
 
 // How hard each role thinks (tech.md §10.1): routine steps run low or the thinking tokens dominate the output bill (§10.2).
-const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'medium', judge: 'medium', author: 'high' };
+const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'low', judge: 'medium', author: 'high' };
 // GPT-5.6, GPT-6 Sol and GPT-6 Luna accept reasoning effort 'none'; GPT-6 Astra and 6.1 Sol start at 'low' (@ai-sdk/openai docs).
 const CAN_SKIP_REASONING = /^gpt-(5\.6|6-(sol|luna))/;
 
@@ -84,21 +84,25 @@ function languageModel({ provider, model }: ModelChoice, credential: string): La
   }
 }
 
-// Output.object carries the schema on every provider: output_config.format (Anthropic), text.format json_schema (OpenAI),
-// responseJsonSchema (Google), response_format json_schema (local). DeepSeek gets response_format json_object, JSON
-// without the schema, so validation and the retry carry the weight. OpenAI's strict mode is set here too, so an SDK
+// Output.object validates every provider's answer. Native schemas use output_config.format (Anthropic), text.format
+// json_schema (OpenAI), responseJsonSchema (Google), response_format json_schema (local). DeepSeek uses JSON mode
+// with the schema in the prompt and local validation. OpenAI's strict mode is set here too, so an SDK
 // default that changed could not loosen it (tech.md §10.6).
 // shortcut: Google gets thinkingLevel, which Gemini 3 and later take; 2.5-era ids would need thinkingBudget instead.
-function providerOptions({ provider, model }: ModelChoice, role: LlmRole): Record<string, Record<string, JSONValue>> {
-  const effort = EFFORT[role];
+function providerOptions({ provider, model }: ModelChoice, role: LlmRole, override?: LlmRequest<unknown>['effort']): Record<string, Record<string, JSONValue>> {
+  const effort = override ?? EFFORT[role];
   switch (provider) {
     case 'anthropic':
-      return { anthropic: { effort } };
+      return { anthropic: { effort: effort === 'none' ? 'low' : effort } };
     case 'openai':
-      return { openai: { reasoningEffort: effort === 'low' && CAN_SKIP_REASONING.test(model) ? 'none' : effort, strictJsonSchema: true } };
+      return { openai: { reasoningEffort: (effort === 'none' || effort === 'low') ? (CAN_SKIP_REASONING.test(model) ? 'none' : 'low') : effort, strictJsonSchema: true } };
     case 'google':
-      return { google: { thinkingConfig: { thinkingLevel: effort } } };
+      return { google: { thinkingConfig: { thinkingLevel: effort === 'none' ? 'low' : effort } } };
     case 'deepseek':
+      // DeepSeek defaults to HIGH thinking when omitted. Routine persona prose needs none.
+      return { deepseek: effort === 'none' || (role === 'persona_writer' && effort === 'low')
+        ? { thinking: { type: 'disabled' } }
+        : { thinking: { type: 'enabled' }, reasoningEffort: effort === 'low' ? 'low' : 'high' } };
     case 'openai_compatible':
       return {};
   }
@@ -108,6 +112,18 @@ function providerOptions({ provider, model }: ModelChoice, role: LlmRole): Recor
 function estimateTokens(system: string, user: UserPart[]) {
   const chars = user.reduce((n, p) => n + (p.type === 'text' ? p.text.length : 0), system.length);
   return Math.ceil(chars / 4) + 1200 * user.filter((p) => p.type === 'image').length;
+}
+
+function reasoningTokens(provider: ProviderId, usage: LanguageModelUsage | undefined): number | undefined {
+  if (!usage) return undefined;
+  if (provider === 'anthropic') return usage.outputTokenDetails.reasoningTokens;
+  // These SDK adapters normalize omitted thinking usage to zero. Keep the distinction
+  // between a provider-reported zero and unavailable usage in our diagnostics.
+  const raw = usage.raw;
+  if (provider === 'google') return typeof raw?.thoughtsTokenCount === 'number' ? raw.thoughtsTokenCount : undefined;
+  const details = raw?.[provider === 'openai' ? 'output_tokens_details' : 'completion_tokens_details'];
+  return details && typeof details === 'object' && 'reasoning_tokens' in details && typeof details.reasoning_tokens === 'number'
+    ? details.reasoning_tokens : undefined;
 }
 
 /**
@@ -150,14 +166,21 @@ export function createGateway({
 
   return {
     async call<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
+      if (req.timeout_ms !== undefined) {
+        const deadline = AbortSignal.timeout(req.timeout_ms);
+        req = { ...req, signal: req.signal ? AbortSignal.any([req.signal, deadline]) : deadline };
+      }
       req.signal?.throwIfAborted();
       const { provider } = req.model;
       costUsd(req.model, NO_TOKENS); // throws before spending money on a model the budget cannot price
       const credential = provider === 'openai_compatible' ? localBaseUrl : secrets.get(SECRET[provider]);
-      if (!credential) throw new Error(provider === 'openai_compatible' ? 'No local endpoint is set. Add its URL in Settings.' : `No ${NAME[provider]} API key is saved. Add one in Settings.`);
+      if (!credential) throw new Error(provider === 'openai_compatible' ? 'No local endpoint is set. Add its URL in Settings.' : 'The selected AI provider is not connected. Open Settings to add its API key or choose a connected provider under Model choices.');
       const hideKey = (text: string) => redact(text, provider === 'openai_compatible' ? undefined : credential);
       const model = languageModel(req.model, credential);
-      const options = providerOptions(req.model, req.role);
+      const options = providerOptions(req.model, req.role, req.effort);
+      const output = Output.object({ schema: req.schema });
+      // DeepSeek supports JSON mode, not native schemas. Keep Output.object's validation and error metadata.
+      if (provider === 'deepseek') output.responseFormat = Output.json().responseFormat;
       // Local models and DeepSeek also get the schema in the prompt, which grounds their answers (tech.md §10.6).
       const system = chatCompletions(provider) ? `${req.system}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : req.system;
       // DeepSeek's chat models read text only (tech.md §10.2): a DeepSeek navigator runs without the screenshots.
@@ -169,7 +192,8 @@ export function createGateway({
       let retries = 0; // transient failures that were tried again
       for (;;) {
         req.signal?.throwIfAborted();
-        await bucket(provider)?.acquire(estimateTokens(system, user), req.signal);
+        const queued = clock.now();
+        await bucket(provider)?.acquire(estimateTokens(system, user), req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
         req.signal?.throwIfAborted();
         const started = clock.now();
         let object: T | undefined;
@@ -190,10 +214,10 @@ export function createGateway({
                 content: user.map((p) => (p.type === 'text' ? p : { type: 'file' as const, data: p.data, mediaType: p.mediaType })),
               },
             ],
-            output: Output.object({ schema: req.schema }),
+            output,
             providerOptions: options,
             // Thinking tokens count against the cap, so the roles that think more get more room.
-            maxOutputTokens: EFFORT[req.role] === 'low' ? 4096 : 16_384,
+            maxOutputTokens: req.max_output_tokens ?? (EFFORT[req.role] === 'low' ? 4096 : 16_384),
             // The retries are ours, so that each failed attempt is logged and a 429 reaches onThrottle.
             maxRetries: 0,
             abortSignal: req.signal,
@@ -230,9 +254,10 @@ export function createGateway({
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
         const attempt: LlmAttempt = {
-          payload: { role: req.role, provider, model: req.model.model, ...tokens, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
+          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
           transcript: JSON.parse(hideKey(JSON.stringify({ request: transcriptRequest({ ...req, system }, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
+        if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;
         // Setup calls have no run ledger; observers still receive their attempt below.
         if (req.run_id !== null) {
           record(
@@ -265,7 +290,7 @@ export function createGateway({
             throw new Error(`${NAME[provider]} ${code}: ${error}${retries ? ` (gave up after ${retries + 1} attempts)` : ''}`);
           }
           // A provider's retry-after is a floor; the jitter spreads the personas out so they do not all return together.
-          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal);
+          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
           req.signal?.throwIfAborted();
           retries++;
           continue;

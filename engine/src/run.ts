@@ -204,20 +204,21 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         }),
         schema: surveySchema,
         signal: hard.signal,
+        timeout_ms: 30_000,
       });
       // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
       if (hard.signal.aborted) return;
       const { sentiment, confidence, likes, frictions, would_continue, reason } = object;
       record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, would_continue, reason } });
     } catch (err) {
-      // Two invalid answers leave the persona without a survey (tech.md §10.6); any other model error ends the run.
-      if (!(err instanceof InvalidOutputError) && !hard.signal.aborted) throw err;
+      // An invalid or timed-out survey must not prevent reporting an episode that already ended.
+      if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError') && !hard.signal.aborted) throw err;
     } finally {
       endStep();
     }
   };
 
-  const ends = new Map<string, EpisodeEnd>(); // episodes that are over, which still take part in later social phases
+  const ends = new Map<string, EpisodeEnd>(); // ended personas can join social phases while other episodes continue
 
   const currentOpinion = (persona_id: string) =>
     foldOpinions(store.events(run_id, { types: ['persona.opinion_changed'] })).find((o) => o.persona_id === persona_id && o.poi_id === poi.id)?.opinion ?? null;
@@ -357,8 +358,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       base.round = round;
       record({ ...base, type: 'run.round_started', payload: {} });
       await inParallel(config.personas.filter((p) => !ends.has(p.id)), turn);
-      if (!drain.signal.aborted) await socialPhase(round);
+      const allEnded = config.personas.every((p) => ends.has(p.id));
+      if (!drain.signal.aborted && !allEnded) await socialPhase(round);
       record({ ...base, type: 'run.round_ended', payload: {} });
+      if (allEnded) break;
     }
     // A stop leaves episodes waiting for a slice that will not come: they end now and close their pages.
     for (const wake of waiting.values()) wake(false);

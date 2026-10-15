@@ -18,6 +18,7 @@ import type {
   RunStatus,
   Persona,
   SessionInfo,
+  SetupCall,
 } from './types.ts';
 
 // Seams (tech.md §16.2): engine code reaches disk, keys, browsers, models and clients only through
@@ -49,6 +50,12 @@ export interface ProjectStore {
   /** Insert or replace by id. */
   putPersona(persona: Persona): void;
   deletePersona(id: string): void;
+  getPersonaDraft(key: string): unknown;
+  putPersonaDraft(key: string, value: unknown): void;
+  clearPersonaDrafts(): void;
+  recordSetupCall(context: Pick<SetupCall, 'task_id' | 'persona_id' | 'purpose'>, attempt: LlmAttempt): void;
+  /** Most recent setup task, in attempt completion order; no transcripts sent to the renderer. */
+  listSetupCalls(): SetupCall[];
   close(): void;
 }
 
@@ -152,6 +159,10 @@ export interface LlmRequest<T> {
   user: UserPart[]; // volatile suffix
   schema: ZodType<T>;
   signal?: AbortSignal;
+  effort?: 'none' | 'low' | 'medium' | 'high';
+  max_output_tokens?: number;
+  /** Total call deadline, including queueing and retries. */
+  timeout_ms?: number;
   /** Synchronous notification after recording each attempt, before returning or retrying; also runs for setup calls. */
   onAttempt?(attempt: LlmAttempt): void;
 }

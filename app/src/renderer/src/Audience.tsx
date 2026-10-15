@@ -1,15 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, Persona, PersonaSchema, ProjectConfig } from '@gnomi/engine/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig } from '@gnomi/engine/types.ts';
+import { GenerationDetails } from './GenerationDetails.tsx';
 import { personaProfileIsCurrent } from '@gnomi/engine/profile/signature.ts';
-import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, personaMinimum, removeSegment, setShare } from './audience.ts';
+import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, setShare } from './audience.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
 import { PersonaList } from './Personas.tsx';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
-import { Card, Field, Note, NumberInput, primaryButton, ProgressBar, secondaryButton, usd, useAction } from './ui.tsx';
+import { Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
+import { Icon } from './Icon.tsx';
+import { BuildProgress } from './BuildProgress.tsx';
 
 /** The audience tab: who the product is for, in proportions the team controls (idea.md §5.1 step 3). */
 export function AudienceTab(props: {
@@ -23,11 +26,15 @@ export function AudienceTab(props: {
   goal: string;
   save(): Promise<ProjectConfig | string>;
   refresh(): Promise<void>;
+  onBack(): void;
+  onReview(): void;
 }) {
   const { audience, onAudience, schema, onSchema, info, description, projectName, goal, save, refresh } = props;
   const plan = useAction();
   const people = useAction();
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<PersonaProgress | null>(null);
+  const [building, setBuilding] = useState<'audience' | 'personas' | null>(null);
+  const buildPanel = useRef<HTMLDivElement>(null);
   const sessions = info?.sessions ?? [];
   const personas = info?.personas ?? [];
   const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema);
@@ -35,9 +42,13 @@ export function AudienceTab(props: {
   const stale = new Set(personas.filter((persona) => {
     try { return !!profileProject && !personaProfileIsCurrent(persona, profileProject); } catch { return true; }
   }).map((persona) => persona.id));
+  const needsPersonas = audience !== null && (personas.length === 0 || stale.size > 0);
+  const busy = plan.busy || people.busy;
+  const stage = building === 'audience' || audience === null ? 1 : building === 'personas' || needsPersonas ? 2 : 3;
 
   // Only while this tab is generating: a late message must not bring the bar back.
-  useEffect(() => onProgress(({ done, total }) => setProgress((was) => was && { done, total })), []);
+  useEffect(() => onProgress((progress) => setProgress((was) => was && progress)), []);
+  useEffect(() => { if (building) buildPanel.current?.scrollIntoView({ block: 'nearest' }); }, [building]);
 
   // Saves first: the engine proposes from, and writes personas for, the saved project and audience.
   const saved = async (): Promise<string | null> => {
@@ -47,11 +58,16 @@ export function AudienceTab(props: {
 
   const propose = () =>
     plan.run(async () => {
-      const problem = await saved();
-      if (problem) return { ok: false, text: problem };
-      const proposal = await call('propose_audience', {});
-      onAudience(proposal.audience);
-      return { ok: true, text: `Proposed ${proposal.audience.segments.length} segments (${usd(proposal.cost_usd)}). Adjust them, then save and generate the personas.` };
+      setBuilding('audience');
+      try {
+        const problem = await saved();
+        if (problem) return { ok: false, text: problem };
+        const proposal = await call('propose_audience', {});
+        onAudience(proposal.audience);
+        return { ok: true, text: `Proposed ${proposal.audience.segments.length} segments (${usd(proposal.cost_usd)}). Next, click Generate personas to create the people for your run.` };
+      } finally {
+        setBuilding(null);
+      }
     });
 
   const onSave = () =>
@@ -62,15 +78,20 @@ export function AudienceTab(props: {
 
   const generate = () =>
     plan.run(async () => {
-      const problem = await saved();
-      if (problem) return { ok: false, text: problem };
+      setBuilding('personas');
       setProgress({ done: 0, total: 0 });
       try {
+        const problem = await saved();
+        if (problem) return { ok: false, text: problem };
         const result = await call('generate_personas', {});
         await refresh();
-        return { ok: true, text: `${result.personas.length} personas are ready (${usd(result.cost_usd)}).` };
+        return { ok: true, text: `${result.personas.length} ${result.personas.length === 1 ? 'persona is' : 'personas are'} ready (${usd(result.cost_usd)}).` };
+      } catch (error) {
+        await refresh().catch(() => {}); // retain the original generation error even if the engine disconnected
+        throw error;
       } finally {
         setProgress(null);
+        setBuilding(null);
       }
     });
 
@@ -98,35 +119,49 @@ export function AudienceTab(props: {
   const several = segments.length > 1;
   return (
     <div className="space-y-5">
+      <ol className="audience-steps" aria-label="Prepare your audience">
+        <li data-complete={stage > 1 || undefined} aria-current={stage === 1 ? 'step' : undefined}><span>{stage > 1 ? <Icon name="check" size={16} /> : '1'}</span><div><strong>Define audience</strong><small>Choose your groups</small></div></li>
+        <li data-complete={stage > 2 || undefined} aria-current={stage === 2 ? 'step' : undefined}><span>{stage > 2 ? <Icon name="check" size={16} /> : '2'}</span><div><strong>Build personas</strong><small>Create the people</small></div></li>
+        <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
+      </ol>
       <Card title="Audience">
+        <div ref={buildPanel}>{building && <BuildProgress kind={building} progress={progress} />}</div>
+        {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
+        <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
         {audience === null ? (
           <div className="space-y-4">
             <p className="text-sm text-stone-600">
-              Say who the product is for. Gnomi can propose segments from your product description and goal, or you can start from one segment and build from there.
-              {schema ? ' Your profile attributes are saved. Build an audience and generate its personas before running.' : ' Without an audience, every run uses one built-in persona.'}
+              Who is your product for? Start with a suggested audience, or describe a group yourself. You can adjust the details before creating your simulated users.
+              {schema ? ' Your saved profile attributes will be included.' : ' For a quick first look, you can also continue with the built-in persona.'}
             </p>
             <div className="flex flex-wrap gap-3">
               <button type="button" onClick={propose} disabled={plan.busy} className={primaryButton}>
-                Propose segments
+                <Icon name="people" size={18} />Suggest an audience
               </button>
               <button type="button" onClick={() => onAudience(blankAudience(description))} disabled={plan.busy} className={secondaryButton}>
-                Start from one segment
+                Build my own
               </button>
             </div>
           </div>
         ) : (
           <div className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-[10rem_12rem_auto_1fr] sm:items-end">
-              <Field label="Number of personas" hint={`${personaMinimum(audience)} to ${PERSONA_MAXIMUM}; 20 or more is better.`}>
-                <NumberInput label="Number of personas" value={audience.persona_count} onChange={(v) => onAudience({ ...audience, persona_count: v })} min={personaMinimum(audience)} max={PERSONA_MAXIMUM} />
+            {!building && <div className="audience-next">
+              <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
+              <div><p className="eyebrow">{needsPersonas ? 'Next step · Required before your run' : 'Your people are ready'}</p><h3>{needsPersonas ? 'Bring your audience to life.' : `${personas.length} ${personas.length === 1 ? 'perspective' : 'perspectives'}, ready to explore.`}</h3><p>{needsPersonas ? `Your audience defines who to include. Click Generate personas to build ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} before starting a run.` : 'Review your people below, or adjust your audience and generate again to apply changes.'}</p></div>
+              <button type="button" onClick={generate} className={needsPersonas ? primaryButton : secondaryButton}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></button>
+            </div>}
+            <div className="flex flex-wrap items-end gap-4">
+              <Field label="Number of personas" hint={`${PERSONA_MINIMUM} to ${PERSONA_MAXIMUM}. Use 1 for a quick check.`}>
+                <NumberInput label="Number of personas" value={audience.persona_count} onChange={(v) => onAudience({ ...audience, persona_count: v })} min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} />
               </Field>
-              <Field label="Seed" hint="The same seed gives the same people.">
+              <details className="audience-seed"><summary>Reproducibility options</summary><div className="flex items-end gap-3 mt-3"><Field label="Seed" hint="The same seed gives the same people.">
                 <NumberInput label="Seed" value={audience.seed} onChange={(v) => onAudience({ ...audience, seed: v })} min={0} />
               </Field>
               <button type="button" onClick={() => onAudience({ ...audience, seed: newSeed() })} className={`${secondaryButton} mb-5`}>
                 New seed
               </button>
-              <div className="flex flex-wrap justify-end gap-3 sm:mb-5">
+              </div></details>
+              <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={propose} disabled={plan.busy} className={secondaryButton}>
                   Propose segments again
                 </button>
@@ -163,21 +198,13 @@ export function AudienceTab(props: {
                 <button type="button" onClick={onSave} disabled={plan.busy} className={secondaryButton}>
                   Save audience
                 </button>
-                <button type="button" onClick={generate} disabled={plan.busy} className={primaryButton}>
-                  Generate personas
-                </button>
                 {changed && <span className="text-sm text-amber-800">Not saved yet.</span>}
-                {plan.busy && !progress && <p className="text-sm text-stone-500">Working...</p>}
+                {plan.busy && !building && <p className="text-sm text-stone-500">Saving audience…</p>}
               </div>
-              {progress && (
-                <div className="space-y-1">
-                  <ProgressBar value={progress.done} max={progress.total} label="Writing personas" />
-                  <p className="text-xs text-stone-500">{progress.total > 0 ? `Writing personas: ${progress.done} of ${progress.total}` : 'Starting...'}</p>
-                </div>
-              )}
             </div>
           </div>
         )}
+        </fieldset>
         {plan.outcome && (
           <div className="mt-4">
             <Note tone={plan.outcome.ok ? 'ok' : 'error'}>{plan.outcome.text}</Note>
@@ -185,7 +212,7 @@ export function AudienceTab(props: {
         )}
       </Card>
 
-      {audience && <ProfileEditor schema={schema} segments={segments} onSchema={onSchema} disabled={people.busy || plan.busy} />}
+      {audience && <details className="disclosure"><summary><Icon name="settings" />Customize persona attributes<span>Optional · traits, templates, and sampling</span></summary><div className="disclosure-body"><ProfileEditor schema={schema} segments={segments} onSchema={onSchema} disabled={people.busy || plan.busy} /></div></details>}
 
       {stale.size > 0 && <Note tone="info">{stale.size} {stale.size === 1 ? 'persona needs' : 'personas need'} regeneration after profile changes. Their old biographies and voices are hidden until you generate personas.</Note>}
 
@@ -205,6 +232,10 @@ export function AudienceTab(props: {
           onAdd={(segmentId) => void change((cost) => `Added a persona (${usd(cost)}).`, () => call('add_persona', { segment_id: segmentId }))}
         />
       )}
+      <div className="flow-footer audience-footer">
+        <button type="button" className={secondaryButton} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
+        <div><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
+      </div>
     </div>
   );
 }

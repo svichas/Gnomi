@@ -17,6 +17,13 @@ export function Inspector(props: {
 }) {
   const { runId, persona, schema, poi, segment, focusSeq, ended, social, names, onClose } = props;
   const name = personaLabel(persona, schema);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  function close() {
+    // Close while still mounted so the native dialog restores focus to its opener.
+    dialog.current?.close();
+    onClose();
+  }
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const evidence = useRef(new Map<number, HTMLLIElement>());
@@ -37,12 +44,6 @@ export function Inspector(props: {
     };
   }, [runId, persona.id]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
   const logged = personaStates(events, [persona]).get(persona.id) ?? 'waiting'; // her own events do not include the run's end
   const state = ended && (logged === 'active' || logged === 'waiting') ? 'unfinished' : logged;
@@ -58,7 +59,8 @@ export function Inspector(props: {
   }, [rows.length > 0, focusSeq]);
 
   return (
-    <aside aria-label="Persona inspector" className="fixed inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-stone-200 bg-white shadow-2xl">
+    <dialog ref={dialog} aria-label="Persona details" className="inspector-dialog" onCancel={(event) => { event.preventDefault(); close(); }}>
+    <aside aria-label="Persona inspector" className="flex h-full w-full flex-col bg-white">
       <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-4">
         <div>
           <h2 className="text-base font-semibold text-stone-900">
@@ -69,7 +71,7 @@ export function Inspector(props: {
             {segment && `${isAttributeEnabled(schema, 'job_title', 'card') ? ', ' : ''}${segment.name}`}
           </p>
         </div>
-        <button type="button" onClick={onClose} className="rounded-lg border border-stone-300 px-3 py-1 text-sm text-stone-800 hover:bg-stone-100">
+        <button type="button" onClick={close} className="rounded-lg border border-stone-300 px-3 py-1 text-sm text-stone-800 hover:bg-stone-100">
           Close
         </button>
       </div>
@@ -189,5 +191,6 @@ export function Inspector(props: {
         </section>
       </div>
     </aside>
+    </dialog>
   );
 }

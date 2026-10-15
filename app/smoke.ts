@@ -44,6 +44,7 @@ async function stage(name: string, body: () => Promise<void>) {
 /** Hovers and clicks the first node with this key prefix on the swarm canvas, found through the sigma instance on its container. */
 async function clickNode(page: Page, prefix: string): Promise<string> {
   const canvas = page.locator('.sigma-container');
+  await canvas.scrollIntoViewIfNeeded();
   const locate = () => canvas.evaluate((element, prefix) => {
     const sigma = (element as HTMLElement & { sigma: { getGraph(): { nodes(): string[] }; getNodeDisplayData(key: string): { x: number; y: number }; framedGraphToViewport(at: { x: number; y: number }): { x: number; y: number } } }).sigma;
     const key = sigma.getGraph().nodes().find((candidate) => candidate.startsWith(prefix))!;
@@ -79,6 +80,19 @@ async function expectReport(page: Page) {
   await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
 }
 
+async function openReport(page: Page, options: { timeout?: number } = {}) {
+  await page.getByRole('tab', { name: 'Report', exact: true }).click(options);
+  await page.getByRole('heading', { name: 'Report', exact: true }).waitFor(options);
+}
+
+async function showActivity(page: Page) {
+  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+  const activity = page.getByRole('region', { name: 'Activity', exact: true });
+  const filters = activity.getByRole('button', { name: /^Filter/ });
+  if (await filters.getAttribute('aria-expanded') === 'false') await filters.click();
+  return activity;
+}
+
 /** Presses Start run, confirms the pre-run summary and waits until the run's page is showing. */
 async function startRun(page: Page, runId: string) {
   await page.getByRole('button', { name: 'Start run' }).click();
@@ -86,7 +100,7 @@ async function startRun(page: Page, runId: string) {
   await summary.or(page.getByRole('alert')).first().waitFor();
   assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
   await summary.getByRole('button', { name: 'Start run' }).click();
-  const heading = page.getByRole('heading', { name: `Run ${runId}` });
+  const heading = page.getByRole('region', { name: 'Run status' });
   await heading.or(summary.getByRole('alert')).first().waitFor({ timeout: 60_000 });
   assert.ok(await heading.isVisible(), `the run did not start: ${await summary.getByRole('alert').allInnerTexts()}`);
 }
@@ -101,11 +115,11 @@ let gym: { close(): Promise<void> } | undefined;
 let ran = false;
 try {
   const page = await app.firstWindow();
-  const tab = (name: string) => page.getByRole('tab', { name });
+  const tab = (name: string) => page.locator(`#tab-${({ Project: 'project', Settings: 'settings', Audience: 'audience', Run: 'run' } as Record<string, string>)[name]}`);
 
-  await stage('the window shows the Settings, Project, Audience and Run tabs', async () => {
+  await stage('the window shows a project journey and a separate Settings control', async () => {
     await tab('Settings').waitFor();
-    assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['Settings', 'Project', 'Audience', 'Run']);
+    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Activity']);
   });
 
   await stage('the engine started and opened the project', async () => {
@@ -116,7 +130,7 @@ try {
   });
 
   await stage('each screen renders (screenshots in app/test-results)', async () => {
-    for (const [name, heading] of [['Settings', 'Providers'], ['Project', 'What to test'], ['Audience', 'Audience'], ['Run', 'Runs']]) {
+    for (const [name, heading] of [['Settings', 'Providers'], ['Project', 'What to test'], ['Audience', 'Audience'], ['Run', 'Every perspective starts with a first step.']]) {
       await tab(name).click();
       await page.getByRole('heading', { name: heading }).waitFor();
       await page.screenshot({ path: join(shots, `${name.toLowerCase()}.png`) });
@@ -172,7 +186,7 @@ try {
     await page.getByLabel('Goal', { exact: true }).fill('Post a job for a backend engineer');
     await page.screenshot({ path: join(shots, 'project-filled.png') });
     await startRun(page, 'r-0001');
-    await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 180_000 });
+    await openReport(page, { timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
     // The ranked themes at the window's size and at 720 px wide, for a look at the evidence layout.
@@ -223,7 +237,7 @@ try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
       await startRun(page, 'r-0002');
-      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 180_000 });
+      await openReport(page, { timeout: 180_000 });
       const methods = page.locator('section[aria-labelledby=methods-title]');
       assert.match(await methods.innerText(), /127\.0\.0\.1: \d+ requests?/);
       await page.screenshot({ path: join(shots, 'report-methods.png'), fullPage: true });
@@ -249,7 +263,7 @@ try {
       assert.match(await banner.innerText(), /hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
       await page.screenshot({ path: join(shots, 'blocked.png') });
       await banner.getByRole('button', { name: 'End run' }).click();
-      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 60_000 });
+      await openReport(page, { timeout: 60_000 });
       assert.match(await page.locator('section[aria-labelledby=report-title]').innerText(), /Blocked/);
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /a CAPTCHA.*did not resume/);
     } finally {
@@ -263,13 +277,14 @@ try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/billing`);
       await startRun(page, 'r-0004');
-      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 60_000 });
-      const feed = page.getByRole('region', { name: 'Activity' });
+      await openReport(page, { timeout: 60_000 });
+      const feed = await showActivity(page);
       await feed.scrollIntoViewIfNeeded(); // the feed draws only the rows on screen
       await feed.getByRole('listitem').first().waitFor();
       const activity = await feed.innerText();
       assert.match(activity, /safety stop/i); // the row label is upper-cased by CSS, which innerText reflects
       assert.match(activity, /The run was halted by a safety check/);
+      await openReport(page);
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /Safety stops\s+Live payment key found/);
       await page.screenshot({ path: join(shots, 'safety-stop.png'), fullPage: true });
     } finally {
@@ -279,6 +294,7 @@ try {
 
   await stage('the pre-run summary lists the allowed hosts and offers the reset for a project with a reset hook', async () => {
     await tab('Project').click();
+    await page.locator('summary').filter({ hasText: 'Access & advanced options' }).click();
     await page.getByLabel('Add a host').fill('cdn.example.test');
     await page.getByRole('button', { name: 'Add host' }).click();
     await page.getByLabel('Reset hook URL (optional)').fill('http://localhost:9/reset');
@@ -296,6 +312,7 @@ try {
   await stage("Settings: providers are added, tested and removed, routes offer only configured ones, and a role's provider fills in its usual model", async () => {
     await tab('Settings').click();
     const settings = page.locator('#panel-settings');
+    await settings.locator('summary').filter({ hasText: 'Model choices' }).click();
     const navigator = settings.getByLabel('Navigator provider');
     const options = () => navigator.locator('option').allTextContents();
     const add = async (provider: string, value: string) => {
@@ -305,7 +322,7 @@ try {
     };
     await settings.getByText('No provider yet. Add one to run personas.').waitFor();
     assert.deepEqual(await options(), ['Anthropic'], 'only the provider in use, flagged');
-    await settings.getByText('No Anthropic key is saved. Add one under Providers.').first().waitFor();
+    await settings.getByText('The selected AI provider is not connected. Add it under Providers or choose a connected provider.').first().waitFor();
 
     const deepseek = 'sk-smoke-deepseek-0123456789abcd';
     await add('anthropic', 'sk-ant-smoke-0123456789');
@@ -319,11 +336,10 @@ try {
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.deepseek.navigator.model);
     await settings.getByText('DeepSeek reads text only, so the navigator will not see the screenshots.').waitFor();
     await settings.getByRole('button', { name: 'Remove DeepSeek' }).click();
-    await settings.getByText('No DeepSeek key is saved. Add one under Providers.').waitFor();
-    await navigator.selectOption('anthropic');
+    await page.waitForFunction(() => document.querySelector<HTMLSelectElement>('[aria-label="Navigator provider"]')?.value === 'anthropic');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
     assert.deepEqual(await options(), ['Anthropic'], 'a removed provider is no longer offered');
-    assert.equal(await settings.getByText('No Anthropic key is saved').count(), 0);
+    assert.equal(await settings.getByText('The selected AI provider is not connected.', { exact: false }).count(), 0);
 
     // The local endpoint is saved with the project, and testing it asks a stand-in server for its model list.
     const hits: string[] = [];
@@ -373,7 +389,7 @@ try {
     const audience = page.locator('#panel-audience');
     const sliders = audience.getByRole('slider');
     const shares = () => sliders.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
-    await audience.getByRole('button', { name: 'Start from one segment' }).click();
+    await audience.getByRole('button', { name: 'Build my own' }).click();
     assert.deepEqual(await shares(), [100]);
     assert.ok(await sliders.first().isDisabled(), 'a lone segment is everyone');
     await audience.getByRole('button', { name: 'Add segment' }).click();
@@ -395,7 +411,7 @@ try {
   await stage('Audience: personas are generated with progress, then edited, regenerated, added and removed', async () => {
     const audience = page.locator('#panel-audience');
     await audience.getByRole('button', { name: 'Start over' }).click();
-    await audience.getByRole('button', { name: 'Start from one segment' }).click();
+    await audience.getByRole('button', { name: 'Build my own' }).click();
     await audience.getByRole('button', { name: 'Add segment' }).click();
     await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
     await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
@@ -479,7 +495,7 @@ try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
       await startRun(page, 'r-0005');
-      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 300_000 });
+      await openReport(page, { timeout: 300_000 });
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
       for (const name of ['Recruiters', 'Hiring managers', 'Weighted by share']) assert.match(segments, new RegExp(name));
       assert.equal(await page.getByRole('region', { name: 'What each persona did' }).getByRole('row').count(), 7, 'a row for each of the six personas');
@@ -487,7 +503,7 @@ try {
       assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /3 browsers at a time/);
       await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
       // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
-      const activity = page.getByRole('region', { name: 'Activity' });
+      const activity = await showActivity(page);
       await activity.getByLabel('Kind of event').selectOption({ label: 'Feed, posts and reactions' });
       await page.waitForFunction(() => {
         const section = document.querySelector('section[aria-labelledby=activity-title]');
@@ -505,6 +521,7 @@ try {
   await stage('a persona opens in the inspector with her steps and their screenshots', async () => {
     assert.ok(population, 'needs the run above');
     const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
+    await page.locator('summary').filter({ hasText: 'People in this run' }).click();
     await page.getByRole('button', { name: /^Inspect / }).first().click();
     await inspector.waitFor();
     // Opinions and the survey come first; the timeline's screenshots load once they are scrolled into view.
@@ -533,6 +550,7 @@ try {
     await page.keyboard.press('Escape');
     await inspector.waitFor({ state: 'detached' });
     // The report's persona names open it too.
+    await openReport(page);
     await page.getByRole('region', { name: 'What each persona did' }).getByRole('button').first().click();
     await inspector.waitFor();
     await inspector.getByRole('button', { name: 'Close' }).click();
@@ -558,7 +576,7 @@ try {
       const names = /\((.+)\) hit a CAPTCHA/.exec(said)?.[1].split(/, | and /) ?? [];
       assert.equal(names.length, 3);
       await banner.getByRole('button', { name: 'Retry' }).click();
-      const feed = page.getByRole('region', { name: 'Activity' });
+      const feed = await showActivity(page);
       await feed.getByLabel('Kind of event').selectOption({ label: 'Blocked and resumed' });
       // The feed holds only the rows on screen, so each poll brings its end into view before it counts.
       const rowsWith = (text: string, count: number) =>
@@ -576,7 +594,7 @@ try {
         await rowsWith('Blocked by a CAPTCHA, waiting for you', 2); // the challenge is still there
       }
       await banner.getByRole('button', { name: 'End run' }).click();
-      await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 120_000 });
+      await openReport(page, { timeout: 120_000 });
       const outcomes = await page.getByRole('region', { name: 'What each persona did' }).innerText();
       assert.equal((outcomes.match(/Blocked/g) ?? []).length, 3);
       // Each stopped twice: the first time they were let go again, the second time the run ended on them.
@@ -602,8 +620,8 @@ try {
     assert.equal(await page.locator('#panel-audience').getByRole('slider').count(), 2);
     if (!ran) return; // nothing to open: the first run failed
     await tab('Run').click();
-    await page.getByRole('button', { name: /r-0001/ }).click();
-    await page.getByRole('heading', { name: 'Report' }).waitFor();
+    await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+    await openReport(page);
     await expectReport(page);
   });
   await stage('the swarm tab draws a run, scrubs its rounds, and a persona node opens the inspector with its social memory', async () => {
@@ -612,8 +630,8 @@ try {
     const graph = page.getByRole('region', { name: 'Swarm graph' });
     // The scripted swarm run above: personas, the Gym, its used and friction edges, and its social rounds.
     await tab('Run').click();
-    await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: /r-0005/ }).click();
-    await page.getByRole('tab', { name: 'Swarm' }).click();
+    await page.getByLabel('Run history', { exact: true }).selectOption('r-0005');
+    await page.getByRole('tab', { name: 'Connections' }).click();
     await graph.getByText(/^6 personas, 1 point of interest, [1-9]\d* connections$/).waitFor();
     assert.match(await graph.innerText(), /Used \([1-9]/);
     assert.match(await graph.innerText(), /Friction \([1-9]/);
@@ -635,8 +653,8 @@ try {
     await page.reload();
     await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
     await tab('Run').click();
-    await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: new RegExp(config.run_id) }).click();
-    await page.getByRole('tab', { name: 'Swarm' }).click();
+    await page.getByLabel('Run history', { exact: true }).selectOption(config.run_id);
+    await page.getByRole('tab', { name: 'Connections' }).click();
     await graph.getByText(`12 personas, 3 points of interest, ${buildGraph(logged).edges.size} connections`).waitFor();
     const feed = page.getByRole('region', { name: 'Feed' });
     await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();

@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { createGateway, InvalidOutputError } from './llm/gateway.ts';
 import { surveySchema } from './agent/prompt.ts';
-import { createScriptedGateway } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { buildReport } from './report/build.ts';
 import { getPersonaSchema } from './profile/schema.ts';
@@ -166,6 +166,11 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
     replacePersonas: () => {},
     putPersona: () => {},
     deletePersona: () => {},
+    getPersonaDraft: () => undefined,
+    putPersonaDraft: () => {},
+    clearPersonaDrafts: () => {},
+    recordSetupCall: () => {},
+    listSetupCalls: () => [],
     close: () => {},
   };
   const files = new Map<string, Uint8Array>();
@@ -478,6 +483,42 @@ test('two invalid outputs make a failed step, not a crash', async () => {
   assert.equal(done.payload.step_no, 2);
   assert.equal(report.personas[0].outcome, 'done');
 });
+
+for (const purpose of ['survey', 'report_themes', 'report_suggestions']) {
+  test(`a hung ${purpose} request times out and still saves the abandoned persona's report`, async (t) => {
+    let aborted = false;
+    t.mock.method(globalThis, 'fetch', (_url: string, init: RequestInit) => new Promise((_, reject) => {
+      init.signal?.addEventListener('abort', () => { aborted = true; reject(init.signal?.reason); });
+    }));
+    const deadlines: (number | undefined)[] = [];
+    const r = begin([], {
+      llm: (record) => {
+        const gateway = createGateway({ secrets: { get: () => 'sk-test-no-network-12345678' }, localBaseUrl: null, record });
+        const scripted = createScriptedGateway({
+          navigator: (req) => req.purpose === 'survey' ? SURVEY : step('abandon', null, 'I cannot join', { severity: 3, what: 'Signup is broken', expected: 'Join the site' }),
+          judge: DEMO_JUDGE,
+          author: DEMO_AUTHOR,
+        }, record);
+        return { call: (req) => {
+          if (req.purpose !== purpose) return scripted.call(req);
+          deadlines.push(req.timeout_ms);
+          // Fail promptly if the deadline is missing; exercise the real gateway with a shorter test deadline otherwise.
+          if (req.timeout_ms === undefined) return Promise.reject(new Error('No completion deadline configured'));
+          return gateway.call({ ...req, timeout_ms: 10 });
+        } };
+      },
+    });
+    const report = await r.run.done;
+    assert.deepEqual(deadlines, [purpose === 'survey' ? 30_000 : 60_000]);
+    assert.equal(aborted, true, 'the deadline cancels the stalled provider request');
+    assert.equal(report.status, 'finished');
+    assert.equal(report.personas[0].outcome, 'abandoned');
+    assert.ok(report.frictions.length > 0, 'observed evidence is retained without the timed-out answer');
+    assert.equal(of(r.events, 'run.finished').length, 1);
+    assert.equal(r.types().at(-1), 'report.generated');
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(r.files.get('runs/r-0001/report.json'))), report);
+  });
+}
 
 test('stop() discards an answer returned after cancellation before it can become a browser action', async () => {
   const r = begin(forever, { onCall: (req, run) => req.persona_id && run.stop() });
@@ -945,7 +986,24 @@ const rounds = (n: number): Partial<RunSettings> => ({ social: true, rounds: n }
 const swarmAnswers = (social: (req: LlmRequest<unknown>) => unknown = () => QUIET, done: (req: LlmRequest<unknown>) => boolean = () => false): Respond =>
   (req) => (req.role === 'socialiser' ? social(req) : done(req) ? step('done', null, 'Done') : forever());
 
-test('each round is a usage slice of ceil(budget / R) steps then a social phase, and every event carries its round', async () => {
+test('social runs finish as soon as every persona gives up, including a single persona and queued personas', async () => {
+  for (const count of [1, 4]) {
+    const r = begin((req) => req.role === 'socialiser' ? QUIET : step('abandon', null, 'I cannot join'), {
+      personas: swarm(count), project: SWARM, settings: { ...rounds(5), concurrency: 1 },
+    });
+    const report = await r.run.done;
+    assert.equal(report.status, 'finished');
+    assert.equal(of(r.events, 'persona.abandoned').length, count);
+    assert.equal(of(r.events, 'persona.survey').length, count);
+    assert.deepEqual(of(r.events, 'run.round_started').map((e) => e.round), [1]);
+    assert.deepEqual(of(r.events, 'run.round_ended').map((e) => e.round), [1]);
+    assert.equal(of(r.events, 'social.feed_viewed').length, 0, 'no social work remains once everyone has stopped using the product');
+    assert.ok(r.pages.every((p) => p.closed));
+    assert.equal(r.types().at(-1), 'report.generated');
+  }
+});
+
+test('rounds interleave usage and social phases while any episode remains, and every event carries its round', async () => {
   const calls: [role: string, round: number][] = [];
   const r = begin(swarmAnswers(() => QUIET, (req) => req.persona_id === 'p-1' && stepOf(req) === 6), {
     personas: swarm(3), project: SWARM, settings: rounds(3), onCall: (req) => void (req.purpose !== 'survey' && calls.push([req.role, req.round])),
@@ -967,7 +1025,7 @@ test('each round is a usage slice of ceil(budget / R) steps then a social phase,
     const nextStep = Math.min(...of(r.events, 'persona.step').filter((e) => e.round === round + 1).map((e) => e.seq));
     assert.ok(lastStep < Math.min(...feeds) && Math.max(...feeds) < nextStep, `round ${round}`);
   }
-  assert.deepEqual(calls.filter(([role]) => role === 'socialiser').map(([, round]) => round), [1, 1, 1, 2, 2, 2, 3, 3, 3], 'one socialiser call per persona and round');
+  assert.deepEqual(calls.filter(([role]) => role === 'socialiser').map(([, round]) => round), [1, 1, 1, 2, 2, 2], 'one call per persona in each social phase; none after the last episode ends');
   assert.ok(calls.filter(([role]) => role === 'navigator').every(([, round], i, all) => i === 0 || round >= all[i - 1][1]));
 });
 
@@ -983,18 +1041,18 @@ test('slices continue one episode: one page per persona kept open between rounds
   assert.deepEqual(of(r.events, 'signal.budget_exceeded').map((e) => e.round), [3, 3]);
 });
 
-test('the survey runs when the episode ends, whichever round, and the persona keeps reading feeds after it', async () => {
-  const r = begin(swarmAnswers(() => QUIET, (req) => req.persona_id === 'p-1' && stepOf(req) === 6), { personas: swarm(3), project: SWARM, settings: rounds(3) });
+test('the survey runs when the episode ends, and the persona keeps reading feeds while others still browse', async () => {
+  const r = begin(swarmAnswers(() => QUIET, (req) => req.persona_id === 'p-1' && stepOf(req) === 6), { personas: swarm(3), project: SWARM, settings: rounds(4) });
   await r.run.done;
-  assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.round]).sort(), [['p-0', 3], ['p-1', 2], ['p-2', 3]]);
+  assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.round]).sort(), [['p-0', 4], ['p-1', 2], ['p-2', 4]]);
   assert.deepEqual(of(r.events, 'social.feed_viewed').filter((e) => e.persona_id === 'p-1').map((e) => e.round), [1, 2, 3]);
-  const ended = r.transcripts.filter((t) => t.persona_id === 'p-1' && /Round 3 of 3/.test(t.request_json));
+  const ended = r.transcripts.filter((t) => t.persona_id === 'p-1' && /Round 3 of 4/.test(t.request_json));
   assert.match(ended[0]?.request_json ?? '', /session with Gym ATS is over after 6 steps: Persona finished the task/);
 });
 
 test('the follow graph is stored with each persona, and feeds show what the followed posted in earlier rounds', async () => {
   const r = begin(swarmAnswers((req) => (req.persona_id === 'p-0' && req.round === 1 ? { ...QUIET, action: 'post', text: 'Where is the save button?', about_poi_id: 'poi-1' } : QUIET)), {
-    personas: swarm(4), project: SWARM, settings: rounds(2),
+    personas: swarm(4), project: SWARM, settings: rounds(3),
   });
   await r.run.done;
   const created = of(r.events, 'persona.created');
@@ -1011,7 +1069,7 @@ test('an injected post goes in at the start of its round’s social phase, befor
   const text = 'The job form lost my whole draft.';
   const seen: string[] = [];
   const r = begin(swarmAnswers((req) => (feedOf(req).includes('inj-r2-1') && said(req).includes(text) && seen.push(req.persona_id ?? ''), QUIET)), {
-    personas: swarm(6), project: SWARM, settings: rounds(3), config: { injected_posts: [{ round: 2, persona_id: 'p-0', poi_id: 'poi-1', text }] },
+    personas: swarm(6), project: SWARM, settings: rounds(4), config: { injected_posts: [{ round: 2, persona_id: 'p-0', poi_id: 'poi-1', text }] },
   });
   await r.run.done;
   const [post, ...others] = of(r.events, 'social.post');
@@ -1037,7 +1095,7 @@ test('an opinion the feed changes cites its posts, an unchanged one records noth
     return { ...QUIET, action: cited.length ? 'react' : 'nothing', post_id: cited[0] ?? null, reaction: cited.length ? 'agree' : null, opinion_updates: [{ poi_id: 'poi-1', ...soured, post_ids: cited }] };
   };
   const r = begin((req) => (req.role === 'socialiser' ? social(req) : req.persona_id === 'p-1' && stepOf(req) === 1 ? { ...forever(), opinion: liked } : forever()), {
-    personas: swarm(2), project: SWARM, settings: rounds(3),
+    personas: swarm(2), project: SWARM, settings: rounds(4),
   });
   await r.run.done;
   const changes = of(r.events, 'persona.opinion_changed').filter((e) => e.persona_id === 'p-1');
@@ -1054,7 +1112,7 @@ test('two invalid socialiser answers leave the persona silent for that phase, an
     req.round === 1
       ? req.persona_id === 'p-0' ? { ...QUIET, action: 'reply', post_id: 'r0-nowhere', text: 'Agreed!' } : { ...QUIET, action: 'post', text: 'Fine so far.', about_poi_id: null }
       : QUIET;
-  const r = begin(swarmAnswers(social), { personas: swarm(2), project: SWARM, settings: rounds(2) });
+  const r = begin(swarmAnswers(social), { personas: swarm(2), project: SWARM, settings: rounds(3) });
   assert.equal((await r.run.done).status, 'finished');
   assert.deepEqual(of(r.events, 'social.post').map((e) => [e.persona_id, e.poi_id, e.payload.post_id]), [['p-1', null, 'r1-p-1']]);
   const attempts = of(r.events, 'llm.call').filter((e) => e.persona_id === 'p-0' && e.payload.role === 'socialiser').map((e) => e.payload.status);

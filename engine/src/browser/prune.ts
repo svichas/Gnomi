@@ -31,9 +31,11 @@ interface Line {
 }
 
 interface Options {
-  secrets: ReadonlySet<string>;
+  secrets: ReadonlyMap<string, PasswordState>;
   viewportHeight: number;
 }
+
+export type PasswordState = 'empty' | 'filled' | 'hidden';
 
 function parse(raw: string): Line[] {
   const root: Line = { role: '', head: '', kids: [] };
@@ -62,7 +64,8 @@ function onScreen(line: Line, viewportHeight: number): boolean {
 function keep(line: Line, opts: Options): Line[] {
   let { value, kids } = line;
   const ref = REF.exec(line.head)?.[1];
-  if (ref && opts.secrets.has(ref)) {
+  const password = ref ? opts.secrets.get(ref) : undefined;
+  if (password) {
     // An input's value is inline, or a "- text:" child when it also has a placeholder.
     value = undefined;
     kids = kids.filter((kid) => kid.role !== 'text');
@@ -72,7 +75,7 @@ function keep(line: Line, opts: Options): Line[] {
     if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
     if (!kids.length && !CONTROLS.has(line.role)) return [];
   }
-  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`);
+  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '');
   return [{ role: line.role, head, value: value === undefined ? undefined : clip(value), kids }];
 }
 
@@ -102,10 +105,10 @@ function print(lines: Line[], depth: number, out: string[]): void {
 
 export function pruneSnapshot(
   raw: string,
-  { maxChars = 16000, passwordRefs = new Set<string>(), viewportHeight = 800 }: { maxChars?: number; passwordRefs?: ReadonlySet<string>; viewportHeight?: number } = {},
+  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), viewportHeight = 800 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; viewportHeight?: number } = {},
 ): string {
   const out: string[] = [];
-  print(visit(parse(raw), { secrets: passwordRefs, viewportHeight }), 0, out);
+  print(visit(parse(raw), { secrets: passwordFields, viewportHeight }), 0, out);
   const text = out.join('\n');
   if (text.length <= maxChars) return text;
   // shortcut: drops from the end, not by distance from the viewport (tech.md §6.2), upgrade when a long page cuts off what the persona scrolled to.

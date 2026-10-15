@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Persona } from '@gnomi/engine/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '../../../../engine/src/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, personaMinimum, rebalance, removeCountry, removeSegment, setCountryShare, setShare } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, setCountryShare, setShare } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
   assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
@@ -80,16 +80,17 @@ test('adding a segment takes an even slice, removing one hands its share back in
 test('the audience is checked before it is saved', () => {
   const audience = blankAudience('An ATS');
   assert.equal(audienceProblem(audience), null);
-  assert.match(String(audienceProblem({ ...audience, persona_count: 2 })), /from 3 to 200/);
-  assert.match(String(audienceProblem({ ...audience, persona_count: 201 })), /from 3 to 200/);
+  assert.equal(audienceProblem({ ...audience, persona_count: 1 }), null);
+  assert.match(String(audienceProblem({ ...audience, persona_count: 0 })), /from 1 to 200/);
+  assert.match(String(audienceProblem({ ...audience, persona_count: 201 })), /from 1 to 200/);
   assert.match(String(audienceProblem({ ...audience, persona_count: 12.5 })), /whole number/);
   assert.match(String(audienceProblem({ ...audience, segments: [{ ...audience.segments[0], name: ' ' }] })), /name/);
   assert.match(String(audienceProblem({ ...audience, segments: [{ ...audience.segments[0], patience: [4, 2] }] })), /patience/);
   assert.match(String(audienceProblem({ ...audience, segments: [] })), /at least one segment/);
-  const two = addSegment(audience);
-  assert.equal(personaMinimum(two), 6);
-  assert.match(String(audienceProblem({ ...two, persona_count: 5 })), /from 6 to 200/);
-  assert.equal(personaMinimum(setShare(two, 'seg-1', 100)), 3, 'a segment with no share needs no personas');
+  const five = addSegment(addSegment(addSegment(addSegment(audience))));
+  assert.equal(five.segments.length, 5);
+  assert.equal(audienceProblem({ ...five, persona_count: 1 }), null, 'five segments do not force fifteen personas');
+  assert.equal(audienceProblem({ ...five, persona_count: 2 }), null);
 });
 
 test('the population is counted per value, most common first or in the order asked for', () => {

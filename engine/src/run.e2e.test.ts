@@ -178,6 +178,49 @@ async function recordLogin(gymUrl: string, sessions: SessionStore, account: (typ
 
 // —— M0 ——
 
+test('a mobile persona completes signup with matching passwords instead of abandoning a masked field', async (t) => {
+  const w = await world(t);
+  const password = 'Synthetic-Signup-42!';
+  let accepted = false;
+  const site = createServer(async (req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    if (req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const data = new URLSearchParams(body);
+      accepted = data.get('password') === password && data.get('confirmation') === password;
+      res.statusCode = accepted ? 200 : 422;
+      res.end(`<h1>${accepted ? 'Account created' : 'Password required'}</h1>`);
+    } else {
+      res.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><h1>Join</h1><form method="post"><label>Password<input name="password" type="password" autocomplete="new-password" required></label><label>Confirm password<input name="confirmation" type="password" autocomplete="new-password" required></label><button>Create account</button></form>');
+    }
+  });
+  await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => site.close(() => resolve())));
+  const start_url = `http://127.0.0.1:${(site.address() as AddressInfo).port}/register`;
+  const project = { ...w.project, goal: 'Create an account', poi: { ...w.project.poi, start_url } };
+  const { report, events } = await w.go(walk([
+    (req) => say('Choose a password.', { type: 'type', ref: ref(req, 'textbox', 'Password'), text: password }),
+    (req) => {
+      const prompt = req.user.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+      assert.match(prompt, /textbox "Password"[^\n]*\[password: filled\]/);
+      assert.match(prompt, /text entered/);
+      return say('Repeat it in confirmation.', { type: 'type', ref: ref(req, 'textbox', 'Confirm password'), text: password });
+    },
+    (req) => say('Both fields are filled.', { type: 'click', ref: ref(req, 'button', 'Create account') }),
+    (req) => {
+      ref(req, 'heading', 'Account created');
+      return say('My account is ready.', { type: 'done', text: 'Account created' });
+    },
+  ]), { project, personas: [{ ...BUILTIN_PERSONA, device: 'mobile' }] });
+  assert.equal(accepted, true, 'the local signup server received matching non-empty passwords');
+  assert.equal(report.status, 'finished');
+  assert.equal(of(events, 'persona.goal_done').length, 1);
+  assert.equal(of(events, 'persona.abandoned').length, 0);
+  assert.equal(of(events, 'persona.blocked').length, 0, 'a public signup is not an expired recorded session');
+  assert.ok(of(events, 'persona.step').every((e) => e.payload.result.ok));
+});
+
 test('a scripted persona walks the Gym: frictions with screenshots, a report from the log alone, no canaries', async (t) => {
   const w = await world(t, { defects: M0_DEFECTS });
   const { report, events, config } = await w.go(
@@ -389,6 +432,24 @@ function peakInFlight(events: GnomiEvent[]): number {
   }
   return Math.max(...[...spans.values()].map(([start]) => [...spans.values()].filter(([s, end]) => s <= start && end >= start).length));
 }
+
+test('a five-segment audience can generate and finish a run with just one persona', async (t) => {
+  const w = await world(t);
+  const audience = audienceOf([10, 50, 20, 15, 5].map((share, i) => segment(`seg-${i + 1}`, share)), 1);
+  const { personas, calls } = await w.sample(audience);
+  assert.equal(personas.length, 1);
+  assert.equal(personas[0].segment_id, 'seg-2');
+  assert.equal(calls, 2);
+  const { config, report, events } = await w.go(walk(toJobs), { project: { ...w.project, audience }, personas });
+  assert.equal(config.personas.length, 1);
+  assert.equal(report.status, 'finished');
+  assert.equal(report.personas.length, 1);
+  assert.equal(report.personas[0].outcome, 'done');
+  assert.equal(of(events, 'persona.created').length, 1);
+  assert.equal(of(events, 'persona.goal_done').length, 1);
+  assert.deepEqual(report.segments.map((s) => [s.id, s.personas]), [['seg-2', 1]]);
+  assert.equal(report.weighted.completion, 1, 'unrepresented segments do not count as failed personas');
+});
 
 test('M2: 50 personas from a four-segment audience run at concurrency 12 on the Gym with all twelve defects', async (t) => {
   const w = await world(t, { defects: 'v1', candidatesDelayMs: 200 });

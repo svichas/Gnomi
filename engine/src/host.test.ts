@@ -157,6 +157,39 @@ test('a full round trip: personas from the audience, edits, an estimate, a run o
   assert.ok(steps.length > 0 && steps.every((e) => e.persona_id === first.id));
 });
 
+test('start_run rechecks for generation that begins during its awaited browser preflight', async (t) => {
+  const gym = await startGym({ port: 0 });
+  t.after(() => gym.close());
+  await call('save_project', { project: project({ start_url: `${gym.url}/` }, { audience: audience([segment('seg-race', { share: 100 })], 3) }) });
+  await call('generate_personas', {});
+  const before = (await call('get_project', {})).runs.length;
+  let started: string | undefined;
+
+  // The preceding round-trip test has initialized the browser pool. Even a resolved pool()
+  // yields once, so this second message acquires the setup lock before preflight resumes.
+  const starting = call('start_run', { reset: false }).then((result) => {
+    started = result.run_id;
+    return result;
+  });
+  const writing = call('generate_personas', {});
+  try {
+    await assert.rejects(starting, /generation.*finish|generation.*progress/i);
+    await writing;
+    assert.equal((await call('get_project', {})).runs.length, before, 'a refused start must not create a run snapshot');
+  } finally {
+    await writing.catch(() => {});
+    if (started) {
+      await call('stop_run', { run_id: started });
+      // Keep the rest of this shared-host suite independent when the regression is present.
+      for (let i = 0; i < 100; i++) {
+        const run = (await call('get_project', {})).runs.find((run) => run.run_id === started);
+        if (run?.status !== 'running') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+  }
+});
+
 test('project closing and switching refuse an in-flight persona write, then close cleanly', async () => {
   await call('open_project', { dir });
   await call('save_project', { project: project({}, { audience: audience([segment('seg-lock', { share: 100 })], 3) }) });

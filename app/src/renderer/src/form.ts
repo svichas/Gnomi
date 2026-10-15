@@ -98,6 +98,8 @@ export function settingsProblem(settings: RunSettings): string | null {
   }
   if (endpoint && startHost(endpoint) === null) return 'Settings: the local endpoint needs a full web address, such as http://localhost:11434/v1.';
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) return 'Settings: concurrency must be a whole number from 1 to 32.';
+  const writerConcurrency = settings.persona_concurrency ?? 12;
+  if (!Number.isInteger(writerConcurrency) || writerConcurrency < 1 || writerConcurrency > 32) return 'Settings: writer concurrency must be a whole number from 1 to 32.';
   if (!(cost_budget_usd > 0)) return 'Settings: the cost budget must be more than zero.';
   if (!(wall_clock_budget_min > 0)) return 'Settings: the time budget must be more than zero minutes.';
   const rounds = settings.rounds ?? 5;

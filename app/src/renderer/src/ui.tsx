@@ -2,16 +2,14 @@ import { cloneElement, useEffect, useId, useRef, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { call, errorText } from './engine.ts';
 
-export const inputClass =
-  'w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200';
-const buttonBase =
-  'rounded-lg px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:opacity-50';
-export const primaryButton = `${buttonBase} bg-indigo-600 text-white hover:bg-indigo-700`;
-export const secondaryButton = `${buttonBase} border border-stone-300 bg-white text-stone-800 hover:bg-stone-100`;
+export const inputClass = 'field-input w-full';
+const buttonBase = 'button disabled:cursor-not-allowed disabled:opacity-50';
+export const primaryButton = `${buttonBase} button-primary`;
+export const secondaryButton = `${buttonBase} button-secondary`;
 
 export function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+    <section className="content-panel">
       <h2 className="mb-3 text-base font-semibold text-stone-900">{title}</h2>
       {children}
     </section>
@@ -19,15 +17,15 @@ export function Card({ title, children }: { title: string; children: ReactNode }
 }
 
 /** A labelled control. The label is tied to it by id rather than wrapped around it, so its text stays "Goal" however much the control holds. */
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string }> }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string; 'aria-describedby'?: string }> }) {
   const id = useId();
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-stone-700">
         {label}
       </label>
-      {cloneElement(children, { id })}
-      {hint && <p className="mt-1 text-xs text-stone-500">{hint}</p>}
+      {cloneElement(children, { id, ...(hint && { 'aria-describedby': `${id}-hint` }) })}
+      {hint && <p id={`${id}-hint`} className="mt-1 text-xs text-stone-500">{hint}</p>}
     </div>
   );
 }
@@ -42,7 +40,7 @@ export function Check({ checked, onChange, children }: { checked: boolean; onCha
 }
 
 /** A number field that can be half-typed: it hands the parent only whole, valid numbers and shows the last good one again on blur. */
-export function NumberInput(props: { value: number; onChange(value: number): void; min?: number; max?: number; step?: number; label: string; id?: string }) {
+export function NumberInput(props: { value: number; onChange(value: number): void; min?: number; max?: number; step?: number; label: string; id?: string; 'aria-describedby'?: string }) {
   const { value, onChange, min, max, step, label, id } = props;
   const [text, setText] = useState(String(value));
   useEffect(() => {
@@ -53,6 +51,7 @@ export function NumberInput(props: { value: number; onChange(value: number): voi
       type="number"
       id={id}
       aria-label={label}
+      aria-describedby={props['aria-describedby']}
       value={text}
       min={min}
       max={max}

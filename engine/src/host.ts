@@ -3,6 +3,7 @@
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from './audience/locations.ts';
+import { randomUUID } from 'node:crypto';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
@@ -18,7 +19,7 @@ import { allowedHosts, checkTarget } from './safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
 import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo } from './protocol.ts';
 import type { BlobStore, BrowserPool, LlmGateway, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore, Transport } from './seams.ts';
-import type { Audience, Persona, ProjectConfig, ProviderId, SessionInfo } from './types.ts';
+import type { Audience, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from './types.ts';
 
 interface PortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: PortLike[] }) => void): void;
@@ -45,6 +46,15 @@ let open: { store: ProjectStore; blobs: BlobStore; record: Recorder } | null = n
 let browsers: Promise<BrowserPool> | null = null;
 let sessions: SessionStore | null = null; // while a project is open and main has sent the session key
 let recording: { role: string; rec: Promise<LoginRecording> } | null = null; // one login recording at a time
+let setupTask: { stop: AbortController; done: Promise<unknown> } | null = null;
+
+function writeSetup<T>(work: () => Promise<T>): Promise<T> {
+  if (setupTask || runs.size) return Promise.reject(new Error('Wait for the current generation or run to finish.'));
+  const stop = new AbortController();
+  const done = Promise.resolve().then(work).finally(() => { setupTask = null; });
+  setupTask = { stop, done };
+  return done;
+}
 
 function current() {
   if (!open) throw new Error('No project is open');
@@ -92,10 +102,27 @@ function withAudience(): { config: ProjectConfig; audience: Audience } {
   return { config, audience: config.audience };
 }
 
-function writer(config: ProjectConfig, onProgress?: AudienceDeps['onProgress']): AudienceDeps {
+function writer(config: ProjectConfig, emit?: (progress: PersonaProgress) => void): AudienceDeps {
   // Proposed segments may only use logins that were actually recorded (metadata only, no session key needed).
   const roles = current().store.listSessions().map((s) => s.role);
-  return { llm: gateway(current().record), model: config.settings.routing.persona_writer, project: config, roles, onProgress };
+  const store = current().store;
+  const task_id = randomUUID();
+  const started = Date.now();
+  const progress: PersonaProgress = { done: 0, total: 0, calls: 0, failed_attempts: 0, stage: 'sketching' };
+  const notify = () => emit?.({ ...progress, elapsed_ms: Date.now() - started });
+  return {
+    llm: gateway(current().record), model: config.settings.routing.persona_writer, project: config, roles,
+    signal: setupTask?.stop.signal,
+    cache: { get: (key) => store.getPersonaDraft(key), set: (key, value) => store.putPersonaDraft(key, value) },
+    onProgress(done, total) { Object.assign(progress, { done, total }); notify(); },
+    onStage(stage) { progress.stage = stage; notify(); },
+    onAttempt(req, attempt) {
+      store.recordSetupCall({ task_id, persona_id: req.persona_id, purpose: req.purpose ?? 'setup' }, attempt);
+      progress.calls!++;
+      if (attempt.payload.status !== 'ok') progress.failed_attempts!++;
+      notify();
+    },
+  };
 }
 
 function persona(id: string): { people: Persona[]; persona: Persona } {
@@ -133,6 +160,7 @@ function readInfo(store: ProjectStore, unlocked: boolean): ProjectInfo {
     diversity: personas.length ? diversityReport(personas) : null,
     runs: store.listRuns(),
     sessions: unlocked ? store.listSessions() : [],
+    setup_calls: store.listSetupCalls(),
   };
 }
 
@@ -140,6 +168,8 @@ const info = () => readInfo(current().store, sessions !== null);
 
 /** Lets the process exit: runs stop, the recorder and the browsers close, the project closes. Main sends it before quitting. */
 async function shutdown() {
+  setupTask?.stop.abort(new Error('App is closing. Completed drafts are saved.'));
+  await setupTask?.done.catch(() => {});
   for (const run of runs.values()) run.stop();
   await Promise.allSettled([...runs.values()].map((run) => run.done));
   const pending = recording;
@@ -193,6 +223,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   get_project: () => info(),
   save_project({ project }) {
+    if (setupTask) throw new Error('Wait for persona generation to finish before saving project changes.');
     validateCountries(project.audience?.countries);
     if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
     current().store.saveProject(project);
@@ -204,33 +235,36 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const result = await testProviderKey(provider, credential);
     return result.ok ? { ok: true, error: null } : { ok: false, error: result.error };
   },
-  propose_audience: () => proposeAudience(writer(project())),
-  async generate_personas() {
+  propose_audience: () => writeSetup(() => proposeAudience(writer(project()))),
+  generate_personas: () => writeSetup(async () => {
     const { config, audience } = withAudience();
-    const progress: AudienceDeps['onProgress'] = (done, total) => broadcast({ kind: 'progress', task: 'generate_personas', done, total });
+    const progress = (value: PersonaProgress) => broadcast({ kind: 'progress', task: 'generate_personas', ...value });
     const { personas, cost_usd } = await syncPersonas(audience, current().store.listPersonas(), writer(config, progress));
     current().store.replacePersonas(personas);
+    current().store.clearPersonaDrafts();
     return { personas, diversity: diversityReport(personas), cost_usd };
-  },
-  async regenerate_persona({ id }) {
+  }),
+  regenerate_persona: ({ id }) => writeSetup(async () => {
     const { config, audience } = withAudience();
     const { people, persona: old } = persona(id);
     const result = await regeneratePersona(old, audience, people, writer(config));
     current().store.putPersona(result.persona);
     return result;
-  },
-  async add_persona({ segment_id }) {
+  }),
+  add_persona: ({ segment_id }) => writeSetup(async () => {
     const { config, audience } = withAudience();
     const result = await addPersona(segment_id, audience, current().store.listPersonas(), writer(config));
     current().store.putPersona(result.persona);
     return result;
-  },
+  }),
   remove_persona({ id }) {
+    if (setupTask) throw new Error('Wait for persona generation to finish before editing personas.');
     persona(id);
     current().store.deletePersona(id);
     return null;
   },
   edit_persona({ persona: edited }) {
+    if (setupTask) throw new Error('Wait for persona generation to finish before editing personas.');
     // Only the written fields change: the sampled traits are what keep the population honest (tech.md §2.4).
     const { persona: old } = persona(edited.id);
     const { name, job_title, background, context_of_use, goal_interpretation, voice } = edited;
@@ -242,6 +276,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience });
   },
   async start_run({ reset }) {
+    if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
     if (runs.size) throw new Error('A run is already in progress'); // one run at a time
@@ -268,6 +303,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     }
     const browserPool = await pool();
     if (runs.size) throw new Error('A run is already in progress'); // checked again: the awaits above let another start slip in
+    if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     let run: RunHandle | undefined;
     const llm = gateway(record, (provider) => run?.throttle(provider));
     run = startRun(store.createRun(newRunConfig(config, { personas, sessions: verified, reset })), { store, blobs, browsers: browserPool, llm, record, sessions });

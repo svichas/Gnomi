@@ -10,6 +10,8 @@ import type {
   RunEstimate,
   RunRow,
   SessionInfo,
+  SetupCall,
+  PersonaProgress,
 } from './types.ts';
 
 // Engine ⇄ client messages over a MessagePort (tech.md §11). Main and the renderer are both clients.
@@ -23,6 +25,7 @@ export interface ProjectInfo {
   diversity: DiversityReport | null; // of the current population
   runs: RunRow[];
   sessions: SessionInfo[];
+  setup_calls?: SetupCall[];
 }
 
 export interface Api {
@@ -71,4 +74,4 @@ export type EngineToClient =
   | { kind: 'response'; id: number; ok: true; result: unknown }
   | { kind: 'response'; id: number; ok: false; error: string }
   | { kind: 'event'; event: GnomiEvent }
-  | { kind: 'progress'; task: 'generate_personas'; done: number; total: number };
+  | ({ kind: 'progress'; task: 'generate_personas' } & PersonaProgress);

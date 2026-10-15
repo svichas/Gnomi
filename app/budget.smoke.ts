@@ -54,8 +54,9 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
-  await page.getByRole('tab', { name: 'Run', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Past runs' }).getByRole('button', { name: /r-0001/ }).click();
+  await page.locator('#tab-run').click();
+  await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+  await page.getByRole('tab', { name: 'Report', exact: true }).click();
   const report = page.locator('section[aria-labelledby=report-title]');
   await report.getByRole('heading', { name: 'Report', exact: true }).waitFor();
   const status = page.getByRole('region', { name: 'Run status' });

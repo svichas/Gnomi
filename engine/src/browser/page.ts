@@ -7,7 +7,7 @@ import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '
 import type { Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { inspect } from './inspect.ts';
-import { pruneSnapshot, snapshotTargets } from './prune.ts';
+import { pruneSnapshot, snapshotTargets, type PasswordState } from './prune.ts';
 
 const ACTION_MS = 5_000;
 const SETTLE_MS = 3_000; // cap on waiting for the page to go quiet after an action
@@ -16,16 +16,20 @@ const WAIT_MS = 1_000;
 const READ_CHARS = 2_000;
 const MAX_ERRORS = 20;
 const ERROR_RESOURCES = new Set(['document', 'xhr', 'fetch']);
-// Password inputs, including one a "show password" toggle turned into type=text.
-const SECRET = 'input[type="password" i], input[autocomplete*="password" i]';
+// Remember recognised password inputs even after a reveal toggle changes their type.
+const PASSWORD = 'input[type="password" i], input[autocomplete*="password" i]';
+const SECRET = `${PASSWORD}, input[data-gnomi-password]`;
 // Model-supplied: reject anything that is not a ref before it reaches Playwright's selector engine.
 const REF = /^(?:f\d+)?e\d+$/;
 
-// Runs in the page. fill() also fills the control of an enclosing <label>, so that control counts too.
-const isSecret = (el: Element, selector: string) => el.matches(selector) || !!el.closest('label')?.control?.matches(selector);
+// Runs in the page: return only presence, never the existing password itself.
+function passwordState(el: Element, selector: string): 'empty' | 'filled' | null {
+  const control = el.matches(selector) ? el : el.closest('label')?.control;
+  return control?.matches(selector) ? ((control as HTMLInputElement).value ? 'filled' : 'empty') : null;
+}
 
 // Runs in every frame before page scripts: counts DOM mutations so act() can tell whether anything changed.
-// Playwright ships both this and isSecret to the page with toString(), so they must stay self-contained.
+// Playwright ships both this and passwordState to the page with toString(), so they must stay self-contained.
 // shortcut: every mutation counts, so a page that animates always reads as changed and burns the full settle cap, upgrade by ignoring style-only churn if real apps do this.
 function countMutations() {
   const state = { id: Math.random().toString(36).slice(2), n: 0 };
@@ -99,6 +103,9 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
   const page = await openPage(context);
   let targets = new Map<string, ActionTarget>();
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
+  const rememberPasswords = () => Promise.all(page.frames().map((frame) => frame.locator(PASSWORD).evaluateAll((inputs) => {
+    for (const input of inputs) if (!input.hasAttribute('data-gnomi-password')) input.setAttribute('data-gnomi-password', '');
+  })));
   page.on('requestfailed', (request) => {
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
   });
@@ -154,7 +161,6 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
       case 'type': {
         const input = await locate(ref);
         if (action.text === null) throw new Error('type needs text');
-        if (await input.evaluate(isSecret, SECRET, { timeout }).catch(() => true)) throw new Error('password_field');
         if (!(await input.isEditable({ timeout }).catch(() => false))) throw new Error('not_editable'); // false when disabled/readonly, throws on non-form elements
         await input.fill(action.text, { timeout }).catch((e) => {
           throw /cannot be filled|not an <input>/.test(String(e)) ? new Error('not_editable') : e;
@@ -216,24 +222,28 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
     },
 
     async snapshot(): Promise<PageSnapshot> {
+      await rememberPasswords();
       const raw = await page.ariaSnapshot({ mode: 'ai', boxes: true, timeout: 10_000 });
       targets = snapshotTargets(raw);
       // Fail closed: a textbox whose type cannot be read is treated as a password.
       const textboxes = [...targets].filter(([, target]) => target.role === 'textbox').map(([ref]) => ref);
-      const secret = await Promise.all(
+      const states = await Promise.all(
         textboxes.map((ref) =>
           page
             .getByRef(ref)
-            .evaluate(isSecret, SECRET, { timeout: 1_000 })
-            .catch(() => true),
+            .evaluate(passwordState, SECRET, { timeout: 1_000 })
+            .catch(() => 'hidden' as const),
         ),
       );
+      const passwordFields = new Map<string, PasswordState>();
+      states.forEach((state, i) => { if (state !== null) passwordFields.set(textboxes[i], state); });
       const viewportHeight = await page.evaluate(() => window.innerHeight);
-      const text = pruneSnapshot(raw, { passwordRefs: new Set(textboxes.filter((_, i) => secret[i])), viewportHeight });
+      const text = pruneSnapshot(raw, { passwordFields, viewportHeight });
       return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
     },
 
-    screenshot() {
+    async screenshot() {
+      await rememberPasswords();
       return page.screenshot({
         type: 'jpeg',
         quality: 70,
