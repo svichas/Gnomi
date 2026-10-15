@@ -27,7 +27,11 @@ export interface WebPoi {
   id: string;
   type: 'web';
   name: string;
-  start_url: string; // its origin is the only host personas may reach in M0
+  start_url: string; // where the login recorder opens and where logged-out personas begin
+  allowed_hosts: string[]; // hosts personas may reach besides start_url's own; every other request is blocked (tech.md §9.3)
+  production_domains: string[]; // never reachable, subdomains included; a run never starts against them
+  not_production: boolean; // the user confirmed that a host without a staging marker is not production
+  reset_hook_url: string | null; // POSTed before a run when the user ticks it in the pre-run summary
 }
 
 export interface ProjectConfig {
@@ -35,6 +39,24 @@ export interface ProjectConfig {
   description: string; // one sentence about the product
   poi: WebPoi;
   goal: string;
+  role: string | null; // the recorded session the built-in persona uses; null browses logged out (segments own roles from M2)
+}
+
+// A recorded login (tech.md §9.1). The cookies and storage themselves stay in the engine and are encrypted on disk.
+export interface SessionInfo {
+  role: string;
+  start_url: string; // the page the user marked in the recorder: where personas in this role begin
+  hosts: string[]; // hosts seen while recording, offered for the allowlist
+  recorded_at: number;
+  verified_at: number | null; // last time a check reached start_url without landing on a login page
+  expires_at: number | null; // earliest expiry among the session's cookies; null when all are session cookies
+}
+
+// Page-content checks after every step (tech.md §9.1, §9.3).
+export interface PageFlags {
+  login: boolean; // a login-like URL or a visible password field
+  challenge: string | null; // the CAPTCHA or bot challenge showing, e.g. 'recaptcha'
+  live_key: string | null; // a live payment-provider key prefix found in the page, e.g. 'pk_live_'
 }
 
 export interface RunConfig {
@@ -46,6 +68,9 @@ export interface RunConfig {
   step_budget: number;
   cost_budget_usd: number;
   screenshots: boolean; // send each step's screenshot to the model; always stored as evidence
+  session: SessionInfo | null; // the session personas log in with, as it was when the run started
+  reset: boolean; // POST the POI's reset hook before the run
+  pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
 }
 
@@ -103,8 +128,9 @@ export type LlmRole = 'navigator' | 'socialiser' | 'persona_writer' | 'judge' | 
 
 export interface EventPayloads {
   'run.started': { config: RunConfig };
+  'run.reset_called': { url: string; status: number | null; error: string | null };
   'run.finished': Record<string, never>;
-  'run.stopped': { reason: 'user' | 'cost_budget' | 'error'; detail: string | null };
+  'run.stopped': { reason: 'user' | 'cost_budget' | 'tripwire' | 'error'; detail: string | null };
   'persona.created': { persona: Persona };
   'persona.episode_started': { poi_id: string; device: Device; start_url: string };
   'persona.step': {
@@ -127,6 +153,10 @@ export interface EventPayloads {
   };
   'persona.goal_done': { step_no: number; summary: string };
   'persona.abandoned': { step_no: number; reason: string };
+  'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
+  'persona.resumed': { step_no: number };
+  'containment.blocked_request': { host: string; url: string; method: string };
+  'containment.tripwire': { kind: 'live_payment_key' | 'production_host'; detail: string };
   'signal.budget_exceeded': { step_no: number; budget: number };
   'signal.repeated_failure': { step_no: number; action: ActionType; error: string }; // the engine ended the episode, not the persona
   'llm.call': {
@@ -176,7 +206,7 @@ export interface Report {
   goal: string;
   poi: { name: string; start_url: string };
   persona: { id: string; name: string; job_title: string; device: Device };
-  outcome: 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'incomplete';
+  outcome: 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'incomplete';
   outcome_text: string | null;
   steps: number;
   frictions: ReportFriction[]; // in step order
@@ -188,4 +218,15 @@ export interface Report {
   ended_at: number | null;
   duration_ms: number | null;
   banner: string; // the hypothesis banner, on every report
+  methods: ReportMethods;
+}
+
+// The methods appendix (idea.md §6.5): what the run was allowed to do and what got in its way.
+export interface ReportMethods {
+  role: string | null;
+  allowed_hosts: string[]; // start_url's host first, then the POI's allowed hosts
+  blocked_requests: { host: string; count: number }[]; // distinct blocked requests per host, most first
+  blocked: { step_no: number; reason: string; detail: string; resumed: boolean }[];
+  tripwires: { kind: string; detail: string }[];
+  reset: { url: string; status: number | null; error: string | null } | null;
 }

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { errors } from 'playwright-core';
-import type { BrowserContext } from 'playwright-core';
-import type { PageDriver } from '../seams.ts';
-import type { Action, ActionOutcome, ActionTarget, PageSnapshot } from '../types.ts';
+import { devices, errors } from 'playwright-core';
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playwright-core';
+import type { PageDriver, StorageState } from '../seams.ts';
+import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
+import type { Containment, HostRule } from './contain.ts';
+import { inspect } from './inspect.ts';
 import { pruneSnapshot, snapshotTargets } from './prune.ts';
 
 const ACTION_MS = 5_000;
@@ -30,40 +32,71 @@ function countMutations() {
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
 }
 
-export async function newPageDriver(context: BrowserContext, origin: string): Promise<PageDriver> {
-  const allowed = new URL(origin).origin;
+/** An isolated context for a persona or a session check: desktop or phone, service workers blocked, behind its containment proxy, optionally logged in. */
+export function newContext(browser: Browser, device: Device, storageState: StorageState | null, proxy: Containment['proxy']): Promise<BrowserContext> {
+  return browser.newContext({
+    ...(device === 'mobile' ? devices['iPhone 15'] : { viewport: { width: 1280, height: 800 } }),
+    serviceWorkers: 'block', // they would otherwise bypass request routing (tech.md §9.3)
+    storageState: (storageState ?? undefined) as BrowserContextOptions['storageState'],
+    proxy,
+  });
+}
+
+export async function openPage(context: BrowserContext): Promise<Page> {
   await context.addInitScript(countMutations);
-  const page = await context.newPage();
   // shortcut: a tab a click opens (target=_blank) is ignored, upgrade when a persona has to follow one.
-  let targets = new Map<string, ActionTarget>();
+  return context.newPage();
+}
 
-  // One string per frame (document id + mutation count): differs after any DOM change or navigation.
-  const domVersion = async () =>
-    (
-      await Promise.all(
-        page.frames().map((frame) =>
-          frame
-            .evaluate(() => {
-              const state = (window as unknown as { __gnomi?: { id: string; n: number } }).__gnomi;
-              return state ? `${state.id}:${state.n}` : '';
-            })
-            .catch(() => ''),
-        ),
-      )
-    ).join('|');
+// One string per frame (document id + mutation count): differs after any DOM change or navigation.
+const domVersion = async (page: Page) =>
+  (
+    await Promise.all(
+      page.frames().map((frame) =>
+        frame
+          .evaluate(() => {
+            const state = (window as unknown as { __gnomi?: { id: string; n: number } }).__gnomi;
+            return state ? `${state.id}:${state.n}` : '';
+          })
+          .catch(() => ''),
+      ),
+    )
+  ).join('|');
 
-  async function settle() {
-    const deadline = Date.now() + SETTLE_MS;
-    await page.waitForLoadState('load', { timeout: SETTLE_MS }).catch(() => {});
-    // shortcut: a response slower than QUIET_MS reads as "nothing happened", upgrade to wait on in-flight requests if that fakes dead-click signals.
-    let last = await domVersion();
-    while (Date.now() < deadline) {
-      await sleep(QUIET_MS);
-      const now = await domVersion();
-      if (now === last) return;
-      last = now;
-    }
+export async function settle(page: Page): Promise<void> {
+  const deadline = Date.now() + SETTLE_MS;
+  await page.waitForLoadState('load', { timeout: SETTLE_MS }).catch(() => {});
+  // shortcut: a response slower than QUIET_MS reads as "nothing happened", upgrade to wait on in-flight requests if that fakes dead-click signals.
+  let last = await domVersion(page);
+  while (Date.now() < deadline) {
+    await sleep(QUIET_MS);
+    const now = await domVersion(page);
+    if (now === last) return;
+    last = now;
   }
+}
+
+export async function newPageDriver(context: BrowserContext, allows: HostRule): Promise<PageDriver> {
+  const page = await openPage(context);
+  let targets = new Map<string, ActionTarget>();
+  let failedNavigation: string | null = null; // the last main-frame page load that did not complete
+  page.on('requestfailed', (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
+  });
+
+  const hostOf = (url: string) => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  };
+  /** True when the page load that just happened was refused by containment (a failed load or a refusal page on an unlisted host). */
+  const refusedByContainment = () => {
+    const url = page.url();
+    if (url.startsWith('chrome-error://')) return failedNavigation !== null && !allows(hostOf(failedNavigation)); // a dead listed host is the product's fault, not ours
+    return /^https?:/.test(url) && !allows(hostOf(url));
+  };
 
   async function locate(ref: string | null) {
     if (!ref) throw new Error('missing ref');
@@ -117,11 +150,11 @@ export async function newPageDriver(context: BrowserContext, origin: string): Pr
         if (!action.text) throw new Error('navigate needs a url');
         let url: URL;
         try {
-          url = new URL(action.text, allowed);
+          url = new URL(action.text, page.url());
         } catch {
           throw new Error('invalid url');
         }
-        if (url.origin !== allowed) throw new Error('host_not_allowed');
+        if (!allows(url.hostname)) throw new Error('host_not_allowed');
         await page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
         return null;
       }
@@ -140,7 +173,7 @@ export async function newPageDriver(context: BrowserContext, origin: string): Pr
   return {
     async goto(url) {
       await page.goto(url, { timeout: 30_000, waitUntil: 'domcontentloaded' });
-      await settle();
+      await settle(page);
     },
 
     async snapshot(): Promise<PageSnapshot> {
@@ -175,18 +208,27 @@ export async function newPageDriver(context: BrowserContext, origin: string): Pr
       if (action.type === 'done' || action.type === 'abandon') throw new Error(`programming error: ${action.type} never reaches the page`);
       const ref = action.ref?.trim() || null;
       const url_before = page.url();
-      const before = await domVersion();
+      const before = await domVersion(page);
       let text: string | null = null;
       let error: string | null = null;
+      failedNavigation = null;
       try {
         text = await perform(action, ref);
       } catch (e) {
         error = e instanceof errors.TimeoutError ? 'timeout' : (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
       }
-      await settle();
-      const dom_changed = (await domVersion()) !== before;
+      await settle(page);
+      if (refusedByContainment()) {
+        // The persona should hear "that leads outside the product" and still be on the page it was on, not on a browser error page.
+        await page.goBack({ timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => null);
+        await settle(page);
+        error = 'host_not_allowed';
+      }
+      const dom_changed = (await domVersion(page)) !== before;
       return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, target: (ref && targets.get(ref)) || null, text };
     },
+
+    inspect: () => inspect(page),
 
     close: () => context.close(),
   };

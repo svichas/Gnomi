@@ -4,9 +4,9 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type { ProjectStore } from '../seams.ts';
 import type { EventType, GnomiEvent, ProjectConfig, RunConfig, RunStatus } from '../types.ts';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
-// IF NOT EXISTS makes the schema idempotent, so a crash part-way through is finished by the next open.
+// IF NOT EXISTS makes the schema idempotent: a crash mid-way is finished by the next open; a v1 file gains new tables.
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS project (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS llm_transcript (
   request_json TEXT NOT NULL,
   response_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS session (
+  role TEXT PRIMARY KEY,
+  start_url TEXT NOT NULL,
+  hosts_json TEXT NOT NULL,
+  recorded_at INTEGER NOT NULL,
+  verified_at INTEGER,
+  expires_at INTEGER
+);
 `;
 
 const EVENT_COLUMNS = 'run_id, seq, ts, round, persona_id, poi_id, type, payload_json';
@@ -70,6 +78,15 @@ type RunDbRow = {
 };
 
 type TranscriptRow = { seq: number; request_json: string; response_json: string };
+
+type SessionDbRow = {
+  role: string;
+  start_url: string;
+  hosts_json: string;
+  recorded_at: number;
+  verified_at: number | null;
+  expires_at: number | null;
+};
 
 function toEvent({ payload_json, ...event }: EventRow): GnomiEvent {
   return { ...event, payload: JSON.parse(payload_json) } as GnomiEvent;
@@ -116,12 +133,34 @@ export function openProject(dir: string): ProjectStore {
     `SELECT e.seq, t.request_json, t.response_json FROM llm_transcript t
      JOIN event e ON e.id = t.event_id WHERE e.run_id = ? ORDER BY e.seq`,
   );
+  const selectSessions = db.prepare(
+    'SELECT role, start_url, hosts_json, recorded_at, verified_at, expires_at FROM session ORDER BY role',
+  );
+  const upsertSession = db.prepare(
+    `INSERT INTO session (role, start_url, hosts_json, recorded_at, verified_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (role) DO UPDATE SET start_url = excluded.start_url, hosts_json = excluded.hosts_json,
+       recorded_at = excluded.recorded_at, verified_at = excluded.verified_at, expires_at = excluded.expires_at`,
+  );
 
   return {
     dir,
     getProject() {
       const row = selectProject.get() as { config_json: string } | undefined;
-      return row ? (JSON.parse(row.config_json) as ProjectConfig) : null;
+      if (!row) return null;
+      const saved = JSON.parse(row.config_json) as ProjectConfig;
+      // Configs saved before M1 lack these fields.
+      return {
+        ...saved,
+        role: saved.role ?? null,
+        poi: {
+          ...saved.poi,
+          allowed_hosts: saved.poi.allowed_hosts ?? [],
+          production_domains: saved.poi.production_domains ?? [],
+          not_production: saved.poi.not_production ?? false,
+          reset_hook_url: saved.poi.reset_hook_url ?? null,
+        },
+      };
     },
     saveProject(project) {
       const now = Date.now();
@@ -193,6 +232,20 @@ export function openProject(dir: string): ProjectStore {
         request_json,
         response_json,
       }));
+    },
+    listSessions() {
+      return (selectSessions.all() as SessionDbRow[]).map((row) => ({
+        role: row.role,
+        start_url: row.start_url,
+        hosts: JSON.parse(row.hosts_json) as string[],
+        recorded_at: row.recorded_at,
+        verified_at: row.verified_at,
+        expires_at: row.expires_at,
+      }));
+    },
+    putSession(info) {
+      const { role, start_url, hosts, recorded_at, verified_at, expires_at } = info;
+      upsertSession.run(role, start_url, JSON.stringify(hosts), recorded_at, verified_at, expires_at);
     },
     close() {
       db.close();

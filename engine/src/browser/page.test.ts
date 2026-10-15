@@ -63,7 +63,7 @@ after(async () => {
 });
 
 async function open(t: TestContext, path = '/', device: Device = 'desktop'): Promise<PageDriver> {
-  const page = await pool.newPage({ device, origin });
+  const page = await pool.newPage({ device, allowedHosts: [new URL(origin).hostname], blockedDomains: [], storageState: null, onBlockedRequest: () => {} });
   t.after(() => page.close());
   await page.goto(origin + path);
   return page;

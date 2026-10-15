@@ -8,7 +8,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p .",
-    "smoke": "electron-vite build && node smoke.ts"
+    "smoke": "electron-vite build && node smoke.ts",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@gnomi/engine": "0.0.0"

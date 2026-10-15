@@ -1,16 +1,28 @@
-// startRun and the step loop over in-memory fakes of the store, blobs and browser, with scripted models.
+// startRun and the step loop over in-memory fakes of the store, blobs, sessions and browser, with scripted models.
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createScriptedGateway, DEMO_SCRIPT, findRef, type Script } from './llm/scripted.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
-import type { BlobStore, BrowserPool, LlmGateway, LlmRequest, PageDriver, ProjectStore, Recorder } from './seams.ts';
-import type { Action, ActionOutcome, ActionType, EventOf, EventType, GnomiEvent, ProjectConfig, RunConfig } from './types.ts';
+import type { BlobStore, BrowserPool, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
+import type { Action, ActionOutcome, ActionType, EventOf, EventType, GnomiEvent, PageFlags, ProjectConfig, RunConfig, SessionInfo } from './types.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',
   description: '',
-  poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/' },
+  poi: {
+    id: 'poi-1',
+    type: 'web',
+    name: 'Gym ATS',
+    start_url: 'http://gym.test/',
+    allowed_hosts: ['cdn.gym.test'],
+    production_domains: ['gym.com'],
+    not_production: false,
+    reset_hook_url: null,
+  },
   goal: 'Post a job for a backend engineer',
+  role: null,
 };
 
 const step = (type: ActionType, ref: string | null = null, text: string | null = null, friction: object | null = null) => ({
@@ -22,7 +34,31 @@ const step = (type: ActionType, ref: string | null = null, text: string | null =
 
 const of = <K extends EventType>(events: GnomiEvent[], type: K) => events.filter((e): e is EventOf<K> => e.type === type);
 
-function begin(model: Script | ((record: Recorder) => LlmGateway), opts: { config?: Partial<RunConfig>; act?: (a: Action) => Partial<ActionOutcome> } = {}) {
+const recruiter: SessionInfo = { role: 'recruiter', start_url: 'http://gym.test/dashboard', hosts: ['gym.test'], recorded_at: 1, verified_at: 1, expires_at: null };
+
+/** One recorded role whose storage state the test can swap, as a re-recording would. */
+function fakeSessions(state: StorageState) {
+  const saved = { state, loads: 0 };
+  const sessions: SessionStore = {
+    list: () => [recruiter],
+    save: async (_info, next) => void (saved.state = next),
+    load: async (role) => (role === recruiter.role ? (saved.loads++, { info: recruiter, state: saved.state }) : null),
+    markVerified: () => {},
+  };
+  return { sessions, saved };
+}
+
+interface Options {
+  config?: Partial<RunConfig>;
+  /** Overrides an action's outcome; may call the page's onBlockedRequest as a browser would. */
+  act?: (a: Action, page: PageOptions) => Partial<ActionOutcome>;
+  /** Flags for the n-th inspection of the run (0 is the first load), across pages. */
+  inspect?: (n: number) => Partial<PageFlags>;
+  sessions?: SessionStore | null;
+  onEvent?: (e: GnomiEvent, run: RunHandle) => void;
+}
+
+function begin(model: Script | ((record: Recorder) => LlmGateway), opts: Options = {}) {
   const events: GnomiEvent[] = [];
   const transcripts: { seq: number; request_json: string; response_json: string }[] = [];
   const finished: { status: string; stop_reason: string | null; cost_usd: number }[] = [];
@@ -42,6 +78,8 @@ function begin(model: Script | ((record: Recorder) => LlmGateway), opts: { confi
     saveTranscript: (_run_id, seq, request, response) =>
       void transcripts.push({ seq, request_json: JSON.stringify(request), response_json: JSON.stringify(response) }),
     transcripts: () => transcripts,
+    listSessions: () => [],
+    putSession: () => {},
     close: () => {},
   };
   const files = new Map<string, Uint8Array>();
@@ -49,29 +87,36 @@ function begin(model: Script | ((record: Recorder) => LlmGateway), opts: { confi
     put: async (path, data) => void files.set(path, data),
     get: async (path) => files.get(path) ?? Promise.reject(new Error(`no blob ${path}`)),
   };
-  const page = { url: '', closed: false };
-  const driver: PageDriver = {
-    goto: async (url) => void (page.url = url),
-    snapshot: async () => ({ url: page.url, title: 'Dashboard · Gym ATS', text: '- link "Jobs" [ref=e1]', hash: 'h1' }),
-    screenshot: async () => new Uint8Array([0xff, 0xd8, 0xff]),
-    act: async (action) => ({
-      ok: true,
-      url_before: page.url,
-      url_after: page.url,
-      dom_changed: true,
-      error: null,
-      target: { role: 'link', name: 'Jobs', box: null },
-      text: null,
-      ...opts.act?.(action),
-    }),
-    close: async () => void (page.closed = true),
+  const pages: { url: string; gotos: string[]; closed: boolean; options: PageOptions }[] = [];
+  let inspections = 0;
+  const browsers: BrowserPool = {
+    async newPage(options) {
+      const page = { url: '', gotos: [] as string[], closed: false, options };
+      pages.push(page);
+      return {
+        goto: async (url) => void page.gotos.push((page.url = url)),
+        snapshot: async () => ({ url: page.url, title: 'Dashboard · Gym ATS', text: '- link "Jobs" [ref=e1]', hash: 'h1' }),
+        screenshot: async () => new Uint8Array([0xff, 0xd8, 0xff]),
+        async act(action) {
+          const outcome = { ok: true, url_before: page.url, url_after: page.url, dom_changed: true, error: null, target: { role: 'link', name: 'Jobs', box: null }, text: null, ...opts.act?.(action, options) };
+          page.url = outcome.url_after;
+          return outcome;
+        },
+        inspect: async () => ({ login: false, challenge: null, live_key: null, ...opts.inspect?.(inspections++) }),
+        close: async () => void (page.closed = true),
+      };
+    },
+    record: () => Promise.reject(new Error('not used')),
+    checkSession: () => Promise.reject(new Error('not used')),
+    close: async () => {},
   };
-  const browsers: BrowserPool = { newPage: async () => driver, close: async () => {} };
-  const record = createRecorder(store, () => {});
+  let handle: RunHandle | undefined;
+  const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
   const llm = Array.isArray(model) ? createScriptedGateway(model, record) : model(record);
-  const config = { ...store.createRun(newRunConfig(project)), ...opts.config };
-  const run = startRun(config, { store, blobs, browsers, llm, record });
-  return { run, events, transcripts, finished, files, page, types: () => events.map((e) => e.type) };
+  const config = { ...store.createRun(newRunConfig(project, { session: null, reset: false })), ...opts.config };
+  handle = startRun(config, { store, blobs, browsers, llm, record, sessions: opts.sessions ?? null });
+  const run = handle;
+  return { run, events, transcripts, finished, files, pages, types: () => events.map((e) => e.type) };
 }
 
 test('a run logs its lifecycle in seq order, keeps the evidence and writes report.json', async () => {
@@ -111,7 +156,7 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
   assert.deepEqual(JSON.parse(new TextDecoder().decode(r.files.get('runs/r-0001/report.json'))), report);
   assert.deepEqual(of(r.events, 'report.generated')[0].payload, { path: 'runs/r-0001/report.json', friction_count: 1 });
   assert.deepEqual(r.finished, [{ status: 'finished', stop_reason: null, cost_usd: 0 }]);
-  assert.equal(r.page.closed, true);
+  assert.ok(r.pages.every((p) => p.closed));
 });
 
 test('the step budget ends the episode exactly on the budget', async () => {
@@ -186,7 +231,7 @@ test('stop() ends the run as stopped by the user once the step in flight is done
   );
   assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'user', cost_usd: 0 }]);
   assert.deepEqual([report.status, report.outcome], ['stopped', 'incomplete']);
-  assert.equal(r.page.closed, true);
+  assert.ok(r.pages.every((p) => p.closed));
 });
 
 test('stop() cancels a model call in flight', async () => {
@@ -238,7 +283,7 @@ test('a browser failure ends the run as stopped(error), closes the page and stil
     [{ reason: 'error', detail: 'Target page crashed' }],
   );
   assert.equal(report.stop_reason, 'error: Target page crashed');
-  assert.equal(r.page.closed, true);
+  assert.ok(r.pages.every((p) => p.closed));
   assert.equal(r.types().at(-1), 'report.generated');
 });
 
@@ -276,4 +321,161 @@ test('scripts find refs by role and accessible name in the page text', () => {
   assert.equal(findRef(req, 'link', 'Jobs'), 'e7');
   assert.equal(findRef(req, 'textbox', 'Job title *'), 'e12');
   assert.equal(findRef(req, 'button', 'Jobs'), null);
+});
+
+test('a recorded session opens a contained page logged in, at the session start page', async () => {
+  const { sessions, saved } = fakeSessions({ cookies: [{ name: 'gym_session', value: 'v1' }] });
+  const r = begin([step('done', null, 'Posted')], { sessions, config: { session: recruiter } });
+  await r.run.done;
+  const { options, gotos } = r.pages[0];
+  assert.deepEqual(options.allowedHosts, ['gym.test', 'cdn.gym.test']);
+  assert.deepEqual(options.blockedDomains, ['gym.com']);
+  assert.deepEqual(options.storageState, saved.state);
+  assert.deepEqual(gotos, ['http://gym.test/dashboard']);
+  assert.equal(of(r.events, 'persona.episode_started')[0].payload.start_url, 'http://gym.test/dashboard');
+});
+
+test('a run whose recorded login has gone missing stops with an error that says what to do', async () => {
+  const { sessions } = fakeSessions({});
+  const r = begin([step('done', null, 'Posted')], { sessions, config: { session: { ...recruiter, role: 'admin' } } });
+  const report = await r.run.done;
+  assert.match(report.stop_reason ?? '', /^error: The recorded "admin" login is missing\. Record it again/);
+});
+
+test('blocked requests are logged, and a blocked page load on a production domain trips the wire', async () => {
+  let clicks = 0;
+  const r = begin([step('click', 'e1'), step('click', 'e1'), step('click', 'e1'), step('done', null, 'Done')], {
+    act: (_a, page) => {
+      clicks++;
+      if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false });
+      if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true });
+      return {};
+    },
+  });
+  const report = await r.run.done;
+  assert.deepEqual(
+    of(r.events, 'containment.blocked_request').map((e) => e.payload.host),
+    ['tracker.example', 'app.gym.com'],
+  );
+  assert.deepEqual(of(r.events, 'containment.tripwire')[0].payload, {
+    kind: 'production_host',
+    detail: 'The persona tried to open https://app.gym.com/jobs, on the production domain gym.com.',
+  });
+  assert.equal(of(r.events, 'persona.step').length, 2);
+  assert.equal(of(r.events, 'run.stopped')[0].payload.reason, 'tripwire');
+  assert.match(report.stop_reason ?? '', /^tripwire: The persona tried to open/);
+  assert.ok(r.pages.every((p) => p.closed));
+});
+
+test('a live payment key on the page halts the run', async () => {
+  const r = begin([step('click', 'e1'), step('done', null, 'Done')], { inspect: (n) => (n === 1 ? { live_key: 'pk_live_' } : {}) });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'persona.step').length, 1);
+  assert.deepEqual(
+    of(r.events, 'containment.tripwire').map((e) => e.payload.kind),
+    ['live_payment_key'],
+  );
+  assert.match(of(r.events, 'containment.tripwire')[0].payload.detail, /live payment key \(pk_live_…\) is on http:\/\/gym\.test\//);
+  assert.deepEqual([report.status, of(r.events, 'run.stopped')[0].payload.reason], ['stopped', 'tripwire']);
+});
+
+test('a captcha pauses the persona, and an unanswered pause ends her episode blocked', async () => {
+  const r = begin([step('click', 'e1'), step('done', null, 'Done')], { inspect: (n) => (n === 1 ? { challenge: 'recaptcha' } : {}), config: { pause_timeout_ms: 20 } });
+  const report = await r.run.done;
+  assert.deepEqual(
+    of(r.events, 'persona.blocked').map((e) => [e.payload.step_no, e.payload.reason]),
+    [[1, 'captcha']],
+  );
+  assert.match(of(r.events, 'persona.blocked')[0].payload.detail, /recaptcha challenge is showing\. Gnomi never solves challenges/);
+  assert.equal(of(r.events, 'persona.resumed').length, 0);
+  assert.deepEqual([report.status, report.outcome], ['finished', 'blocked']);
+  assert.deepEqual(report.methods.blocked, [{ step_no: 1, reason: 'captcha', detail: of(r.events, 'persona.blocked')[0].payload.detail, resumed: false }]);
+});
+
+test('an expired session pauses the persona; resumed, she goes on with the new login and her memory', async () => {
+  const { sessions, saved } = fakeSessions({ cookies: [{ name: 'gym_session', value: 'old' }] });
+  const relogged = { cookies: [{ name: 'gym_session', value: 'new' }] };
+  const r = begin([step('click', 'e1'), step('done', null, 'Posted')], {
+    sessions,
+    config: { session: recruiter },
+    act: () => ({ url_after: 'http://gym.test/login?next=%2Fjobs' }),
+    inspect: (n) => (n === 1 ? { login: true } : {}),
+    onEvent: (e, run) => {
+      if (e.type !== 'persona.blocked') return;
+      saved.state = relogged; // the user re-records the login
+      run.resume('p-001');
+    },
+  });
+  const report = await r.run.done;
+  assert.deepEqual(
+    r.types().filter((t) => t.startsWith('persona.')),
+    ['persona.created', 'persona.episode_started', 'persona.step', 'persona.blocked', 'persona.resumed', 'persona.step', 'persona.goal_done'],
+  );
+  assert.deepEqual(of(r.events, 'persona.blocked')[0].payload.reason, 'session_expired');
+  assert.equal(r.pages.length, 2);
+  assert.ok(r.pages[0].closed);
+  assert.deepEqual(r.pages[1].options.storageState, relogged);
+  assert.deepEqual(r.pages[1].gotos, ['http://gym.test/dashboard'], 'back to the last page before the block');
+  assert.match(r.transcripts[1].request_json, /1\. click link \\"Jobs\\" → went to \/login\?next=%2Fjobs/, 'her memory survives the pause');
+  assert.deepEqual([report.outcome, report.methods.blocked[0].resumed], ['done', true]);
+});
+
+test('a login page without a recorded session is just a page', async () => {
+  const r = begin([step('click', 'e1'), step('done', null, 'Done')], { inspect: () => ({ login: true }) });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'persona.blocked').length, 0);
+  assert.equal(report.outcome, 'done');
+});
+
+test('stop() while a persona is paused ends the run as a user stop', async () => {
+  const r = begin([step('click', 'e1'), step('done', null, 'Done')], {
+    inspect: (n) => (n === 1 ? { challenge: 'recaptcha' } : {}),
+    onEvent: (e, run) => e.type === 'persona.blocked' && run.stop(),
+  });
+  const report = await r.run.done;
+  assert.deepEqual(
+    of(r.events, 'run.stopped').map((e) => e.payload),
+    [{ reason: 'user', detail: null }],
+  );
+  assert.equal(report.status, 'stopped');
+  assert.ok(r.pages.every((p) => p.closed));
+});
+
+async function hook(status: number) {
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    calls.push(req.method ?? '');
+    res.writeHead(status).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/__reset`;
+  return { url, calls, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+test('the reset hook is POSTed before the persona is created', async (t) => {
+  const server = await hook(204);
+  t.after(server.close);
+  const r = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi: { ...project.poi, reset_hook_url: server.url } } } });
+  const report = await r.run.done;
+  assert.deepEqual(server.calls, ['POST']);
+  assert.deepEqual(r.types().slice(0, 3), ['run.started', 'run.reset_called', 'persona.created']);
+  assert.deepEqual(of(r.events, 'run.reset_called')[0].payload, { url: server.url, status: 204, error: null });
+  assert.deepEqual(report.methods.reset, { url: server.url, status: 204, error: null });
+});
+
+test('a reset hook that fails stops the run before the persona starts', async (t) => {
+  const server = await hook(500);
+  t.after(server.close);
+  const poi = { ...project.poi, reset_hook_url: server.url };
+  const r = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi } } });
+  assert.deepEqual(
+    (await r.run.done).stop_reason,
+    'error: The reset hook answered 500',
+  );
+  assert.equal(of(r.events, 'persona.created').length, 0);
+
+  await server.close();
+  const offline = begin([step('done', null, 'Done')], { config: { reset: true, project: { ...project, poi } } });
+  assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
+  assert.deepEqual(of(offline.events, 'run.reset_called')[0].payload.status, null);
 });

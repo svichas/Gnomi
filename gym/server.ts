@@ -1,5 +1,6 @@
 // Gym ATS, a seeded-defect demo app Gnomi is measured against (catalogue: gym/defects.yaml). No dependencies.
-// startGym({ port, defects }): port defaults to 4317 (0 = any free port); defects "all" | "none" | "D01,D03". Run directly with PORT and GYM_DEFECTS.
+// startGym({ port, defects, login, thirdParty, liveKey, captcha }): port defaults to 4317 (0 = any free port); the other options default off. Env: PORT, GYM_DEFECTS, GYM_LOGIN=1, GYM_THIRD_PARTY, GYM_LIVE_KEY=1, GYM_CAPTCHA=1.
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -8,7 +9,16 @@ const DEFECT_IDS = ["D01", "D02", "D03"];
 const DEPARTMENTS = ["Engineering", "Design", "Product", "Sales", "People"];
 const EMPLOYMENT_TYPES = ["Full-time", "Part-time", "Contract", "Internship"];
 
+export const GYM_ACCOUNTS = [
+  { email: 'recruiter@gym.test', password: 'gym-recruiter-pass-1', name: 'Priya Natarajan', role: 'recruiter' },
+  { email: 'manager@gym.test', password: 'gym-manager-pass-1', name: 'Dana Okafor', role: 'hiring_manager' },
+] as const;
+type Account = (typeof GYM_ACCOUNTS)[number];
+const ROLE_LABELS: Record<Account["role"], string> = { recruiter: "Recruiter", hiring_manager: "Hiring manager" };
+
 type On = (id: string) => boolean;
+type Ctx = { on: On; thirdParty?: string; liveKey: boolean; captcha: boolean; account?: Account };
+type Config = { defects: Set<string>; login: boolean; thirdParty?: string; liveKey: boolean; captcha: boolean };
 type Job = {
   id: number;
   title: string;
@@ -28,8 +38,21 @@ const SEED: Job[] = [
 ];
 const BLANK: JobForm = { title: "", department: "", type: "Full-time", location: "", description: "" };
 
-export async function startGym(opts: { port?: number; defects?: string } = {}): Promise<{ url: string; close(): Promise<void> }> {
-  const app = createApp(parseDefects(opts.defects ?? "all"));
+export async function startGym(opts: {
+  port?: number;
+  defects?: string;
+  login?: boolean;
+  thirdParty?: string;
+  liveKey?: boolean;
+  captcha?: boolean;
+} = {}): Promise<{ url: string; close(): Promise<void> }> {
+  const app = createApp({
+    defects: parseDefects(opts.defects ?? "all"),
+    login: opts.login ?? false,
+    thirdParty: opts.thirdParty ? new URL(opts.thirdParty).origin : undefined,
+    liveKey: opts.liveKey ?? false,
+    captcha: opts.captcha ?? false,
+  });
   const server = createServer((req, res) => {
     // A client that aborts mid-body rejects readBody; drop that socket instead of crashing the process.
     app(req, res).catch((err) => {
@@ -39,7 +62,7 @@ export async function startGym(opts: { port?: number; defects?: string } = {}): 
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    // Loopback only: the demo has no auth.
+    // Loopback only: the test hooks and fixture accounts are not for the LAN.
     server.listen(opts.port ?? 4317, "localhost", () => resolve());
   });
   const { port } = server.address() as AddressInfo;
@@ -62,15 +85,59 @@ function parseDefects(spec: string): Set<string> {
   return new Set(ids);
 }
 
-function createApp(enabled: Set<string>) {
-  const on: On = (id) => enabled.has(id);
+function createApp(config: Config) {
+  const base = {
+    on: (id: string) => config.defects.has(id),
+    thirdParty: config.thirdParty,
+    liveKey: config.liveKey,
+    captcha: config.captcha,
+  };
   const jobs = [...SEED];
+  // shortcut: sessions never expire on a clock (/__sessions/expire stands in), add one if a test needs real timeouts.
+  const sessions = new Map<string, Account>();
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
+    const post = req.method === "POST";
+    const token = req.headers.cookie?.match(/(?:^|;\s*)gym_session=([0-9a-f]+)/)?.[1];
+    const account = token ? sessions.get(token) : undefined;
+    const c: Ctx = { ...base, account };
 
-    if (req.method === "POST" && path === "/jobs") {
+    // shortcut: test hooks are unauthenticated, safe only while bound to loopback; add a token before any other bind.
+    if (post && path === "/__reset") {
+      jobs.splice(0, jobs.length, ...SEED);
+      res.writeHead(204).end();
+      return;
+    }
+    if (post && path === "/__sessions/expire") {
+      sessions.clear();
+      res.writeHead(204).end();
+      return;
+    }
+
+    if (config.login && path === "/login") {
+      if (!post) return send(res, 200, loginPage(c, "", safeNext(url.searchParams.get("next"))));
+      const form = new URLSearchParams(await readBody(req));
+      const email = (form.get("email") ?? "").trim();
+      const next = safeNext(form.get("next"));
+      // shortcut: demo passwords are plain constants compared directly, hash them before any real account exists.
+      const match = GYM_ACCOUNTS.find((a) => a.email === email && a.password === form.get("password"));
+      if (!match) return send(res, 200, loginPage(c, email, next, "Wrong email or password"));
+      const sid = randomBytes(16).toString("hex");
+      sessions.set(sid, match);
+      return redirect(res, next, `gym_session=${sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800`);
+    }
+    // Sign-out needs no session: it clears whatever cookie is there.
+    if (config.login && post && path === "/logout") {
+      if (token) sessions.delete(token);
+      return redirect(res, "/login", "gym_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+    }
+    if (config.login && !account && !path.startsWith("/__") && path !== "/logout") {
+      return redirect(res, `/login?${new URLSearchParams({ next: path + url.search })}`);
+    }
+
+    if (post && path === "/jobs") {
       const form = new URLSearchParams(await readBody(req));
       const field = (name: string) => (form.get(name) ?? "").trim();
       const type = field("type");
@@ -84,7 +151,7 @@ function createApp(enabled: Set<string>) {
       const errors: FormErrors = {};
       if (!values.title) errors.title = "Enter a job title";
       if (!DEPARTMENTS.includes(values.department)) errors.department = "Choose a department";
-      if (errors.title || errors.department) return send(res, 200, jobFormPage(on, values, errors));
+      if (errors.title || errors.department) return send(res, 200, jobFormPage(c, values, errors));
       const job: Job = { ...values, id: jobs.length + 1, status: "Live" };
       jobs.push(job);
       // The banner rides on the redirect so the job page needs no session state.
@@ -94,19 +161,25 @@ function createApp(enabled: Set<string>) {
 
     const jobMatch = /^\/jobs\/(\d+)$/.exec(path);
     const found = jobMatch ? jobs.find((j) => j.id === Number(jobMatch[1])) : undefined;
-    if (path === "/") return send(res, 200, dashboardPage(on, jobs));
-    if (path === "/jobs") return send(res, 200, jobsPage(on, jobs));
-    if (path === "/jobs/new") return send(res, 200, jobFormPage(on, BLANK, {}));
-    if (path === "/candidates") return send(res, 200, placeholderPage(on, "candidates", "Candidates", "Candidate pipelines arrive in a later release."));
-    if (path === "/settings") return send(res, 200, placeholderPage(on, "settings", "Settings", "Account and team settings arrive in a later release."));
-    if (found) return send(res, 200, jobPage(on, found, url.searchParams.has("published")));
-    send(res, 404, notFoundPage(on));
+    if (path === "/") return send(res, 200, dashboardPage(c, jobs));
+    if (path === "/jobs") return send(res, 200, jobsPage(c, jobs));
+    if (path === "/jobs/new") return send(res, 200, jobFormPage(c, BLANK, {}));
+    if (path === "/candidates") return send(res, 200, candidatesPage(c));
+    if (path === "/settings") return send(res, 200, settingsPage(c));
+    if (path === "/billing") return send(res, 200, billingPage(c));
+    if (found) return send(res, 200, jobPage(c, found, url.searchParams.has("published")));
+    send(res, 404, notFoundPage(c));
   };
 }
 
 function send(res: ServerResponse, status: number, html: string): void {
   res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
   res.end(html);
+}
+
+function redirect(res: ServerResponse, location: string, setCookie?: string): void {
+  res.writeHead(303, setCookie ? { location, "set-cookie": setCookie } : { location });
+  res.end();
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -116,14 +189,21 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return body;
 }
 
+// Same-site paths only: a lone leading slash, no backslash or control characters (browsers strip tabs and newlines, so "/\t/evil" would become "//evil").
+const safeNext = (next: string | null): string => (next && /^\/(?![\/\\])[\x20-\x7e]*$/.test(next) ? next : "/");
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const options = (items: string[], selected: string) =>
   items.map((item) => `<option value="${esc(item)}"${item === selected ? " selected" : ""}>${esc(item)}</option>`).join("");
 const badge = (status: Job["status"]) => `<span class="badge${status === "Live" ? " live" : ""}">${status}</span>`;
 
-function layout(on: On, section: string, title: string, body: string): string {
+function layout(c: Ctx, section: string, title: string, body: string): string {
   const link = (key: string, label: string, href: string) =>
     `<a href="${href}"${key === section ? ' aria-current="page"' : ""}>${label}</a>`;
+  const session = c.account
+    ? `<div class="session"><span>Signed in as ${esc(c.account.name)} · ${ROLE_LABELS[c.account.role]}</span><form method="post" action="/logout"><button class="btn secondary" type="submit">Sign out</button></form></div>`
+    : "";
+  const analytics = c.thirdParty ? `<script async src="${esc(c.thirdParty)}/analytics.js"></script>` : "";
+  const beacon = c.thirdParty ? `<img src="${esc(c.thirdParty)}/pixel.gif" alt="" width="1" height="1">` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -132,27 +212,49 @@ function layout(on: On, section: string, title: string, body: string): string {
 <title>${esc(title)} · Gym ATS</title>
 <link rel="icon" href="data:,">
 <style>${CSS}</style>
+${analytics}
 </head>
 <body>
 <header class="topbar">
 <span class="brand">Gym ATS</span>
 <nav aria-label="Main">
 ${link("dashboard", "Dashboard", "/")}
-${link("jobs", "Jobs", on("D03") ? "/job" : "/jobs")}
+${link("jobs", "Jobs", c.on("D03") ? "/job" : "/jobs")}
 ${link("candidates", "Candidates", "/candidates")}
 ${link("settings", "Settings", "/settings")}
 </nav>
+${session}
 </header>
 <main>
 ${body}
 </main>
+${beacon}
 </body>
 </html>`;
 }
 
-function dashboardPage(on: On, jobs: Job[]): string {
+function loginPage(c: Ctx, email: string, next: string, error?: string): string {
+  const invalid = error ? ' aria-invalid="true" aria-describedby="login-error"' : "";
+  return layout(c, "", "Sign in", `
+<h1>Sign in</h1>
+<form class="card" method="post" action="/login" novalidate>
+<input type="hidden" name="next" value="${esc(next)}">
+<div class="field">
+<label for="email">Email</label>
+<input id="email" name="email" type="email" autocomplete="username" value="${esc(email)}"${invalid}>
+</div>
+<div class="field">
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password"${invalid}>
+</div>
+${error ? `<p class="error" id="login-error">${error}</p>` : ""}
+<div class="actions"><button class="btn primary" type="submit">Sign in</button></div>
+</form>`);
+}
+
+function dashboardPage(c: Ctx, jobs: Job[]): string {
   const live = jobs.filter((j) => j.status === "Live");
-  return layout(on, "dashboard", "Dashboard", `
+  return layout(c, "dashboard", "Dashboard", `
 <h1>Dashboard</h1>
 <div class="stats">
 <div class="card"><p class="stat-label">Live jobs</p><p class="stat-value">${live.length}</p></div>
@@ -165,11 +267,11 @@ function dashboardPage(on: On, jobs: Job[]): string {
 </section>`);
 }
 
-function jobsPage(on: On, jobs: Job[]): string {
+function jobsPage(c: Ctx, jobs: Job[]): string {
   const rows = jobs
     .map((j) => `<tr><td><a href="/jobs/${j.id}">${esc(j.title)}</a></td><td>${esc(j.department)}</td><td>${badge(j.status)}</td></tr>`)
     .join("");
-  return layout(on, "jobs", "Jobs", `
+  return layout(c, "jobs", "Jobs", `
 <div class="page-head"><h1>Jobs</h1><a class="btn primary" href="/jobs/new">Create job</a></div>
 <table>
 <thead><tr><th scope="col">Title</th><th scope="col">Department</th><th scope="col">Status</th></tr></thead>
@@ -177,9 +279,9 @@ function jobsPage(on: On, jobs: Job[]): string {
 </table>`);
 }
 
-function jobFormPage(on: On, v: JobForm, errors: FormErrors): string {
-  const deptError = on("D02") ? undefined : errors.department;
-  return layout(on, "jobs", "Create job", `
+function jobFormPage(c: Ctx, v: JobForm, errors: FormErrors): string {
+  const deptError = c.on("D02") ? undefined : errors.department;
+  return layout(c, "jobs", "Create job", `
 <h1>Create job</h1>
 <form class="card" method="post" action="/jobs">
 <div class="field">
@@ -200,22 +302,22 @@ ${errors.title ? `<p class="error" id="title-error">${errors.title}</p>` : ""}
 <textarea id="description" name="description" rows="6">${esc(v.description)}</textarea>
 </div>
 <div class="field">
-<label for="department">${on("D02") ? "Department" : "Department *"}</label>
+<label for="department">${c.on("D02") ? "Department" : "Department *"}</label>
 <select id="department" name="department"${deptError ? ' aria-invalid="true" aria-describedby="department-error"' : ""}>
 <option value="">Select…</option>${options(DEPARTMENTS, v.department)}
 </select>
 ${deptError ? `<p class="error" id="department-error">${deptError}</p>` : ""}
 </div>
 <div class="actions">
-<button class="btn primary" type="submit">${on("D01") ? "Save draft" : "Publish job"}</button>
+<button class="btn primary" type="submit">${c.on("D01") ? "Save draft" : "Publish job"}</button>
 <a class="btn secondary" href="/jobs">Cancel</a>
 </div>
 </form>`);
 }
 
-function jobPage(on: On, job: Job, published: boolean): string {
+function jobPage(c: Ctx, job: Job, published: boolean): string {
   const facts = [job.department, job.type, job.location].filter(Boolean).map((s) => esc(s)).join(" · ");
-  return layout(on, "jobs", job.title, `
+  return layout(c, "jobs", job.title, `
 ${published ? '<p class="banner" role="status">Job published</p>' : ""}
 <div class="page-head"><h1>${esc(job.title)}</h1>${badge(job.status)}</div>
 <p>${facts}</p>
@@ -223,12 +325,34 @@ ${published ? '<p class="banner" role="status">Job published</p>' : ""}
 <p><a href="/jobs">Back to jobs</a></p>`);
 }
 
-function placeholderPage(on: On, section: string, title: string, text: string): string {
-  return layout(on, section, title, `<h1>${title}</h1>\n<section class="card"><p>${text}</p></section>`);
+function placeholderPage(c: Ctx, section: string, title: string, text: string): string {
+  return layout(c, section, title, `<h1>${title}</h1>\n<section class="card"><p>${text}</p></section>`);
 }
 
-const notFoundPage = (on: On) =>
-  layout(on, "", "Page not found", `
+function candidatesPage(c: Ctx): string {
+  if (!c.captcha) return placeholderPage(c, "candidates", "Candidates", "Candidate pipelines arrive in a later release.");
+  return layout(c, "candidates", "Verify you are human", `
+<h1>Verify you are human</h1>
+<section class="card"><p>Complete the check to continue</p><div class="g-recaptcha" data-sitekey="6LeGYMFAKEsitekey"></div></section>`);
+}
+
+function settingsPage(c: Ctx): string {
+  return layout(c, "settings", "Settings", `
+<h1>Settings</h1>
+<section class="card"><p>Account and team settings arrive in a later release.</p><p><a href="/billing">Billing</a></p></section>`);
+}
+
+function billingPage(c: Ctx): string {
+  // Assembled at runtime so the source never contains a literal live-key prefix.
+  const key = ["pk", c.liveKey ? "live" : "test", ""].join("_") + "GYMFAKE0123456789abcdef";
+  return layout(c, "settings", "Billing", `
+<h1>Billing</h1>
+<section class="card"><h2>Plan</h2><p>Team plan, up to 25 seats, billed monthly.</p></section>
+<script>window.GYM_STRIPE_KEY = "${key}";</script>`);
+}
+
+const notFoundPage = (c: Ctx) =>
+  layout(c, "", "Page not found", `
 <h1>Page not found</h1>
 <section class="card"><p>The page you were looking for does not exist.</p><p><a href="/">Back to dashboard</a></p></section>`);
 
@@ -241,6 +365,8 @@ body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-seri
 nav { display: flex; gap: 20px; }
 nav a { color: var(--muted); text-decoration: none; }
 nav a[aria-current="page"] { color: var(--brand); font-weight: 600; }
+.session { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; }
+.session form { margin: 0; }
 main { max-width: 960px; margin: 32px auto; padding: 0 16px; }
 h1 { font-size: 24px; margin: 0 0 16px; }
 h2 { font-size: 18px; margin: 0; }
@@ -275,6 +401,10 @@ if (import.meta.main) {
   const gym = await startGym({
     port: process.env.PORT ? Number(process.env.PORT) : undefined,
     defects: process.env.GYM_DEFECTS || undefined,
+    login: process.env.GYM_LOGIN === "1",
+    thirdParty: process.env.GYM_THIRD_PARTY || undefined,
+    liveKey: process.env.GYM_LIVE_KEY === "1",
+    captcha: process.env.GYM_CAPTCHA === "1",
   });
   console.log(`Gym ATS running at ${gym.url}`);
 }

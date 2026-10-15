@@ -1,4 +1,4 @@
-import type { Report, ReportFriction } from '../types.ts';
+import type { Report, ReportFriction, ReportMethods } from '../types.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -30,6 +30,10 @@ export function reportToMarkdown(report: Report): string {
     `- LLM calls: ${report.llm_calls}`,
     `- Duration: ${duration}`,
     '',
+    '## Methods',
+    '',
+    ...methodsToMarkdown(report.methods),
+    '',
   ].join('\n');
 }
 
@@ -41,4 +45,25 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
     `   - Page: ${friction.url}`,
     `   - Screenshot: ${friction.screenshot ?? 'none'}`,
   ].join('\n');
+}
+
+function methodsToMarkdown(methods: ReportMethods): string[] {
+  const blocked = methods.blocked.map(
+    (b) => `- Blocked at step ${b.step_no} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,
+  );
+  const tripwires = methods.tripwires.map((t) => `- Tripwire (${t.kind}): ${line(t.detail)}`);
+  return [
+    `- Role: ${methods.role ?? 'none, browsing logged out'}`,
+    `- Allowed hosts: ${methods.allowed_hosts.join(', ') || 'none'}`,
+    `- Blocked requests: ${methods.blocked_requests.map((r) => `${r.host} (${r.count})`).join(', ') || 'none'}`,
+    ...(blocked.length > 0 ? blocked : ['- Blocked personas: none']),
+    ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
+    `- Reset hook: ${resetToMarkdown(methods.reset)}`,
+  ];
+}
+
+function resetToMarkdown(reset: ReportMethods['reset']): string {
+  if (reset === null) return 'not called';
+  if (reset.error !== null) return `${reset.url}, failed: ${line(reset.error)}`;
+  return `${reset.url}, ${reset.status === null ? 'no response' : `HTTP ${reset.status}`}`;
 }

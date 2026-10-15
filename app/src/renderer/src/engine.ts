@@ -14,7 +14,7 @@ let stop: (message: string) => void;
 export const stopped = new Promise<string>((resolve) => (stop = resolve));
 
 // Listens from module load: the preload posts the port as soon as the page has loaded, and again after a reload.
-export const connected = new Promise<{ startupError: string | null }>((resolve) => {
+export const connected = new Promise<{ startupError: string | null; sessionsPersist: boolean }>((resolve) => {
   window.addEventListener('message', (e: MessageEvent) => {
     if (e.source !== window || e.data?.gnomi !== 'port' || !e.ports[0]) return;
     port = e.ports[0];
@@ -34,7 +34,7 @@ export const connected = new Promise<{ startupError: string | null }>((resolve) 
       if (data.ok) waiting?.resolve(data.result);
       else waiting?.reject(new Error(data.error));
     };
-    resolve({ startupError: e.data.startupError });
+    resolve({ startupError: e.data.startupError, sessionsPersist: e.data.sessionsPersist });
   });
 });
 

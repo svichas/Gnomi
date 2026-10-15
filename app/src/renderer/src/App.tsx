@@ -19,13 +19,15 @@ export function App() {
   const [problem, setProblem] = useState<string | null>(null);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [sessionsPersist, setSessionsPersist] = useState(true);
 
   const refresh = useCallback(async () => setInfo(await call('get_project', {})), []);
 
   useEffect(() => {
     void stopped.then(setProblem);
     void (async () => {
-      const { startupError } = await connected;
+      const { startupError, sessionsPersist } = await connected;
+      setSessionsPersist(sessionsPersist);
       if (startupError) setProblem(`Gnomi could not start properly: ${startupError}`);
       try {
         const loaded = await call('get_project', {});
@@ -87,6 +89,7 @@ export function App() {
             <div role="tabpanel" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'} className="max-w-2xl">
               <Project
                 info={info}
+                sessionsPersist={sessionsPersist}
                 onSaved={refresh}
                 onStarted={(id) => {
                   setRunId(id);

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Report as ReportData, ReportFriction } from '@gnomi/engine/types.ts';
+import type { ReactNode } from 'react';
+import type { Report as ReportData, ReportFriction, ReportMethods } from '@gnomi/engine/types.ts';
+import { resetOutcome, stopText } from './activity.ts';
 import { call } from './engine.ts';
 import { Note } from './ui.tsx';
 
@@ -16,6 +18,7 @@ const OUTCOMES = {
   abandoned: { text: 'Gave up', style: 'bg-amber-100 text-amber-900' },
   budget_exceeded: { text: 'Ran out of steps', style: 'bg-amber-100 text-amber-900' },
   repeated_failure: { text: 'Got stuck', style: 'bg-amber-100 text-amber-900' },
+  blocked: { text: 'Blocked', style: 'bg-red-100 text-red-900' },
   incomplete: { text: 'Did not finish', style: 'bg-stone-200 text-stone-800' },
 };
 
@@ -60,6 +63,79 @@ function Friction({ friction }: { friction: ReportFriction }) {
   );
 }
 
+const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
+const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** What the run was allowed to do and what got in its way (idea.md §6.5), so a team can allow a host and run again. */
+function Methods({ methods }: { methods: ReportMethods }) {
+  const none = 'None';
+  const rows: [string, ReactNode][] = [
+    ['Logged in as', methods.role ?? 'Nobody: the persona browsed logged out'],
+    ['Allowed hosts', `${methods.allowed_hosts.join(', ')}. Every other host was blocked.`],
+    [
+      'Blocked requests',
+      methods.blocked_requests.length === 0 ? (
+        none
+      ) : (
+        <ul>
+          {methods.blocked_requests.map(({ host, count: n }) => (
+            <li key={host}>
+              {host}: {count(n, 'request')}
+            </li>
+          ))}
+        </ul>
+      ),
+    ],
+    [
+      'Blocked personas',
+      methods.blocked.length === 0 ? (
+        none
+      ) : (
+        <ul>
+          {methods.blocked.map((blocked) => (
+            <li key={blocked.step_no}>
+              Step {blocked.step_no}: {BLOCK_REASONS[blocked.reason] ?? blocked.reason}
+              {blocked.detail && ` (${blocked.detail})`}, {blocked.resumed ? 'then resumed' : 'did not resume'}
+            </li>
+          ))}
+        </ul>
+      ),
+    ],
+    [
+      'Safety stops',
+      methods.tripwires.length === 0 ? (
+        none
+      ) : (
+        <ul>
+          {methods.tripwires.map((tripwire) => (
+            <li key={`${tripwire.kind}${tripwire.detail}`}>
+              {TRIPWIRES[tripwire.kind] ?? tripwire.kind}: {tripwire.detail}
+            </li>
+          ))}
+        </ul>
+      ),
+    ],
+    ['Reset hook', methods.reset === null ? 'Not used' : `${methods.reset.url}: ${resetOutcome(methods.reset).text}`],
+  ];
+  return (
+    <section aria-labelledby="methods-title">
+      <h3 id="methods-title" className="mb-2 text-sm font-semibold text-stone-900">
+        Methods
+      </h3>
+      <dl className="divide-y divide-stone-100 rounded-lg border border-stone-200 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid gap-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+            <dt className="text-stone-500">{label}</dt>
+            <dd className="break-words text-stone-900">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 export function Report({ report }: { report: ReportData }) {
   const outcome = OUTCOMES[report.outcome];
   const stats = [
@@ -82,7 +158,7 @@ export function Report({ report }: { report: ReportData }) {
           <span className={`rounded-full px-3 py-0.5 text-xs font-semibold ${outcome.style}`}>{outcome.text}</span>
           {report.outcome_text && <span className="text-stone-700">{report.outcome_text}</span>}
         </p>
-        {report.status === 'stopped' && <p className="mt-2 text-sm text-stone-500">This run was stopped early ({report.stop_reason}).</p>}
+        {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {stats.map(([label, value]) => (
@@ -104,6 +180,7 @@ export function Report({ report }: { report: ReportData }) {
           </ol>
         )}
       </div>
+      <Methods methods={report.methods} />
     </section>
   );
 }

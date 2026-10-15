@@ -1,17 +1,21 @@
-import { chromium, devices } from 'playwright-core';
-import type { Browser } from 'playwright-core';
+import { chromium } from 'playwright-core';
+import type { Browser, BrowserContext, LaunchOptions } from 'playwright-core';
 import type { BrowserPool } from '../seams.ts';
-import { newPageDriver } from './page.ts';
+import { startContainment } from './contain.ts';
+import { newContext, newPageDriver } from './page.ts';
+import { checkSession, recordLogin } from './session.ts';
 
 // Playwright's own Chromium first (undefined channel): a Chrome under an enterprise policy that disables DevTools
 // launches fine, then gets killed seconds later. When no Chromium is installed this falls through to Chrome, then Edge.
 const CHANNELS = [undefined, 'chrome', 'msedge'];
 
-async function launch(headless: boolean): Promise<Browser> {
+async function launch(headless: boolean, proxy?: LaunchOptions['proxy']): Promise<Browser> {
   let cause: unknown;
   for (const channel of CHANNELS) {
     try {
-      return await chromium.launch({ headless, channel });
+      // WebRTC's UDP would go around the containment proxy; this flag sends it through the proxy, which refuses it.
+      const args = proxy ? ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] : [];
+      return await chromium.launch({ headless, channel, proxy, args });
     } catch (e) {
       cause = e;
     }
@@ -20,15 +24,27 @@ async function launch(headless: boolean): Promise<Browser> {
 }
 
 export async function launchBrowserPool(opts: { headless?: boolean } = {}): Promise<BrowserPool> {
-  const browser = await launch(opts.headless ?? true);
+  // The placeholder proxy tells Playwright every context brings its own (containment), as the docs ask.
+  const browser = await launch(opts.headless ?? true, { server: 'http://per-context' });
   return {
-    async newPage({ device, origin }) {
-      const context = await browser.newContext({
-        ...(device === 'mobile' ? devices['iPhone 15'] : { viewport: { width: 1280, height: 800 } }),
-        serviceWorkers: 'block', // they would otherwise bypass request routing (tech.md §9.3)
-      });
-      return newPageDriver(context, origin);
+    async newPage({ device, allowedHosts, blockedDomains, storageState, onBlockedRequest }) {
+      const containment = await startContainment(allowedHosts, blockedDomains, onBlockedRequest);
+      let context: BrowserContext | undefined;
+      try {
+        context = await newContext(browser, device, storageState, containment.proxy);
+        await containment.install(context);
+        return await newPageDriver(context, containment.allows);
+      } catch (e) {
+        containment.close();
+        await context?.close().catch(() => {});
+        throw e;
+      }
     },
+    // A browser of its own and no proxy: IdP hosts must be reachable while the person logs in, and their window is not part of any run.
+    async record(url, { headless = false } = {}) {
+      return recordLogin(await launch(headless), url);
+    },
+    checkSession: (opts) => checkSession(browser, opts),
     close: () => browser.close(),
   };
 }

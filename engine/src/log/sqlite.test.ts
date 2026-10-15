@@ -5,14 +5,24 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
-import type { NewEvent, ProjectConfig, RunConfig } from '../types.ts';
+import type { NewEvent, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
 import { openProject } from './sqlite.ts';
 
 const project: ProjectConfig = {
   name: 'Gym',
   description: 'A demo ATS.',
-  poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' },
+  poi: {
+    id: 'poi-gym',
+    type: 'web',
+    name: 'Gym',
+    start_url: 'http://localhost:3001/',
+    allowed_hosts: ['cdn.example.com'],
+    production_domains: ['ats.example.com'],
+    not_production: false,
+    reset_hook_url: null,
+  },
   goal: 'Post a job for a backend engineer',
+  role: 'recruiter',
 };
 
 function snapshot(): Omit<RunConfig, 'run_id'> {
@@ -24,6 +34,9 @@ function snapshot(): Omit<RunConfig, 'run_id'> {
     step_budget: 40,
     cost_budget_usd: 1,
     screenshots: true,
+    session: null,
+    reset: false,
+    pause_timeout_ms: 300000,
     app_version: '0.0.0',
   };
 }
@@ -55,6 +68,15 @@ function step(run_id: string, step_no: number, persona_id = 'p-001'): NewEvent {
   };
 }
 
+const sessionInfo = (role: string, verified_at: number | null = null): SessionInfo => ({
+  role,
+  start_url: 'http://localhost:3001/app',
+  hosts: ['localhost', 'cdn.example.com'],
+  recorded_at: 1000,
+  verified_at,
+  expires_at: null,
+});
+
 test('reopening keeps the project, runs and events', (t) => {
   const dir = tempDir(t);
   const store = openProject(dir);
@@ -81,9 +103,56 @@ test('reopening keeps the project, runs and events', (t) => {
   reopened.close();
 
   const raw = new DatabaseSync(join(dir, 'project.sqlite'));
-  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 1);
+  assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 2);
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
+});
+
+test('a v1 project upgrades on open and keeps its runs and events', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  const run = store.createRun(snapshot()).run_id;
+  const appended = store.append(step(run, 1));
+  store.close();
+
+  // The v2 change is additive: without the session table the file is exactly a v1 file.
+  const v1 = new DatabaseSync(join(dir, 'project.sqlite'));
+  v1.exec('DROP TABLE session; PRAGMA user_version = 1;');
+  v1.close();
+
+  const upgraded = openProject(dir);
+  assert.deepEqual(upgraded.listSessions(), []);
+  assert.deepEqual(upgraded.events(run), [appended]);
+  upgraded.close();
+  const check = new DatabaseSync(join(dir, 'project.sqlite'));
+  assert.equal(check.prepare('PRAGMA user_version').get()?.user_version, 2);
+  check.close();
+});
+
+test('a project saved before M1 reads back with the M1 defaults', (t) => {
+  const store = openProject(tempDir(t));
+  const before = {
+    name: 'Gym',
+    description: 'A demo ATS.',
+    poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' },
+    goal: 'Post a job for a backend engineer',
+  };
+  store.saveProject(before as unknown as ProjectConfig);
+  assert.deepEqual(store.getProject(), {
+    ...before,
+    role: null,
+    poi: { ...before.poi, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+  });
+  store.close();
+});
+
+test('sessions upsert by role and list in role order', (t) => {
+  const store = openProject(tempDir(t));
+  store.putSession(sessionInfo('recruiter'));
+  store.putSession(sessionInfo('admin'));
+  store.putSession(sessionInfo('recruiter', 5000));
+  assert.deepEqual(store.listSessions(), [sessionInfo('admin'), sessionInfo('recruiter', 5000)]);
+  store.close();
 });
 
 test('run ids count up per project and newest runs list first', (t) => {

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
@@ -29,18 +30,22 @@ function request<M extends Method>(method: M, params: Api[M]['params']): Promise
   });
 }
 
-// The key lives encrypted in userData, never in a project folder, and is only ever sent to the engine.
-const keyFile = () => join(app.getPath('userData'), 'anthropic.key');
+// Secrets live encrypted in userData, never in a project folder, and are only ever sent to the engine.
+const secretFile = (name: string) => join(app.getPath('userData'), name);
 let hasKey = false;
 
-async function loadKey(): Promise<string | null> {
-  if (!existsSync(keyFile())) return null;
+async function readSecret(name: string): Promise<string | null> {
+  if (!existsSync(secretFile(name))) return null;
   try {
-    return (await safeStorage.decryptStringAsync(readFileSync(keyFile()))).result;
+    return (await safeStorage.decryptStringAsync(readFileSync(secretFile(name)))).result;
   } catch {
-    console.warn('The saved key could not be decrypted; it has to be entered again in Settings.');
+    console.warn(`${name} could not be decrypted and is ignored.`); // never the value
     return null;
   }
+}
+
+async function writeSecret(name: string, value: string) {
+  writeFileSync(secretFile(name), await safeStorage.encryptStringAsync(value), { mode: 0o600 });
 }
 
 // Linux without a secret store would keep the key readable by anyone (tech.md §4.11): then it lives for this session only.
@@ -49,8 +54,24 @@ async function canRemember(): Promise<boolean> {
   return safeStorage.isAsyncEncryptionAvailable();
 }
 
-/** Starts the engine and opens the project; resolves with the error message instead of rejecting so the UI can show it. */
-async function startEngine(): Promise<string | null> {
+/** The key that encrypts recorded logins on disk: made on first start, then kept like the API key. */
+async function loadSessionKey(): Promise<{ key: string; remembered: boolean }> {
+  const stored = await readSecret('session.key');
+  if (stored && /^[0-9a-f]{64}$/.test(stored)) return { key: stored, remembered: true };
+  const key = randomBytes(32).toString('hex');
+  const remembered = await canRemember();
+  if (remembered) await writeSecret('session.key', key);
+  return { key, remembered }; // not remembered: recorded logins end with this app session
+}
+
+interface Startup {
+  startupError: string | null; // set instead of rejecting, so the page can show it
+  sessionsPersist: boolean; // false: recorded logins are forgotten when the app quits
+}
+
+/** Starts the engine, gives it the secrets and opens the project. */
+async function startEngine(): Promise<Startup> {
+  let sessionsPersist = true;
   try {
     const child = utilityProcess.fork(join(import.meta.dirname, 'host.js'), [], { serviceName: 'Gnomi engine' });
     engine = child;
@@ -69,17 +90,20 @@ async function startEngine(): Promise<string | null> {
     });
     // shortcut: one fixed project folder; add a project picker when more than one project is needed (M6 import/export).
     const dir = process.env.GNOMI_PROJECT_DIR || join(app.getPath('userData'), 'projects', 'Default.gnomi');
+    const sessionKey = await loadSessionKey();
+    sessionsPersist = sessionKey.remembered;
+    await request('set_secret', { name: 'session_key', value: sessionKey.key });
     await Promise.all([
       request('open_project', { dir }),
-      loadKey().then(async (key) => {
+      readSecret('anthropic.key').then(async (key) => {
         if (!key) return;
         await request('set_secret', { name: 'anthropic_api_key', value: key });
         hasKey = true;
       }),
     ]);
-    return null;
+    return { startupError: null, sessionsPersist };
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return { startupError: err instanceof Error ? err.message : String(err), sessionsPersist };
   }
 }
 
@@ -89,17 +113,17 @@ ipcMain.handle('save-key', async (_event, key: unknown) => {
   await request('set_secret', { name: 'anthropic_api_key', value: secret });
   hasKey = true;
   const remembered = await canRemember();
-  if (remembered) writeFileSync(keyFile(), await safeStorage.encryptStringAsync(secret), { mode: 0o600 });
+  if (remembered) await writeSecret('anthropic.key', secret);
   return { remembered };
 });
 ipcMain.handle('has-key', () => hasKey);
 ipcMain.handle('clear-key', async () => {
-  rmSync(keyFile(), { force: true });
+  rmSync(secretFile('anthropic.key'), { force: true });
   await request('set_secret', { name: 'anthropic_api_key', value: null });
   hasKey = false;
 });
 
-function createWindow(started: Promise<string | null>) {
+function createWindow(started: Promise<Startup>) {
   const win = new BrowserWindow({
     width: 1100,
     height: 780,
@@ -119,11 +143,11 @@ function createWindow(started: Promise<string | null>) {
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   // A fresh port on every load, because a reloaded page has lost the previous one.
   win.webContents.on('did-finish-load', async () => {
-    const startupError = await started;
+    const startup = await started;
     const { port1, port2 } = new MessageChannelMain();
     if (engine) engine.postMessage({ kind: 'connect' }, [port1]);
     else port1.close(); // the page sees its port close and reports that the engine stopped
-    win.webContents.postMessage('gnomi-port', startupError, [port2]);
+    win.webContents.postMessage('gnomi-port', startup, [port2]);
   });
   if (rendererUrl) void win.loadURL(rendererUrl);
   else void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));

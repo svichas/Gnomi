@@ -1,133 +1,102 @@
 import { useEffect, useState } from 'react';
-import type { Action, ActionTarget, GnomiEvent, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
+import type { EventOf, GnomiEvent, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
+import { isEnd, merge, toRows, waitingBlock } from './activity.ts';
+import type { Row, Tone } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
+import { RecordingPanel, useRecorder } from './Recorder.tsx';
 import { Report, usd } from './Report.tsx';
-import { Note, secondaryButton } from './ui.tsx';
-
-type Tone = 'plain' | 'friction' | 'good' | 'bad' | 'muted';
-
-interface Row {
-  seq: number;
-  label: string;
-  tone: Tone;
-  title: string;
-  badge?: { ok: boolean; text: string };
-  detail?: string;
-  quote?: string;
-}
+import { Note, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
 
 const TONES: Record<Tone, string> = {
   plain: 'border-stone-200 bg-white',
   friction: 'border-amber-300 bg-amber-50',
   good: 'border-green-200 bg-green-50',
   bad: 'border-red-200 bg-red-50',
+  alarm: 'border-2 border-red-500 bg-red-100',
+  notice: 'border-sky-200 bg-sky-50',
   muted: 'border-transparent bg-transparent text-stone-500',
 };
-
-const STEP_ERRORS: Record<string, string> = {
-  ref_not_found: 'element not found',
-  not_editable: 'field cannot be typed into',
-  password_field: 'password fields are off limits',
-  host_not_allowed: 'outside the allowed site',
-  timeout: 'timed out',
-  invalid_output: 'the model gave an unusable answer',
-};
-
-function describeAction(action: Action, target: ActionTarget | null): string {
-  const element = target ? `${target.role} "${target.name}"` : action.ref ? `element ${action.ref}` : 'the page';
-  switch (action.type) {
-    case 'click':
-      return `Clicked ${element}`;
-    case 'type':
-      return `Typed "${action.text}" into ${element}`;
-    case 'select':
-      return `Chose "${action.text}" in ${element}`;
-    case 'scroll':
-      return `Scrolled ${action.text ?? 'down'}`;
-    case 'back':
-      return 'Went back';
-    case 'navigate':
-      return `Opened ${action.text}`;
-    case 'read':
-      return `Read ${element}`;
-    case 'wait':
-      return 'Waited';
-    case 'done':
-      return 'Decided the goal is done';
-    case 'abandon':
-      return 'Decided to give up';
-  }
-}
-
-const STOP_REASONS = { user: 'You stopped the run', cost_budget: 'The run reached its cost limit', error: 'The run stopped because of an error' };
-
-/** One line of the activity list, or null for events that are bookkeeping. */
-function describe(event: GnomiEvent): Row | null {
-  const { seq } = event;
-  switch (event.type) {
-    case 'persona.episode_started':
-      return { seq, label: 'Start', tone: 'muted', title: `Opened ${event.payload.start_url} in a ${event.payload.device} browser` };
-    case 'persona.step': {
-      const { step_no, action, target, result, thought } = event.payload;
-      const error = result.error && (STEP_ERRORS[result.error] ?? result.error);
-      return {
-        seq,
-        label: `Step ${step_no}`,
-        tone: 'plain',
-        title: describeAction(action, target),
-        badge: action.type === 'done' || action.type === 'abandon' ? undefined : result.ok ? { ok: true, text: 'ok' } : { ok: false, text: `error: ${error || 'failed'}` },
-        quote: thought,
-      };
-    }
-    case 'persona.friction_reported': {
-      const { step_no, severity, what, expected } = event.payload;
-      return { seq, label: `Step ${step_no}`, tone: 'friction', title: `Friction, severity ${severity} of 4: ${what}`, detail: `Expected: ${expected}` };
-    }
-    case 'persona.goal_done':
-      return { seq, label: `Step ${event.payload.step_no}`, tone: 'good', title: 'Goal reached', detail: event.payload.summary };
-    case 'persona.abandoned':
-      return { seq, label: `Step ${event.payload.step_no}`, tone: 'bad', title: 'Gave up', detail: event.payload.reason };
-    case 'signal.budget_exceeded':
-      return { seq, label: `Step ${event.payload.step_no}`, tone: 'bad', title: `Used all ${event.payload.budget} steps` };
-    case 'signal.repeated_failure': {
-      const { step_no, action, error } = event.payload;
-      return { seq, label: `Step ${step_no}`, tone: 'bad', title: 'Got stuck', detail: `The same ${action} failed three times in a row (${error})` };
-    }
-    case 'llm.call':
-      return event.payload.status === 'ok'
-        ? null
-        : { seq, label: 'Model', tone: 'bad', title: 'A model call failed', detail: event.payload.error ?? event.payload.status };
-    case 'run.stopped':
-      return { seq, label: 'Stopped', tone: 'muted', title: STOP_REASONS[event.payload.reason], detail: event.payload.detail ?? undefined };
-    case 'run.finished':
-      return { seq, label: 'Done', tone: 'muted', title: 'Run finished' };
-    default:
-      return null;
-  }
-}
-
-const isEnd = (event: GnomiEvent) => event.type === 'run.finished' || event.type === 'run.stopped';
-
-/** Events arrive both live and from get_events, so adding the same one twice must change nothing. */
-function merge(have: GnomiEvent[], incoming: GnomiEvent[]): GnomiEvent[] {
-  const seen = new Set(have.map((event) => event.seq));
-  const fresh = incoming.filter((event) => !seen.has(event.seq));
-  return fresh.length ? [...have, ...fresh].sort((a, b) => a.seq - b.seq) : have;
-}
 
 function ActivityItem({ row }: { row: Row }) {
   return (
     <li className={`rounded-lg border px-3 py-2 ${TONES[row.tone]}`}>
       <div className="flex items-baseline justify-between gap-3">
         <p className="min-w-0 break-words text-sm">
-          <span className="mr-2 text-xs font-semibold uppercase tracking-wide text-stone-500">{row.label}</span>
-          <span className="font-medium text-stone-900">{row.title}</span>
+          <span className={`mr-2 text-xs font-semibold uppercase tracking-wide ${row.tone === 'alarm' ? 'text-red-800' : 'text-stone-500'}`}>{row.label}</span>
+          <span className={`${row.tone === 'alarm' ? 'font-semibold text-red-950' : 'font-medium text-stone-900'}`}>{row.title}</span>
         </p>
         {row.badge && <span className={`shrink-0 text-xs font-medium ${row.badge.ok ? 'text-green-700' : 'text-red-700'}`}>{row.badge.text}</span>}
       </div>
       {row.detail && <p className="mt-1 text-sm text-stone-700">{row.detail}</p>}
       {row.quote && <p className="mt-1 text-sm italic text-stone-600">&ldquo;{row.quote}&rdquo;</p>}
     </li>
+  );
+}
+
+/** The engine words a CAPTCHA block as "A recaptcha challenge is showing. ..."; the banner only needs the name of the challenge. */
+function challengeKind(detail: string): string | null {
+  const named = /^An? (.+?) challenge is showing/.exec(detail);
+  return named ? named[1] : detail.length <= 40 ? detail : null;
+}
+
+const waitText = (ms: number) => (ms >= 90_000 ? `${Math.round(ms / 60_000)} minutes` : `${Math.round(ms / 1000)} seconds`);
+
+/** A paused persona needs the user: a login to record again, or a CAPTCHA to turn off on staging. */
+function BlockedBanner(props: { blocked: EventOf<'persona.blocked'>; row: RunRow | undefined; runId: string; ending: boolean; onEnd(): void }) {
+  const { blocked, row, runId, ending, onEnd } = props;
+  const { reason } = blocked.payload;
+  const kind = challengeKind(blocked.payload.detail);
+  const name = row?.config.persona.name ?? 'The persona';
+  const resume = { run_id: runId, persona_id: blocked.persona_id ?? row?.config.persona.id ?? '' };
+  const role = row?.config.session?.role ?? row?.config.project.role ?? null;
+  const retry = useAction();
+  const recorder = useRecorder(async () => {
+    await call('resume_persona', resume);
+  });
+  const busy = retry.busy || recorder.busy || ending;
+
+  return (
+    <section role="alert" aria-label="The persona is waiting for you" className="space-y-3 rounded-xl border-2 border-red-300 bg-red-50 p-5">
+      {reason === 'session_expired' ? (
+        <>
+          <h2 className="text-base font-semibold text-red-950">{name}&rsquo;s login expired</h2>
+          <p className="text-sm text-red-900">Record the login again and the run carries on from where it stopped.</p>
+        </>
+      ) : (
+        <p className="text-sm text-red-950">
+          {name} hit a CAPTCHA{kind && ` (${kind})`}. Gnomi never solves these: turn the challenge off on staging or use the provider&rsquo;s test keys, then
+          retry.
+        </p>
+      )}
+      {row && <p className="text-xs text-red-900">Gnomi waits {waitText(row.config.pause_timeout_ms)} for you, then ends the run.</p>}
+      <RecordingPanel recorder={recorder} />
+      <div className="flex flex-wrap gap-3">
+        {reason === 'session_expired' ? (
+          <button type="button" onClick={() => role !== null && recorder.start(role)} disabled={busy || role === null || recorder.recording !== null} className={primaryButton}>
+            Re-record login
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              retry.run(async () => {
+                await call('resume_persona', resume);
+                return null;
+              })
+            }
+            disabled={busy}
+            className={primaryButton}
+          >
+            Retry
+          </button>
+        )}
+        <button type="button" onClick={onEnd} disabled={busy} className={secondaryButton}>
+          End run
+        </button>
+      </div>
+      {retry.outcome && <Note tone={retry.outcome.ok ? 'ok' : 'error'}>{retry.outcome.text}</Note>}
+      {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+    </section>
   );
 }
 
@@ -179,8 +148,9 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
 
   const cost = events.reduce((sum, event) => (event.type === 'llm.call' ? sum + event.payload.cost_usd : sum), 0);
   const step = events.reduce((last, event) => (event.type === 'persona.step' ? Math.max(last, event.payload.step_no) : last), 0);
-  const rows = events.flatMap((event) => describe(event) ?? []).reverse(); // newest first, so the latest step is always in view
-  const status = ended ? (events.some((event) => event.type === 'run.stopped') ? 'Stopped' : 'Finished') : events.length ? 'Running' : 'Starting';
+  const rows = toRows(events);
+  const waiting = waitingBlock(events);
+  const status = ended ? (events.some((event) => event.type === 'run.stopped') ? 'Stopped' : 'Finished') : waiting ? 'Waiting for you' : events.length ? 'Running' : 'Starting';
 
   return (
     <div className="space-y-5">
@@ -215,6 +185,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
         {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Stopping after the current step...</p>}
       </section>
 
+      {waiting && <BlockedBanner blocked={waiting} row={row} runId={runId} ending={stopping} onEnd={stop} />}
       {error && <Note tone="error">{error}</Note>}
       {ended && !report && !error && <p className="text-sm text-stone-500">Building the report...</p>}
       {report && <Report report={report} />}
@@ -260,7 +231,7 @@ export function Run({ runId, runs, onSelect, onRunEnded }: { runId: string | nul
                   <span className="block text-xs text-stone-500">
                     {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)}`}
                   </span>
-                  <span className="block text-xs text-stone-500">{new Date(run.started_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  <span className="block text-xs text-stone-500">{when(run.started_at)}</span>
                   <span className="mt-1 block truncate text-xs text-stone-600">{run.config.project.goal}</span>
                 </button>
               </li>
