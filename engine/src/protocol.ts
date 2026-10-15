@@ -28,6 +28,8 @@ export interface ProjectInfo {
 export interface Api {
   set_secret: { params: { name: SecretName; value: string | null }; result: null };
   open_project: { params: { dir: string }; result: ProjectInfo };
+  /** Closes the project for folder operations. Refuses active runs, recordings and pending project requests. */
+  close_project: { params: Record<string, never>; result: null };
   get_project: { params: Record<string, never>; result: ProjectInfo };
   save_project: { params: { project: ProjectConfig }; result: null };
   /** Checks the provider's saved key, or for 'openai_compatible' that the project's local endpoint answers. */

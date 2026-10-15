@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { startGym } from '../../gym/server.ts';
 import { createFsBlobStore } from './log/blobs.ts';
@@ -153,4 +154,45 @@ test('a full round trip: personas from the audience, edits, an estimate, a run o
   );
   const steps = (await call('get_events', { run_id, after_seq: null, persona_id: first.id })).filter((e) => e.type === 'persona.step');
   assert.ok(steps.length > 0 && steps.every((e) => e.persona_id === first.id));
+});
+
+test('project closing and switching refuse an in-flight persona write, then close cleanly', async () => {
+  await call('open_project', { dir });
+  await call('save_project', { project: project({}, { audience: audience([segment('seg-lock', { share: 100 })], 3) }) });
+  const writing = call('generate_personas', {});
+  await assert.rejects(call('close_project', {}), /Wait for the current project task/);
+  await assert.rejects(call('open_project', { dir: join(dir, 'other') }), /Wait for the current project task/);
+  await writing;
+  assert.equal((await call('get_project', {})).dir, dir);
+  assert.equal(await call('close_project', {}), null);
+  await assert.rejects(call('get_project', {}), /No project/);
+  assert.equal((await call('open_project', { dir })).personas.length, 3);
+});
+
+test('opening an invalid project path leaves the previous project available', async () => {
+  await call('open_project', { dir });
+  await assert.rejects(call('open_project', { dir: join(dir, 'project.sqlite', 'invalid') }));
+  assert.equal((await call('get_project', {})).dir, dir);
+});
+
+test('opening a project with corrupt stored data preserves the previous project', async () => {
+  await call('open_project', { dir });
+  const damaged = join(dir, 'damaged');
+  openProject(damaged).close();
+  const db = new DatabaseSync(join(damaged, 'project.sqlite'));
+  db.prepare('INSERT INTO project (id, config_json, created_at, updated_at) VALUES (1, ?, 0, 0)').run('{');
+  db.close();
+  await assert.rejects(call('open_project', { dir: damaged }));
+  assert.equal((await call('get_project', {})).dir, dir);
+});
+
+test('save_project refuses invalid country mixes before they can enter storage', async () => {
+  await call('open_project', { dir });
+  const config = project({}, { audience: audience([segment('seg-1', { share: 100 })], 3) });
+  await call('save_project', { project: config });
+  const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: 0 }, { DE: -1 }, { DE: Infinity }];
+  for (const countries of invalid) {
+    await assert.rejects(call('save_project', { project: { ...config, audience: { ...config.audience!, countries } } }), /country/i);
+  }
+  assert.deepEqual((await call('get_project', {})).project, config);
 });

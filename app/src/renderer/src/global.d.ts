@@ -9,5 +9,7 @@ interface Window {
     saveKey(provider: KeyedProvider, key: string): Promise<{ remembered: boolean }>;
     hasKey(provider: KeyedProvider): Promise<boolean>;
     clearKey(provider: KeyedProvider): Promise<void>;
+    listProjects(): Promise<import('../../projects.ts').ProjectCatalog>;
+    projectAction(action: import('../../projects.ts').ProjectAction): Promise<import('../../projects.ts').ProjectActionResult>;
   };
 }

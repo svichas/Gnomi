@@ -91,7 +91,7 @@ try {
     }
   });
 
-  await stage('the page is isolated: no Node, a three-method bridge, a strict CSP', async () => {
+  await stage('the page is isolated: no Node, a bounded bridge, a strict CSP', async () => {
     const seen = await page.evaluate(async () => {
       const script = document.createElement('script');
       script.textContent = 'window.inlineScriptRan = true';
@@ -104,7 +104,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -279,6 +279,10 @@ try {
     await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
     await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
     await audience.getByLabel('Number of personas', { exact: true }).fill('6');
+    await audience.getByRole('button', { name: 'Remove country United States' }).click();
+    await audience.getByLabel('Add country').selectOption('DE');
+    await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
+    await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
     // The generation may be quick, so a page observer keeps what the progress bar showed.
     await page.evaluate(() => {
       const seen: string[] = [];
@@ -297,6 +301,10 @@ try {
     await audience.getByText('Hiring managers (3)').waitFor();
     const cards = audience.locator('details li');
     assert.equal(await cards.count(), 6);
+    await audience.locator('details').nth(1).locator('summary').click();
+    for (const text of await cards.allInnerTexts()) assert.match(text, /Berlin, Germany · Europe\/Berlin · de-DE, en/);
+    assert.equal(await cards.filter({ hasText: 'Employer: Example GmbH' }).count(), 3);
+    assert.equal(await cards.filter({ hasText: 'Employer: Beispiel AG' }).count(), 3);
     await audience.getByRole('heading', { name: 'Personas (6)' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, 'personas.png') });
 
@@ -368,6 +376,8 @@ try {
     await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
     await inspector.getByText('Full profile').click();
     assert.match(await inspector.innerText(), /Background/);
+    assert.match(await inspector.innerText(), /Germany/);
+    assert.match(await inspector.innerText(), /Europe\/Berlin/);
     await page.screenshot({ path: join(shots, 'inspector.png') });
     await page.keyboard.press('Escape');
     await inspector.waitFor({ state: 'detached' });
