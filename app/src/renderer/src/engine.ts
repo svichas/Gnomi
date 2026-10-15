@@ -1,0 +1,61 @@
+import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
+import type { GnomiEvent } from '@gnomi/engine/types.ts';
+
+// The engine client: typed requests over the MessagePort that main hands to the page (tech.md §11).
+let port: MessagePort | undefined;
+let nextId = 1;
+const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
+const listeners = new Set<(event: GnomiEvent) => void>();
+
+const STOPPED = 'The engine stopped unexpectedly. Quit and reopen Gnomi to continue.';
+let closed = false;
+let stop: (message: string) => void;
+/** Resolves with a message if the engine goes away: its process died, so its end of the port closed. */
+export const stopped = new Promise<string>((resolve) => (stop = resolve));
+
+// Listens from module load: the preload posts the port as soon as the page has loaded, and again after a reload.
+export const connected = new Promise<{ startupError: string | null }>((resolve) => {
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window || e.data?.gnomi !== 'port' || !e.ports[0]) return;
+    port = e.ports[0];
+    port.addEventListener('close', () => {
+      closed = true;
+      pending.forEach((waiting) => waiting.reject(new Error(STOPPED)));
+      pending.clear();
+      stop(STOPPED);
+    });
+    port.onmessage = ({ data }: MessageEvent<EngineToClient>) => {
+      if (data.kind === 'event') {
+        listeners.forEach((listener) => listener(data.event));
+        return;
+      }
+      const waiting = pending.get(data.id);
+      pending.delete(data.id);
+      if (data.ok) waiting?.resolve(data.result);
+      else waiting?.reject(new Error(data.error));
+    };
+    resolve({ startupError: e.data.startupError });
+  });
+});
+
+export async function call<M extends Method>(method: M, params: Api[M]['params']): Promise<Api[M]['result']> {
+  await connected;
+  if (closed) throw new Error(STOPPED);
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve: resolve as (result: unknown) => void, reject });
+    port?.postMessage({ kind: 'request', id, method, params });
+  });
+}
+
+/** Every event the engine appends, from now on; returns the unsubscribe function. */
+export function onEvent(listener: (event: GnomiEvent) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Electron prefixes errors thrown by main's IPC handlers; the designer only needs the sentence. */
+export function errorText(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  return text.replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+}

@@ -1,0 +1,132 @@
+import type { ActionTarget } from '../types.ts';
+
+// Input is Playwright's `ariaSnapshot({ mode: 'ai', boxes: true })`: one node per line,
+//   - role "name" [flags] [ref=e5] [cursor=pointer] [box=x,y,w,h]: inline text
+// with a node's properties as child lines ("- /url: …", "- text: …") and any key containing ": "
+// wrapped in single quotes. Nothing in it says an input is a password, so the caller passes those refs.
+
+const MAX_TEXT = 200;
+const KEEP_RUN = 5; // leading siblings of a long run that always stay
+const MIN_HIDDEN = 3; // hiding fewer than this costs more tokens (the marker line) than it saves
+const TRUNCATED = '… (truncated)';
+// Roles that repeat as items. A run of `generic` wrappers (card grids, div-soup rows) collapses too, unless it holds form fields.
+const REPEATED = new Set(['listitem', 'row', 'option', 'article']);
+const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'spinbutton', 'slider']);
+// Worth showing even with no name or text: an unlabelled button is a finding, not noise.
+const CONTROLS = new Set([
+  'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton',
+  'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'treeitem',
+]);
+
+const LINE = /^( *)- (?:'((?:[^']|'')*)'|((?:[^:]|:(?!\s|$))*))(?::(?: (.*))?)?$/;
+const NAME = /^(\S+ )"((?:[^"\\]|\\.)*)"/;
+const REF = /\[ref=([^\]]+)\]/;
+const BOX = /\[box=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\]/;
+
+interface Line {
+  role: string;
+  head: string; // role, "name" and [flags], without the YAML quoting
+  value?: string; // inline text after ": "
+  kids: Line[];
+}
+
+interface Options {
+  secrets: ReadonlySet<string>;
+  viewportHeight: number;
+}
+
+function parse(raw: string): Line[] {
+  const root: Line = { role: '', head: '', kids: [] };
+  const parents = [root];
+  for (const text of raw.split('\n')) {
+    const m = LINE.exec(text);
+    if (!m) continue;
+    const head = m[2]?.replaceAll("''", "'") ?? m[3];
+    const line: Line = { role: head.split(' ', 1)[0], head, value: m[4], kids: [] };
+    parents.length = Math.min(m[1].length / 2 + 1, parents.length);
+    parents.at(-1)!.kids.push(line);
+    parents.push(line);
+  }
+  return root.kids;
+}
+
+const clip = (s: string) => (s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) + '…' : s);
+const hasField = (line: Line): boolean => FIELDS.has(line.role) || line.kids.some(hasField);
+const collapsible = (line: Line) => REPEATED.has(line.role) || (line.role === 'generic' && !hasField(line));
+
+function onScreen(line: Line, viewportHeight: number): boolean {
+  const box = BOX.exec(line.head);
+  return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight;
+}
+
+function keep(line: Line, opts: Options): Line[] {
+  let { value, kids } = line;
+  const ref = REF.exec(line.head)?.[1];
+  if (ref && opts.secrets.has(ref)) {
+    // An input's value is inline, or a "- text:" child when it also has a placeholder.
+    value = undefined;
+    kids = kids.filter((kid) => kid.role !== 'text');
+  }
+  kids = visit(kids, opts);
+  if (!NAME.test(line.head) && value === undefined && !line.head.includes('[cursor=pointer]')) {
+    if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
+    if (!kids.length && !CONTROLS.has(line.role)) return [];
+  }
+  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`);
+  return [{ role: line.role, head, value: value === undefined ? undefined : clip(value), kids }];
+}
+
+function visit(lines: Line[], opts: Options): Line[] {
+  const out: Line[] = [];
+  for (let i = 0; i < lines.length; ) {
+    let run = 1;
+    if (collapsible(lines[i])) while (lines[i + run]?.role === lines[i].role && collapsible(lines[i + run])) run++;
+    const items = lines.slice(i, i + run);
+    // What the persona can see stays addressable, and so does the selected option: a long <select> must show its value.
+    let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts.viewportHeight));
+    if (items.length - shown.length < MIN_HIDDEN) shown = items;
+    for (const line of shown) out.push(...keep(line, opts));
+    if (shown.length < run) out.push({ role: '…', head: `… (×${run - shown.length} more)`, kids: [] });
+    i += run;
+  }
+  return out;
+}
+
+function print(lines: Line[], depth: number, out: string[]): void {
+  for (const line of lines) {
+    const tail = line.value !== undefined ? `: ${line.value}` : line.kids.length ? ':' : '';
+    out.push(`${'  '.repeat(depth)}- ${line.head}${tail}`);
+    print(line.kids, depth + 1, out);
+  }
+}
+
+export function pruneSnapshot(
+  raw: string,
+  { maxChars = 16000, passwordRefs = new Set<string>(), viewportHeight = 800 }: { maxChars?: number; passwordRefs?: ReadonlySet<string>; viewportHeight?: number } = {},
+): string {
+  const out: string[] = [];
+  print(visit(parse(raw), { secrets: passwordRefs, viewportHeight }), 0, out);
+  const text = out.join('\n');
+  if (text.length <= maxChars) return text;
+  // shortcut: drops from the end, not by distance from the viewport (tech.md §6.2), upgrade when a long page cuts off what the persona scrolled to.
+  const cut = text.lastIndexOf('\n', maxChars - TRUNCATED.length - 1);
+  return `${text.slice(0, Math.max(cut, 0))}\n${TRUNCATED}`;
+}
+
+/** Role, accessible name and box of every ref in a raw snapshot: the evidence for what an action touched. */
+export function snapshotTargets(raw: string): Map<string, ActionTarget> {
+  const targets = new Map<string, ActionTarget>();
+  const walk = (lines: Line[]) => {
+    for (const { role, head, kids } of lines) {
+      const ref = REF.exec(head)?.[1];
+      const box = BOX.exec(head);
+      if (ref) {
+        const name = NAME.exec(head)?.[2];
+        targets.set(ref, { role, name: name === undefined ? '' : JSON.parse(`"${name}"`), box: box ? [+box[1], +box[2], +box[3], +box[4]] : null });
+      }
+      walk(kids);
+    }
+  };
+  walk(parse(raw));
+  return targets;
+}

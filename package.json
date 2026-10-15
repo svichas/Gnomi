@@ -1,0 +1,22 @@
+{
+  "name": "gnomi",
+  "private": true,
+  "workspaces": [
+    "engine",
+    "gym",
+    "app"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "gym": "npm start -w @gnomi/gym",
+    "dev": "npm run dev -w @gnomi/app"
+  },
+  "engines": {
+    "node": ">=24.15"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

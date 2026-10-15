@@ -1,0 +1,6 @@
+node_modules/
+out/
+dist/
+*.gnomi/
+test-results/
+.DS_Store

@@ -1,0 +1,24 @@
+- id: D01
+  title: Primary submit button says Save draft but still publishes the job live
+  type: label        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [jobs/new]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D01
+- id: D02
+  title: Department is required but not marked, and a missing Department re-renders the form with no error
+  type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [jobs/new]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D02
+- id: D03
+  title: Main nav Jobs link points to /job, a 404, instead of /jobs
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [dashboard, jobs, jobs/new, "jobs/:id", candidates, settings]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D03
