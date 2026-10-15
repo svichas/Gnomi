@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Report } from '../types.ts';
+import type { Report, ReportTheme } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
 import { reportToMarkdown } from './markdown.ts';
 
@@ -234,4 +234,74 @@ test('the methods appendix says what did not happen', () => {
     assert.ok(md.includes(expected), expected);
   }
   assert.ok(reportToMarkdown(report).includes('- Reset hook: not called'));
+});
+
+const theme: ReportTheme = {
+  id: 'g1+g3',
+  poi_id: 'poi-gym',
+  rank: 1,
+  title: 'Saving a job\nfails',
+  description: 'Save does nothing for most recruiters.',
+  named_by: 'judge',
+  trust: 'confirmed',
+  severity: 3,
+  impact: 0.8,
+  score: 2.4,
+  personas: 2,
+  frictions: 3,
+  pages: ['localhost:3001/jobs/new'],
+  elements: ['button "Save"'],
+  affected: [
+    { segment_id: 'seg-a', name: 'Recruiters', affected: 2, reached: 2, rate: 1 },
+    { segment_id: 'seg-b', name: 'Hiring managers', affected: 0, reached: 0, rate: 0 },
+  ],
+  evidence: [
+    { seq: 4, step_seq: 3, persona_id: 'p-1-01', persona_name: 'Ana Ruiz', segment_id: 'seg-a', step_no: 1, url, severity: 3, trust: 'confirmed', what: 'Save does nothing', quote: 'Is this posting or saving?', screenshot: 'runs/r-0001/shots/p-1-01-0001.jpg', signals: ['failed_action'] },
+    { seq: 20, step_seq: null, persona_id: 'p-1-02', persona_name: 'Ben Okoro', segment_id: 'seg-a', step_no: null, url: null, severity: 2, trust: 'reported', what: 'Saving felt broken', quote: '', screenshot: null, signals: [] },
+  ],
+  seqs: [4, 5, 20],
+  suggestion: { change: 'Make Save submit the job.', solution: 'Submit the form and show the saved job.' },
+};
+
+test('themes carry rank, trust, affected share, evidence with event links and labelled suggestions', () => {
+  const md = reportToMarkdown({ ...report, themes: [theme], sentiment: [], went_well: [] });
+  for (const expected of [
+    '## Themes',
+    '### 1. Saving a job fails',
+    '- Trust: confirmed (a self-report backed by an objective signal)',
+    '- Severity 3 of 4, score 2.40, 2 personas, 3 frictions',
+    '- Affected by segment: Recruiters 2 of 2 (100%)',
+    '- Elements: button "Save"',
+    '- Events: #4, #5, #20',
+    '1. Ana Ruiz (step 1, severity 3, confirmed; signals: failed_action): Save does nothing',
+    '   - Event: #4',
+    '2. Ben Okoro (survey, severity 2, reported): Saving felt broken\n   - Screenshot: none',
+    '**Suggested change (generated suggestion):** Make Save submit the job.',
+    '**Possible solution (generated suggestion):** Submit the form and show the saved job.',
+  ]) {
+    assert.ok(md.includes(expected), expected);
+  }
+  assert.ok(md.indexOf('## Themes') < md.indexOf('## Frictions'));
+  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No frictions to group into themes.'));
+});
+
+test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
+  const md = reportToMarkdown({
+    ...report,
+    sentiment: [{ segment_id: 'seg-a', name: 'Recruiters', surveyed: 2, sentiment: 0.5, would_continue: 0.5 }, { segment_id: 'seg-b', name: 'Hiring managers', surveyed: 0, sentiment: null, would_continue: 0 }],
+    went_well: [{ text: 'Clear pricing', count: 2, personas: 2, seqs: [7, 9] }],
+    methods: { ...report.methods, signal_thresholds: { loop_visits: 3 }, limitations: ['Suggested changes cover 1 of 2 themes.'] },
+  });
+  for (const expected of [
+    '| Recruiters | 2 | 0.50 | 50% |',
+    '| Hiring managers | 0 | no answers | - |',
+    '## What went well',
+    '1. Clear pricing (2 mentions by 2 personas)',
+    '- Signal thresholds: loop_visits 3',
+    '- Limitation: Suggested changes cover 1 of 2 themes.',
+  ]) {
+    assert.ok(md.includes(expected), expected);
+  }
+  const legacy = reportToMarkdown(report);
+  for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
 });

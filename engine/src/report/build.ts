@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
+import { analyseFrictions } from './themes.ts';
 import type {
   Audience,
   EventOf,
@@ -33,6 +34,7 @@ type LoggedConfig = Omit<RunConfig, 'personas' | 'sessions' | 'project'> & {
   sessions?: SessionInfo[];
   session?: SessionInfo | null;
   cost_budget_usd?: number;
+  signals?: Record<string, unknown>; // the signal thresholds, frozen from M3 on (RunConfig.signals)
 };
 
 type Ending = Pick<ReportPersona, 'outcome' | 'outcome_text'>;
@@ -169,6 +171,12 @@ export function buildReport(events: GnomiEvent[]): Report {
   const weighted = (pick: (s: ReportSegment) => number) =>
     weight === 0 ? 0 : segments.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
 
+  const analysis = analyseFrictions(events, {
+    poi_id: config.project.poi.id,
+    personas: new Map(personas.map((p) => [p.id, { name: p.name, segment_id: p.segment_id }])),
+    segments,
+  });
+
   const inUse = audience ? audience.segments.filter((s) => segments.some((seg) => seg.id === s.id)) : [];
   const roleOfUse = audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
   const roles = [...new Set(roleOfUse)].filter((role): role is string => role !== null);
@@ -224,6 +232,9 @@ export function buildReport(events: GnomiEvent[]): Report {
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
     steps: ofType(events, 'persona.step').length,
     frictions,
+    themes: analysis.themes,
+    sentiment: analysis.sentiment,
+    went_well: analysis.went_well,
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,
@@ -263,6 +274,8 @@ export function buildReport(events: GnomiEvent[]): Report {
         concurrency: e.payload.concurrency,
         reason: e.payload.reason,
       })),
+      signal_thresholds: config.signals ?? null,
+      limitations: analysis.limitations,
     },
   };
 }
