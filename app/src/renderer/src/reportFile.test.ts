@@ -63,3 +63,24 @@ test('the JSON export round-trips the report', async () => {
   const report = fixture(3, 2);
   assert.deepEqual(JSON.parse(await reportFile(report, 'json', thumbnails())), report);
 });
+
+test('the opinion spread and homogeneity render into the export, the sentiment line as inline SVG', async () => {
+  const report = fixture(2, 1);
+  const stats = {
+    posts: 2,
+    seeds: [{ seq: 50, post_id: 's1', persona_id: 'p-1-0', persona_name: 'Persona 0', segment_id: 'seg-a', round: 1, text: 'Save <is> broken', injected: false }],
+    first_hand: ['p-1-0'],
+    second_hand: ['p-1-1'],
+    segments: [{ segment_id: 'seg-a', name: 'Recruiters', personas: 2, seed: true }],
+    influence: [{ from: 'p-1-0', to: 'p-1-1', poi_id: 'poi', post_id: 's1', seq: 60, round: 2, delta: -1 }],
+    sentiment: [{ round: 1, mean: -1, personas: 1 }, { round: 2, mean: -1.5, personas: 2 }],
+  };
+  report.spread = [{ poi_id: 'poi', name: 'Gym', ...stats, themes: [{ theme_id: 'g1', rank: 1, title: 'Saving fails', ...stats }] }];
+  report.methods.homogeneity = { posts: 0.42, post_count: 2, narratives: 0.1, threshold: 0.3, warning: 'The posts read alike.' };
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Opinion spread', 'About Gym', 'Saving fails', '“Save &lt;is&gt; broken”', 'Persona 0 → Persona 1, round 2, sentiment −1.0', 'Round 2: −1.5', 'Posts 0.42 (2 posts)', 'The posts read alike.']) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.equal(html.split('<svg').length - 1, 2, 'one sentiment line for the POI and one for the theme');
+  assert.doesNotMatch(html, /<(?:button|select|script)\b/);
+});

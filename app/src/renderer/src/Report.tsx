@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportTheme, Trust } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
@@ -391,6 +391,152 @@ function WentWell({ likes }: { likes: ReportLike[] }) {
   );
 }
 
+/** Mean sentiment at each round's end on a −2…+2 scale, 0 dashed; each value is also written out beside it. */
+function SentimentLine({ rows }: { rows: SpreadStats['sentiment'] }) {
+  const points = rows.flatMap((r) => (r.mean === null ? [] : [{ ...r, mean: r.mean }]));
+  if (points.length === 0) return <p className="text-xs text-stone-500">No opinions recorded.</p>;
+  const width = 168;
+  const x = (round: number) => (rows.length === 1 ? (width + 16) / 2 : 24 + ((round - 1) / (rows.length - 1)) * (width - 32));
+  const y = (mean: number) => 8 + ((2 - mean) / 4) * 48;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <svg viewBox={`0 0 ${width} 64`} width={width} height={64} aria-hidden="true" className="shrink-0 overflow-visible">
+        {([[2, '+2'], [0, '0'], [-2, '−2']] as const).map(([v, label]) => (
+          <g key={v}>
+            <text x={0} y={y(v) + 3} className="fill-stone-400 text-[9px] tabular-nums">{label}</text>
+            <line x1={16} x2={width} y1={y(v)} y2={y(v)} strokeDasharray={v === 0 ? '3 3' : undefined} className={v === 0 ? 'stroke-stone-400' : 'stroke-stone-200'} />
+          </g>
+        ))}
+        <polyline points={points.map((p) => `${x(p.round)},${y(p.mean)}`).join(' ')} fill="none" strokeWidth={2} strokeLinejoin="round" className="stroke-indigo-600" />
+        {points.map((p) => (
+          <circle key={p.round} cx={x(p.round)} cy={y(p.mean)} r={4} strokeWidth={2} className="fill-indigo-600 stroke-white">
+            <title>{`Round ${p.round}: ${signed(p.mean)} (${count(p.personas, 'persona')})`}</title>
+          </circle>
+        ))}
+      </svg>
+      <ol className="flex flex-wrap gap-x-3 text-xs tabular-nums text-stone-600" aria-label="Mean sentiment by round, −2 to +2">
+        {rows.map((r) => (
+          <li key={r.round}>
+            Round {r.round}: {r.mean === null ? 'no opinions' : signed(r.mean)}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** One POI's or theme's spread: counts, seed posts, repeats, segments reached, influence and the sentiment line. */
+function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; personas: ReportPersona[]; onInspect: Inspect }) {
+  const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
+  const crossed = stats.segments.filter((segment) => !segment.seed).length;
+  const figures = [
+    ['Posts', stats.posts],
+    ['First-hand', stats.first_hand.length],
+    ['Second-hand', stats.second_hand.length],
+    ['Influence edges', stats.influence.length],
+  ] as const;
+  return (
+    <div className="space-y-3 text-sm">
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {figures.map(([label, value]) => (
+          <div key={label} className="rounded-lg bg-stone-50 px-3 py-1.5">
+            <dt className="text-xs text-stone-500">{label}</dt>
+            <dd className="font-medium tabular-nums text-stone-900">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div>
+        <p className="text-xs font-medium text-stone-700">Seed posts</p>
+        <ul className="mt-1 space-y-2">
+          {stats.seeds.map((post) => (
+            <li key={post.post_id} className="border-l-4 border-stone-200 pl-3">
+              <p className="flex flex-wrap gap-x-2 text-xs text-stone-500">
+                <PersonaLink id={post.persona_id} name={post.persona_name} seq={post.seq} onInspect={onInspect} />
+                <span>round {post.round}</span>
+                {post.injected && <span className="font-medium text-amber-800">injected by the test harness</span>}
+              </p>
+              <p className="text-stone-900">&ldquo;{post.text}&rdquo;</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="text-stone-700">
+        <span className="font-medium">Repeated without their own friction:</span>{' '}
+        {stats.second_hand.length === 0 ? 'nobody' : stats.second_hand.map(name).join(', ')}
+      </p>
+      <p className="text-stone-700">
+        <span className="font-medium">Segments reached:</span>{' '}
+        {stats.segments.map((segment) => `${segment.name} ${segment.personas}${segment.seed ? ' (seed)' : ''}`).join(', ') || 'none'}. Crossed into {count(crossed, 'other segment')}.
+      </p>
+      {stats.influence.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-stone-700">Influence</p>
+          <ul className="text-stone-700">
+            {stats.influence.slice(0, 5).map((edge) => (
+              <li key={`${edge.seq}/${edge.post_id}`}>
+                {name(edge.from)} → {name(edge.to)}, round {edge.round}, sentiment {signed(edge.delta)}
+              </li>
+            ))}
+          </ul>
+          {stats.influence.length > 5 && <p className="text-xs text-stone-500">And {count(stats.influence.length - 5, 'more edge')}.</p>}
+        </div>
+      )}
+      <div>
+        <p className="text-xs font-medium text-stone-700">Mean sentiment by round, −2 to +2</p>
+        <SentimentLine rows={stats.sentiment} />
+      </div>
+    </div>
+  );
+}
+
+/** How talk about the product and each theme travelled on the simulated feed (tech.md §8.2 step 7). */
+function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; personas: ReportPersona[]; onInspect: Inspect }) {
+  return (
+    <section aria-labelledby="spread-title" className="space-y-3">
+      <h3 id="spread-title" className="text-sm font-semibold text-stone-900">
+        Opinion spread
+      </h3>
+      <p className="text-xs text-stone-500">
+        How talk travelled on the simulated feed. First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.
+      </p>
+      {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a point of interest.</p>}
+      {spread.map((poi) => (
+        <div key={poi.poi_id} className="space-y-4">
+          <div className="space-y-2 rounded-lg border border-stone-200 p-4">
+            <h4 className="font-medium text-stone-900">About {poi.name}</h4>
+            <SpreadBody stats={poi} personas={personas} onInspect={onInspect} />
+          </div>
+          {poi.themes.length > 0 && (
+            <ol className="space-y-4" aria-label={`Themes talked about on the feed, about ${poi.name}`}>
+              {poi.themes.map((theme) => (
+                <li key={theme.theme_id} className="space-y-2 rounded-lg border border-stone-200 p-4">
+                  <h4 className="font-medium text-stone-900">
+                    <span className="mr-2 tabular-nums text-stone-500">{theme.rank}.</span>
+                    {theme.title}
+                  </h4>
+                  <SpreadBody stats={theme} personas={personas} onInspect={onInspect} />
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function Homogeneity({ value }: { value: ReportHomogeneity }) {
+  const mean = (x: number | null) => (x === null ? 'too few to compare' : x.toFixed(2));
+  return (
+    <div className="space-y-1">
+      <p>
+        Posts {mean(value.posts)} ({count(value.post_count, 'post')}), persona backgrounds {mean(value.narratives)}. Mean pairwise TF-IDF cosine, 0 to 1; a warning at {value.threshold.toFixed(2)}.
+      </p>
+      {value.warning && <p className="font-medium text-amber-800">{value.warning}</p>}
+    </div>
+  );
+}
+
 const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
 const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
 
@@ -468,6 +614,7 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
     ...(methods.signal_thresholds === undefined ? [] : [['Signal thresholds', methods.signal_thresholds === null ? 'Not frozen in this run' : (
       <ul>{Object.entries(methods.signal_thresholds).map(([key, value]) => <li key={key}>{key.replaceAll('_', ' ')}: {JSON.stringify(value)}</li>)}</ul>
     )] as [string, ReactNode]]),
+    ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),
     ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];
   return (
@@ -551,6 +698,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {report.themes && <Themes themes={report.themes} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
+      {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
       <PersonaOutcomes report={details} onInspect={onInspect} />
       <Methods methods={report.methods} personas={report.personas} />
