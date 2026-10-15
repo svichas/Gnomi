@@ -1,5 +1,7 @@
-import { runEpisode } from './agent/loop.ts';
+import { runEpisode, type EpisodeEnd } from './agent/loop.ts';
+import { surveyParts, surveySchema, surveySystemPrompt } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
+import { InvalidOutputError } from './llm/gateway.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
@@ -168,11 +170,48 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       paused.set(persona_id, () => end('resumed'));
     });
 
+  // One survey per persona and POI once its episode has ended (tech.md §8.2), admitted like a step so a run-wide stop or
+  // the cost cap prevents it. The navigator plays the persona, so it answers the persona's survey too.
+  const survey = async (persona: Persona, end: EpisodeEnd) => {
+    if (end === 'blocked' || end === 'stopped' || !beginStep()) return;
+    try {
+      const own = store.events(run_id, { types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.persona_id === persona.id);
+      const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
+      const { object } = await budgetedLlm.call({
+        role: 'navigator',
+        model: settings.routing.navigator,
+        run_id,
+        persona_id: persona.id,
+        round: 1,
+        purpose: 'survey',
+        system: surveySystemPrompt(persona, project, segmentOf(persona, project)),
+        user: surveyParts({
+          persona,
+          end,
+          detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
+          steps: own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output').length,
+          frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
+        }),
+        schema: surveySchema,
+        signal: hard.signal,
+      });
+      // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
+      if (hard.signal.aborted) return;
+      const { sentiment, confidence, likes, frictions, would_continue, reason } = object;
+      record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, would_continue, reason } });
+    } catch (err) {
+      // Two invalid answers leave the persona without a survey (tech.md §10.6); any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !hard.signal.aborted) throw err;
+    } finally {
+      endStep();
+    }
+  };
+
   const episode = async (persona: Persona) => {
     const role = roleOf(persona, project);
     const session = role ? (config.sessions.find((s) => s.role === role) ?? null) : null;
     if (role && !session) throw new Error(`No login for the "${role}" role was verified before the run.`);
-    await runEpisode({
+    const end = await runEpisode({
       config,
       persona,
       segment: segmentOf(persona, project),
@@ -187,6 +226,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       tripwire: tripwire(persona.id),
       waitForResume: waitForResume(persona.id),
     });
+    await survey(persona, end);
   };
 
   // At most `concurrency` personas in flight, each with its own page; a paused persona keeps its slot and its page.

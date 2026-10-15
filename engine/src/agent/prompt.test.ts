@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
-import { stepSchema, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { z } from 'zod';
+import { stepSchema, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 
 const project: ProjectConfig = {
@@ -185,4 +186,46 @@ test('disabled fields and prompt-private attributes are absent from both profile
   assert.doesNotMatch(prompt, /PRIVATE_|screen reader|uses products like this|240-person|pronouns:/);
   assert.match(prompt, /in their own voice/);
   assert.match(prompt, /region: EMEA/);
+});
+
+test('the survey schema takes bounded answers and rejects malformed or out-of-range ones', () => {
+  const answer = { frictions: ['The save button is hidden'], likes: [], sentiment: -1, confidence: 0.6, would_continue: false, reason: 'Too much hunting for buttons.' };
+  assert.deepEqual(surveySchema.parse(answer), answer);
+  assert.deepEqual(surveySchema.parse({ ...answer, reason: '  Padded.  ' }).reason, 'Padded.');
+  for (const change of [
+    { sentiment: 3 }, { sentiment: -0.5 }, { confidence: -0.1 }, { confidence: 1.5 }, { would_continue: 'yes' }, { reason: ' ' }, { reason: 'x'.repeat(501) },
+    { likes: Array(6).fill('Fine') }, { frictions: Array(6).fill('Slow') }, { frictions: ['x'.repeat(501)] }, { likes: [''] }, { thought: 'extra' },
+  ]) assert.equal(surveySchema.safeParse({ ...answer, ...change }).success, false, JSON.stringify(change));
+  const { reason: _, ...missing } = answer;
+  assert.equal(surveySchema.safeParse(missing).success, false);
+  const provider = z.toJSONSchema(surveySchema, { io: 'input', target: 'draft-7' });
+  assert.deepEqual(provider.required, ['frictions', 'likes', 'sentiment', 'confidence', 'would_continue', 'reason'], 'what would make the persona stop comes first');
+  assert.equal(provider.additionalProperties, false);
+});
+
+test('the survey prompt keeps the persona, goal and first language, and sums up the episode', () => {
+  const german: Persona = { ...BUILTIN_PERSONA, languages: ['de-DE', 'en'] };
+  const segment: Segment = { id: 'seg-1', name: 'Recruiters', description: '', share: 100, role: null, usage_frequency: 'weekly', typical_goals: [], mobile_share: 0, patience: [3, 3], tech_skill: [3, 3], account_state: 'empty', entry: 'direct', goal_override: 'Invite a colleague' };
+  const system = surveySystemPrompt(german, project, segment);
+  assert.ok(system.startsWith('This is Priya Natarajan. Priya has just used Gym ATS'));
+  assert.match(system, /Priya's task: "Invite a colleague"/);
+  assert.match(system, /account: new and empty/);
+  assert.match(system, /every text in her own voice and in German \(Germany\) \(de-DE\)/);
+  assert.ok(system.indexOf('- frictions:') < system.indexOf('- likes:'));
+  const user = textOf(surveyParts({ persona: german, end: 'abandoned', detail: 'Too slow', steps: 4, frictions: ['No save button', 'Lost my draft'] }));
+  assert.match(user, /^The session is over after 4 steps: Priya gave up \("Too slow"\)\./);
+  assert.match(user, /- "No save button"\n- "Lost my draft"/);
+  assert.match(textOf(surveyParts({ persona: german, end: 'budget_exceeded', detail: null, steps: 1, frictions: [] })), /after 1 step: Priya ran out of patience before finishing\.\nPriya reported no frictions/);
+  for (const text of [system, user]) {
+    assert.doesNotMatch(text, /\byou are\b/i);
+    assert.doesNotMatch(text, /assistant|helpful/i);
+  }
+});
+
+test('the survey prompt shows only what the profile schema lets into prompts', () => {
+  const persona_schema = getPersonaSchema();
+  for (const id of ['pronouns', 'employer']) persona_schema.attributes.find((a) => a.id === id)!.use_in_prompt = false;
+  const system = surveySystemPrompt({ ...BUILTIN_PERSONA, employer: 'PRIVATE_EMPLOYER' }, { ...project, persona_schema }, null);
+  assert.doesNotMatch(system, /PRIVATE_|pronouns:/);
+  assert.match(system, /in their own voice/);
 });

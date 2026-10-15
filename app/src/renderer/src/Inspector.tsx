@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
+import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
 import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
 import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
@@ -42,6 +42,7 @@ export function Inspector(props: { runId: string; persona: Persona; schema?: Per
   const state = ended && (logged === 'active' || logged === 'waiting') ? 'unfinished' : logged;
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
+  const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
   const highlighted = evidenceSeq ?? focusSeq;
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
@@ -96,6 +97,24 @@ export function Inspector(props: { runId: string; persona: Persona; schema?: Per
                 return <button type="button" key={seq} className="text-indigo-700 underline" onClick={() => { setEvidenceSeq(seq); evidence.current.get(seq)?.scrollIntoView({ block: 'center' }); }}>View source step {step.payload.step_no}</button>;
               })}
             </div>
+          </div>)}
+        </section>
+
+        <section aria-label="Survey" className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">End-of-episode survey</h3>
+          {surveys.length === 0 && <p className="text-sm text-stone-500">No survey yet. A persona answers one when its episode ends; older runs have none.</p>}
+          {surveys.map(({ seq, payload: survey }) => <div key={seq} className="space-y-3 rounded-lg border border-stone-200 px-4 py-3 text-sm">
+            <h4 className="font-medium text-stone-900">{poi?.id === survey.poi_id ? poi.name : survey.poi_id}</h4>
+            <dl className="grid grid-cols-3 gap-3">
+              <div><dt className="text-xs text-stone-500">Would keep using it</dt><dd>{survey.would_continue ? 'Yes' : 'No'}</dd></div>
+              <div><dt className="text-xs text-stone-500">Sentiment</dt><dd>{survey.sentiment > 0 ? '+' : ''}{survey.sentiment} of −2 to +2</dd></div>
+              <div><dt className="text-xs text-stone-500">Self-reported confidence</dt><dd>{Math.round(survey.confidence * 100)}%</dd></div>
+            </dl>
+            <p className="italic text-stone-600">&ldquo;{survey.reason}&rdquo;</p>
+            {([['Frictions', survey.frictions], ['Likes', survey.likes]] as const).map(([label, items]) => <div key={label}>
+              <h5 className="text-xs font-medium text-stone-500">{label}</h5>
+              {items.length ? <ul className="list-disc space-y-1 pl-4">{items.map((item, i) => <li key={i} className="break-words">{item}</li>)}</ul> : <p className="text-stone-500">None reported</p>}
+            </div>)}
           </div>)}
         </section>
 

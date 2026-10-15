@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { startGym } from '../../gym/server.ts';
 import { launchBrowserPool } from './browser/pool.ts';
-import { createScriptedGateway } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_SURVEY } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -51,6 +51,7 @@ test('a German persona reaches the Gym with her locale, languages and Berlin tim
   let snapshot = '';
   const llm = createScriptedGateway({
     navigator: (request) => {
+      if (request.purpose === 'survey') return DEMO_SURVEY;
       snapshot = request.user.map((part) => part.type === 'text' ? part.text : '').join('\n');
       return { thought, feeling: 1, action: { type: 'done', ref: null, text: 'Sprache und Zeitzone geprüft.' }, friction: null };
     },
@@ -76,7 +77,7 @@ test('a German persona reaches the Gym with her locale, languages and Berlin tim
   assert.equal(step.payload.thought, thought);
   assert.deepEqual(live.find((event) => event.type === 'persona.step'), step, 'the activity stream receives the persisted thought unchanged');
   const transcripts = store.transcripts(config.run_id);
-  assert.equal(transcripts.length, 1);
+  assert.equal(transcripts.length, 2, 'the step and the survey');
   assert.ok(transcripts[0].response_json.includes(thought));
   assert.equal(report.cost_usd, 0, 'the validation uses a scripted model');
 });
