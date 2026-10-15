@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { DEFECT_IDS, GYM_ACCOUNTS, startGym } from "./server.ts";
+import { DEFECT_IDS, GYM_ACCOUNTS, GYM_V1_DEFECT_IDS, startGym } from "./server.ts";
 
 const submitLabel = (html: string) => html.match(/<button[^>]*>([^<]*)<\/button>/)?.[1];
 const departmentLabel = (html: string) => html.match(/<label for="department">([^<]*)<\/label>/)?.[1];
@@ -15,8 +15,8 @@ async function request(url: string, path: string, init?: RequestInit) {
 const postJob = (url: string, fields: Record<string, string>) =>
   request(url, "/jobs", { method: "POST", body: new URLSearchParams(fields) });
 
-async function withGym(defects: string, run: (url: string) => Promise<void>) {
-  const gym = await startGym({ port: 0, defects });
+async function withGym(defects: string, run: (url: string) => Promise<void>, opts: Parameters<typeof startGym>[0] = {}) {
+  const gym = await startGym({ port: 0, defects, ...opts });
   try {
     await run(gym.url);
   } finally {
@@ -134,6 +134,32 @@ describe("Gym ATS", () => {
     const toggles = [...yaml.matchAll(/^ {2}toggle: (\S+)$/gm)].map((m) => m[1]);
     assert.deepEqual(toggles, DEFECT_IDS);
   });
+
+  it("defects.yaml catalogues all 25 defects in the evaluation-plan format, five of Gym v2's visual-only", async () => {
+    const yaml = await readFile(new URL("./defects.yaml", import.meta.url), "utf8");
+    const entries = yaml.split(/^(?=- id: )/m).filter(Boolean);
+    const field = (entry: string, name: string) => entry.match(new RegExp(`^ {2}${name}: (.*?)(?: +#.*)?$`, "m"))?.[1] ?? "";
+    assert.equal(entries.length, 25);
+    for (const entry of entries) {
+      const id = entry.match(/^- id: (\S+)$/m)?.[1] ?? "";
+      assert.equal(field(entry, "toggle"), id);
+      assert.match(field(entry, "title"), /\S/, id);
+      assert.match(field(entry, "type"), /^(flow|label|affordance|error-handling|performance|visual|content)$/, id);
+      assert.match(field(entry, "severity"), /^(low|medium|high)$/, id);
+      assert.match(field(entry, "pages"), /^\[.+\]$/, id);
+      assert.match(field(entry, "affects"), /^\[(recruiter|hiring_manager|admin)(, (recruiter|hiring_manager|admin))*\]$/, id);
+      assert.match(field(entry, "visual_only"), /^(true|false)$/, id);
+    }
+    const v2 = entries.filter((entry) => !GYM_V1_DEFECT_IDS.includes(entry.match(/^- id: (\S+)$/m)?.[1] ?? ""));
+    assert.equal(v2.filter((entry) => field(entry, "visual_only") === "true").length, 5);
+  });
+
+  it("v1 switches on D01 to D12, the Gym v1 set", () =>
+    withGym("v1", async (url) => {
+      assert.deepEqual(GYM_V1_DEFECT_IDS, DEFECT_IDS.slice(0, 12));
+      assert.equal(submitLabel((await request(url, "/jobs/new")).body), "Save draft"); // D01
+      assert.match((await request(url, "/settings/approvals")).body, /Disable approval bypass/); // D12
+    }));
 });
 
 describe("Gym ATS options", () => {
@@ -495,4 +521,60 @@ describe("Gym ATS options", () => {
       assert.match((await request(url, "/settings/approvals")).body, /Disable approval bypass/);
     });
   });
+});
+
+describe("Gym v2 defects", () => {
+  const post = (url: string, path: string, fields: Record<string, string>) =>
+    request(url, path, { method: "POST", body: new URLSearchParams(fields) });
+  // Each probe answers on a fresh Gym whether its defect shows.
+  const probes: Record<string, (url: string) => Promise<boolean>> = {
+    D13: async (url) => {
+      await post(url, "/settings/users", { email: "lead@gym.test", role: "hiring_manager" });
+      return (await request(url, "/settings/users")).body.includes("lead@gym.test</td><td>Recruiter</td>");
+    },
+    D14: async (url) => (await post(url, "/reviews/1", { feedback: "He's strong on systems design." })).status === 500,
+    D15: async (url) => {
+      const start = Date.now();
+      await post(url, "/reviews/1", { decision: "advance" });
+      return Date.now() - start >= 290;
+    },
+    D16: async (url) => (await request(url, "/settings")).body.includes('<a href="/settings/users">Seats</a>'),
+    D17: async (url) => (await request(url, "/")).body.includes('Live jobs</p><p class="stat-value">3</p>'),
+    D18: async (url) => (await request(url, "/reviews")).body.includes('<a href="/reviews/2">Mateo Alvarez</a>'),
+    D19: async (url) => !(await postJob(url, { title: "", department: "Design", type: "Contract", description: "Build pipelines." })).body.includes("Build pipelines."),
+    D20: async (url) => {
+      await post(url, "/reviews/1", { decision: "reject" });
+      return (await request(url, "/reviews")).body.includes("Mateo Alvarez");
+    },
+    D21: async (url) => (await request(url, "/jobs")).body.includes('<a class="btn primary reveal" href="/jobs/new" aria-label="Create job">+</a>'),
+    D22: async (url) => (await request(url, "/jobs")).body.includes('<span class="sr-only">Live</span>'),
+    D23: async (url) => /<button[^>]*cursor: not-allowed">Send feedback<\/button>/.test((await request(url, "/reviews/1")).body),
+    D24: async (url) => /<button[^>]*#b8c0f0">Send invitation<\/button>/.test((await request(url, "/settings/users")).body),
+    D25: async (url) => (await request(url, "/settings/approvals")).body.includes('<p class="tip" aria-hidden="true"'),
+  };
+
+  it("has a probe for each defect Gym v2 adds", () => {
+    assert.deepEqual(Object.keys(probes), DEFECT_IDS.filter((id) => !GYM_V1_DEFECT_IDS.includes(id)));
+  });
+
+  for (const [id, probe] of Object.entries(probes)) {
+    it(`${id}: shows alone and in "all", never in "v1" or the "none" control`, async () => {
+      for (const [defects, shows] of [[id, true], ["all", true], ["v1", false], ["none", false]] as const) {
+        await withGym(defects, async (url) => assert.equal(await probe(url), shows, defects), { decisionDelayMs: 300 });
+      }
+    });
+  }
+
+  it("D14 off: feedback with an apostrophe is sent", () =>
+    withGym("none", async (url) => {
+      assert.match((await post(url, "/reviews/1", { feedback: "He's strong on systems design." })).body, /Feedback sent/);
+    }));
+
+  it("D21 to D25 keep their accessible names, so only a screenshot shows them", () =>
+    withGym("D21,D22,D23,D24,D25", async (url) => {
+      assert.match((await request(url, "/jobs")).body, /<span class="sr-only">Draft<\/span>/);
+      assert.match((await request(url, "/reviews/1")).body, /<button class="btn primary" type="submit"[^>]*>Send feedback<\/button>/);
+      assert.doesNotMatch((await request(url, "/reviews/1")).body, /disabled/);
+      assert.match((await request(url, "/settings/approvals")).body, /<button class="btn primary" type="submit">Save<\/button>/);
+    }));
 });
