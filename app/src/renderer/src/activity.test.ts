@@ -134,6 +134,32 @@ test('merge ignores events it already has and keeps them in order', () => {
   assert.deepEqual(merge([], [resumed(1)]).map((e) => e.seq), [1]);
 });
 
+test('detected signals read as sentences and have their own category', () => {
+  const base = { step_no: 3, url: 'http://gym.test/jobs/new', ref: 'e7' };
+  const signals = [
+    event(1, 'signal.failed_action', { ...base, action: 'click', error: 'no_effect' }),
+    event(2, 'signal.failed_action', { ...base, action: 'type', error: 'not_editable' }),
+    event(3, 'signal.loop', { ...base, snapshot_hash: 'h', visits: 3 }),
+    event(4, 'signal.backtrack', { ...base, kind: 'repeated_back' }),
+    event(5, 'signal.error', { ...base, kind: 'http', status: 404, message: 'GET http://gym.test/job' }),
+    event(6, 'signal.validation_error', { ...base, message: 'Enter a job title' }),
+    event(7, 'signal.small_target', { ...base, box: [0, 0, 35.4, 23] }),
+  ];
+  assert.deepEqual(
+    toRows(signals).reverse().map((row) => [row.label, row.title, row.detail]),
+    [
+      ['Step 3', 'Detected: the click changed nothing', base.url],
+      ['Step 3', 'Detected: the type failed (field cannot be typed into)', base.url],
+      ['Step 3', 'Detected: the same page 3 times in a few steps', base.url],
+      ['Step 3', 'Detected: went back again and again', base.url],
+      ['Step 3', 'Detected: the site answered HTTP 404', 'GET http://gym.test/job'],
+      ['Step 3', 'Detected: an error message appeared after submitting', 'Enter a job title'],
+      ['Step 3', 'Detected: tapped a small target, 35×23 px', base.url],
+    ],
+  );
+  assert.equal(filterEvents([...signals, blocked(8)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
+});
+
 test('a change of pace is a row of its own', () => {
   const [row] = toRows([event(1, 'run.concurrency_changed', { concurrency: 6, reason: 'The provider rate-limited us' }, null)]);
   assert.equal(row.title, 'Now running 6 personas at a time');

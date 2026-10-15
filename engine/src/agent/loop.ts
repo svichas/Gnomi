@@ -1,6 +1,7 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
+import { DEFAULT_SIGNALS, detectSignals, isSubmit, type Step } from '../signals/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
@@ -50,6 +51,8 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   const system = systemPrompt(persona, config.project, segment, step_budget);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
+  const history: Step[] = []; // every recorded step, for the signal detectors
+  const thresholds = config.signals ?? DEFAULT_SIGNALS;
   let opinion: Opinion | null = null;
   let failKey = '';
   let failStreak = 0;
@@ -141,6 +144,11 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
       const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      // Objective signals right after their step (tech.md §8.1); a submit needs one more look to see what it made appear.
+      const step: Step = { step_no, action, target, result, snapshot_hash: snapshot.hash };
+      const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
+      for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds })) emit(s.type, s.payload);
+      history.push(step);
       if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
         const after = structuredClone(output.opinion);
         emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recordedStep.seq], post_ids: [] } });

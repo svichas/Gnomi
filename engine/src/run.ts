@@ -3,6 +3,7 @@ import { personaEnvironment } from './audience/locations.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
+import { DEFAULT_SIGNALS } from './signals/index.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
 import type { EventPayloads, GnomiEvent, Persona, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo } from './types.ts';
 
@@ -57,6 +58,7 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     reset: opts.reset,
     pause_timeout_ms: 10 * 60_000,
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
+    signals: { ...DEFAULT_SIGNALS },
   };
 }
 

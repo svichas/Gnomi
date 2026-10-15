@@ -182,6 +182,17 @@ export interface RunConfig {
   reset: boolean; // POST the POI's reset hook before the run
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
+  signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
+}
+
+/** Objective-signal thresholds (tech.md §8.1), frozen per run so a report can cite what was detected. */
+export interface SignalThresholds {
+  loop_visits: number; // the same page state seen this many times…
+  loop_window: number; // …within this many steps is a loop
+  back_count: number; // this many `back` actions…
+  back_window: number; // …within this many steps is a backtrack
+  revisit_window: number; // so is returning to a page acted on in this many previous steps
+  small_target_px: number; // a mobile tap target narrower or shorter than this, in CSS pixels
 }
 
 export type RunStatus = 'running' | 'finished' | 'stopped' | 'interrupted';

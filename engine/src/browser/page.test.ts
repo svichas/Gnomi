@@ -34,6 +34,9 @@ const pages: Record<string, string> = {
   '/next': `<!doctype html><html><head>${head}<title>Next page</title></head><body><h1>Next page</h1><a href="/">Home</a></body></html>`,
   '/long': `<!doctype html><html><head>${head}<title>Long page</title></head><body><main><h1>Long page</h1>
 <p>${'Lorem ipsum dolor sit amet. '.repeat(150)}</p><div style="height:1500px"></div><ul>${items}</ul><div style="height:3000px"></div><button>Bottom button</button></main></body></html>`,
+  '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
+<button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
+<a href="/status/404">Broken link</a></body></html>`,
 };
 
 let pool: BrowserPool;
@@ -48,6 +51,9 @@ before(async () => {
       // Two inputs whose values come from the query, to compare screenshots of different values.
       const { password = '', text = '' } = Object.fromEntries(url.searchParams);
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
+    } else if (url.pathname.startsWith('/status/')) {
+      res.statusCode = Number(url.pathname.slice('/status/'.length));
+      res.end('<h1>Failed</h1>');
     } else {
       res.end(pages[url.pathname] ?? '<h1>Not found</h1>');
     }
@@ -308,4 +314,21 @@ test('a mobile page is laid out at the phone width', async (t) => {
   const { text } = await page.snapshot();
   assert.match(text, /navigation "Main" \[ref=\w+\] \[box=\d+,\d+,3\d\d,\d+\]/);
   assert.equal((await act(page, 'click', refOf(text, /button "Save" \[ref=(\w+)\]/))).dom_changed, true);
+});
+
+test('errors() drains console errors, uncaught exceptions and 4xx/5xx on allowed hosts, each once, never what containment blocked', async (t) => {
+  const page = await open(t, '/errors');
+  assert.deepEqual(page.errors(), []);
+  await act(page, 'click', refOf((await page.snapshot()).text, /button "Break" \[ref=(\w+)\]/));
+  assert.deepEqual(
+    page.errors().sort((a, b) => a.kind.localeCompare(b.kind)),
+    [
+      { kind: 'console', status: null, message: 'boom from the app' },
+      { kind: 'exception', status: null, message: 'kaboom' },
+      { kind: 'http', status: 500, message: `GET ${origin}/status/500` },
+    ],
+  );
+  assert.deepEqual(page.errors(), [], 'drained');
+  await act(page, 'click', refOf((await page.snapshot()).text, /link "Broken link" \[ref=(\w+)\]/));
+  assert.deepEqual(page.errors(), [{ kind: 'http', status: 404, message: `GET ${origin}/status/404` }], 'a broken link, without Chromium\'s duplicate console line');
 });

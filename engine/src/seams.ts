@@ -117,6 +117,8 @@ export interface BrowserPool {
   close(): Promise<void>;
 }
 
+export type PageError = Pick<EventPayloads['signal.error'], 'kind' | 'status' | 'message'>;
+
 export interface PageDriver {
   goto(url: string): Promise<void>;
   snapshot(): Promise<PageSnapshot>;
@@ -126,6 +128,8 @@ export interface PageDriver {
   act(action: Action): Promise<ActionOutcome>;
   /** Login page, bot challenge and live-payment-key checks on the current page, run after every step. */
   inspect(): Promise<PageFlags>;
+  /** Console errors, uncaught exceptions and 4xx/5xx document/XHR/fetch responses from allowed hosts since the last call. */
+  errors(): PageError[];
   close(): Promise<void>;
 }
 
