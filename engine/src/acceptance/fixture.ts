@@ -2,10 +2,11 @@ import { apportion, personaId, sampleTraits, slotSeed } from '../audience/sample
 import { sampleProfile } from '../profile/sample.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, Persona, ProjectConfig, Segment } from '../types.ts';
+import type { Audience, InjectedPost, Persona, ProjectConfig, Segment } from '../types.ts';
 
 export const FIXTURE_VERSION = 1;
 export const SEED = 20261015;
+export const M4_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // run seeds: the population stays frozen, the follow graph varies
 export interface Fixture { project: ProjectConfig; personas: Persona[] }
 const FIRST = ['Alex', 'Robin', 'Sam', 'Jordan', 'Kai', 'Noor', 'Rowan', 'Ari', 'Quinn', 'Sasha'];
 const LAST = ['Meyer', 'Wilson', 'Fischer', 'Reed', 'Schneider'];
@@ -64,4 +65,12 @@ export function germanProbe(base: Fixture): Fixture {
     poi: { ...base.project.poi, id: 'poi-locale', name: 'Gym locale echo', start_url: new URL('/locale', base.project.poi.start_url).href },
     settings: { ...structuredClone(base.project.settings), concurrency: 1, wall_clock_budget_min: 5 },
   } };
+}
+
+/** The M4 harness's seeded complaint (Gym D04), posted for the fixture's first recruiter before round 1's social phase. */
+export function complaint(base: Fixture): InjectedPost {
+  return {
+    round: 1, persona_id: base.personas[0].id, poi_id: base.project.poi.id,
+    text: 'Assigning a hiring manager who has no account yet threw away my whole job draft. Has anyone else lost a job post this way?',
+  };
 }
