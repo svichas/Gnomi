@@ -27,11 +27,11 @@ export async function launchBrowserPool(opts: { headless?: boolean } = {}): Prom
   // The placeholder proxy tells Playwright every context brings its own (containment), as the docs ask.
   const browser = await launch(opts.headless ?? true, { server: 'http://per-context' });
   return {
-    async newPage({ device, allowedHosts, blockedDomains, storageState, onBlockedRequest }) {
+    async newPage({ device, locale, timezone, languages, allowedHosts, blockedDomains, storageState, onBlockedRequest }) {
       const containment = await startContainment(allowedHosts, blockedDomains, onBlockedRequest);
       let context: BrowserContext | undefined;
       try {
-        context = await newContext(browser, device, storageState, containment.proxy);
+        context = await newContext(browser, device, storageState, containment.proxy, { locale, timezone, languages });
         await containment.install(context);
         return await newPageDriver(context, containment.allows);
       } catch (e) {

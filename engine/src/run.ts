@@ -1,4 +1,5 @@
 import { runEpisode } from './agent/loop.ts';
+import { personaEnvironment } from './audience/locations.ts';
 import { buildReport } from './report/build.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
@@ -117,6 +118,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (role && !saved) throw new Error(`The recorded "${role}" login is missing. Record it again, then start a new run.`);
     return browsers.newPage({
       device: persona.device,
+      ...personaEnvironment(persona),
       allowedHosts: allowedHosts(poi),
       blockedDomains: poi.production_domains,
       storageState: saved?.state ?? null,

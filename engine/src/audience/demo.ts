@@ -163,6 +163,7 @@ function candidates(t: Traits, taken: string[], seed: number): { candidates: Can
       industry,
       background:
         `I am ${/^[aeiou]/i.test(title) ? 'an' : 'a'} ${title.toLowerCase()} at a ${t.company_size.toLocaleString('en-US')}-person ${industry} company, ${one(ORIGINS)}. ` +
+        (t.employer ? `My employer is ${t.employer}. ` : '') + (t.city ? `I live in ${t.city}. ` : '') +
         `${one(WEEKS)} ${one(TOOLS)} ${one(DEVICES[t.device])} ${skill}${ACCESS[t.accessibility_needs]}${lang} ${one(PET_HATES)}${patience} ` +
         '(Scripted demo persona: no model wrote this.)',
       context_of_use: one(CONTEXTS[t.device]),

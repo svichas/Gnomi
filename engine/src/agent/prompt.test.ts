@@ -162,3 +162,15 @@ test('pronouns, background, a second language and the segment shape the card wit
   assert.match(he, /pronouns: he\/him/);
   assert.match(he, /in his own voice/);
 });
+
+test('the prompt keeps the sampled country and employer and explicitly asks for thoughts in the primary language', () => {
+  const german: Persona = { ...BUILTIN_PERSONA, country: 'DE', city: 'Berlin', timezone: 'Europe/Berlin', languages: ['de-DE', 'en'], language: 'en', employer: 'Northwind' };
+  const system = systemPrompt(german, project, null, 30);
+  assert.match(system, /country: Germany \(DE\)/);
+  assert.match(system, /city: Berlin/);
+  assert.match(system, /timezone: Europe\/Berlin/);
+  assert.match(system, /employer: Northwind/);
+  assert.match(system, /languages: de-DE, en/);
+  assert.match(system, /thought:.*in German \(Germany\) \(de-DE\)/);
+  assert.match(systemPrompt({ ...BUILTIN_PERSONA, language: 'el' }, project, null, 30), /thought:.*in Greek \(el\)/);
+});

@@ -80,6 +80,9 @@ export interface SessionStore {
 
 export interface PageOptions {
   device: Device;
+  locale?: string; // browser locale; falls back to en-US outside a persona run
+  timezone?: string; // IANA timezone; UTC when unspecified
+  languages?: string[]; // ordered browser and Accept-Language preferences
   /** Hostnames that requests and `navigate` may reach, start_url's host first; every other request is aborted. */
   allowedHosts: string[];
   /** Never reachable, subdomains included, even when listed in allowedHosts. */

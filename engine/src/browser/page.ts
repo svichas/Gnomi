@@ -5,6 +5,7 @@ import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playw
 import type { PageDriver, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
 import type { Containment, HostRule } from './contain.ts';
+import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { inspect } from './inspect.ts';
 import { pruneSnapshot, snapshotTargets } from './prune.ts';
 
@@ -33,13 +34,29 @@ function countMutations() {
 }
 
 /** An isolated context for a persona or a session check: desktop or phone, service workers blocked, behind its containment proxy, optionally logged in. */
-export function newContext(browser: Browser, device: Device, storageState: StorageState | null, proxy: Containment['proxy']): Promise<BrowserContext> {
-  return browser.newContext({
+export async function newContext(browser: Browser, device: Device, storageState: StorageState | null, proxy: Containment['proxy'], environment: Partial<LocaleEnvironment> = {}): Promise<BrowserContext> {
+  const { locale, timezone, languages } = personaEnvironment({ language: environment.locale ?? 'en-US', timezone: environment.timezone, languages: environment.languages });
+  const context = await browser.newContext({
     ...(device === 'mobile' ? devices['iPhone 15'] : { viewport: { width: 1280, height: 800 } }),
+    locale,
+    timezoneId: timezone,
+    extraHTTPHeaders: { 'Accept-Language': languages.map((tag, i) => i === 0 ? tag : `${tag};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`).join(',') },
     serviceWorkers: 'block', // they would otherwise bypass request routing (tech.md §9.3)
     storageState: (storageState ?? undefined) as BrowserContextOptions['storageState'],
     proxy,
   });
+  try {
+    // Playwright's locale controls Intl and navigator.language; its public API has no language-list option.
+    // Install the same ordered preferences before application scripts, including in new frames.
+    await context.addInitScript((tags) => {
+      const preferences = Object.freeze([...tags]);
+      Object.defineProperty(Navigator.prototype, 'languages', { configurable: true, get: () => preferences });
+    }, languages);
+    return context;
+  } catch (error) {
+    await context.close().catch(() => {});
+    throw error;
+  }
 }
 
 export async function openPage(context: BrowserContext): Promise<Page> {

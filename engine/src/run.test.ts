@@ -441,6 +441,21 @@ test('the wall-clock budget ends the run the same way', async () => {
   assert.ok(r.files.has('runs/r-0001/report.json'));
 });
 
+test('personas carry their effective locale into isolated browsers and episode events, with legacy fallbacks', async () => {
+  const personas = [
+    persona('german', { country: 'DE', city: 'Berlin', timezone: 'Europe/Berlin', languages: ['de-DE', 'en-GB'], language: 'de' }),
+    persona('legacy', { language: 'el' }),
+  ];
+  const r = begin([step('done', null, 'Done')], { personas });
+  await r.run.done;
+  const expected = [
+    { locale: 'de-DE', timezone: 'Europe/Berlin', languages: ['de-DE', 'en-GB'] },
+    { locale: 'el', timezone: 'UTC', languages: ['el'] },
+  ];
+  assert.deepEqual(r.pages.map(({ options: { locale, timezone, languages } }) => ({ locale, timezone, languages })), expected);
+  assert.deepEqual(of(r.events, 'persona.episode_started').map(({ payload: { locale, timezone, languages } }) => ({ locale, timezone, languages })), expected);
+});
+
 test('each persona gets her segment goal, context and device', async () => {
   const project_ = {
     audience: audience([

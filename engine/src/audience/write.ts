@@ -28,7 +28,7 @@ export const WRITER_SYSTEM = `Gnomi simulates the people who use a product, so a
 Write four different candidates for this person, each with a probability: how likely it is that a real person with exactly these traits, in this segment, is this candidate. The four probabilities sum to 1. Make the candidates genuinely different from each other (name, job, the employer's industry, history, situation, way of talking), and include realistic but less typical people, not only the most obvious one: a candidate with a low probability is welcome.
 
 Each candidate has:
-- name: a full name that fits the first language, the pronouns and where such a person plausibly lives, with the variety real names have; never a famous person or a placeholder.
+- name: a full name that fits the first language and the person's life, with the variety real names have; never a famous person or a placeholder. When a city and country are sampled, this person lives there.
 - job_title: a real title held by someone in this segment at this seniority.
 - industry: the employer's industry, specific ("regional freight forwarding", not "business").
 - background: 80 to 150 words in the first person, as the person would tell it to an interviewer: how they came to this job, what a normal week looks like, the tools they use today and what bothers them about them, and what they would not put up with. It follows from every trait: seniority, company size, tech skill, familiarity with this kind of product, device, motivation, and any accessibility need, described by how they work (zoom, a screen reader, the keyboard) rather than as a label.
@@ -77,6 +77,7 @@ export function writerUser(project: ProjectConfig, segment: Segment, traits: Tra
     '',
     `${TRAITS_LABEL}${JSON.stringify({ ...traits, segment_id: undefined })}`,
     `tech_skill, patience and motivation run from 1 (low) to 5 (high); language is their first language (${languageName(traits.language)}); company_size counts employees.`,
+    ...(traits.country || traits.employer ? ['Keep the sampled location and employer fixed wherever provided; the biography, context and voice must agree with them. Languages are ordered preferences, with the first language used for thoughts.'] : []),
     ...(taken ? ['', `${TAKEN_LABEL}${JSON.stringify(taken)}`] : []),
   ].join('\n');
 }

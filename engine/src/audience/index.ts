@@ -3,6 +3,7 @@ import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, 
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from './sample.ts';
 import { nameKey, writePersonas } from './write.ts';
+import { validateCountries } from './locations.ts';
 
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';
@@ -87,6 +88,7 @@ interface Slot {
 
 /** Each segment's slots: its share of persona_count (at least 3) plus the personas added by hand, in index order. */
 function layout(audience: Audience, population: Persona[]): { segment: Segment; slots: Slot[] }[] {
+  validateCountries(audience.countries);
   const count = audience.persona_count;
   if (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS) throw new Error(`persona_count must be a whole number from 1 to ${MAX_PERSONAS}`);
   const counts = apportion(audience.segments.map((s) => s.share), count, MIN_PER_SEGMENT);

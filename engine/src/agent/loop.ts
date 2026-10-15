@@ -1,4 +1,5 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
+import { personaEnvironment } from '../audience/locations.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
@@ -106,7 +107,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
 
   try {
     await page.goto(startUrl);
-    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl });
+    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona) });
     const first = await inspect(0, startUrl);
     if (first !== 'go') return first;
 

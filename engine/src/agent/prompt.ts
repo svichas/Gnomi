@@ -2,6 +2,7 @@
 // Third-person framing and a question ("what does Priya do next?") are the two measured levers against
 // sycophancy (§2.4); behaviour rules stay mild and trait-derived because directives overshoot into caricature.
 import { z } from 'zod';
+import { countryName, personaEnvironment } from '../audience/locations.ts';
 import { ACTION_TYPES } from '../types.ts';
 import type { Action, ActionResult, ActionTarget, ActionType, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import type { UserPart } from '../seams.ts';
@@ -107,13 +108,14 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
       ? `${p} is on a phone, using one hand, on a patchy connection.`
       : `${p} is on a computer with a mouse and a full-size screen.`;
   const access = ACCESSIBILITY[persona.accessibility_needs];
-  const english = persona.language.toLowerCase().split('-')[0] === 'en';
+  const environment = personaEnvironment(persona);
+  const english = environment.locale.toLowerCase().split('-')[0] === 'en';
   const rules = [
     `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}. In all, ${p} gives up after about ${stepBudget} actions, or sooner if annoyed.`,
     skill,
     device,
     familiarity,
-    ...(english ? [] : [`${p}'s first language is ${languageName(persona.language)}; English is a second language.`]),
+    ...(english ? [] : [`${p}'s first language is ${languageName(environment.locale)}; English is a second language.`]),
     ...(access ? [`${access(w)}.`] : []),
   ];
   const segmentContext = segment
@@ -133,8 +135,14 @@ identity:
   name: ${persona.name}
   pronouns: ${persona.pronouns}/${obj}
   job: ${persona.job_title} (${persona.seniority === 'mid' ? 'mid-level' : persona.seniority}) at a ${persona.company_size}-person ${persona.industry} company
-  language: ${persona.language}
-  background: ${persona.background}
+  language: ${environment.locale}
+${[
+  ...(persona.country ? [`  country: ${countryName(persona.country)} (${persona.country})`] : []),
+  ...(persona.city ? [`  city: ${persona.city}`] : []),
+  ...(persona.timezone ? [`  timezone: ${environment.timezone}`] : []),
+  ...(persona.languages ? [`  languages: ${environment.languages.join(', ')}`] : []),
+  ...(persona.employer ? [`  employer: ${persona.employer}`] : []),
+].map((line) => `${line}\n`).join('')}  background: ${persona.background}
 capability:
   tech skill: ${persona.tech_skill} of 5
   familiarity with this kind of product: ${persona.familiarity_with_category}
@@ -154,7 +162,7 @@ How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}
 
 Answer every turn with one JSON object:
-- thought: ${p} thinking aloud, in ${poss} own voice, in at most 40 words.
+- thought: ${p} thinking aloud, in ${poss} own voice, in ${languageName(environment.locale)} (${environment.locale}), in at most 40 words. Keep the thought in this language even when the page uses another language.
 - feeling: how ${p} feels right now, an integer from -2 (very frustrated) to 2 (very pleased); 0 is neutral.
 - action: what ${p} does next, as {type, ref, text}. ref is a [ref=…] value from the current page or null; text is null when unused.
 ${actionTypes(persona)

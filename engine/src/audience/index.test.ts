@@ -134,7 +134,7 @@ test('the first sync writes each persona once; an unchanged second sync makes no
   for (const p of first.personas) {
     const segment = audience.segments.find((s) => s.id === p.segment_id)!;
     const traits = sampleTraits(segment, audience, p.seed);
-    for (const k of TRAIT_KEYS) assert.equal(p[k], traits[k], `${p.id} ${k} is sampled, not written`);
+    for (const k of TRAIT_KEYS) assert.deepEqual(p[k], traits[k], `${p.id} ${k} is sampled, not written`);
   }
 
   const again = gateway();
@@ -150,6 +150,37 @@ test('the first sync writes each persona once; an unchanged second sync makes no
   assert.equal(reseeded.calls.length, 20, 'a new audience seed re-samples everyone');
   assert.deepEqual(ids(other.personas), ids(first.personas));
   assert.ok(other.personas.every((p, i) => p.seed !== first.personas[i].seed));
+});
+
+test('country and employer traits reach the writer, survive persistence, and sync without another model call', async () => {
+  const original = await proposed();
+  const audience: Audience = { ...original, countries: { DE: 100 }, segments: original.segments.map((s) => ({ ...s, employers: ['Northwind'] })) };
+  const { llm, calls } = gateway();
+  const first = await syncPersonas(audience, [], deps(llm));
+  assert.ok(first.personas.every((p) => p.country === 'DE' && p.city === 'Berlin' && p.timezone === 'Europe/Berlin' && p.language === 'de-DE' && p.employer === 'Northwind'));
+  assert.deepEqual(first.personas[0].languages, ['de-DE', 'en']);
+  assert.match(textOf(calls[0]), /"country":"DE"/);
+  assert.match(textOf(calls[0]), /"employer":"Northwind"/);
+  assert.match(textOf(calls[0]), /Keep the sampled location and employer/);
+  assert.match(first.personas[0].background, /Northwind/);
+  assert.match(first.personas[0].background, /Berlin/);
+
+  const second = gateway();
+  const synced = await syncPersonas(audience, structuredClone(first.personas), deps(second.llm));
+  assert.deepEqual(synced.personas, first.personas);
+  assert.equal(second.calls.length, 0, 'equal language arrays from disk do not force another write');
+
+  const changed = gateway();
+  const greek = await syncPersonas({ ...audience, countries: { GR: 100 } }, first.personas, deps(changed.llm));
+  assert.equal(changed.calls.length, first.personas.length);
+  assert.ok(greek.personas.every((p) => p.country === 'GR' && p.language === 'el-GR' && p.employer === 'Northwind'));
+});
+
+test('an invalid country distribution is rejected before the writer can spend even with no active segment', async () => {
+  const { llm, calls } = gateway();
+  const audience = { ...await proposed(), countries: { DE: 0 }, segments: [] };
+  await assert.rejects(syncPersonas(audience, [], deps(llm)), /country/i);
+  assert.equal(calls.length, 0);
 });
 
 test('changing one share rewrites only the slots it adds and drops the slots it removes', async () => {

@@ -21,6 +21,11 @@ export interface Persona {
   familiarity_with_category: 'low' | 'medium' | 'high';
   device: Device;
   language: string; // first language, BCP 47
+  country?: string; // ISO 3166-1 alpha-2; absent on personas created before country sampling
+  city?: string;
+  timezone?: string; // IANA timezone, e.g. Europe/Berlin
+  languages?: string[]; // ordered BCP 47 preferences, first is also the browser locale
+  employer?: string; // sampled from the segment's optional employer list
   accessibility_needs: AccessibilityNeed;
   context_of_use: string;
   background: string; // a short narrative of who this person is, written from the sampled traits
@@ -67,6 +72,7 @@ export interface Segment {
   account_state: 'empty' | 'populated';
   entry: 'direct' | 'email_link' | 'shared_link';
   goal_override: string | null; // replaces the project goal for this segment
+  employers?: string[]; // optional organisations to spread this segment's personas across
 }
 
 export interface Audience {
@@ -76,6 +82,7 @@ export interface Audience {
   company_size: [min: number, max: number]; // employees at the companies the product sells to
   // Population-wide distributions the user can see (idea.md §11, "Bias in personas"); each sums to 1.
   languages: Record<string, number>; // first language → share
+  countries?: Record<string, number>; // supported ISO country code → weight; replaces language-only sampling when set
   accessibility: Record<AccessibilityNeed, number>;
 }
 
@@ -203,7 +210,7 @@ export interface EventPayloads {
   'run.stopped': { reason: 'user' | 'cost_budget' | 'wall_clock' | 'tripwire' | 'error'; detail: string | null };
   'run.concurrency_changed': { concurrency: number; reason: string }; // e.g. backing off after a provider's rate limit
   'persona.created': { persona: Persona };
-  'persona.episode_started': { poi_id: string; device: Device; start_url: string };
+  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[] };
   'persona.step': {
     step_no: number;
     action: Action;
