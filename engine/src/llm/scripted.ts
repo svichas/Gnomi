@@ -89,15 +89,16 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction group the judge was shown, saying plainly that no model named it. */
+/** One theme per friction group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
 export const DEMO_JUDGE: Responder = (req) => {
-  const groups = (requestJson(req).groups ?? []) as { id: string }[];
+  const { groups = [], posts } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[] };
   return {
     themes: groups.map((group, i) => ({
       title: `Scripted demo theme ${i + 1}: no model named it`,
       description: `Scripted demo: no judge model ran, so this is friction group ${group.id} as the engine grouped it.`,
       group_ids: [group.id],
     })),
+    ...(posts ? { posts: groups.length > 0 ? posts.map((post) => ({ post_id: post.id, group_ids: [groups[0].id] })) : [] } : {}),
   };
 };
 

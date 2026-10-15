@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { LlmGateway, Recorder } from '../seams.ts';
-import type { GnomiEvent, RunConfig } from '../types.ts';
+import type { GnomiEvent, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
-import { authorThemes, frictionGroups, judgeGroups } from './themes.ts';
+import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
 // changes. Each answer is recorded as an event, so the report rebuilds from the log alone; a failed or missing answer
@@ -11,6 +11,10 @@ import { authorThemes, frictionGroups, judgeGroups } from './themes.ts';
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const judgeSchema = z.object({
   themes: z.array(z.object({ title: text(120), description: text(400), group_ids: z.array(z.string()).min(1) })),
+});
+/** In social runs the same call tags posts with groups (step 7), so the report can follow a problem through the feed. */
+export const judgePostsSchema = judgeSchema.extend({
+  posts: z.array(z.object({ post_id: z.string(), group_ids: z.array(z.string()) })),
 });
 export const authorSchema = z.object({
   suggestions: z.array(z.object({ theme_id: z.string(), change: text(300), solution: text(800) })),
@@ -25,6 +29,13 @@ Merge groups that describe the same underlying problem into one theme, and name 
 - group_ids: the ids of the groups in this theme.
 
 Use only the group ids you were given, and put each group in at most one theme. Do not invent frictions. These are simulated users: never claim that real users had the problem.`;
+
+export const JUDGE_POSTS = `
+
+The personas also posted on a shared feed. Each post has an id, the round it was written in and its text (posts may be a sample).
+Tag the posts that talk about a group's problem:
+- posts: one entry per such post, with its post_id and the group_ids of the problems it talks about. Leave out posts about none.
+A post that repeats a complaint its author never ran into still counts. Use only the post and group ids you were given.`;
 
 export const AUTHOR_SYSTEM = `You suggest design changes for potential usability frictions that simulated users (personas) ran into while trying a product.
 For each theme you get its title, description, trust, the pages and elements involved and up to three pieces of evidence.
@@ -51,20 +62,21 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
 
   const all = frictionGroups(events(), project.poi.id);
   for (const poi_id of new Set(all.map((g) => g.poi_id))) {
-    const groups = judgeGroups(all.filter((g) => g.poi_id === poi_id));
+    const { groups, posts } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id));
+    const social = posts.length > 0; // without posts the call is the M3 one
     try {
-      const { object } = await llm.call({
+      const { object } = await llm.call<{ themes: JudgeTheme[]; posts?: JudgePostTag[] }>({
         role: 'judge',
         model: routing.judge,
         run_id,
         persona_id: null,
         round: 1,
         purpose: 'report_themes',
-        system: JUDGE_SYSTEM,
-        user: [{ type: 'text', text: JSON.stringify({ product, groups }) }],
-        schema: judgeSchema,
+        system: social ? JUDGE_SYSTEM + JUDGE_POSTS : JUDGE_SYSTEM,
+        user: [{ type: 'text', text: JSON.stringify(social ? { product, groups, posts } : { product, groups }) }],
+        schema: social ? judgePostsSchema : judgeSchema,
       });
-      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes } });
+      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}) } });
     } catch {
       // No key, a provider error, two invalid answers or a stop: llm.call recorded any attempt, and the themes stay deterministic.
     }
