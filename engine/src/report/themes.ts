@@ -1,4 +1,4 @@
-import type { AuthorSuggestion, GnomiEvent, JudgeTheme, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
+import type { AuthorSuggestion, EventOf, GnomiEvent, JudgePostTag, JudgeTheme, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
 import { buildCandidates, groupCandidates, normaliseText, pagePattern, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
@@ -7,6 +7,9 @@ import { buildCandidates, groupCandidates, normaliseText, pagePattern, TRUST_WEI
 /** About 30k tokens of group summaries per judge call (tech.md §8.2); the author gets a little less. */
 export const JUDGE_TOKEN_CAP = 30_000;
 export const AUTHOR_TOKEN_CAP = 20_000;
+/** Of the judge's cap, at most this much goes to post summaries in social runs (step 7); the groups get the rest. */
+export const JUDGE_POST_CAP = 10_000;
+const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
 const TEXT_MAX = 600;
@@ -79,6 +82,55 @@ export function judgeGroups(groups: Group[], cap = JUDGE_TOKEN_CAP): GroupSummar
     sent.push(summary);
   }
   return sent;
+}
+
+export type Post = EventOf<'social.post'> & { persona_id: string };
+
+/** Posts about one POI, replies included, in seq order. */
+export const postsAbout = (events: GnomiEvent[], poi_id: string) =>
+  events.filter((e): e is Post => e.type === 'social.post' && e.persona_id !== null && e.payload.about_poi_id === poi_id);
+
+export interface PostSummary {
+  id: string;
+  round: number;
+  text: string;
+}
+
+/**
+ * What one judge call sees: post summaries up to their cap, then the groups in what is left. All posts when they fit,
+ * else an even stride over seq order so every round keeps some. Without posts the groups get the whole cap, as in M3.
+ */
+export function judgeInput(groups: Group[], posts: Post[], cap = JUDGE_TOKEN_CAP, postCap = JUDGE_POST_CAP) {
+  const all: PostSummary[] = posts.map((p) => ({ id: p.payload.post_id, round: p.round, text: clip(p.payload.text, POST_MAX) }));
+  const every = Math.max(1, Math.ceil(all.reduce((sum, p) => sum + tokens(p), 0) / postCap));
+  const sent: PostSummary[] = [];
+  let used = 0;
+  for (let i = 0; i < all.length; i += every) {
+    if (used + tokens(all[i]) > postCap) break;
+    used += tokens(all[i]);
+    sent.push(all[i]);
+  }
+  return { groups: judgeGroups(groups, cap - used), posts: sent };
+}
+
+/** Step 7's validation: a tag keeps a post the judge was shown and the themes holding its known group ids; the rest is reported. */
+export function tagPosts(themes: ReportTheme[], tags: JudgePostTag[] | undefined, shown: Set<string>): { tagged: Map<string, string[]>; unknown: string[] } {
+  const themeOf = new Map(themes.flatMap((t) => t.id.split('+').map((g) => [g, t.id] as const)));
+  const tagged = new Map<string, string[]>();
+  const unknown = new Set<string>();
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    if (!shown.has(tag?.post_id)) {
+      unknown.add(String(tag?.post_id));
+      continue;
+    }
+    for (const id of Array.isArray(tag.group_ids) ? tag.group_ids : []) {
+      const theme = themeOf.get(id);
+      const list = tagged.get(tag.post_id) ?? [];
+      if (!theme) unknown.add(String(id));
+      else if (!list.includes(theme)) tagged.set(tag.post_id, [...list, theme]);
+    }
+  }
+  return { tagged, unknown: [...unknown] };
 }
 
 const KIND_TITLE: Record<CandidateKind, string> = {
@@ -307,6 +359,7 @@ export function wentWell(events: GnomiEvent[]): ReportLike[] {
 
 export interface Analysis {
   themes: ReportTheme[];
+  tagged?: Map<string, string[]>; // post id → the ids of the themes the judge tagged it with; absent when it tagged none
   sentiment: ReportSentiment[];
   went_well: ReportLike[];
   limitations: string[];
@@ -319,15 +372,21 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const reach = reachOf(events, candidates, ctx.poi_id);
   const limitations: string[] = [];
   const themes: ReportTheme[] = [];
+  const tagged = new Map<string, string[]>();
 
   for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
     const own = groups.filter((g) => g.poi_id === poi_id);
     const judged = lastFor(events, 'report.themes', poi_id);
     const { drafts, unknown } = applyJudge(own, judged?.payload.themes ?? null);
-    if (!judged) limitations.push('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
-    else {
-      const sent = judgeGroups(own).length;
+    const talk = postsAbout(events, poi_id);
+    const input = judgeInput(own, talk);
+    if (!judged) {
+      limitations.push('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
+      if (talk.length > 0) limitations.push('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.');
+    } else {
+      const sent = input.groups.length;
       if (sent < own.length) limitations.push(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
+      if (input.posts.length < talk.length) limitations.push(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
       if (unknown.length > 0) limitations.push(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
     }
 
@@ -359,6 +418,12 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       .sort((a, b) => b.score - a.score || b.personas - a.personas || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
     ranked.forEach((t, i) => (t.rank = i + 1));
 
+    if (judged && talk.length > 0) {
+      const tags = tagPosts(ranked, judged.payload.posts, new Set(input.posts.map((p) => p.id)));
+      for (const [post_id, ids] of tags.tagged) tagged.set(post_id, ids);
+      if (tags.unknown.length > 0) limitations.push(`The judge tagged unknown post or group ids (${tags.unknown.join(', ')}); they were ignored.`);
+    }
+
     const suggested = lastFor(events, 'report.suggestions', poi_id);
     if (!suggested) limitations.push('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
     else {
@@ -374,5 +439,5 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {
     limitations.push('No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".');
   }
-  return { themes, sentiment, went_well: wentWell(events), limitations };
+  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events), limitations };
 }

@@ -1,5 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
+import type { InfluenceEdge } from './social/influence.ts';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -350,7 +351,7 @@ export interface EventPayloads {
   };
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
-  'report.themes': { poi_id: string; themes: JudgeTheme[] }; // the judge's semantic merge and naming of friction groups
+  'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
 }
@@ -359,6 +360,12 @@ export interface JudgeTheme {
   title: string;
   description: string;
   group_ids: string[]; // deterministic friction groups this theme merges
+}
+
+/** The judge's tag of one post about the POI with the friction groups it talks about (tech.md §8.2 step 7). */
+export interface JudgePostTag {
+  post_id: string;
+  group_ids: string[];
 }
 
 export interface AuthorSuggestion {
@@ -504,6 +511,7 @@ export interface Report {
   themes?: ReportTheme[];
   sentiment?: ReportSentiment[];
   went_well?: ReportLike[];
+  spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
   cost_usd: number;
   llm_calls: number;
   unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports
@@ -530,4 +538,43 @@ export interface ReportMethods {
   concurrency_changes: { concurrency: number; reason: string }[];
   signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
   limitations?: string[]; // what the report's analysis could not do, in plain words
+  homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
+}
+
+/** The homogeneity guard (tech.md §6.6): a swarm that writes with one voice is not simulating a community. */
+export interface ReportHomogeneity {
+  posts: number | null; // mean pairwise TF-IDF cosine of the posts the models wrote, 0–1; null under two posts
+  post_count: number;
+  narratives: number | null; // the same over persona backgrounds
+  threshold: number; // a mean at or above it sets the warning
+  warning: string | null;
+}
+
+/** A post shown in the spread section. */
+export interface ReportPost {
+  seq: number;
+  post_id: string;
+  persona_id: string;
+  persona_name: string;
+  segment_id: string | null;
+  round: number;
+  text: string;
+  injected: boolean; // put in the persona's name by the test harness, not written by a model
+}
+
+/** How talk about a POI, or one of its themes, travelled on the feed (tech.md §8.2 step 7, §6.6). */
+export interface SpreadStats {
+  posts: number; // posts about it, replies included
+  seeds: ReportPost[]; // the first posts about it: those of the earliest round with one, at most three
+  first_hand: string[]; // persona ids with their own friction in it
+  second_hand: string[]; // repeats: persona ids who posted about it without their own friction in it
+  segments: { segment_id: string | null; name: string; personas: number; seed: boolean }[]; // where its posters and influenced personas are
+  influence: InfluenceEdge[]; // the shared rule in social/influence.ts, limited to its posts
+  sentiment: { round: number; mean: number | null; personas: number }[]; // mean latest opinion at each round's end, −2…+2
+}
+
+export interface ReportSpread extends SpreadStats {
+  poi_id: string;
+  name: string;
+  themes: (SpreadStats & { theme_id: string; rank: number; title: string })[]; // themes with a tagged post, in rank order
 }
