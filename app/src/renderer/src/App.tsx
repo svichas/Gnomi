@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
+import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
 import { AudienceTab } from './Audience.tsx';
 import { call, connected, errorText, stopped } from './engine.ts';
 import { initialDraft, toConfig } from './form.ts';
@@ -123,6 +123,7 @@ export function App() {
   const setForm = (update: (form: Form) => Form) => setDraft((was) => was && { ...was, form: update(was.form) });
   const setSettings = (settings: RunSettings) => setDraft((was) => was && { ...was, settings });
   const setAudience = (audience: Audience | null) => setDraft((was) => was && { ...was, audience });
+  const setSchema = (persona_schema: PersonaSchema) => setDraft((was) => was && { ...was, persona_schema });
 
   return (
     <div className="min-h-screen">
@@ -184,7 +185,7 @@ export function App() {
               />
             </div>
             <div role="tabpanel" id="panel-audience" aria-labelledby="tab-audience" hidden={tab !== 'audience'}>
-              <AudienceTab audience={draft.audience} onAudience={setAudience} info={info} description={draft.form.description} save={save} refresh={refresh} />
+              <AudienceTab audience={draft.audience} onAudience={setAudience} schema={draft.persona_schema} onSchema={setSchema} info={info} description={draft.form.description} projectName={draft.form.name} goal={draft.form.goal} save={save} refresh={refresh} />
             </div>
             <div role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
               <Run runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onRunEnded={refresh} />

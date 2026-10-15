@@ -386,6 +386,10 @@ Configuration (edited in the UI, versioned by run snapshot):
 
 The persona schema makes the profile generic for the engine: the sampler walks the enabled attributes and draws each from its per-segment rule with the seeded generator; the persona writer receives the drawn values and the descriptions and writes the biography and voice; the prompt builder renders every enabled attribute with `use_in_prompt` as YAML in its group; and the report groups frictions and sentiment by every attribute flagged `report_dimension`. The engine itself reads only the core attributes by name (country, timezone, languages, device, tech skill, patience, goal interpretation, voice, biography, seed), which is why those cannot be removed. Schemas can be exported as templates (JSON) and imported into other projects; Gnomi ships the default template. Duplicating a run copies the snapshot; the comparison view diffs two snapshots and two reports.
 
+**M2 implementation:** the version-1 schema lives in `ProjectConfig.persona_schema` inside the existing project JSON, rather than requiring another SQLite table. Existing typed persona fields retain their sampling sources; additional default and custom values live in `Persona.attributes`. Each sampled attribute has its own seed stream. `enabled` governs every projection, `show_on_card` governs cards, `use_in_prompt` governs model input, and `report_dimension` governs grouping and filtering. Core fields must remain enabled in prompts. Templates are strictly validated before use; rules can be fixed, numeric ranges or weighted choices with segment overrides. List values are lists of text and group as an ordered whole.
+
+Writer-input signatures detect stale generated prose. A refresh reuses biographies after card/report-only edits and updates private sampled values without another writer call; model-input changes require rewritten biographies before a run. New runs deep-copy the project, population and session metadata and materialize the default schema. Old logs without a schema retain their earlier report shape. Profile group rates use the number of personas with that exact value; mean latest feeling excludes personas with no recorded step. Filtered details retain explicitly labelled full-run totals. Default demographic/work/psychology rules are editable starting assumptions, not measured audience distributions.
+
 The log:
 
 | Table | Purpose | Key columns |
@@ -508,11 +512,17 @@ The output schema for a browser step:
     "severity": 3,
     "what": "Inviting a manager navigated away from the job form",
     "expected": "To invite without leaving the form"
+  },
+  "opinion": {
+    "sentiment": -1,
+    "confidence": 0.6,
+    "likes": [],
+    "frictions": ["Inviting a manager interrupted my draft"]
   }
 }
 ```
 
-`friction` is optional and `feeling` is −2…+2. Structured output is enforced with a schema per action phase (browse, social, survey, static-design), using the provider's native structured-output mode (see [§10](#10-llm-provider-abstraction-and-model-routing)).
+`friction` and `opinion` are nullable and `feeling` is −2…+2. Opinion is a complete self-reported snapshot, supplied only when firsthand evidence changes the persona's view: integer sentiment −2…+2, confidence 0…1, and at most five likes and five frictions (500 characters each). It describes what was already observed, not the result of the action about to happen. The engine emits `persona.opinion_changed` only when the snapshot changes, linking it to the recorded step sequence; the inspector folds these events by run, persona and POI. No extra model call is added. Older responses may omit opinion and older logs display an empty opinion state. Strict provider JSON schemas still require the nullable key. Structured output is enforced with a schema per action phase (browse, social, survey, static-design), using the provider's native structured-output mode (see [§10](#10-llm-provider-abstraction-and-model-routing)).
 
 ### 6.2 Perception
 

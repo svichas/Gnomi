@@ -10,6 +10,7 @@ import { after, test } from 'node:test';
 import { startGym } from '../../gym/server.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
+import { getPersonaSchema } from './profile/schema.ts';
 import { createSessionStore } from './sessions.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { Api, EngineToClient, Method } from './protocol.ts';
@@ -195,4 +196,55 @@ test('save_project refuses invalid country mixes before they can enter storage',
     await assert.rejects(call('save_project', { project: { ...config, audience: { ...config.audience!, countries } } }), /country/i);
   }
   assert.deepEqual((await call('get_project', {})).project, config);
+});
+
+test('save_project rejects invalid schemas without replacing the saved project', async () => {
+  await call('open_project', { dir });
+  const config = project({}, { audience: audience([segment('seg-profile', { share: 100 })], 3), persona_schema: getPersonaSchema() });
+  await call('save_project', { project: config });
+  const invalid = structuredClone(config);
+  invalid.persona_schema!.attributes.find((a) => a.id === 'device')!.enabled = false;
+  await assert.rejects(call('save_project', { project: invalid }), /core|profile|attribute/i);
+  assert.deepEqual((await call('get_project', {})).project, config);
+  const brokenDir = join(dir, 'bad-schema');
+  const broken = openProject(brokenDir);
+  broken.saveProject(invalid);
+  broken.close();
+  await assert.rejects(call('open_project', { dir: brokenDir }), /core|profile|attribute/i);
+  assert.deepEqual((await call('get_project', {})).project, config);
+});
+
+test('changed model profile inputs require refreshed biographies before starting any browser work', async () => {
+  const config = project({}, { audience: audience([segment('seg-profile', { share: 100 })], 3), persona_schema: getPersonaSchema(), role: null });
+  await call('save_project', { project: config });
+  const { personas } = await call('generate_personas', {});
+  assert.ok(personas.every((p) => p.profile_signature));
+  const changed = structuredClone(config);
+  changed.persona_schema!.attributes.find((a) => a.id === 'employer')!.enabled = false;
+  await call('save_project', { project: changed });
+  await assert.rejects(call('start_run', { reset: false }), /profile.*changed|refresh|generate.*again/i);
+  assert.deepEqual((await call('get_project', {})).personas, personas, 'a refused run does not alter the population');
+  const refreshed = await call('generate_personas', {});
+  assert.ok(refreshed.personas.every((p, i) => p.profile_signature !== personas[i].profile_signature));
+  const metadata = structuredClone(changed);
+  metadata.persona_schema!.attributes.find((a) => a.id === 'device')!.show_on_card = false;
+  metadata.persona_schema!.attributes.find((a) => a.id === 'employer')!.report_dimension = false;
+  metadata.role = 'missing-login-for-freshness-check';
+  metadata.audience!.segments[0].role = metadata.role;
+  await call('save_project', { project: metadata });
+  // Role is not writer context. Reaching login preflight proves metadata edits pass freshness checks.
+  await assert.rejects(call('start_run', { reset: false }), /No login is recorded/);
+});
+
+test('a custom schema needs a generated audience, and legacy profiles migrate when a schema is saved', async () => {
+  await call('save_project', { project: project({}, { persona_schema: getPersonaSchema() }) });
+  await assert.rejects(call('start_run', { reset: false }), /audience/i);
+  const config = project({}, { audience: audience([segment('seg-profile', { share: 100 })], 3) });
+  await call('save_project', { project: config });
+  const generated = await call('generate_personas', {});
+  const store = openProject(dir);
+  store.replacePersonas(generated.personas.map(({ profile_signature: _signature, ...person }) => person));
+  store.close();
+  await call('save_project', { project: { ...config, persona_schema: getPersonaSchema() } });
+  await assert.rejects(call('start_run', { reset: false }), /profile.*changed|refresh|generate.*again/i);
 });

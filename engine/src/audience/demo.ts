@@ -3,7 +3,7 @@ import type { LlmRequest, Responder } from '../seams.ts';
 import type { Persona } from '../types.ts';
 import { LOGINS_LABEL, type Proposal } from './propose.ts';
 import { fnv1a, mulberry32, type Traits } from './sample.ts';
-import { languageName, nameKey, TAKEN_LABEL, TRAITS_LABEL, type Candidate } from './write.ts';
+import { languageName, nameKey, TAKEN_LABEL, TRAITS_LABEL, WRITTEN_LABEL, type Candidate } from './write.ts';
 
 const FIRST: Record<Persona['pronouns'], string[]> = {
   she: ['Amara', 'Lucía', 'Mei', 'Priya', 'Hannah', 'Fatima', 'Ingrid', 'Chloé', 'Ana', 'Yuki', 'Zainab', 'Olga', 'Grace', 'Leila', 'Sofia', 'Nadia', 'Rosa', 'Ewa', 'Thandiwe', 'Camille', 'Meera', 'Isabel', 'Aroha', 'Sun-hee'],
@@ -142,38 +142,40 @@ function proposal(roles: string[]): Proposal {
   };
 }
 
-function candidates(t: Traits, taken: string[], seed: number): { candidates: Candidate[] } {
+function candidates(t: Partial<Traits>, taken: string[], seed: number, written: string[]): { candidates: Candidate[] } {
   const rng = mulberry32(seed);
   const one = <T>(list: readonly T[]): T => list[Math.floor(rng() * list.length)];
   const avoid = new Set(taken.map(nameKey));
-  const language = languageName(t.language);
+  const language = languageName(t.languages?.[0] ?? t.language ?? 'en');
   const out: Candidate[] = [];
   for (let attempt = 0; out.length < 4; attempt++) {
-    const name = `${one(FIRST[t.pronouns])} ${one(SURNAMES)}`;
+    const name = `${one(FIRST[t.pronouns ?? 'they'])} ${one(SURNAMES)}`;
     if (avoid.has(nameKey(name)) && attempt < 200) continue;
     avoid.add(nameKey(name));
-    const title = one(TITLES[t.seniority]);
-    const industry = one(INDUSTRIES);
-    const skill = one(SKILLS[t.tech_skill <= 2 ? 'low' : t.tech_skill === 3 ? 'mid' : 'high']);
-    const patience = t.patience <= 2 ? one(PATIENCE.low) : t.patience >= 4 ? one(PATIENCE.high) : '';
-    const lang = t.language === 'en' ? '' : ` My first language is ${language}; I read English at work every day but think in ${language}.`;
+    const title = written.includes('job_title') ? (t.seniority ? one(TITLES[t.seniority]) : 'Team member') : 'Not specified';
+    const industry = written.includes('industry') ? one(INDUSTRIES) : 'Not specified';
+    const skill = one(SKILLS[(t.tech_skill ?? 3) <= 2 ? 'low' : t.tech_skill === 3 ? 'mid' : 'high']);
+    const patience = (t.patience ?? 3) <= 2 ? one(PATIENCE.low) : (t.patience ?? 3) >= 4 ? one(PATIENCE.high) : '';
+    const lang = language.startsWith('English') ? '' : ` My first language is ${language}; I read English at work every day but think in ${language}.`;
+    const job = written.includes('job_title') ? `I am ${/^[aeiou]/i.test(title) ? 'an' : 'a'} ${title.toLowerCase()}` : 'I work';
+    const company = `${t.company_size === undefined ? '' : `${t.company_size.toLocaleString('en-US')}-person `}${written.includes('industry') ? `${industry} ` : ''}company`;
     out.push({
       name,
       job_title: title,
       industry,
       background:
-        `I am ${/^[aeiou]/i.test(title) ? 'an' : 'a'} ${title.toLowerCase()} at a ${t.company_size.toLocaleString('en-US')}-person ${industry} company, ${one(ORIGINS)}. ` +
+        `${job} at a ${company}, ${one(ORIGINS)}. ` +
         (t.employer ? `My employer is ${t.employer}. ` : '') + (t.city ? `I live in ${t.city}. ` : '') +
-        `${one(WEEKS)} ${one(TOOLS)} ${one(DEVICES[t.device])} ${skill}${ACCESS[t.accessibility_needs]}${lang} ${one(PET_HATES)}${patience} ` +
+        `${one(WEEKS)} ${one(TOOLS)} ${one(DEVICES[t.device ?? 'desktop'])} ${skill}${ACCESS[t.accessibility_needs ?? 'none']}${lang} ${one(PET_HATES)}${patience} ` +
         '(Scripted demo persona: no model wrote this.)',
-      context_of_use: one(CONTEXTS[t.device]),
+      context_of_use: written.includes('context_of_use') ? one(CONTEXTS[t.device ?? 'desktop']) : 'Not specified',
       goal_interpretation:
-        t.motivation <= 2
+        (t.motivation ?? 3) <= 2
           ? 'Scripted demo, no model read the task: do the minimum it asks and move on.'
-          : t.motivation >= 4
+          : (t.motivation ?? 3) >= 4
             ? 'Scripted demo, no model read the task: do it properly, since it matters for my work.'
             : 'Scripted demo, no model read the task: get it done without fuss.',
-      voice: `Scripted demo voice, no model wrote it: ${t.patience <= 2 ? 'short and blunt' : t.patience >= 4 ? 'calm and thorough' : 'plain and practical'}; thinks in ${language}.`,
+      voice: `Scripted demo voice, no model wrote it: ${(t.patience ?? 3) <= 2 ? 'short and blunt' : (t.patience ?? 3) >= 4 ? 'calm and thorough' : 'plain and practical'}; thinks in ${language}.`,
       probability: [0.4, 0.3, 0.2, 0.1][out.length],
     });
   }
@@ -192,7 +194,7 @@ export const DEMO_PERSONA_WRITER: Responder = (req: LlmRequest<unknown>) => {
   if (req.purpose === 'write_persona') {
     const traits = line(text, TRAITS_LABEL) as Traits | undefined;
     if (!traits) throw new Error('DEMO_PERSONA_WRITER: the request has no sampled traits');
-    return candidates(traits, (line(text, TAKEN_LABEL) as string[] | undefined) ?? [], fnv1a(`${req.persona_id}/${JSON.stringify(traits)}`));
+    return candidates(traits, (line(text, TAKEN_LABEL) as string[] | undefined) ?? [], fnv1a(`${req.persona_id}/${JSON.stringify(traits)}`), (line(text, WRITTEN_LABEL) as string[] | undefined) ?? ['name', 'job_title', 'industry', 'context_of_use', 'background', 'goal_interpretation', 'voice']);
   }
   throw new Error(`DEMO_PERSONA_WRITER has no scripted answer for purpose ${req.purpose}`);
 };

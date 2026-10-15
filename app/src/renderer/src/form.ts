@@ -1,7 +1,8 @@
 import { looksLikeStaging } from '@gnomi/engine/safety.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/engine/settings.ts';
-import type { Audience, LlmRole, ProjectConfig, RunSettings, SessionInfo } from '@gnomi/engine/types.ts';
+import type { Audience, LlmRole, PersonaSchema, ProjectConfig, RunSettings, SessionInfo } from '@gnomi/engine/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
+import { profileProblem } from './profile.ts';
 
 // The Project screen's form and its rules, kept free of React so they can be tested on their own.
 
@@ -39,11 +40,12 @@ export interface Draft {
   form: Form;
   settings: RunSettings;
   audience: Audience | null; // null runs the single built-in persona
+  persona_schema?: PersonaSchema;
 }
 
 export function initialDraft(project: ProjectConfig | null | undefined): Draft {
   // Projects saved before M2 have no settings or audience.
-  return { form: initialForm(project), settings: project?.settings ?? DEFAULT_SETTINGS, audience: project?.audience ?? null };
+  return { form: initialForm(project), settings: project?.settings ?? DEFAULT_SETTINGS, audience: project?.audience ?? null, ...(project?.persona_schema ? { persona_schema: project.persona_schema } : {}) };
 }
 
 /** The hostname of a web address, or null when it is not an http(s) address. */
@@ -102,7 +104,7 @@ export function settingsProblem(settings: RunSettings): string | null {
 }
 
 /** The project as the tabs describe it, or the sentence telling what is missing. */
-export function toConfig({ form, settings, audience }: Draft): ProjectConfig | string {
+export function toConfig({ form, settings, audience, persona_schema }: Draft): ProjectConfig | string {
   const name = form.name.trim();
   const goal = form.goal.trim();
   const url = form.url.trim();
@@ -118,6 +120,8 @@ export function toConfig({ form, settings, audience }: Draft): ProjectConfig | s
   if (reset && startHost(reset) === null) return 'The reset hook needs a full web address, or leave it empty.';
   const problem = settingsProblem(settings) ?? (audience && audienceProblem(audience));
   if (problem) return problem;
+  const invalidProfile = profileProblem(persona_schema);
+  if (invalidProfile) return `Audience: ${invalidProfile}`;
   // shortcut: one web POI with a fixed id; add a POI list when a project needs several
   return {
     name,
@@ -135,6 +139,7 @@ export function toConfig({ form, settings, audience }: Draft): ProjectConfig | s
       reset_hook_url: reset || null,
     },
     audience: audience && cleanAudience(audience),
+    ...(persona_schema ? { persona_schema } : {}),
     settings: {
       ...settings,
       local_base_url: settings.local_base_url?.trim() || null,

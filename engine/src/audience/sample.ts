@@ -74,6 +74,7 @@ export type Traits = Pick<
   | 'timezone'
   | 'languages'
   | 'employer'
+  | 'attributes'
 >;
 
 export const TRAIT_KEYS = [
@@ -95,11 +96,11 @@ export const TRAIT_KEYS = [
   'employer',
 ] as const satisfies readonly (keyof Traits)[];
 
-export const sameTraits = (persona: Persona, traits: Traits) => TRAIT_KEYS.every((k) =>
-  k === 'languages'
-    ? persona.languages?.length === traits.languages?.length && (traits.languages?.every((tag, i) => tag === persona.languages?.[i]) ?? true)
-    : persona[k] === traits[k],
-);
+const equalValue = (a: unknown, b: unknown): boolean => Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((v, i) => v === b[i]) : a === b;
+export const sameTraits = (persona: Persona, traits: Traits) =>
+  TRAIT_KEYS.every((k) => equalValue(persona[k], traits[k])) &&
+  Object.keys(persona.attributes ?? {}).length === Object.keys(traits.attributes ?? {}).length &&
+  Object.entries(traits.attributes ?? {}).every(([key, value]) => equalValue(persona.attributes?.[key], value));
 
 const FAMILIARITY: Record<UsageFrequency, Persona['familiarity_with_category']> = {
   daily: 'high',

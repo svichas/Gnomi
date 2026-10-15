@@ -10,6 +10,8 @@ import { createScriptedGateway, DEMO_NAVIGATOR } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { validatePersonaSchema } from './profile/schema.ts';
+import { personaProfileIsCurrent } from './profile/signature.ts';
 import { buildReport } from './report/build.ts';
 import { createRecorder, newRunConfig, roleOf, startRun, type RunHandle } from './run.ts';
 import { allowedHosts, checkTarget } from './safety.ts';
@@ -119,10 +121,12 @@ async function verify(config: ProjectConfig, role: string) {
 }
 
 function readInfo(store: ProjectStore, unlocked: boolean): ProjectInfo {
+  const config = store.getProject();
+  if (config?.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
   const personas = store.listPersonas();
   return {
     dir: store.dir,
-    project: store.getProject(),
+    project: config,
     persona: BUILTIN_PERSONA,
     personas,
     diversity: personas.length ? diversityReport(personas) : null,
@@ -189,6 +193,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   get_project: () => info(),
   save_project({ project }) {
     validateCountries(project.audience?.countries);
+    if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
     current().store.saveProject(project);
     return null;
   },
@@ -245,6 +250,12 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (reset && !config.poi.reset_hook_url) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
+    if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
+    if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
+    if (config.audience && personas.some((person) =>
+      // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
+      !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
+    )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
     const navigator = config.settings.routing.navigator.provider;
     if (!FAKE_LLM && navigator === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
     if (!FAKE_LLM && navigator !== 'openai_compatible' && !secrets.get(KEYS[navigator].secret)) throw new Error(`Add ${KEYS[navigator].label} key in Settings: the navigator runs on it`);

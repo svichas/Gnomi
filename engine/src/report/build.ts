@@ -1,4 +1,6 @@
 import { DEFAULT_SETTINGS } from '../settings.ts';
+import { isAttributeEnabled } from '../profile/schema.ts';
+import { buildDimensions, reportAttributes } from './dimensions.ts';
 import type {
   Audience,
   EventOf,
@@ -99,6 +101,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const config = started.payload.config as LoggedConfig;
   const audience: Audience | null = config.project.audience ?? null;
   const settings = config.project.settings ?? null;
+  const schema = config.project.persona_schema;
 
   const byPersona = new Map<string, GnomiEvent[]>();
   for (const e of events) {
@@ -121,12 +124,13 @@ export function buildReport(events: GnomiEvent[]): Report {
     return {
       id: p.id,
       name: p.name,
-      job_title: p.job_title,
+      ...(!schema || isAttributeEnabled(schema, 'job_title', 'all') ? { job_title: p.job_title } : {}),
       segment_id: p.segment_id ?? null, // runs before M2 have no segment
       device: p.device,
       ...endingOf(own),
       steps: ofType(own, 'persona.step').length,
       frictions: ofType(own, 'persona.friction_reported').length,
+      ...(schema ? { attributes: reportAttributes(p, schema) } : {}),
     };
   });
 
@@ -170,6 +174,11 @@ export function buildReport(events: GnomiEvent[]): Report {
   const roles = [...new Set(roleOfUse)].filter((role): role is string => role !== null);
 
   const calls = ofType(events, 'llm.call');
+  const latestFeeling = new Map<string, number>();
+  for (const event of ofType(events, 'persona.step')) {
+    // Invalid output steps carry a synthetic zero; it is not the persona reporting a neutral feeling.
+    if (event.persona_id && event.payload.result.error !== 'invalid_output') latestFeeling.set(event.persona_id, event.payload.feeling);
+  }
   const total = (pick: (e: EventOf<'llm.call'>) => number) => calls.reduce((sum, e) => sum + pick(e), 0);
   // Runs before M2 have no routing, so the call itself names the model it used.
   const routing: Routing | null = settings?.routing ?? null;
@@ -210,6 +219,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     goal: config.project.goal,
     poi: { name: config.project.poi.name, start_url: config.project.poi.start_url },
     personas,
+    ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema) } : {}),
     segments,
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
     steps: ofType(events, 'persona.step').length,

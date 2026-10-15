@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
@@ -44,6 +45,21 @@ const project: ProjectConfig = {
   audience: null,
   settings: DEFAULT_SETTINGS,
 };
+
+test('new runs freeze independent schema, profile values, project settings and sessions', () => {
+  const current = structuredClone({ ...project, persona_schema: getPersonaSchema() });
+  const person = structuredClone({ ...BUILTIN_PERSONA, attributes: { tools_today: ['Sheets'] } });
+  const session = { role: 'recruiter', start_url: 'http://gym.test/', hosts: ['gym.test'], recorded_at: 1, verified_at: 1, expires_at: null };
+  const snapshot = newRunConfig(current, { personas: [person], sessions: [session], reset: false });
+  const expected = structuredClone(snapshot);
+  current.persona_schema.attributes.find((a) => a.id === 'employer')!.enabled = false;
+  current.settings.concurrency = 99;
+  person.attributes.tools_today.push('Another tool');
+  session.hosts.push('changed.test');
+  assert.deepEqual(snapshot, expected);
+  assert.deepEqual(newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }).project.persona_schema, getPersonaSchema());
+  assert.equal(project.persona_schema, undefined, 'freezing defaults does not migrate the current project');
+});
 
 const step = (type: ActionType, ref: string | null = null, text: string | null = null, friction: object | null = null) => ({
   thought: `A ${type}, then.`,
@@ -215,6 +231,41 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
 }
 
 // —— One persona, as in M0 and M1 ——
+
+test('opinion changes cite each persona’s own recorded step, retain prior values and add no model calls', async () => {
+  const initial = { sentiment: -1, confidence: 0.5, likes: [], frictions: ['Missing confirmation'] };
+  const updated = { sentiment: 1, confidence: 0.8, likes: ['Confirmation appeared'], frictions: [] };
+  const r = begin((_request, n) => ({ ...step(n === 3 ? 'done' : 'read'), opinion: n < 2 ? initial : n === 2 ? null : updated }), { personas: [persona('a'), persona('b')], settings: { concurrency: 2 } });
+  await r.run.done;
+  const changes = of(r.events, 'persona.opinion_changed');
+  assert.equal(changes.length, 4, 'identical and null opinions do not create changes');
+  assert.equal(of(r.events, 'llm.call').length, 8, 'one call per ordinary step, no survey call');
+  for (const id of ['a', 'b']) {
+    const own = changes.filter((event) => event.persona_id === id);
+    assert.deepEqual(own.map((event) => [event.payload.before, event.payload.after]), [[null, initial], [initial, updated]]);
+    for (const event of own) {
+      const cause = r.events.find((candidate) => candidate.seq === event.payload.cause.step_ids[0]);
+      assert.equal(cause?.type, 'persona.step');
+      assert.equal(cause?.persona_id, id);
+      assert.equal(cause?.run_id, event.run_id);
+      assert.equal(cause?.poi_id, event.payload.poi_id);
+      assert.equal(cause?.round, event.round);
+      assert.ok(cause!.seq < event.seq);
+      assert.deepEqual(event.payload.cause.post_ids, []);
+    }
+    const requests = r.transcripts.filter((transcript) => transcript.persona_id === id);
+    assert.match(requests[1].request_json, /Current opinion/);
+    assert.match(requests[1].request_json, /Missing confirmation/);
+  }
+});
+
+test('invalid opinion output cannot create a ledger entry or fabricate confidence', async () => {
+  const invalid = { ...step('read'), opinion: { sentiment: 1, confidence: 4, likes: [], frictions: [] } };
+  const r = begin([invalid, invalid, step('done')]);
+  await r.run.done;
+  assert.equal(of(r.events, 'persona.opinion_changed').length, 0);
+  assert.equal(of(r.events, 'persona.step')[0].payload.result.error, 'invalid_output');
+});
 
 test('a run logs its lifecycle in seq order, keeps the evidence and writes report.json', async () => {
   const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };

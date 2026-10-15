@@ -22,6 +22,12 @@ const DEMO_STEPS = [
       what: 'Sample friction from the scripted demo persona; no model looked at this page',
       expected: 'A run with a model API key, which reports real frictions',
     },
+    opinion: {
+      sentiment: -1,
+      confidence: 0.5,
+      likes: ['Sample like from the scripted demo: clear navigation; no model assessed this page'],
+      frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
+    },
   },
   {
     thought: 'Scripted demo: stopping here.',

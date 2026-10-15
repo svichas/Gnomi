@@ -2,8 +2,10 @@ import { forwardRef } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { Persona, Segment } from '@gnomi/engine/types.ts';
+import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
+import type { ProfileGroups } from '@gnomi/engine/report/dimensions.ts';
 import { CATEGORIES, TONE_CLASSES } from './activity.ts';
-import type { Category, Filters, Row } from './activity.ts';
+import type { Category, Filters, ProfileFilter, Row } from './activity.ts';
 import { Field, inputClass } from './ui.tsx';
 
 function Body({ row, who }: { row: Row; who: string | null }) {
@@ -45,6 +47,31 @@ export function ActivityItem({ row, who, onOpen }: { row: Row; who: string | nul
 const List = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<'div'>>(function List(props, ref) {
   return <div role="list" ref={ref} {...props} />;
 });
+
+/** One selection applies to report details, the persona roster and the activity feed. */
+export function ProfileFilters({ groups, filter, onChange }: { groups: ProfileGroups[]; filter: ProfileFilter; onChange(filter: ProfileFilter): void }) {
+  const selected = groups.find((group) => group.attribute.id === filter.dimension);
+  if (!groups.length) return null;
+  return (
+    <section aria-label="Profile filters" className="space-y-3 rounded-xl border border-stone-200 bg-white p-5">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Profile dimension">
+          <select value={filter.dimension ?? ''} onChange={(event) => onChange({ dimension: event.target.value, value: '' })} className={inputClass}>
+            <option value="">All profiles</option>
+            {groups.map(({ attribute }) => <option key={attribute.id} value={attribute.id}>{attribute.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Profile value">
+          <select value={filter.value ?? ''} disabled={!selected} onChange={(event) => onChange({ ...filter, value: event.target.value })} className={inputClass}>
+            <option value="">All values</option>
+            {selected?.values.map(({ value }) => <option key={attributeKey(value)} value={attributeKey(value)}>{formatAttributeValue(value)}</option>)}
+          </select>
+        </Field>
+      </div>
+      <p className="text-xs text-stone-500">Filters apply to report details, personas and activity. Run totals and grouped results always describe the full run.</p>
+    </section>
+  );
+}
 
 /** The live feed of a run, virtualised: only the rows on screen are in the page, however many personas there are. */
 export function Activity(props: {

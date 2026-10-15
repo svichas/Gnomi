@@ -1,6 +1,6 @@
-# M2 roadmap gap closure — first implementation batch
+# M2 roadmap gap closure
 
-The existing M0–M2 implementation covers the core run loop, login containment, audience generation, concurrency, costs and segment reports. This batch closes two missing M2 user flows before starting M3: country-aware personas and multiple projects.
+The existing M0–M2 implementation covers the core run loop, login containment, audience generation, concurrency, costs and segment reports. The first batch closed two missing M2 user flows before starting M3: country-aware personas and multiple projects. Subsequent slices below cover configurable profiles and current opinions.
 
 ## Decisions
 
@@ -33,3 +33,17 @@ The engine contract precedes profile UI integration. Project operations are inde
 - Live-provider quality, cost/time and native-language acceptance measurements; reconcile the budget overshoot acceptance with concurrent in-flight calls.
 
 See `tasks/todo.md` for progress and `docs/roadmap.md` for the product roadmap.
+
+## Second batch — configurable profile attributes
+
+The next slice adds a versioned, saved profile schema, preserving legacy projects and event logs. Core engine attributes cannot be disabled; every other attribute has independent card, model-input and report-dimension switches. Custom text, number, choice, boolean and list values use validated fixed, range or weighted-choice rules, with segment overrides and independent seeded sampling. JSON templates travel through the browser file picker and download flow.
+
+The engine agent owns schema defaults/validation/projections, sampling, biography freshness and model prompts. The app agent owns the editor, templates, cards and inspector. The report agent owns frozen-schema aggregation and filters across reports and activity. The coordinator owns shared types, engine save/run boundaries, immutable run snapshots, persistence checks and integration review.
+
+Model-input changes require refreshed biographies before a run. Card/report-only edits do not spend another writer call. New runs freeze a complete schema alongside their population; old logs without a schema keep their previous report shape. Disabled fields are excluded from profile views and model inputs, and stale prose is hidden until generation is refreshed.
+
+Acceptance: valid templates round-trip; malformed templates and weakened core fields are rejected; 50 seeded personas follow custom per-segment choice shares within sampling error; disabled defaults disappear from cards/inspector/prompts/reports; custom dimensions filter persona and friction evidence; later project edits do not change an existing run. Focused regressions, full tests/typecheck/build and Electron profile smoke verify the integrated slice without paid calls.
+
+## Following slice — current opinions
+
+Add a bounded optional opinion snapshot to the existing navigator response: sentiment, confidence, likes and frictions. When it changes, record `persona.opinion_changed` with the prior value and a causal step sequence. Fold the log to display the current opinion for each POI in the inspector, with a link back to the evidence. Legacy responses/logs remain readable; absent opinions are shown as absent, never inferred from step feeling. This adds no model call. Social influence and the end-of-episode survey remain M4 and M3 respectively.

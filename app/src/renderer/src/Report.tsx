@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
-import { resetOutcome, stopText } from './activity.ts';
+import type { Outcome, Report as ReportData, ReportDimension, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
+import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
+import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
+import type { ProfileFilter } from './activity.ts';
 import { Note, Screenshot, usd } from './ui.tsx';
 
 function duration(ms: number | null) {
@@ -121,7 +123,7 @@ function SegmentTable({ report }: { report: ReportData }) {
   );
 }
 
-function FrictionsBySegment({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
+function FrictionsBySegment({ report, filtered, onInspect }: { report: ReportData; filtered: boolean; onInspect: Inspect }) {
   const known = new Set(report.segments.map((segment) => segment.id));
   const groups = [
     ...report.segments.map((segment) => ({ key: segment.id ?? segment.name, name: segment.name, items: report.frictions.filter((f) => f.segment_id === segment.id) })),
@@ -133,7 +135,7 @@ function FrictionsBySegment({ report, onInspect }: { report: ReportData; onInspe
         Frictions found ({report.frictions.length})
       </h3>
       {groups.length === 0 ? (
-        <p className="text-sm text-stone-600">No persona reported any friction in this run.</p>
+        <p className="text-sm text-stone-600">No persona reported any friction in this {filtered ? 'selection' : 'run'}.</p>
       ) : (
         <div className="space-y-5">
           {groups.map((group) => (
@@ -178,7 +180,7 @@ function PersonaOutcomes({ report, onInspect }: { report: ReportData; onInspect:
               <tr key={persona.id}>
                 <th scope="row" className="px-3 py-2 text-left font-normal">
                   <PersonaLink id={persona.id} name={persona.name} onInspect={onInspect} />
-                  <span className="block text-xs text-stone-500">{persona.job_title}</span>
+                  {persona.job_title && <span className="block text-xs text-stone-500">{persona.job_title}</span>}
                 </th>
                 <td className="px-3 py-2">{segmentName(persona)}</td>
                 <td className="px-3 py-2">{persona.device}</td>
@@ -289,7 +291,35 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
   );
 }
 
-export function Report({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
+function DimensionTable({ dimension, selected }: { dimension: ReportDimension; selected?: string }) {
+  return (
+    <section aria-labelledby="profile-results-title" className="space-y-3">
+      <h3 id="profile-results-title" className="text-sm font-semibold text-stone-900">Results by profile: {dimension.name}</h3>
+      <div className="max-h-80 overflow-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-stone-50"><tr><Th>{dimension.name}</Th><Th>Personas</Th><Th>Reached the goal</Th><Th>Reported friction</Th><Th>Mean latest feeling</Th></tr></thead>
+          <tbody className="divide-y divide-stone-100">
+            {dimension.values.map((group) => <tr key={attributeKey(group.value)} className={attributeKey(group.value) === selected ? 'bg-indigo-50' : ''}>
+              <th scope="row" className="px-3 py-2 text-left font-medium">{formatAttributeValue(group.value)}</th>
+              <td className="px-3 py-2">{group.personas}</td>
+              <td className="px-3 py-2">{pct(group.completion)}</td>
+              <td className="px-3 py-2">{pct(group.with_friction)}</td>
+              <td className="px-3 py-2">{group.sentiment === null ? 'No recorded feeling' : group.sentiment.toFixed(2)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-stone-500">Full-run groups, without segment weighting. Rates use the personas in each row. Feeling is the mean of each persona's latest valid step feeling, from −2 to 2; personas without one are excluded. Lists match the entire ordered list.</p>
+    </section>
+  );
+}
+
+export function Report({ report, filter = {}, onInspect }: { report: ReportData; filter?: ProfileFilter; onInspect: Inspect }) {
+  const selectedPersonas = report.personas.filter((persona) => matchesProfileValues(persona.attributes, filter));
+  const ids = new Set(selectedPersonas.map((persona) => persona.id));
+  const filtered = !!filter.dimension && !!filter.value;
+  const details = filtered ? { ...report, personas: selectedPersonas, frictions: report.frictions.filter((friction) => ids.has(friction.persona_id)) } : report;
+  const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
   const stats = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
@@ -303,10 +333,12 @@ export function Report({ report, onInspect }: { report: ReportData; onInspect: I
         Report
       </h2>
       <Note tone="info">{report.banner}</Note>
+      {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
         <p className="text-sm text-stone-600">The goal: {report.goal}</p>
         {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
+      {filtered && <h3 className="text-sm font-semibold text-stone-900">Full-run totals</h3>}
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-stone-50 px-3 py-2">
@@ -316,8 +348,9 @@ export function Report({ report, onInspect }: { report: ReportData; onInspect: I
         ))}
       </dl>
       <SegmentTable report={report} />
-      <FrictionsBySegment report={report} onInspect={onInspect} />
-      <PersonaOutcomes report={report} onInspect={onInspect} />
+      {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
+      <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} />
+      <PersonaOutcomes report={details} onInspect={onInspect} />
       <Methods methods={report.methods} personas={report.personas} />
     </section>
   );

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent, Persona, RunConfig, Segment } from '@gnomi/engine/types.ts';
-import { countStates, filterEvents, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
+import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/engine/types.ts';
+import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
+import { BUILTIN_PERSONA } from '@gnomi/engine/persona.ts';
+import { countStates, filterEvents, filterPersonas, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -9,6 +11,38 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 const blockedRequest = (seq: number, host: string, path: string) => event(seq, 'containment.blocked_request', { host, url: `http://${host}${path}`, method: 'GET' });
 const blocked = (seq: number, reason: 'captcha' | 'session_expired' = 'captcha', who = 'p-001') => event(seq, 'persona.blocked', { step_no: 2, reason, detail: 'recaptcha' }, who);
 const resumed = (seq: number, who = 'p-001') => event(seq, 'persona.resumed', { step_no: 2 }, who);
+
+test('opinion updates have their own activity category with explicit self-reported confidence', () => {
+  const changed = event(3, 'persona.opinion_changed', { poi_id: 'poi-1', before: null, after: { sentiment: -1, confidence: 0.7, likes: ['Clear labels'], frictions: ['No confirmation'] }, cause: { step_ids: [2], post_ids: [] } });
+  const rows = toRows([changed]);
+  assert.equal(rows[0].label, 'Opinion');
+  assert.match(rows[0].title, /Sentiment -1.*confidence 70%/);
+  assert.match(rows[0].detail ?? '', /Clear labels.*No confirmation/);
+  assert.deepEqual(filterEvents([changed, blocked(4)], { persona: '', segment: '', category: 'opinions' }, new Map()).map((e) => e.seq), [3]);
+});
+
+test('profile filters retain typed false, zero and list values and filter the roster and activity together', () => {
+  const attribute = (id: string, type: ProfileAttribute['type']): ProfileAttribute => ({
+    id, name: id, type, group: 'work', description: 'A test attribute.', core: false, enabled: true, show_on_card: true, use_in_prompt: true, report_dimension: true,
+    sampling: { default: { kind: 'fixed', value: type === 'number' ? 0 : type === 'list' ? [] : false }, by_segment: {} },
+  });
+  const schema = { ...getPersonaSchema(), attributes: [...getPersonaSchema().attributes, attribute('accepted', 'boolean'), attribute('tenure', 'number'), attribute('tools', 'list')] };
+  const people = [
+    { ...BUILTIN_PERSONA, id: 'a', segment_id: 'seg-1', attributes: { accepted: false, tenure: 0, tools: ['A', 'B'] } },
+    { ...BUILTIN_PERSONA, id: 'b', segment_id: 'seg-2', attributes: { accepted: true, tenure: 1, tools: ['B', 'A'] } },
+  ];
+  const events = [blocked(1, 'captcha', 'a'), blocked(2, 'captcha', 'b'), event(3, 'run.finished', {}, null)];
+  for (const [dimension, value] of [['accepted', false], ['tenure', 0], ['tools', ['A', 'B']]] as [string, AttributeValue][]) {
+    const filters = { persona: '', segment: '', category: '' as const, dimension, value: JSON.stringify(value) };
+    assert.deepEqual(filterPersonas(people, filters, schema).map((persona) => persona.id), ['a']);
+    assert.deepEqual(filterEvents(events, filters, new Map(people.map((persona) => [persona.id, persona])), schema).map((event) => event.seq), [1]);
+    assert.equal(matchesProfileValues(people[0].attributes, filters), true);
+    assert.equal(matchesProfileValues(people[1].attributes, filters), false);
+  }
+  assert.equal(matchesProfileValues({ accepted: 'false' }, { dimension: 'accepted', value: 'false' }), false);
+  const hidden = { ...schema, attributes: schema.attributes.map((a) => a.id === 'accepted' ? { ...a, enabled: false } : a) };
+  assert.deepEqual(filterPersonas(people, { dimension: 'accepted', value: 'false' }, hidden), []);
+});
 
 test('blocked requests are one row per host that keeps its place while its count grows', () => {
   const events = [

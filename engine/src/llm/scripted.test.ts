@@ -104,6 +104,12 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
   assert.deepEqual(b1, a1);
   assert.equal(a2.action.type, 'scroll');
   assert.match(a2.friction?.what ?? '', /scripted demo/);
+  assert.deepEqual(a2.opinion, {
+    sentiment: -1,
+    confidence: 0.5,
+    likes: ['Sample like from the scripted demo: clear navigation; no model assessed this page'],
+    frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
+  });
   assert.deepEqual(b2, a2);
   assert.equal(a3.action.type, 'abandon');
   assert.match(a3.thought + a3.action.text, /Scripted demo/);

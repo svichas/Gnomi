@@ -49,7 +49,14 @@ The first M2 gap-closure batch adds:
 
 Country sampling currently uses one reference city per supported country (14 countries), not a demographic distribution within countries. Legacy personas retain their language and use UTC when no timezone was stored. Folder export is available; ZIP packaging and import remain M6.
 
-**Still required for M2:** the configurable profile schema, remaining full-profile traits (including decision role and prior tools), attribute switches/custom sampling/templates/report dimensions, structured current opinions, and live-provider acceptance measurements. The existing concurrency tests allow one in-flight step per active persona after the budget is reached; the stricter one-step acceptance below still needs resolution. Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time or language compliance.
+The second gap-closure batch adds:
+
+- A versioned profile schema and editor with protected core attributes, independent card/prompt/report switches, custom text/number/choice/boolean/list attributes, per-segment sampling rules and validated JSON templates. The shipped schema covers all eight profile groups, including decision role, tools and prior tools, work context and psychology; defaults are editable assumptions.
+- Deterministic attribute sampling and biography freshness checks. Changed model inputs require refreshed prose; display-only edits reuse biographies, and private sampled fields refresh without a writer call. Disabled fields are excluded from profile output and model input. New runs freeze the schema and population; legacy logs remain readable.
+- Profile dimensions in reports and Markdown, with completion, friction share and mean latest feeling by exact attribute value. Shared filters narrow report evidence, the persona roster and activity while keeping full-run totals explicitly labelled.
+- Structured current opinions in the inspector: sentiment, self-reported confidence, likes, frictions and a link to the source step. The engine records changed snapshots from the existing navigator response, without an additional model call; old runs without opinions show an empty state.
+
+**Still required for M2:** live-provider acceptance measurements and resolution of the budget-overshoot contract. The existing concurrency tests allow one in-flight step per active persona after the budget is reached; the stricter one-step acceptance below still needs resolution. Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time, profile adherence or language compliance. Default prior-tool lists are empty until configured, and language values represent ordered preferences rather than proficiency scores.
 
 ---
 

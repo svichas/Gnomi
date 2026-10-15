@@ -1,5 +1,6 @@
 import { runEpisode } from './agent/loop.ts';
 import { personaEnvironment } from './audience/locations.ts';
+import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
@@ -50,9 +51,9 @@ export function roleOf(persona: Persona, project: ProjectConfig): string | null 
 export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean }): Omit<RunConfig, 'run_id'> {
   return {
     seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
-    project,
-    personas: opts.personas,
-    sessions: opts.sessions,
+    project: structuredClone({ ...project, persona_schema: getPersonaSchema(project.persona_schema) }),
+    personas: structuredClone(opts.personas),
+    sessions: structuredClone(opts.sessions),
     reset: opts.reset,
     pause_timeout_ms: 10 * 60_000,
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version

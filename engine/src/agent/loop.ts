@@ -1,7 +1,8 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
+import { sameOpinion } from '../opinion/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
-import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
+import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
 
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'stopped';
@@ -49,6 +50,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   const system = systemPrompt(persona, config.project, segment, step_budget);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
+  let opinion: Opinion | null = null;
   let failKey = '';
   let failStreak = 0;
 
@@ -93,7 +95,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     const shot = await page.screenshot();
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: 1, system, user, schema, signal });
       return { snapshot, screenshot, output: object as StepOutput | null };
@@ -132,7 +134,12 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
           : await page.act(action);
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
-      emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
+        const after = structuredClone(output.opinion);
+        emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recordedStep.seq], post_ids: [] } });
+        opinion = structuredClone(after);
+      }
       const friction = output?.friction ?? null;
       if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url: snapshot.url, ref: action.ref } });
 

@@ -45,6 +45,8 @@ function describe(e: GnomiEvent): string {
     }
     case 'persona.friction_reported':
       return `step ${e.payload.step_no}, severity ${e.payload.severity}: ${e.payload.what} (expected: ${e.payload.expected})`;
+    case 'persona.opinion_changed':
+      return `${e.payload.poi_id}: sentiment ${e.payload.after.sentiment}, self-reported confidence ${Math.round(e.payload.after.confidence * 100)}%`;
     case 'persona.goal_done':
       return `step ${e.payload.step_no}: ${e.payload.summary}`;
     case 'persona.abandoned':

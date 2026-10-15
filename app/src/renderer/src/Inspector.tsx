@@ -1,26 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import type { GnomiEvent, Persona, Segment } from '@gnomi/engine/types.ts';
-import { countryName } from '@gnomi/engine/audience/locations.ts';
+import type { GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
+import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
+import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
 import { Screenshot } from './ui.tsx';
-
-function Trait({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt className="text-xs text-stone-500">{label}</dt>
-      <dd className="text-sm text-stone-900">{children}</dd>
-    </div>
-  );
-}
+import { personaLabel, ProfileFields } from './ProfileFields.tsx';
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
-export function Inspector(props: { runId: string; persona: Persona; segment: Segment | undefined; focusSeq: number | null; ended: boolean; onClose(): void }) {
-  const { runId, persona, segment, focusSeq, ended, onClose } = props;
+export function Inspector(props: { runId: string; persona: Persona; schema?: PersonaSchema; poi?: { id: string; name: string }; segment: Segment | undefined; focusSeq: number | null; ended: boolean; onClose(): void }) {
+  const { runId, persona, schema, poi, segment, focusSeq, ended, onClose } = props;
+  const name = personaLabel(persona, schema);
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const focused = useRef<HTMLLIElement>(null);
+  const evidence = useRef(new Map<number, HTMLLIElement>());
+  const [evidenceSeq, setEvidenceSeq] = useState<number | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -47,10 +41,13 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
   const logged = personaStates(events, [persona]).get(persona.id) ?? 'waiting'; // her own events do not include the run's end
   const state = ended && (logged === 'active' || logged === 'waiting') ? 'unfinished' : logged;
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
+  const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
+  const highlighted = evidenceSeq ?? focusSeq;
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
   useEffect(() => {
-    focused.current?.scrollIntoView({ block: 'center' });
+    setEvidenceSeq(null);
+    if (focusSeq !== null) evidence.current.get(focusSeq)?.scrollIntoView({ block: 'center' });
   }, [rows.length > 0, focusSeq]);
 
   return (
@@ -58,11 +55,11 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
       <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-4">
         <div>
           <h2 className="text-base font-semibold text-stone-900">
-            {persona.name} {persona.pronouns && <span className="font-normal text-stone-500">({persona.pronouns})</span>}
+            {name} {isAttributeEnabled(schema, 'pronouns', 'card') && persona.pronouns && <span className="font-normal text-stone-500">({persona.pronouns})</span>}
           </h2>
           <p className="text-sm text-stone-600">
-            {persona.job_title}
-            {segment && `, ${segment.name}`}
+            {isAttributeEnabled(schema, 'job_title', 'card') && persona.job_title}
+            {segment && `${isAttributeEnabled(schema, 'job_title', 'card') ? ', ' : ''}${segment.name}`}
           </p>
         </div>
         <button type="button" onClick={onClose} className="rounded-lg border border-stone-300 px-3 py-1 text-sm text-stone-800 hover:bg-stone-100">
@@ -76,40 +73,36 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
             <span className="font-medium text-stone-900">{stateWord(state, ended)}.</span>{' '}
             {feeling !== null ? `Feeling ${FEELINGS[feeling] ?? feeling} (${feeling > 0 ? '+' : ''}${feeling}).` : 'No steps yet.'}
           </p>
-          <p className="text-stone-600">
-            {persona.seniority} level at a {persona.company_size}-person {persona.industry} company, on a {persona.device} browser. Tech skill {persona.tech_skill} of 5, patience{' '}
-            {persona.patience} of 5.
-          </p>
+        </section>
+
+        <section aria-label="Current opinions" className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Current opinions</h3>
+          {opinions.length === 0 && <p className="text-sm text-stone-500">No opinion recorded yet. Older runs may only have step feelings.</p>}
+          {opinions.map((entry) => <div key={entry.poi_id} className="space-y-3 rounded-lg border border-stone-200 px-4 py-3 text-sm">
+            <h4 className="font-medium text-stone-900">{poi?.id === entry.poi_id ? poi.name : entry.poi_id}</h4>
+            <dl className="grid grid-cols-2 gap-3">
+              <div><dt className="text-xs text-stone-500">Sentiment</dt><dd>{entry.opinion.sentiment > 0 ? '+' : ''}{entry.opinion.sentiment} of −2 to +2</dd></div>
+              <div><dt className="text-xs text-stone-500">Self-reported confidence</dt><dd>{Math.round(entry.opinion.confidence * 100)}%</dd></div>
+            </dl>
+            {([['Likes', entry.opinion.likes], ['Frictions', entry.opinion.frictions]] as const).map(([label, items]) => <div key={label}>
+              <h5 className="text-xs font-medium text-stone-500">{label}</h5>
+              {items.length ? <ul className="list-disc space-y-1 pl-4">{items.map((item, i) => <li key={i} className="break-words">{item}</li>)}</ul> : <p className="text-stone-500">None reported</p>}
+            </div>)}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
+              <span>Round {entry.round}</span>
+              {entry.cause.step_ids.map((seq) => {
+                const step = events.find((event) => event.seq === seq && event.type === 'persona.step');
+                if (!step || step.type !== 'persona.step') return null;
+                return <button type="button" key={seq} className="text-indigo-700 underline" onClick={() => { setEvidenceSeq(seq); evidence.current.get(seq)?.scrollIntoView({ block: 'center' }); }}>View source step {step.payload.step_no}</button>;
+              })}
+            </div>
+          </div>)}
         </section>
 
         <details aria-label="Profile" className="rounded-lg border border-stone-200">
           <summary className="cursor-pointer px-4 py-2 text-sm font-semibold text-stone-900">Full profile</summary>
           <div className="space-y-3 border-t border-stone-200 px-4 py-3">
-            <dl className="grid grid-cols-2 gap-3">
-              <Trait label="Seniority">{persona.seniority}</Trait>
-              <Trait label="Company">
-                {persona.company_size} employees, {persona.industry}
-              </Trait>
-              <Trait label="Device">{persona.device}</Trait>
-              <Trait label="First language">{persona.language}</Trait>
-              {persona.country && <Trait label="Country">{countryName(persona.country)}</Trait>}
-              {persona.city && <Trait label="City">{persona.city}</Trait>}
-              {persona.timezone && <Trait label="Timezone">{persona.timezone}</Trait>}
-              {persona.languages && <Trait label="Languages">{persona.languages.join(', ')}</Trait>}
-              {persona.employer && <Trait label="Employer">{persona.employer}</Trait>}
-              <Trait label="Tech skill">{persona.tech_skill} of 5</Trait>
-              <Trait label="Patience">{persona.patience} of 5</Trait>
-              <Trait label="Motivation">{persona.motivation} of 5</Trait>
-              <Trait label="Knows the category">{persona.familiarity_with_category}</Trait>
-              <Trait label="Accessibility">{persona.accessibility_needs.replace('_', ' ')}</Trait>
-              <Trait label="Seed">{persona.seed}</Trait>
-            </dl>
-            <dl className="space-y-3">
-              <Trait label="Background">{persona.background}</Trait>
-              <Trait label="Where and when">{persona.context_of_use}</Trait>
-              <Trait label="Reads the goal as">{persona.goal_interpretation}</Trait>
-              <Trait label="Voice">{persona.voice}</Trait>
-            </dl>
+            <ProfileFields persona={persona} schema={schema} purpose="all" />
           </div>
         </details>
 
@@ -121,8 +114,8 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
             {rows.map((row) => (
               <li
                 key={row.seq}
-                ref={row.seq === focusSeq ? focused : undefined}
-                className={`rounded-lg border px-3 py-2 text-sm ${TONE_CLASSES[row.tone]} ${row.seq === focusSeq ? 'ring-2 ring-indigo-500' : ''}`}
+                ref={(node) => { if (node) evidence.current.set(row.seq, node); else evidence.current.delete(row.seq); }}
+                className={`rounded-lg border px-3 py-2 text-sm ${TONE_CLASSES[row.tone]} ${row.seq === highlighted ? 'ring-2 ring-indigo-500' : ''}`}
               >
                 <div className="flex items-baseline justify-between gap-3">
                   <p className="min-w-0 break-words">
@@ -135,7 +128,7 @@ export function Inspector(props: { runId: string; persona: Persona; segment: Seg
                 {row.quote && <p className="mt-1 italic text-stone-600">&ldquo;{row.quote}&rdquo;</p>}
                 {row.screenshot && (
                   <div className="mt-2">
-                    <Screenshot path={row.screenshot} alt={`${persona.name} at ${row.label.toLowerCase()}`} />
+                    <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} />
                   </div>
                 )}
               </li>
