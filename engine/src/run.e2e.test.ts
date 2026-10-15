@@ -12,7 +12,7 @@ import type { Page } from 'playwright-core';
 import { GYM_ACCOUNTS, startGym } from '../../gym/server.ts';
 import { DEMO_PERSONA_WRITER, syncPersonas } from './audience/index.ts';
 import { launchBrowserPool } from './browser/pool.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR, findRef } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SURVEY, findRef } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -138,7 +138,8 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
   ) => {
     let handle: RunHandle | undefined;
     const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-    const scripted = createScriptedGateway({ navigator }, record, { costPerCall: opts.costPerCall ?? 0 });
+    // Walks script the steps only; every persona answers the demo survey at the end.
+    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
     let calls = 0;
     const llm: LlmGateway = {
       async call<T>(req: LlmRequest<T>) {
@@ -475,7 +476,7 @@ test('M2: two segments on different roles each log in with their own recorded se
   const seen = new Map<string, string>();
   for (const { seq, request_json } of w.store.transcripts(config.run_id)) {
     const call = w.store.events(config.run_id).find((e) => e.seq === seq);
-    seen.set(call?.persona_id ?? '', request_json);
+    if (!seen.has(call?.persona_id ?? '')) seen.set(call?.persona_id ?? '', request_json); // the step, not the survey after it
   }
   for (const p of personas) {
     const expected = p.segment_id === 'seg-r' ? /Signed in as Priya Natarajan · Recruiter/ : /Signed in as Dana Okafor · Hiring manager/;

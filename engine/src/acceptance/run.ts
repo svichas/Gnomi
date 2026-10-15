@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
 import { createGateway } from '../llm/gateway.ts';
-import { createScriptedGateway, DEMO_SCRIPT } from '../llm/scripted.ts';
+import { createScriptedGateway, DEMO_SCRIPT, DEMO_SURVEY } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { buildReport } from '../report/build.ts';
@@ -27,6 +27,7 @@ interface CaseResult { id: string; criteria: Criterion[]; facts?: Facts; project
 function scriptedNavigator(): Responder {
   const calls = new Map<string, number>();
   return (request) => {
+    if (request.purpose === 'survey') return DEMO_SURVEY;
     const key = request.persona_id ?? '';
     const index = calls.get(key) ?? 0;
     calls.set(key, index + 1);
@@ -94,7 +95,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
     const record = createRecorder(store, () => {});
     const actual = options.mode === 'live'
       ? createGateway({ secrets: { get: (name) => name === 'anthropic_api_key' ? env.ANTHROPIC_API_KEY!.trim() : null }, localBaseUrl: null, record, onThrottle: (provider) => run?.throttle(provider) })
-      : createScriptedGateway({ navigator: id === 'german-locale' ? () => ({
+      : createScriptedGateway({ navigator: id === 'german-locale' ? (request) => request.purpose === 'survey' ? DEMO_SURVEY : ({
         thought: 'Dies ist ein geskripteter Test: Die Seite zeigt Deutsch und die Berliner Zeitzone.', feeling: 0,
         action: { type: 'done', ref: null, text: 'Geskriptete Prüfung beendet.' }, friction: null,
       }) : scriptedNavigator() }, record);

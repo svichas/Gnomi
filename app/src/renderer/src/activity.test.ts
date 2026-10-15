@@ -21,6 +21,17 @@ test('opinion updates have their own activity category with explicit self-report
   assert.deepEqual(filterEvents([changed, blocked(4)], { persona: '', segment: '', category: 'opinions' }, new Map()).map((e) => e.seq), [3]);
 });
 
+test('a survey answer reads as a row with its reason quoted, filed with opinions, and leaves the persona as she ended', () => {
+  const done = event(2, 'persona.goal_done', { step_no: 1, summary: 'Posted' });
+  const survey = event(3, 'persona.survey', { poi_id: 'poi-1', sentiment: 1, confidence: 0.8, likes: ['Clear form'], frictions: [], would_continue: true, reason: 'It just worked.' });
+  const [row] = toRows([survey]);
+  assert.deepEqual([row.label, row.quote], ['Survey', 'It just worked.']);
+  assert.match(row.title, /^Would keep using it; sentiment \+1, self-reported confidence 80%/);
+  assert.match(row.detail ?? '', /Frictions: none reported\. Likes: Clear form\./);
+  assert.deepEqual(filterEvents([done, survey], { persona: '', segment: '', category: 'opinions' }, new Map()).map((e) => e.seq), [3]);
+  assert.equal(personaStates([done, survey], [{ id: 'p-001' } as Persona]).get('p-001'), 'done');
+});
+
 test('profile filters retain typed false, zero and list values and filter the roster and activity together', () => {
   const attribute = (id: string, type: ProfileAttribute['type']): ProfileAttribute => ({
     id, name: id, type, group: 'work', description: 'A test attribute.', core: false, enabled: true, show_on_card: true, use_in_prompt: true, report_dimension: true,

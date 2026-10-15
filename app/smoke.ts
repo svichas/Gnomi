@@ -376,7 +376,10 @@ try {
     const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
     await page.getByRole('button', { name: /^Inspect / }).first().click();
     await inspector.waitFor();
-    const image = inspector.getByRole('region', { name: 'Timeline' }).getByRole('img').first();
+    // Opinions and the survey come first; the timeline's screenshots load once they are scrolled into view.
+    const timeline = inspector.getByRole('region', { name: 'Timeline' });
+    await timeline.scrollIntoViewIfNeeded();
+    const image = timeline.getByRole('img').first();
     await image.waitFor();
     await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
     await inspector.getByText('Full profile').click();
@@ -388,6 +391,10 @@ try {
     assert.match(await opinions.innerText(), /Self-reported confidence\s+50%/);
     assert.match(await opinions.innerText(), /Likes[\s\S]+Sample like from the scripted demo/);
     assert.match(await opinions.innerText(), /Frictions[\s\S]+Sample friction from the scripted demo/);
+    const survey = inspector.getByRole('region', { name: 'Survey' });
+    assert.match(await survey.innerText(), /Would keep using it\s+No/);
+    assert.match(await survey.innerText(), /Scripted demo survey: no model was called/);
+    await survey.screenshot({ path: join(shots, 'inspector-survey.png') });
     await opinions.getByRole('button', { name: 'View source step 2' }).click();
     const evidence = inspector.getByRole('region', { name: 'Timeline' }).locator('li.ring-2');
     assert.match(await evidence.innerText(), /Step 2[\s\S]+Scripted demo: logging a sample friction/i);

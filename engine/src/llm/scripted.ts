@@ -39,10 +39,21 @@ const DEMO_STEPS = [
 
 export const DEMO_SCRIPT: Script = DEMO_STEPS;
 
-/** Every persona of every run plays the three demo steps in turn; counted per run, so the next run starts over. */
+/** The end-of-episode survey answer of every demo persona. */
+export const DEMO_SURVEY = {
+  frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
+  likes: ['Sample like from the scripted demo: clear navigation; no model assessed this page'],
+  sentiment: -1,
+  confidence: 0.5,
+  would_continue: false,
+  reason: 'Scripted demo survey: no model was called.',
+};
+
+/** Every persona of every run plays the three demo steps in turn, then answers the demo survey; counted per run, so the next run starts over. */
 export const DEMO_NAVIGATOR: Responder = (() => {
   const calls = new Map<string, number>();
   return (req) => {
+    if (req.purpose === 'survey') return DEMO_SURVEY;
     const key = `${req.run_id}/${req.persona_id}`;
     const n = calls.get(key) ?? 0;
     calls.set(key, n + 1);

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { createGateway, InvalidOutputError } from './llm/gateway.ts';
+import { surveySchema } from './agent/prompt.ts';
 import { createScriptedGateway } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { getPersonaSchema } from './profile/schema.ts';
@@ -132,7 +133,11 @@ interface Options {
   inspect?: (n: number, url: string) => Partial<PageFlags>;
   onEvent?: (e: GnomiEvent, run: RunHandle) => void;
   llm?: (record: Recorder) => LlmGateway;
+  /** The answer to every survey request, kept out of the step script; a valid survey by default. */
+  survey?: unknown;
 }
+
+const SURVEY = { frictions: ['The save button was hard to find'], likes: ['Clear job form'], sentiment: 1, confidence: 0.7, would_continue: true, reason: 'It worked in the end.' };
 
 function begin(respond: Respond | unknown[], opts: Options = {}) {
   const events: GnomiEvent[] = [];
@@ -210,11 +215,12 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
     async call<T>(req: LlmRequest<T>) {
       for (let attempt = 1; ; attempt++) {
         req.signal?.throwIfAborted();
+        const survey = req.purpose === 'survey';
         const n = calls.get(req.persona_id) ?? 0;
-        calls.set(req.persona_id, n + 1);
+        if (!survey) calls.set(req.persona_id, n + 1);
         if (handle) opts.onCall?.(req, handle);
         if (opts.delayMs) await sleep(opts.delayMs);
-        const output = answer(req, n);
+        const output = survey ? ('survey' in opts ? opts.survey : SURVEY) : answer(req, n);
         const parsed = req.schema.safeParse(output);
         const payload = { role: req.role, provider: 'fake', model: req.model.model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
         const request = { system: req.system, user: req.user.map((part) => (part.type === 'text' ? part : { type: 'image', bytes: part.data.byteLength })) };
@@ -243,7 +249,7 @@ test('opinion changes cite each persona’s own recorded step, retain prior valu
   await r.run.done;
   const changes = of(r.events, 'persona.opinion_changed');
   assert.equal(changes.length, 4, 'identical and null opinions do not create changes');
-  assert.equal(of(r.events, 'llm.call').length, 8, 'one call per ordinary step, no survey call');
+  assert.equal(of(r.events, 'llm.call').length, 10, 'one call per ordinary step and one survey per persona');
   for (const id of ['a', 'b']) {
     const own = changes.filter((event) => event.persona_id === id);
     assert.deepEqual(own.map((event) => [event.payload.before, event.payload.after]), [[null, initial], [initial, updated]]);
@@ -286,6 +292,8 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
     'llm.call',
     'persona.step',
     'persona.goal_done',
+    'llm.call',
+    'persona.survey',
     'run.finished',
     'report.generated',
   ]);
@@ -361,12 +369,90 @@ test("abandon ends the episode with the persona's own reason", async () => {
   assert.equal(report.personas[0].outcome, 'abandoned');
 });
 
+test('every episode that ends on its own gets one survey from the navigator, about that episode', async () => {
+  const dead = step('click', 'e9');
+  const scripts: Record<string, unknown[]> = {
+    done: [step('click', 'e1', null, { severity: 2, what: 'Jobs is hard to find', expected: 'A Jobs tab' }), step('done', null, 'Posted')],
+    abandoned: [step('abandon', null, 'Too slow')],
+    stuck: [dead, dead, dead],
+  };
+  const asked = new Map<string | null, LlmRequest<unknown>>();
+  const r = begin((req, n) => scripts[req.persona_id!]?.[n] ?? forever(), {
+    personas: [persona('done'), persona('abandoned'), persona('stuck'), persona('budget', { patience: 1 })],
+    settings: { concurrency: 4 },
+    act: (a) => (a.ref === 'e9' ? { ok: false, error: 'ref_not_found', dom_changed: false, target: null } : {}),
+    onCall: (req) => void (req.purpose === 'survey' && asked.set(req.persona_id, req)),
+  });
+  const report = await r.run.done;
+  assert.equal(report.status, 'finished');
+  assert.deepEqual(report.personas.map((p) => p.outcome).sort(), ['abandoned', 'budget_exceeded', 'done', 'repeated_failure']);
+  const surveys = of(r.events, 'persona.survey');
+  assert.deepEqual(surveys.map((e) => e.persona_id).sort(), ['abandoned', 'budget', 'done', 'stuck']);
+  for (const survey of surveys) {
+    assert.deepEqual([survey.poi_id, survey.payload], ['poi-1', { poi_id: 'poi-1', ...SURVEY }]);
+    assert.ok(r.events.every((e) => e.persona_id !== survey.persona_id || e.seq <= survey.seq), 'the survey is the persona’s last event');
+  }
+  for (const req of asked.values()) {
+    assert.deepEqual([req.role, req.model, req.schema], ['navigator', DEFAULT_SETTINGS.routing.navigator, surveySchema]);
+  }
+  const text = (id: string) => asked.get(id)!.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+  assert.match(text('done'), /^The session is over after 2 steps: Persona finished the task \("Posted"\)\.\nFrictions Persona reported along the way:\n- "Jobs is hard to find"/);
+  assert.match(text('abandoned'), /after 1 step: Persona gave up \("Too slow"\)\.\nPersona reported no frictions/);
+  assert.match(text('stuck'), /after 3 steps: Persona stopped after the same action failed three times in a row\./);
+  assert.match(text('budget'), /after 12 steps: Persona ran out of patience before finishing\./);
+});
+
+test('no survey after a user stop, the wall clock, an unanswered block or a cost stop', async () => {
+  const run = async (respond: unknown[], opts: Options) => {
+    let asked = 0;
+    const r = begin(respond, { ...opts, onCall: (req) => void (req.purpose === 'survey' && asked++) });
+    const report = await r.run.done;
+    assert.equal(of(r.events, 'persona.survey').length, 0);
+    return { report, asked, done: of(r.events, 'persona.goal_done').length };
+  };
+  const posted = [step('done', null, 'Posted')];
+  const user = await run(posted, { onEvent: (e, handle) => void (e.type === 'persona.goal_done' && handle.stop()) });
+  assert.deepEqual([user.done, user.report.stop_reason, user.asked], [1, 'user', 0]);
+  // The wall clock runs out while the final step is being answered; that step still completes.
+  const clock = await run(posted, { settings: { wall_clock_budget_min: 0.001 }, delayMs: 150 });
+  assert.deepEqual([clock.done, clock.report.stop_reason?.split(':')[0], clock.asked], [1, 'wall_clock', 0]);
+  const blocked = await run([step('click', 'e1'), ...posted], { inspect: (n) => (n === 1 ? { challenge: 'recaptcha' } : {}), config: { pause_timeout_ms: 20 } });
+  assert.deepEqual([blocked.report.personas[0].outcome, blocked.asked], ['blocked', 0]);
+  // $0.20 spent and $0.20 a call: the survey would reach the $0.40 cap, so it is never sent.
+  const cost = await run(posted, { cost: 0.2, settings: { cost_budget_usd: 0.4 } });
+  assert.deepEqual([cost.done, cost.report.stop_reason?.split(':')[0], cost.asked], [1, 'cost_budget', 0]);
+});
+
+test('survey answers follow the step rules: validated, retried once, cut off at the cap, errors end the run', async () => {
+  const invalid = begin([step('done', null, 'Posted')], { survey: { ...SURVEY, sentiment: 5 } });
+  assert.equal((await invalid.run.done).status, 'finished', 'two invalid answers leave the persona without a survey, not the run broken');
+  assert.deepEqual(of(invalid.events, 'llm.call').map((e) => e.payload.status), ['ok', 'invalid_output', 'invalid_output']);
+  assert.equal(of(invalid.events, 'persona.survey').length, 0);
+
+  // Steps cost $0.10 and the survey $0.30, so the survey is admitted and its own first attempt crosses the $0.35 cap.
+  for (const answer of [SURVEY, { ...SURVEY, likes: Array(6).fill('Fine') }]) {
+    const r = begin([], {
+      settings: { cost_budget_usd: 0.35 },
+      llm: (record) => ({ call: (req) => createScriptedGateway([req.purpose === 'survey' ? answer : step('done', null, 'Posted')], record, { costPerCall: req.purpose === 'survey' ? 0.3 : 0.1 }).call(req) }),
+    });
+    const report = await r.run.done;
+    assert.equal(report.stop_reason, 'cost_budget: the $0.35 recorded-cost budget was reached');
+    assert.equal(of(r.events, 'llm.call').length, 2, 'no retry after the cap');
+    assert.equal(of(r.events, 'persona.survey').length, 0, 'an answer that arrives at the cap is logged as a call, not used');
+  }
+
+  const failing = begin([], {
+    llm: (record) => ({ call: (req) => (req.purpose === 'survey' ? Promise.reject(new Error('Anthropic answered 500')) : createScriptedGateway([step('done', null, 'Posted')], record).call(req)) }),
+  });
+  assert.equal((await failing.run.done).stop_reason, 'error: Anthropic answered 500');
+});
+
 test('two invalid outputs make a failed step, not a crash', async () => {
   const r = begin([{ thought: 'no action' }, { thought: 'still none', feeling: 9 }, step('done', null, 'Posted')]);
   const report = await r.run.done;
   assert.deepEqual(
     of(r.events, 'llm.call').map((e) => e.payload.status),
-    ['invalid_output', 'invalid_output', 'ok'],
+    ['invalid_output', 'invalid_output', 'ok', 'ok'],
   );
   const [failed, done] = of(r.events, 'persona.step');
   assert.deepEqual(failed.payload.action, { type: 'wait', ref: null, text: null });
@@ -770,7 +856,7 @@ test('an expired session pauses the persona; resumed, she goes on with the new l
   const report = await r.run.done;
   assert.deepEqual(
     r.types().filter((t) => t.startsWith('persona.')),
-    ['persona.created', 'persona.episode_started', 'persona.step', 'persona.blocked', 'persona.resumed', 'persona.step', 'persona.goal_done'],
+    ['persona.created', 'persona.episode_started', 'persona.step', 'persona.blocked', 'persona.resumed', 'persona.step', 'persona.goal_done', 'persona.survey'],
   );
   assert.equal(r.pages.length, 2);
   assert.ok(r.pages[0].closed);

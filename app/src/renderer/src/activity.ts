@@ -122,6 +122,15 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
         detail: `Likes: ${likes.join('; ') || 'none reported'}. Frictions: ${frictions.join('; ') || 'none reported'}.`,
       };
     }
+    case 'persona.survey': {
+      const { sentiment, confidence, likes, frictions, would_continue, reason } = event.payload;
+      return {
+        seq, label: 'Survey', tone: 'notice',
+        title: `${would_continue ? 'Would' : 'Would not'} keep using it; sentiment ${sentiment > 0 ? '+' : ''}${sentiment}, self-reported confidence ${Math.round(confidence * 100)}%`,
+        detail: `Frictions: ${frictions.join('; ') || 'none reported'}. Likes: ${likes.join('; ') || 'none reported'}.`,
+        quote: reason,
+      };
+    }
     case 'persona.blocked': {
       const { step_no, reason, detail } = event.payload;
       return { seq, label: `Step ${step_no}`, tone: 'bad', title: reason === 'captcha' ? 'Blocked by a CAPTCHA, waiting for you' : 'Login expired, waiting for you', detail };
@@ -274,6 +283,7 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'signal.validation_error': 'signals',
   'signal.small_target': 'signals',
   'persona.opinion_changed': 'opinions',
+  'persona.survey': 'opinions',
   'persona.goal_done': 'outcomes',
   'persona.abandoned': 'outcomes',
   'signal.budget_exceeded': 'outcomes',
