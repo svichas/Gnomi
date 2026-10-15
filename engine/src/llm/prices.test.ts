@@ -35,6 +35,9 @@ test('other models price at their own cards', () => {
   close(costUsd(anthropic('claude-sonnet-5-5'), usage(0, 0, 1_000_000)), 0.2); // 0.1 × the input price, per the claude-api skill
   close(costUsd({ provider: 'openai', model: 'gpt-6-luna' }, usage(600, 200, 400)), 0.000164); // 60 + 100 + 4, per million
   close(costUsd({ provider: 'openai', model: 'gpt-5.4-mini' }, usage(1_000_000, 1_000_000)), 0.75 + 4.5);
+  // DeepSeek at its peak card: a cache miss is plain input, a hit far cheaper.
+  close(costUsd({ provider: 'deepseek', model: 'deepseek-flash' }, usage(600, 200, 400)), 0.0004224); // 180 + 240 + 2.4, per million
+  close(costUsd({ provider: 'deepseek', model: 'deepseek-v4-pro' }, usage(1_000_000, 1_000_000, 1_000_000)), 1.32 + 3.96 + 0.044);
 });
 
 test('Gemini prices rise on the announced dates', () => {
@@ -73,4 +76,8 @@ test('the reference run of tech.md §10.4 prices to the totals printed there, wi
   assert.ok(Math.abs(run(haiku, anthropic('claude-sonnet-5-5'), anthropic('claude-opus-5-5')) - 3.57) < 0.005);
   assert.ok(Math.abs(run(openai('gpt-6-luna'), openai('gpt-5.4-mini'), openai('gpt-6-astra')) - 6.01) < 0.005);
   assert.ok(Math.abs(run(google('gemini-3.5-flash-lite'), google('gemini-3.8-flash'), google('gemini-4-argon')) - 5.49) < 0.005);
+  // The DeepSeek rows at peak prices: tech.md prints $4.56 and $2.06 for what comes to $4.568 and $2.066.
+  const deepseek = (model: string): ModelChoice => ({ provider: 'deepseek', model });
+  assert.ok(Math.abs(run(deepseek('deepseek-flash'), deepseek('deepseek-v4-pro'), deepseek('deepseek-v4-pro')) - 4.56) < 0.01);
+  assert.ok(Math.abs(run(haiku, deepseek('deepseek-v4-pro'), deepseek('deepseek-v4-pro')) - 2.06) < 0.01);
 });

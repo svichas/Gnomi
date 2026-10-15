@@ -65,7 +65,7 @@ export interface Persona {
   profile_signature?: string; // writer input identity; stale biographies must be regenerated after profile changes
 }
 
-export type ProviderId = 'anthropic' | 'openai' | 'google' | 'openai_compatible';
+export type ProviderId = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'openai_compatible';
 
 export interface ModelChoice {
   provider: ProviderId;

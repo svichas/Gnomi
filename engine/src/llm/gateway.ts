@@ -13,12 +13,16 @@ import { costUsd, type TokenUsage } from './prices.ts';
 export class InvalidOutputError extends Error {}
 
 const NO_TOKENS: TokenUsage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
-const NAME: Record<ProviderId, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', openai_compatible: 'The local endpoint' };
+const NAME: Record<ProviderId, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', openai_compatible: 'The local endpoint' };
 const SECRET: Record<Exclude<ProviderId, 'openai_compatible'>, SecretName> = {
   anthropic: 'anthropic_api_key',
   openai: 'openai_api_key',
   google: 'google_api_key',
+  deepseek: 'deepseek_api_key',
 };
+// DeepSeek speaks OpenAI's chat-completions API, so it goes through the same package as a local endpoint (tech.md §4.5).
+const DEEPSEEK_URL = 'https://api.deepseek.com';
+const chatCompletions = (provider: ProviderId) => provider === 'deepseek' || provider === 'openai_compatible';
 
 // How hard each role thinks (tech.md §10.1): routine steps run low or the thinking tokens dominate the output bill (§10.2).
 const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'medium', judge: 'medium', author: 'high' };
@@ -32,7 +36,7 @@ const MAX_WAIT_MS = 60_000; // a longer retry-after is a quota to wait out, not 
 const NO_CREDIT = /insufficient_quota|credit balance is too low/i;
 const OVERLOADED = /overloaded/i;
 
-// Key shapes: Anthropic and OpenAI sk-…, Google AIza…. The key in hand is replaced literally as well.
+// Key shapes: Anthropic, OpenAI and DeepSeek sk-…, Google AIza…. The key in hand is replaced literally as well.
 const KEY_PATTERN = /\b(?:sk-[\w-]{8,}|AIza[\w-]{8,})/g;
 const redact = (text: string, key?: string) => (key ? text.replaceAll(key, '[redacted]') : text).replace(KEY_PATTERN, '[redacted]');
 
@@ -43,7 +47,7 @@ function usageReported(provider: ProviderId, usage: LanguageModelUsage | undefin
   const raw = usage.raw;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
   const [input, output] = provider === 'google' ? ['promptTokenCount', 'candidatesTokenCount']
-    : provider === 'openai_compatible' ? ['prompt_tokens', 'completion_tokens'] : ['input_tokens', 'output_tokens'];
+    : chatCompletions(provider) ? ['prompt_tokens', 'completion_tokens'] : ['input_tokens', 'output_tokens'];
   if (!count(raw[input]) || !count(raw[output])) return false;
   // A Google total larger than the available components can reveal omitted reasoning or tool-use tokens.
   return provider !== 'google' || raw.totalTokenCount == null ||
@@ -73,13 +77,16 @@ function languageModel({ provider, model }: ModelChoice, credential: string): La
       return createOpenAI({ apiKey: credential }).languageModel(model);
     case 'google':
       return createGoogle({ apiKey: credential }).languageModel(model);
+    case 'deepseek': // no supportsStructuredOutputs: DeepSeek has JSON mode only, so the schema is not enforced (tech.md §10.6)
+      return createOpenAICompatible({ name: 'deepseek', baseURL: DEEPSEEK_URL, apiKey: credential }).languageModel(model);
     case 'openai_compatible':
       return createOpenAICompatible({ name: 'local', baseURL: credential, supportsStructuredOutputs: true }).languageModel(model);
   }
 }
 
 // Output.object carries the schema on every provider: output_config.format (Anthropic), text.format json_schema (OpenAI),
-// responseJsonSchema (Google), response_format json_schema (local). OpenAI's strict mode is set here too, so an SDK
+// responseJsonSchema (Google), response_format json_schema (local). DeepSeek gets response_format json_object, JSON
+// without the schema, so validation and the retry carry the weight. OpenAI's strict mode is set here too, so an SDK
 // default that changed could not loosen it (tech.md §10.6).
 // shortcut: Google gets thinkingLevel, which Gemini 3 and later take; 2.5-era ids would need thinkingBudget instead.
 function providerOptions({ provider, model }: ModelChoice, role: LlmRole): Record<string, Record<string, JSONValue>> {
@@ -91,6 +98,7 @@ function providerOptions({ provider, model }: ModelChoice, role: LlmRole): Recor
       return { openai: { reasoningEffort: effort === 'low' && CAN_SKIP_REASONING.test(model) ? 'none' : effort, strictJsonSchema: true } };
     case 'google':
       return { google: { thinkingConfig: { thinkingLevel: effort } } };
+    case 'deepseek':
     case 'openai_compatible':
       return {};
   }
@@ -150,10 +158,12 @@ export function createGateway({
       const hideKey = (text: string) => redact(text, provider === 'openai_compatible' ? undefined : credential);
       const model = languageModel(req.model, credential);
       const options = providerOptions(req.model, req.role);
-      // Local models also get the schema in the prompt, which grounds their answers (tech.md §10.6).
-      const system = provider === 'openai_compatible' ? `${req.system}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : req.system;
+      // Local models and DeepSeek also get the schema in the prompt, which grounds their answers (tech.md §10.6).
+      const system = chatCompletions(provider) ? `${req.system}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : req.system;
+      // DeepSeek's chat models read text only (tech.md §10.2): a DeepSeek navigator runs without the screenshots.
+      const parts = provider === 'deepseek' ? req.user.filter((p) => p.type === 'text') : req.user;
 
-      let user = req.user;
+      let user = parts;
       let spent = 0;
       let invalid = 0; // answers that did not fit the schema; the second one ends the call
       let retries = 0; // transient failures that were tried again
@@ -262,7 +272,7 @@ export function createGateway({
         }
 
         if (++invalid === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);
-        user = retryParts(req.user, error ?? '');
+        user = retryParts(parts, error ?? '');
       }
     },
   };
@@ -273,6 +283,7 @@ const PROBES: Record<ProviderId, (credential: string) => { url: string; headers:
   openai: (key) => ({ url: 'https://api.openai.com/v1/models', headers: { authorization: `Bearer ${key}` } }),
   // The key travels in a header, never in the query string, so no URL we show or log can carry it.
   google: (key) => ({ url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', headers: { 'x-goog-api-key': key } }),
+  deepseek: (key) => ({ url: `${DEEPSEEK_URL}/models`, headers: { authorization: `Bearer ${key}` } }),
   openai_compatible: (baseUrl) => ({ url: `${baseUrl.replace(/\/+$/, '')}/models`, headers: {} }),
 };
 

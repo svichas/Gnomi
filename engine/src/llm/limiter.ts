@@ -24,6 +24,7 @@ export const DEFAULT_LIMITS: Record<ProviderId, Limit | null> = {
   anthropic: { rpm: 1000, tpm: 2_000_000 },
   openai: { rpm: 500, tpm: 1_000_000 },
   google: { rpm: 300, tpm: 1_000_000 },
+  deepseek: null, // tech.md §10.4 gives no DeepSeek limit to seed a bucket with; concurrency and the 429 back-off bound it
   openai_compatible: null,
 };
 
