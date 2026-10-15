@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportDimension, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportTheme, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
+import { TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
@@ -200,6 +201,191 @@ function PersonaOutcomes({ report, onInspect }: { report: ReportData; onInspect:
   );
 }
 
+const TRUST: Record<Trust, { text: string; style: string }> = {
+  confirmed: { text: 'Confirmed', style: 'border-indigo-300 bg-indigo-50 text-indigo-900' },
+  observed: { text: 'Observed', style: 'border-sky-300 bg-sky-50 text-sky-900' },
+  reported: { text: 'Reported', style: 'border-stone-300 bg-stone-50 text-stone-800' },
+};
+
+/** Trust is always spelled out: within the simulation, never a claim that real people confirmed it (brand.md §5). */
+function TrustBadge({ trust }: { trust: Trust }) {
+  return (
+    <span title={`${TRUST[trust].text}: ${TRUST_TEXT[trust]}`} className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${TRUST[trust].style}`}>
+      {TRUST[trust].text}
+    </span>
+  );
+}
+
+/** Share of each segment's personas who reached the theme's pages and hit it. */
+function Affected({ theme }: { theme: ReportTheme }) {
+  const rows = theme.affected.filter((a) => a.reached > 0);
+  return (
+    <figure>
+      <figcaption className="mb-1 text-xs font-medium text-stone-700">Affected, of the personas who reached the page</figcaption>
+      <ul className="space-y-1">
+        {rows.map((a) => (
+          <li key={a.segment_id ?? a.name} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-xs">
+            <span className="truncate text-stone-700">{a.name}</span>
+            <span className="h-2 rounded bg-stone-100">
+              <span className="block h-full rounded bg-indigo-500" style={{ width: pct(a.rate) }} />
+            </span>
+            <span className="whitespace-nowrap tabular-nums text-stone-600">
+              {a.affected} of {a.reached} ({pct(a.rate)})
+            </span>
+          </li>
+        ))}
+      </ul>
+    </figure>
+  );
+}
+
+function Evidence({ evidence, onInspect }: { evidence: ReportEvidence; onInspect: Inspect }) {
+  const at = evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`;
+  return (
+    <li className={`grid gap-3 border-t border-stone-100 pt-3 ${evidence.screenshot ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
+      {evidence.screenshot && <Screenshot path={evidence.screenshot} alt={`The page at ${at}, as ${evidence.persona_name} saw it`} />}
+      <div className="min-w-0 space-y-1">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+          <PersonaLink id={evidence.persona_id} name={evidence.persona_name} seq={evidence.step_seq ?? evidence.seq} onInspect={onInspect} />
+          <span>{at}, severity {evidence.severity} of 4</span>
+          <TrustBadge trust={evidence.trust} />
+          {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
+        </p>
+        <p className="text-sm text-stone-900">{evidence.what}</p>
+        {evidence.quote && <blockquote className="border-l-4 border-stone-300 pl-3 text-sm italic text-stone-700">&ldquo;{evidence.quote}&rdquo;</blockquote>}
+        {evidence.url && <p className="break-all text-xs text-stone-500">{evidence.url}</p>}
+      </div>
+    </li>
+  );
+}
+
+function Theme({ theme, onInspect }: { theme: ReportTheme; onInspect: Inspect }) {
+  return (
+    <li className="space-y-3 rounded-lg border border-stone-200 p-4">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+        <span className="text-sm font-semibold tabular-nums text-stone-500">{theme.rank}.</span>
+        <h4 className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</h4>
+        <TrustBadge trust={theme.trust} />
+      </div>
+      <p className="text-sm text-stone-700">{theme.description}</p>
+      <p className="text-xs tabular-nums text-stone-500">
+        {count(theme.personas, 'persona')}, {count(theme.frictions, 'friction')}, median severity {theme.severity} of 4
+        {theme.named_by === 'rules' && '. Title generated from the page and element'}
+      </p>
+      <Affected theme={theme} />
+      <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
+        {theme.evidence.map((evidence, i) => (
+          <Evidence key={i} evidence={evidence} onInspect={onInspect} />
+        ))}
+      </ul>
+      {theme.suggestion && (
+        <div className="space-y-1 rounded-lg border border-dashed border-stone-300 bg-stone-50 p-3 text-sm">
+          <p className="text-xs font-medium text-stone-500">Generated suggestion: consider it, then validate with real people</p>
+          <p className="text-stone-900">
+            <span className="font-medium">Suggested change:</span> {theme.suggestion.change}
+          </p>
+          <p className="text-stone-700">
+            <span className="font-medium">Possible solution:</span> {theme.suggestion.solution}
+          </p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function Themes({ themes, onInspect }: { themes: ReportTheme[]; onInspect: Inspect }) {
+  return (
+    <section aria-labelledby="themes-title" className="space-y-3">
+      <h3 id="themes-title" className="text-sm font-semibold text-stone-900">
+        Potential frictions, ranked ({themes.length})
+      </h3>
+      <p className="text-xs text-stone-500">
+        Ranked by the segment-weighted share of personas affected × median severity × trust. Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.
+      </p>
+      {themes.length === 0 ? (
+        <p className="text-sm text-stone-600">No frictions to group into themes in this run.</p>
+      ) : (
+        <ol className="space-y-4">
+          {themes.map((theme) => (
+            <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} onInspect={onInspect} />
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
+
+/** A −2…+2 track with the neutral midpoint marked; the number is always shown beside it. */
+function SentimentScale({ value }: { value: number }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span aria-hidden="true" className="relative h-2 w-24 rounded bg-stone-100">
+        <span className="absolute inset-y-[-2px] left-1/2 w-px bg-stone-400" />
+        <span className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-indigo-600" style={{ left: `${((value + 2) / 4) * 100}%` }} />
+      </span>
+      <span className="tabular-nums">{signed(value)}</span>
+    </span>
+  );
+}
+
+function Sentiment({ rows }: { rows: ReportSentiment[] }) {
+  return (
+    <section aria-labelledby="sentiment-title" className="space-y-2">
+      <h3 id="sentiment-title" className="text-sm font-semibold text-stone-900">
+        Sentiment by segment
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50">
+            <tr>
+              <Th>Segment</Th>
+              <Th>Surveyed</Th>
+              <Th>Mean sentiment, −2 to +2</Th>
+              <Th>Would continue</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {rows.map((row) => (
+              <tr key={row.segment_id ?? row.name}>
+                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
+                  {row.name}
+                </th>
+                <td className="px-3 py-2 tabular-nums">{row.surveyed}</td>
+                <td className="px-3 py-2">{row.sentiment === null ? 'No answers' : <SentimentScale value={row.sentiment} />}</td>
+                <td className="px-3 py-2 tabular-nums">{row.surveyed === 0 ? '-' : pct(row.would_continue)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-stone-500">From each persona's end-of-episode survey, 0 is neutral. Means are per segment, without weighting.</p>
+    </section>
+  );
+}
+
+function WentWell({ likes }: { likes: ReportLike[] }) {
+  return (
+    <section aria-labelledby="went-well-title" className="space-y-2">
+      <h3 id="went-well-title" className="text-sm font-semibold text-stone-900">
+        What went well
+      </h3>
+      <ol className="space-y-1 text-sm">
+        {likes.slice(0, 10).map((like, i) => (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-stone-100 pb-1">
+            <span className="text-stone-900">{like.text}</span>
+            <span className="text-xs tabular-nums text-stone-500">
+              {count(like.count, 'mention')} by {count(like.personas, 'persona')}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {likes.length > 10 && <p className="text-xs text-stone-500">And {count(likes.length - 10, 'more like')} named once or twice.</p>}
+    </section>
+  );
+}
+
 const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
 const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
 
@@ -274,6 +460,10 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
       ),
     ],
     ['Reset hook', methods.reset === null ? 'Not used' : `${methods.reset.url}: ${resetOutcome(methods.reset).text}`],
+    ...(methods.signal_thresholds === undefined ? [] : [['Signal thresholds', methods.signal_thresholds === null ? 'Not frozen in this run' : (
+      <ul>{Object.entries(methods.signal_thresholds).map(([key, value]) => <li key={key}>{key.replaceAll('_', ' ')}: {JSON.stringify(value)}</li>)}</ul>
+    )] as [string, ReactNode]]),
+    ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];
   return (
     <section aria-labelledby="methods-title">
@@ -351,6 +541,9 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
       {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
+      {report.themes && <Themes themes={report.themes} onInspect={onInspect} />}
+      {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
+      {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} />
       <PersonaOutcomes report={details} onInspect={onInspect} />
       <Methods methods={report.methods} personas={report.personas} />
