@@ -5,9 +5,11 @@ import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
 import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
+import type { KeyTest } from '../providers.ts';
 import { REPORT_FORMATS } from '../reports.ts';
 import type { ReportFormat } from '../reports.ts';
 import { ProjectLibrary } from './projects.ts';
+import { keyedProvider, ProviderKeys } from './providers.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -26,6 +28,7 @@ let engine: UtilityProcess | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
 let library: ProjectLibrary;
+let providers: ProviderKeys;
 let currentProjectId = '';
 let changingProject = false;
 
@@ -50,20 +53,6 @@ function request<M extends Method>(method: M, params: Api[M]['params']): Promise
 
 // Secrets live encrypted in userData, never in a project folder, and are only ever sent to the engine.
 const secretFile = (name: string) => join(app.getPath('userData'), name);
-
-// One file per provider key; the local endpoint needs none. `loaded` is the providers whose key the engine holds now.
-const PROVIDERS = {
-  anthropic: { file: 'anthropic.key', secret: 'anthropic_api_key' },
-  openai: { file: 'openai.key', secret: 'openai_api_key' },
-  google: { file: 'google.key', secret: 'google_api_key' },
-} as const;
-type KeyProvider = keyof typeof PROVIDERS;
-const loaded = new Set<KeyProvider>();
-
-function keyProvider(value: unknown): KeyProvider {
-  if (typeof value === 'string' && Object.hasOwn(PROVIDERS, value)) return value as KeyProvider;
-  throw new Error('Unknown provider');
-}
 
 async function readSecret(name: string): Promise<string | null> {
   if (!existsSync(secretFile(name))) return null;
@@ -121,6 +110,7 @@ async function startEngine(): Promise<Startup> {
     });
     const override = process.env.GNOMI_PROJECT_DIR;
     library = new ProjectLibrary(join(app.getPath('userData'), 'projects'), override);
+    providers = new ProviderKeys(app.getPath('userData'), { read: readSecret, write: writeSecret, canRemember }, (name, value) => request('set_secret', { name, value }));
     const sessionKey = await loadSessionKey();
     sessionsPersist = sessionKey.remembered;
     await request('set_secret', { name: 'session_key', value: sessionKey.key });
@@ -135,15 +125,7 @@ async function startEngine(): Promise<Startup> {
           await openManagedProject(entries.find((entry) => entry.id === previous)?.id ?? entries[0]?.id ?? library.create('Untitled project').id);
         }
       })(),
-      (async () => {
-        // One at a time, so macOS asks for Keychain access once.
-        for (const [provider, { file, secret }] of Object.entries(PROVIDERS)) {
-          const key = await readSecret(file);
-          if (!key) continue;
-          await request('set_secret', { name: secret, value: key });
-          loaded.add(provider as KeyProvider);
-        }
-      })(),
+      providers.load(),
     ]);
     return { startupError: null, sessionsPersist };
   } catch (err) {
@@ -151,22 +133,17 @@ async function startEngine(): Promise<Startup> {
   }
 }
 
-ipcMain.handle('save-key', async (_event, provider: unknown, key: unknown) => {
-  const { file, secret } = PROVIDERS[keyProvider(provider)];
-  if (typeof key !== 'string' || !key.trim()) throw new Error('Paste a key first');
-  const value = key.trim();
-  await request('set_secret', { name: secret, value });
-  loaded.add(provider as KeyProvider);
-  const remembered = await canRemember();
-  if (remembered) await writeSecret(file, value);
-  return { remembered };
-});
-ipcMain.handle('has-key', (_event, provider: unknown) => loaded.has(keyProvider(provider)));
-ipcMain.handle('clear-key', async (_event, provider: unknown) => {
-  const { file, secret } = PROVIDERS[keyProvider(provider)];
-  rmSync(secretFile(file), { force: true });
-  await request('set_secret', { name: secret, value: null });
-  loaded.delete(provider as KeyProvider);
+ipcMain.handle('list-providers', () => providers.list());
+ipcMain.handle('save-key', (_event, provider: unknown, key: unknown) => providers.save(keyedProvider(provider), typeof key === 'string' ? key : ''));
+ipcMain.handle('clear-key', (_event, provider: unknown) => providers.remove(keyedProvider(provider)));
+ipcMain.handle('test-key', async (_event, provider: unknown): Promise<KeyTest> => {
+  const id = provider === 'openai_compatible' ? provider : keyedProvider(provider);
+  // The engine tests the address saved with the open project, so that is the one the result belongs to.
+  const target = id === 'openai_compatible' ? (await request('get_project', {})).project?.settings.local_base_url : null;
+  const { ok, error } = await request('test_key', { provider: id });
+  const test: KeyTest = { ok, error, at: Date.now(), ...(target ? { target } : {}) };
+  providers.recordTest(id, test);
+  return test;
 });
 
 ipcMain.handle('list-projects', () => catalog());

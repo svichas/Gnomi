@@ -7,10 +7,11 @@ import type { EventOf, GnomiEvent, ModelChoice, ProviderId } from '../types.ts';
 import { createGateway, InvalidOutputError, testProviderKey } from './gateway.ts';
 import type { Clock } from './limiter.ts';
 
-const KEYS: Record<'anthropic' | 'openai' | 'google', string> = {
+const KEYS: Record<'anthropic' | 'openai' | 'google' | 'deepseek', string> = {
   anthropic: 'sk-ant-api03-test-key-0123456789',
   openai: 'sk-proj-test-openai-key-0123456789',
   google: 'AIzaSyTestGoogleKey0123456789abcd',
+  deepseek: 'sk-0123456789abcdef0123456789abcdef',
 };
 const KEY = KEYS.anthropic;
 const LOCAL = 'http://localhost:11434/v1';
@@ -57,7 +58,7 @@ function setup(opts: { keys?: Partial<Record<SecretName, string>>; localBaseUrl?
   const { record, calls } = recorder();
   const { clock, slept } = fakeClock(opts.sleep);
   const throttled: ProviderId[] = [];
-  const keys = opts.keys ?? { anthropic_api_key: KEYS.anthropic, openai_api_key: KEYS.openai, google_api_key: KEYS.google };
+  const keys = opts.keys ?? { anthropic_api_key: KEYS.anthropic, openai_api_key: KEYS.openai, google_api_key: KEYS.google, deepseek_api_key: KEYS.deepseek };
   const gateway = createGateway({
     secrets: { get: (name) => keys[name] ?? null },
     localBaseUrl: opts.localBaseUrl === undefined ? LOCAL : opts.localBaseUrl,
@@ -202,6 +203,38 @@ test('each provider gets its own client, key, schema format and token accounting
   );
   const expected = [0.00023, 0.000164, 0.000692, 0]; // 600 × 0.10 + 400 × 0.01 + 200 × 0.50 for Luna; 600 × 0.30 + 400 × 0.03 + 200 × 2.50 for Flash-Lite
   costs.forEach((cost, i) => assert.ok(Math.abs(cost - expected[i]) < 1e-12, `${models[i].model}: ${cost} ≠ ${expected[i]}`));
+});
+
+test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema in the prompt, text only, its own price', async () => {
+  // DeepSeek's usage: 1,000 tokens in, 400 of them cache hits, 200 out.
+  const completion = (text: string) =>
+    Response.json({
+      id: 'c1', object: 'chat.completion', created: 1, model: 'deepseek-flash',
+      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1_000, completion_tokens: 200, total_tokens: 1_200, prompt_cache_hit_tokens: 400, prompt_cache_miss_tokens: 600, prompt_tokens_details: { cached_tokens: 400 } },
+    });
+  const sent = stubFetch(() => completion('{"thought":"no feeling"}'), () => completion(OK));
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-flash' } }));
+
+  assert.deepEqual(result.object, { thought: 'Jobs is in the menu.', feeling: 0 });
+  assert.deepEqual(sent.urls, ['https://api.deepseek.com/chat/completions', 'https://api.deepseek.com/chat/completions']);
+  assert.equal(sent.headers[0].get('authorization'), `Bearer ${KEYS.deepseek}`);
+  const [first, retry] = sent.bodies;
+  assert.equal(first.model, 'deepseek-flash');
+  assert.deepEqual(first.response_format, { type: 'json_object' }, 'JSON mode: DeepSeek enforces no schema');
+  assert.match(first.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
+  assert.equal(first.messages[1].content, 'What does Priya do next?', 'the screenshot is left out');
+  assert.deepEqual(retry.messages[1].content.map((part: { type: string }) => part.type), ['text', 'text'], 'the retry is text only too');
+  assert.doesNotMatch(JSON.stringify(sent.bodies), /image_url/);
+
+  // 600 × $0.30 + 400 hits × $0.006 + 200 × $1.20, per million, for each of the two attempts.
+  assert.deepEqual(calls.map((c) => [c.event.payload.provider, c.event.payload.status, c.event.payload.input_tokens, c.event.payload.cache_read_tokens, c.event.payload.output_tokens, c.event.payload.usage_reported]), [
+    ['deepseek', 'invalid_output', 600, 400, 200, true],
+    ['deepseek', 'ok', 600, 400, 200, true],
+  ]);
+  assert.ok(Math.abs(result.cost_usd - 2 * 0.0004224) < 1e-12, `${result.cost_usd}`);
+  assert.doesNotMatch(calls[1].transcript, new RegExp(KEYS.deepseek));
 });
 
 test('a role sets how hard the model thinks and how much room it has', async () => {
@@ -499,21 +532,24 @@ test('requests wait their turn when the provider\'s bucket is empty', async () =
 });
 
 test('testProviderKey asks each provider\'s list endpoint, with the key in a header and never in the URL', async () => {
-  const sent = stubFetch(...Array.from({ length: 4 }, () => () => Response.json({ data: [] })));
+  const sent = stubFetch(...Array.from({ length: 5 }, () => () => Response.json({ data: [] })));
   assert.deepEqual(await testProviderKey('anthropic', KEYS.anthropic), { ok: true });
   assert.deepEqual(await testProviderKey('openai', KEYS.openai), { ok: true });
   assert.deepEqual(await testProviderKey('google', KEYS.google), { ok: true });
   assert.deepEqual(await testProviderKey('openai_compatible', `${LOCAL}/`), { ok: true });
+  assert.deepEqual(await testProviderKey('deepseek', KEYS.deepseek), { ok: true });
   assert.deepEqual(sent.urls, [
     'https://api.anthropic.com/v1/models?limit=1',
     'https://api.openai.com/v1/models',
     'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1',
     `${LOCAL}/models`,
+    'https://api.deepseek.com/models',
   ]);
   assert.equal(sent.headers[0].get('x-api-key'), KEYS.anthropic);
   assert.equal(sent.headers[1].get('authorization'), `Bearer ${KEYS.openai}`);
   assert.equal(sent.headers[2].get('x-goog-api-key'), KEYS.google);
   assert.equal(sent.headers[3].get('authorization'), null);
+  assert.equal(sent.headers[4].get('authorization'), `Bearer ${KEYS.deepseek}`);
   assert.ok(!sent.urls.some((u) => Object.values(KEYS).some((k) => u.includes(k))));
 });
 
@@ -554,7 +590,7 @@ test('testProviderKey explains a rejected key, a refusal, an unreachable API and
 });
 
 test('testProviderKey never puts a key in the message it returns', async () => {
-  for (const provider of ['anthropic', 'openai', 'google'] as const) {
+  for (const provider of ['anthropic', 'openai', 'google', 'deepseek'] as const) {
     const key = KEYS[provider];
     stubFetch(() => Response.json({ error: { message: `no access for ${key}`, code: 403, status: 'PERMISSION_DENIED' } }, { status: 403 }));
     const refused = await testProviderKey(provider, key);

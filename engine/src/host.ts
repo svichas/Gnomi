@@ -34,6 +34,7 @@ const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretNam
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
   openai: { secret: 'openai_api_key', label: 'an OpenAI' },
   google: { secret: 'google_api_key', label: 'a Google' },
+  deepseek: { secret: 'deepseek_api_key', label: 'a DeepSeek' },
 };
 
 const clients = new Set<Transport>();

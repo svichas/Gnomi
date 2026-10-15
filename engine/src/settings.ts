@@ -23,6 +23,14 @@ export const PROVIDER_DEFAULTS: Record<ProviderId, Routing> = {
     judge: { provider: 'google', model: 'gemini-3.8-flash' },
     author: { provider: 'google', model: 'gemini-4-argon' },
   },
+  // Text only (tech.md §10.2): a DeepSeek navigator never sees the screenshots.
+  deepseek: {
+    navigator: { provider: 'deepseek', model: 'deepseek-flash' },
+    socialiser: { provider: 'deepseek', model: 'deepseek-flash' },
+    persona_writer: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+    judge: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+    author: { provider: 'deepseek', model: 'deepseek-v4-pro' },
+  },
   openai_compatible: {
     navigator: { provider: 'openai_compatible', model: 'gemma4:e4b' },
     socialiser: { provider: 'openai_compatible', model: 'gemma4:e4b' },

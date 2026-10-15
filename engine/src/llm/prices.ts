@@ -1,8 +1,8 @@
 import type { ModelChoice } from '../types.ts';
 
 // USD per million tokens, standard tier. Checked 2026-10-15 against tech.md §10.3 (Anthropic's figures from its pricing
-// page via the claude-api skill, cached 2026-10-06; OpenAI's and Google's from their pricing pages). A stale table
-// under-reports cost until it is updated.
+// page via the claude-api skill, cached 2026-10-06; OpenAI's, Google's and DeepSeek's from their pricing pages). A stale
+// table under-reports cost until it is updated.
 interface Rates {
   input: number;
   output: number;
@@ -37,6 +37,10 @@ const PRICES: Record<string, Card[]> = {
   'google/gemini-4-argon': [card(CHECKED, 2, 10, 0.2), card('2026-12-01', 4, 20, 0.4)],
   'google/gemini-3.8-flash': [card(CHECKED, 0.75, 3.75, 0.075), card('2027-01-01', 1.5, 7.5, 0.15)],
   'google/gemini-3.5-flash-lite': [card(CHECKED, 0.3, 2.5, 0.03)],
+  // DeepSeek caches prefixes on its own; a miss costs the input rate. Cache hits per its pricing page (tech.md §10.3 omits them).
+  // shortcut: always the peak card, so off-peak calls (half price) are recorded at twice their cost; price by the clock if that matters.
+  'deepseek/deepseek-flash': [card(CHECKED, 0.3, 1.2, 0.006)],
+  'deepseek/deepseek-v4-pro': [card(CHECKED, 1.32, 3.96, 0.044)],
 };
 
 /** Disjoint counts, as Anthropic reports them: input_tokens excludes cache reads and writes. */

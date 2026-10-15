@@ -67,7 +67,7 @@ export interface Persona {
   posting_propensity?: number; // 0–1, sampled: how readily this persona posts in social rounds (tech.md §6.6); absent before M4
 }
 
-export type ProviderId = 'anthropic' | 'openai' | 'google' | 'openai_compatible';
+export type ProviderId = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'openai_compatible';
 
 export interface ModelChoice {
   provider: ProviderId;

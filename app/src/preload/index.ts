@@ -8,8 +8,9 @@ ipcRenderer.on('gnomi-port', (event, startup: { startupError: string | null; ses
 // A key goes to main and never comes back.
 contextBridge.exposeInMainWorld('gnomi', {
   saveKey: (provider, key) => ipcRenderer.invoke('save-key', provider, key),
-  hasKey: (provider) => ipcRenderer.invoke('has-key', provider),
+  listProviders: () => ipcRenderer.invoke('list-providers'),
   clearKey: (provider) => ipcRenderer.invoke('clear-key', provider),
+  testKey: (provider) => ipcRenderer.invoke('test-key', provider),
   listProjects: () => ipcRenderer.invoke('list-projects'),
   projectAction: (action) => ipcRenderer.invoke('project-action', action),
   reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
