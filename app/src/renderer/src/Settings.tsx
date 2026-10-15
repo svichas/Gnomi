@@ -1,21 +1,17 @@
 import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
 import type { LlmRole, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
-import { call } from './engine.ts';
+import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
+import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';
-import { Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
+import type { Outcome } from './ui.tsx';
 
-const KEYED: { id: KeyedProvider; label: string }[] = [
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'openai', label: 'OpenAI' },
-  { id: 'google', label: 'Google' },
-];
-
-const PROVIDER_LABELS: Record<ProviderId, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  google: 'Google',
-  openai_compatible: 'Local endpoint',
+// What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
+const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
+  deepseek: 'Its servers are in China. It reads text only, so it never sees screenshots, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
+  openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
 };
 
 const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
@@ -26,100 +22,156 @@ const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }>
   author: { label: 'Author', hint: 'Writes the report text.', used: false },
 };
 
-function ProviderKey({ provider, label, onChange }: { provider: KeyedProvider; label: string; onChange(has: boolean): void }) {
-  const [key, setKey] = useState('');
-  const [hasKey, setHasKey] = useState(false);
-  const { busy, outcome, run } = useAction();
-
-  useEffect(() => {
-    void window.gnomi.hasKey(provider).then((has) => {
-      setHasKey(has);
-      onChange(has);
-    });
-  }, []);
-
-  const keep = (has: boolean) => {
-    setHasKey(has);
-    onChange(has);
-  };
-
-  // Returns whether the key will be remembered; the pasted text is dropped as soon as main has it.
-  async function save() {
-    const { remembered } = await window.gnomi.saveKey(provider, key);
-    setKey('');
-    keep(true);
-    return remembered;
-  }
-
-  const onSave = () =>
-    run(async () => {
-      const remembered = await save();
-      return {
-        ok: true,
-        text: remembered
-          ? 'Key saved.'
-          : 'Key accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.',
-      };
-    });
-
-  const onTest = () =>
-    run(async () => {
-      if (key.trim()) await save(); // testing what was just pasted is what people expect
-      const result = await call('test_key', { provider });
-      return result.ok ? { ok: true, text: 'The key works.' } : { ok: false, text: `The key did not work: ${result.error ?? 'it was rejected'}` };
-    });
-
-  const onRemove = () =>
-    run(async () => {
-      await window.gnomi.clearKey(provider);
-      keep(false);
-      return { ok: true, text: 'Key removed.' };
-    });
-
+function TestResult({ test }: { test: KeyTest | null }) {
+  if (!test) return <p className="text-xs text-stone-500">Not tested yet</p>;
   return (
-    <div className="space-y-3 rounded-lg border border-stone-200 p-4">
-      <Field label={`${label} API key`} hint={hasKey ? 'A key is saved. Paste a new one to replace it.' : 'No key saved yet.'}>
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="Paste your key"
-          autoComplete="off"
-          spellCheck={false}
-          className={inputClass}
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onSave} disabled={busy || !key.trim()} className={primaryButton}>
-          Save {label} key
-        </button>
-        <button type="button" onClick={onTest} disabled={busy || (!key.trim() && !hasKey)} className={secondaryButton}>
-          Test {label} key
-        </button>
-        <button type="button" onClick={onRemove} disabled={busy || !hasKey} className={secondaryButton}>
-          Remove {label} key
-        </button>
-        {busy && <p className="text-sm text-stone-500">Working...</p>}
-      </div>
-      {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+    <div className="text-xs">
+      <p className={`font-medium ${test.ok ? 'text-green-800' : 'text-red-800'}`}>
+        <span aria-hidden="true">{test.ok ? '✓ ' : '✕ '}</span>
+        {test.ok ? 'Works' : 'Did not work'}
+      </p>
+      <p className="text-stone-500">Tested {when(test.at)}</p>
     </div>
   );
 }
 
-export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(): Promise<ProjectConfig | string> }) {
+/** One configured provider: its masked key or address, its last test, and Test and Remove. */
+function ProviderRow(props: { provider: ProviderId; detail: string; test: KeyTest | null; disabled: boolean; onTest(): Promise<string | null>; onRemove(): void }) {
+  const { provider, detail, test, disabled, onTest, onRemove } = props;
+  const testing = useAction();
+  const label = PROVIDER_LABELS[provider];
+  const note = PROVIDER_NOTES[provider];
+  return (
+    <li className="space-y-2 border-t border-stone-200 py-3 first:border-t-0 first:pt-0">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-48">
+          <p className="text-sm font-medium text-stone-900">{label}</p>
+          <p className="truncate font-mono text-xs text-stone-600">{detail}</p>
+        </div>
+        <div className="w-44">{testing.busy ? <p className="text-xs text-stone-500">Testing...</p> : <TestResult test={test} />}</div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => testing.run(async () => { const problem = await onTest(); return problem ? { ok: false, text: problem } : null; })}
+            disabled={disabled || testing.busy}
+            className={secondaryButton}
+          >
+            Test<span className="sr-only"> {label}</span>
+          </button>
+          <button type="button" onClick={onRemove} disabled={disabled || testing.busy} className={secondaryButton}>
+            Remove<span className="sr-only"> {label}</span>
+          </button>
+        </div>
+      </div>
+      {test && !test.ok && test.error && <p className="text-xs text-red-800">{test.error}</p>}
+      {note && <p className="text-xs text-stone-500">{note}</p>}
+      {testing.outcome && <Note tone="error">{testing.outcome.text}</Note>}
+    </li>
+  );
+}
+
+function AddProvider({ choices, disabled, onAdd }: { choices: ProviderId[]; disabled: boolean; onAdd(provider: ProviderId, value: string): Promise<boolean> }) {
+  const [picked, setPicked] = useState<ProviderId>(choices[0]);
+  const [value, setValue] = useState('');
+  const provider = choices.includes(picked) ? picked : choices[0]; // the one just added leaves the list
+  const local = provider === 'openai_compatible';
+  const note = PROVIDER_NOTES[provider];
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (await onAdd(provider, value)) setValue(''); // a pasted key is dropped as soon as main has it
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-2 rounded-lg bg-stone-50 p-4">
+      <p className="text-sm font-medium text-stone-800">Add a provider</p>
+      <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-end">
+        <Field label="Provider">
+          <select value={provider} onChange={(e) => { setPicked(e.target.value as ProviderId); setValue(''); }} className={inputClass}>
+            {choices.map((id) => (
+              <option key={id} value={id}>
+                {PROVIDER_LABELS[id]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={local ? 'Base URL' : 'API key'}>
+          <input
+            type={local ? 'url' : 'password'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={local ? 'http://localhost:11434/v1' : 'Paste the key'}
+            autoComplete="off"
+            spellCheck={false}
+            className={inputClass}
+          />
+        </Field>
+        <button type="submit" disabled={disabled || !value.trim()} className={primaryButton}>
+          Add provider
+        </button>
+      </div>
+      {note && <p className="text-xs text-stone-500">{note}</p>}
+    </form>
+  );
+}
+
+export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string> }) {
   const { settings, onSettings, save } = props;
-  const [keys, setKeys] = useState<Record<string, boolean>>({});
-  const endpoint = useAction();
+  const [list, setList] = useState<ProviderList | null>(null); // null until main has answered
+  const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
+  const reload = async () => setList(await window.gnomi.listProviders());
 
-  const testEndpoint = () =>
-    endpoint.run(async () => {
-      const saved = await save(); // the engine tests the address saved with the project
-      if (typeof saved === 'string') return { ok: false, text: problemFor(saved, 'settings') };
-      const result = await call('test_key', { provider: 'openai_compatible' });
-      return result.ok ? { ok: true, text: 'The endpoint answers.' } : { ok: false, text: `The endpoint did not answer: ${result.error ?? 'no reason given'}` };
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  const localUrl = settings.local_base_url?.trim() || null;
+  const configured = list && configuredProviders(list.keys, localUrl);
+  const addable = (Object.keys(PROVIDER_LABELS) as ProviderId[]).filter((id) => configured && !configured.includes(id));
+
+  /** Saves the project with the local endpoint changed; the engine only ever reaches the address saved with it. */
+  async function saveLocal(local_base_url: string | null): Promise<Outcome | null> {
+    const next = { ...settings, local_base_url };
+    onSettings(next);
+    const saved = await save(next);
+    return typeof saved === 'string' ? { ok: false, text: problemFor(saved, 'settings') } : null;
+  }
+
+  /** Whether the provider was added, so the form can drop what was typed. */
+  async function add(provider: ProviderId, value: string): Promise<boolean> {
+    let added = false;
+    await changing.run(async () => {
+      if (provider === 'openai_compatible') {
+        added = true; // in the draft even when the project cannot be saved yet
+        return saveLocal(value.trim());
+      }
+      const entry = await window.gnomi.saveKey(provider, value);
+      added = true;
+      await reload();
+      return entry.remembered ? null : { ok: true, text: 'Key accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
     });
+    return added;
+  }
+
+  const remove = (provider: ProviderId) =>
+    changing.run(async () => {
+      if (provider === 'openai_compatible') return saveLocal(null);
+      await window.gnomi.clearKey(provider);
+      await reload();
+      return null;
+    });
+
+  async function test(provider: ProviderId): Promise<string | null> {
+    if (provider === 'openai_compatible') {
+      const saved = await save(); // the engine tests the address saved with the project
+      if (typeof saved === 'string') return problemFor(saved, 'settings');
+    }
+    await window.gnomi.testKey(provider);
+    await reload();
+    return null;
+  }
 
   const onSave = () =>
     saving.run(async () => {
@@ -127,56 +179,52 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       return typeof saved === 'string' ? { ok: false, text: problemFor(saved, 'settings') } : { ok: true, text: 'Settings saved with the project.' };
     });
 
-  function missing(provider: ProviderId): string | null {
-    if (provider === 'openai_compatible') return settings.local_base_url?.trim() ? null : 'Give the local endpoint an address above.';
-    return keys[provider] === false ? `No ${PROVIDER_LABELS[provider]} key is saved yet.` : null;
-  }
-
   return (
     <div className="space-y-5">
-      <Card title="Provider keys">
+      <Card title="Providers">
         <p className="mb-4 text-sm text-stone-600">
           Gnomi uses your own keys. Each is stored encrypted by your operating system and is only ever sent to its provider. Add the ones you want to use.
         </p>
-        <div className="space-y-3">
-          {KEYED.map(({ id, label }) => (
-            <ProviderKey key={id} provider={id} label={label} onChange={(has) => setKeys((was) => ({ ...was, [id]: has }))} />
-          ))}
-        </div>
-      </Card>
-
-      <Card title="Local endpoint">
-        <div className="space-y-3">
-          <Field
-            label="Base URL"
-            hint="Any server that speaks the OpenAI API, such as Ollama or LM Studio, e.g. http://localhost:11434/v1. Leave empty if you do not use one."
-          >
-            <input
-              value={settings.local_base_url ?? ''}
-              onChange={(e) => set('local_base_url', e.target.value || null)}
-              placeholder="http://localhost:11434/v1"
-              spellCheck={false}
-              className={inputClass}
-            />
-          </Field>
-          <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={testEndpoint} disabled={endpoint.busy || !settings.local_base_url?.trim()} className={secondaryButton}>
-              Test endpoint
-            </button>
-            <span className="text-xs text-stone-500">Testing saves the project first.</span>
-            {endpoint.busy && <p className="text-sm text-stone-500">Working...</p>}
-          </div>
-          {endpoint.outcome && <Note tone={endpoint.outcome.ok ? 'ok' : 'error'}>{endpoint.outcome.text}</Note>}
-        </div>
+        {list && (list.keys.length || localUrl) ? (
+          <ul className="mb-4">
+            {list.keys.map(({ provider, masked, remembered, test: last }) => (
+              <ProviderRow
+                key={provider}
+                provider={provider}
+                detail={remembered ? masked : `${masked} · this session only`}
+                test={last}
+                disabled={changing.busy}
+                onTest={() => test(provider)}
+                onRemove={() => remove(provider)}
+              />
+            ))}
+            {localUrl && (
+              <ProviderRow
+                provider="openai_compatible"
+                detail={localUrl}
+                test={list.local_test?.target === localUrl ? list.local_test : null}
+                disabled={changing.busy}
+                onTest={() => test('openai_compatible')}
+                onRemove={() => remove('openai_compatible')}
+              />
+            )}
+          </ul>
+        ) : (
+          list && <p className="mb-4 text-sm text-stone-500">No provider yet. Add one to run personas.</p>
+        )}
+        {addable.length > 0 && <AddProvider choices={addable} disabled={changing.busy} onAdd={add} />}
+        {changing.busy && <p className="mt-3 text-sm text-stone-500">Working...</p>}
+        {changing.outcome && <div className="mt-3"><Note tone={changing.outcome.ok ? 'ok' : 'error'}>{changing.outcome.text}</Note></div>}
       </Card>
 
       <Card title="This project's models">
-        <p className="mb-4 text-sm text-stone-600">Pick a provider and a model for each job. Changing the provider fills in its usual model.</p>
+        <p className="mb-4 text-sm text-stone-600">Pick a provider and a model for each job from the providers above. Changing the provider fills in its usual model.</p>
         <div className="space-y-3">
           {ROLES.map((role) => {
             const choice = settings.routing[role];
             const text = ROLE_TEXT[role];
-            const warning = missing(choice.provider);
+            const warning = configured && routeProblem(choice.provider, configured);
+            const blind = role === 'navigator' && choice.provider === 'deepseek' && settings.screenshots;
             return (
               <div key={role} className="grid gap-2 sm:grid-cols-[9rem_10rem_minmax(0,1fr)] sm:items-start">
                 <div>
@@ -189,7 +237,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
                   onChange={(e) => set('routing', { ...settings.routing, [role]: PROVIDER_DEFAULTS[e.target.value as ProviderId][role] })}
                   className={inputClass}
                 >
-                  {(Object.keys(PROVIDER_LABELS) as ProviderId[]).map((id) => (
+                  {(configured ? routeOptions(configured, choice.provider) : [choice.provider]).map((id) => (
                     <option key={id} value={id}>
                       {PROVIDER_LABELS[id]}
                     </option>
@@ -204,6 +252,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
                     className={inputClass}
                   />
                   {text.used && warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
+                  {blind && <p className="mt-1 text-xs text-stone-500">DeepSeek reads text only, so the navigator will not see the screenshots.</p>}
                 </div>
               </div>
             );

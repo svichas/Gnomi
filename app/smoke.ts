@@ -87,7 +87,7 @@ try {
   });
 
   await stage('each screen renders (screenshots in app/test-results)', async () => {
-    for (const [name, heading] of [['Settings', 'Provider keys'], ['Project', 'What to test'], ['Audience', 'Audience'], ['Run', 'Runs']]) {
+    for (const [name, heading] of [['Settings', 'Providers'], ['Project', 'What to test'], ['Audience', 'Audience'], ['Run', 'Runs']]) {
       await tab(name).click();
       await page.getByRole('heading', { name: heading }).waitFor();
       await page.screenshot({ path: join(shots, `${name.toLowerCase()}.png`) });
@@ -107,7 +107,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -115,7 +115,9 @@ try {
     const openai = 'sk-openai-smoke-test-key';
     const saved = await page.evaluate((key) => window.gnomi.saveKey('anthropic', key), `  ${anthropic}  `);
     await page.evaluate((key) => window.gnomi.saveKey('openai', key), openai);
-    assert.deepEqual(await page.evaluate(() => Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai'), window.gnomi.hasKey('google')])), [true, true, false]);
+    const listed = await page.evaluate(() => window.gnomi.listProviders());
+    assert.deepEqual(listed.keys.map((entry) => [entry.provider, entry.masked]), [['anthropic', 'sk-…-key'], ['openai', 'sk-…-key']]);
+    assert.ok(!JSON.stringify([saved, listed]).includes('smoke-test'), 'a key came back from main');
     const refused = await page.evaluate(() => (window.gnomi.saveKey as (provider: string, key: string) => Promise<unknown>)('mistral', 'x').then(() => 'accepted', (err: Error) => err.message));
     assert.match(refused, /Unknown provider/);
     if (saved.remembered) {
@@ -127,7 +129,7 @@ try {
       if (process.platform !== 'win32') assert.equal(statSync(sessionKey).mode & 0o777, 0o600);
     }
     await page.evaluate(() => Promise.all([window.gnomi.clearKey('anthropic'), window.gnomi.clearKey('openai')]));
-    assert.deepEqual(await page.evaluate(() => Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai')])), [false, false]);
+    assert.deepEqual((await page.evaluate(() => window.gnomi.listProviders())).keys, []);
     assert.ok(!existsSync(join(userData, 'openai.key')), 'the removed key file is still there');
   });
 
@@ -262,14 +264,66 @@ try {
     await summary.waitFor({ state: 'hidden' });
   });
 
-  await stage("Settings: a role's provider fills in its usual model, and budgets save with the project", async () => {
+  await stage("Settings: providers are added, tested and removed, routes offer only configured ones, and a role's provider fills in its usual model", async () => {
     await tab('Settings').click();
     const settings = page.locator('#panel-settings');
-    await settings.getByLabel('Navigator provider').selectOption('openai');
-    assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.openai.navigator.model);
-    await settings.getByText('No OpenAI key is saved yet.').first().waitFor();
-    await settings.getByLabel('Navigator provider').selectOption('anthropic');
+    const navigator = settings.getByLabel('Navigator provider');
+    const options = () => navigator.locator('option').allTextContents();
+    const add = async (provider: string, value: string) => {
+      await settings.getByLabel('Provider', { exact: true }).selectOption(provider);
+      await settings.getByLabel(provider === 'openai_compatible' ? 'Base URL' : 'API key', { exact: true }).fill(value);
+      await settings.getByRole('button', { name: 'Add provider' }).click();
+    };
+    await settings.getByText('No provider yet. Add one to run personas.').waitFor();
+    assert.deepEqual(await options(), ['Anthropic'], 'only the provider in use, flagged');
+    await settings.getByText('No Anthropic key is saved. Add one under Providers.').first().waitFor();
+
+    const deepseek = 'sk-smoke-deepseek-0123456789abcd';
+    await add('anthropic', 'sk-ant-smoke-0123456789');
+    await add('deepseek', deepseek);
+    await settings.getByText('sk-…abcd').waitFor();
+    assert.equal(await settings.getByText('Not tested yet').count(), 2);
+    assert.ok(!(await settings.innerText()).includes('smoke-deepseek') && (await settings.getByLabel('API key', { exact: true }).inputValue()) === '', 'the key is still on the page');
+    await settings.getByText('Its servers are in China.').first().waitFor();
+    assert.deepEqual(await options(), ['Anthropic', 'DeepSeek']);
+    await navigator.selectOption('deepseek');
+    assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.deepseek.navigator.model);
+    await settings.getByText('DeepSeek reads text only, so the navigator will not see the screenshots.').waitFor();
+    await settings.getByRole('button', { name: 'Remove DeepSeek' }).click();
+    await settings.getByText('No DeepSeek key is saved. Add one under Providers.').waitFor();
+    await navigator.selectOption('anthropic');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
+    assert.deepEqual(await options(), ['Anthropic'], 'a removed provider is no longer offered');
+    assert.equal(await settings.getByText('No Anthropic key is saved').count(), 0);
+
+    // The local endpoint is saved with the project, and testing it asks a stand-in server for its model list.
+    const hits: string[] = [];
+    const endpoint = createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      res.setHeader('content-type', 'application/json');
+      res.end('{"object":"list","data":[]}');
+    });
+    await new Promise<void>((resolve) => endpoint.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${(endpoint.address() as AddressInfo).port}/v1`;
+      await add('openai_compatible', url);
+      await settings.getByText(url).waitFor();
+      await settings.getByRole('button', { name: 'Test Local endpoint' }).click();
+      await settings.getByText('Works').waitFor();
+      assert.deepEqual(hits, ['GET /v1/models']);
+    } finally {
+      endpoint.close();
+    }
+    // The provider list at the window's size and at 720 px wide.
+    await page.screenshot({ path: join(shots, 'settings-providers.png') });
+    const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
+    await page.screenshot({ path: join(shots, 'settings-providers-720.png') });
+    await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
+  });
+
+  await stage('Settings: budgets save with the project', async () => {
+    const settings = page.locator('#panel-settings');
     assert.equal(await settings.getByText('Used from a later version.').count(), 3, 'the socialiser, judge and author are marked as not used yet');
     await settings.getByLabel('Concurrency (1-32)', { exact: true }).fill('40');
     await settings.getByRole('button', { name: 'Save settings' }).click();
@@ -500,6 +554,8 @@ try {
     assert.equal(await page.getByRole('alert').count(), 0, `the page reports: ${await page.getByRole('alert').allInnerTexts()}`);
     await tab('Settings').click();
     assert.equal(await page.locator('#panel-settings').getByLabel('Concurrency (1-32)', { exact: true }).inputValue(), '3');
+    await page.locator('#panel-settings').getByText('sk-…6789').waitFor();
+    await page.locator('#panel-settings').getByText('Works').waitFor(); // the local endpoint's last test outlives the page
     await tab('Audience').click();
     await page.locator('#panel-audience').getByRole('heading', { name: 'Personas (6)' }).waitFor();
     assert.equal(await page.locator('#panel-audience').getByRole('slider').count(), 2);

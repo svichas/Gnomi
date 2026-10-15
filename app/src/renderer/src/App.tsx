@@ -65,7 +65,7 @@ export function App() {
           setRunId(running.run_id);
           setTab('run');
           setHome(false);
-        } else if (!(await Promise.all([window.gnomi.hasKey('anthropic'), window.gnomi.hasKey('openai'), window.gnomi.hasKey('google')])).includes(true)) {
+        } else if (!(await window.gnomi.listProviders()).keys.length && !loaded.project?.settings.local_base_url) {
           setTab('settings');
         }
       } catch (err) {
@@ -77,13 +77,15 @@ export function App() {
   }, []);
 
   // One project, edited on three tabs and saved as a whole: a tab's Save writes what the others hold too.
-  async function save(): Promise<ProjectConfig | string> {
+  // `settings` is for a change made in the same moment, before the draft holds it (adding the local endpoint).
+  async function save(settings?: RunSettings): Promise<ProjectConfig | string> {
     if (!draft) return 'Gnomi is still starting.';
-    const config = toConfig(draft);
+    const next = settings ? { ...draft, settings } : draft;
+    const config = toConfig(next);
     if (typeof config === 'string') return config;
     await call('save_project', { project: config });
     await refresh();
-    baseline.current = JSON.stringify(draft);
+    baseline.current = JSON.stringify(next);
     setCatalog(await window.gnomi.listProjects());
     return config;
   }
