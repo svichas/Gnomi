@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('gnomi', {
   clearKey: (provider) => ipcRenderer.invoke('clear-key', provider),
   listProjects: () => ipcRenderer.invoke('list-projects'),
   projectAction: (action) => ipcRenderer.invoke('project-action', action),
+  reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
+  saveReport: (format, runId, content) => ipcRenderer.invoke('save-report', format, runId, content),
 } satisfies Window['gnomi']);

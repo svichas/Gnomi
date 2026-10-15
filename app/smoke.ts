@@ -107,7 +107,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -152,6 +152,32 @@ try {
     await themes.screenshot({ path: join(shots, 'report-themes-720.png') });
     await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
     ran = true;
+  });
+
+  await stage('the report exports to HTML, PDF, JSON and Markdown files', async () => {
+    assert.ok(ran, 'needs the run above');
+    const exported = join(tmp, 'exports');
+    mkdirSync(exported);
+    // The save dialog is replaced: each file lands under its suggested name.
+    await app.evaluate(({ dialog }, dir) => {
+      dialog.showSaveDialog = async (options: Electron.SaveDialogOptions) => ({ canceled: false, filePath: `${dir}/${options.defaultPath}` });
+    }, exported);
+    const file = (format: string) => readFileSync(join(exported, `gnomi-report-r-0001.${format}`));
+    for (const format of ['html', 'pdf', 'json', 'md']) {
+      await page.getByLabel('Export format').selectOption(format);
+      await page.getByRole('button', { name: 'Export report' }).click();
+      await page.getByText(new RegExp(`Report exported to .*gnomi-report-r-0001\\.${format}$`)).waitFor({ timeout: 60_000 });
+      assert.ok(file(format).length > 0, `the ${format} file is empty`);
+    }
+    const html = file('html').toString();
+    assert.doesNotMatch(html, /<script/i);
+    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'the HTML loads something from outside the file');
+    assert.match(html, /<img src="data:image\/jpeg;base64,/);
+    assert.doesNotMatch(html, /<button\b/, 'the file has inspector links');
+    assert.equal(file('pdf').subarray(0, 5).toString(), '%PDF-');
+    assert.equal(JSON.parse(file('json').toString()).run_id, 'r-0001');
+    assert.match(file('md').toString(), /^# Gnomi report: Post a job/);
+    console.log(`      sizes: ${['html', 'pdf', 'json', 'md'].map((format) => `${format} ${file(format).length} B`).join(', ')}`);
   });
 
   await stage('a third-party host is blocked: the report lists it and it received nothing', async () => {
