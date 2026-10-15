@@ -4,15 +4,15 @@ import type { LlmAttempt } from '../seams.ts';
 
 export type Mode = 'scripted' | 'live';
 export type Status = 'PASS' | 'FAIL' | 'REVIEW_NEEDED' | 'NOT_RUN';
-export interface Options { mode: Mode; out: string; allowance_usd?: number }
+export interface Options { mode: Mode; out: string; allowance_usd?: number; m4?: true }
 export interface Criterion { id: string; status: Status; live_required: boolean; detail: string }
 export const BILLING_CAVEAT = 'The allowance stops new work at recorded spend. Already-dispatched calls may still be billed; missing provider usage makes the final bill uncertain. This is not a provider billing cap.';
 
 export function parseOptions(args: string[]): Options {
-  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' } } });
+  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, m4: { type: 'boolean' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' } } });
   const allowance_usd = values['allowance-usd'] === undefined ? undefined : Number(values['allowance-usd']);
   if (allowance_usd !== undefined && (!Number.isFinite(allowance_usd) || allowance_usd <= 0)) throw new Error('--allowance-usd must be a finite positive recorded-spend allowance.');
-  return { mode: values.live ? 'live' : 'scripted', out: resolve(values.out ?? `acceptance-results/${new Date().toISOString().replaceAll(':', '-')}`), ...(allowance_usd === undefined ? {} : { allowance_usd }) };
+  return { mode: values.live ? 'live' : 'scripted', out: resolve(values.out ?? `acceptance-results/${new Date().toISOString().replaceAll(':', '-')}`), ...(allowance_usd === undefined ? {} : { allowance_usd }), ...(values.m4 ? { m4: true as const } : {}) };
 }
 
 export function validateOptions(options: Options, env: Record<string, string | undefined>): void {
