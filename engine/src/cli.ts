@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { launchBrowserPool } from './browser/pool.ts';
 import { createGateway } from './llm/gateway.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
       const llm =
         apiKey && !values['fake-llm']
           ? createGateway({ secrets: { get: (name) => (name === 'anthropic_api_key' ? apiKey : null) }, localBaseUrl: null, record, onThrottle: (provider) => run?.throttle(provider) })
-          : createScriptedGateway({ navigator: DEMO_NAVIGATOR, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+          : createScriptedGateway({ navigator: DEMO_NAVIGATOR, socialiser: DEMO_SOCIALISER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
       console.log(`Project folder: ${dir}`);
       // Nobody can resume a blocked persona from a terminal, so a block ends her episode at once.
       const config = store.createRun({ ...newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }), pause_timeout_ms: 0 });

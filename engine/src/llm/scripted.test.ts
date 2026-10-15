@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
-import { stepSchema, surveySchema } from '../agent/prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveySchema } from '../agent/prompt.ts';
+import { DEFAULT_SETTINGS } from '../settings.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent } from '../types.ts';
 import { InvalidOutputError } from './gateway.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR } from './scripted.ts';
+import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './scripted.ts';
 
 const schema = z.object({ thought: z.string(), feeling: z.number().int().min(-2).max(2) });
 const model = { provider: 'anthropic', model: 'claude-haiku-5-5' } as const;
@@ -136,4 +137,26 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
 
   assert.deepEqual(await step('p-1', 'r-demo-2'), a1, 'a new run starts over');
   assert.equal((await step('p-1')).action.type, 'abandon', 'past the end it keeps abandoning rather than throwing');
+});
+
+test('the demo socialiser reads the real social prompt and answers validly, mostly with silence, the same way each time', () => {
+  const project = { name: 'Gym ATS', description: '', poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }, goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS } as const;
+  const line = (post_id: string) => ({ post_id, author: 'Ana Ruiz', text: 'Lost my draft.', agree: 0, disagree: 0, parent: null });
+  const ask = (persona_id: string, ids: string[]) => {
+    const user = socialParts({ persona: BUILTIN_PERSONA, project, round: 2, rounds: 5, end: null, steps: 3, frictions: [], opinion: null, posted: [], feed: ids.map(line) });
+    const answer = DEMO_SOCIALISER({ ...request(), role: 'socialiser', persona_id, round: 2, system: socialSystemPrompt(BUILTIN_PERSONA, project, null), user, schema: socialSchema(ids, ['poi-1']) });
+    assert.ok(socialSchema(ids, ['poi-1']).safeParse(answer).success, JSON.stringify(answer));
+    return answer as { action: string; post_id: string | null; about_poi_id: string | null; text: string | null; opinion_updates: unknown[] };
+  };
+  for (const ids of [['r1-p-a', 'inj-r1-1'], []]) {
+    const answers = Array.from({ length: 200 }, (_, i) => ask(`p-${i}`, ids));
+    const count = (action: string) => answers.filter((a) => a.action === action).length;
+    assert.ok(count('nothing') > 120, `${count('nothing')} of 200 stay silent`);
+    assert.ok(count('post') > 0);
+    if (ids.length) assert.ok(count('react') > 0 && count('reply') > 0 && answers.every((a) => a.post_id === null || a.post_id === ids[0]));
+    else assert.equal(count('post') + count('nothing'), 200, 'an empty feed has nothing to answer');
+    assert.ok(answers.every((a) => a.opinion_updates.length === 0 && (a.text === null || /^Scripted demo/.test(a.text))));
+    assert.ok(answers.filter((a) => a.action === 'post').every((a) => a.about_poi_id === 'poi-1'));
+  }
+  assert.deepEqual(ask('p-7', ['r1-p-a']), ask('p-7', ['r1-p-a']));
 });

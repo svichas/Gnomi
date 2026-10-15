@@ -21,6 +21,37 @@ test('opinion updates have their own activity category with explicit self-report
   assert.deepEqual(filterEvents([changed, blocked(4)], { persona: '', segment: '', category: 'opinions' }, new Map()).map((e) => e.seq), [3]);
 });
 
+test('rounds, feeds, posts, replies, reactions and feed-driven opinions read as rows, with social events in their own category', () => {
+  const at = (seq: number, type: EventType, payload: object, round = 2) => ({ ...event(seq, type as 'social.post', payload as EventPayloads['social.post']), round }) as GnomiEvent;
+  const events = [
+    at(1, 'run.round_started', {}),
+    at(2, 'social.feed_viewed', { post_ids: ['r1-p-002', 'inj-r1-1'] }),
+    at(3, 'social.feed_viewed', { post_ids: [] }),
+    at(4, 'social.post', { post_id: 'r2-p-001', parent_id: null, text: 'Lost my draft.', about_poi_id: 'poi-1' }),
+    at(5, 'social.post', { post_id: 'r2-p-001', parent_id: 'inj-r1-1', text: 'Same here.', about_poi_id: null }),
+    at(6, 'social.post', { post_id: 'inj-r2-1', parent_id: null, text: 'Seeded complaint', about_poi_id: 'poi-1', injected: true }),
+    at(7, 'social.reaction', { post_id: 'r1-p-002', kind: 'disagree' }),
+    at(8, 'persona.opinion_changed', { poi_id: 'poi-1', before: null, after: { sentiment: -1, confidence: 0.5, likes: [], frictions: ['Drafts get lost'] }, cause: { step_ids: [], post_ids: ['inj-r1-1'] } }),
+    at(9, 'run.round_ended', {}),
+  ];
+  const rows = toRows(events).reverse();
+  assert.deepEqual(rows.map((r) => [r.label, r.title]), [
+    ['Round 2', 'Round 2 started'],
+    ['Feed', 'Read 2 new posts in the feed'],
+    ['Feed', 'Found nothing new in the feed'],
+    ['Post', 'Posted in the feed'],
+    ['Reply', 'Replied to post inj-r1-1'],
+    ['Post', 'Posted in the feed (put there by the test harness)'],
+    ['Reaction', 'Disagreed with post r1-p-002'],
+    ['Opinion', 'Sentiment -1; self-reported confidence 50%, after reading a post'],
+    ['Round 2', 'Round 2 ended'],
+  ]);
+  assert.equal(rows[3].quote, 'Lost my draft.');
+  assert.match(rows[7].detail ?? '', /Cited posts: inj-r1-1\./);
+  assert.deepEqual(filterEvents(events, { persona: '', segment: '', category: 'social' }, new Map()).map((e) => e.seq), [2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(filterEvents(events, { persona: '', segment: '', category: 'run' }, new Map()).map((e) => e.seq), [1, 9]);
+});
+
 test('a survey answer reads as a row with its reason quoted, filed with opinions, and leaves the persona as she ended', () => {
   const done = event(2, 'persona.goal_done', { step_no: 1, summary: 'Posted' });
   const survey = event(3, 'persona.survey', { poi_id: 'poi-1', sentiment: 1, confidence: 0.8, likes: ['Clear form'], frictions: [], would_continue: true, reason: 'It just worked.' });
