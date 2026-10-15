@@ -143,6 +143,29 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
       const { step_no, action, error } = event.payload;
       return { seq, label: `Step ${step_no}`, tone: 'bad', title: 'Got stuck', detail: `The same ${action} failed three times in a row (${error})` };
     }
+    // Objective signals (tech.md §8.1): what the engine detected, as opposed to what the persona said.
+    case 'signal.failed_action': {
+      const { step_no, action, error } = event.payload;
+      const title = error === 'no_effect' ? `Detected: the ${action} changed nothing` : `Detected: the ${action} failed (${STEP_ERRORS[error] ?? error})`;
+      return { seq, label: `Step ${step_no}`, tone: 'notice', title, detail: event.payload.url };
+    }
+    case 'signal.loop':
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: the same page ${event.payload.visits} times in a few steps`, detail: event.payload.url };
+    case 'signal.backtrack': {
+      const { step_no, kind, url } = event.payload;
+      return { seq, label: `Step ${step_no}`, tone: 'notice', title: kind === 'repeated_back' ? 'Detected: went back again and again' : 'Detected: returned to a page from moments ago', detail: url };
+    }
+    case 'signal.error': {
+      const { step_no, kind, status, message } = event.payload;
+      const title = kind === 'http' ? `Detected: the site answered HTTP ${status}` : kind === 'exception' ? 'Detected: the page threw an error' : 'Detected: the page logged an error';
+      return { seq, label: `Step ${step_no}`, tone: 'notice', title, detail: message };
+    }
+    case 'signal.validation_error':
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: 'Detected: an error message appeared after submitting', detail: event.payload.message };
+    case 'signal.small_target': {
+      const [, , width, height] = event.payload.box;
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: event.payload.url };
+    }
     case 'llm.call':
       return event.payload.status === 'ok'
         ? null
@@ -227,11 +250,12 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
   return counts;
 }
 
-export type Category = 'steps' | 'frictions' | 'opinions' | 'outcomes' | 'blocks' | 'containment' | 'run';
+export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'outcomes' | 'blocks' | 'containment' | 'run';
 
 export const CATEGORIES: Record<Category, string> = {
   steps: 'Steps',
   frictions: 'Frictions',
+  signals: 'Detected signals',
   opinions: 'Opinions',
   outcomes: 'Finishes and give-ups',
   blocks: 'Blocked and resumed',
@@ -243,6 +267,12 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'persona.step': 'steps',
   'persona.episode_started': 'steps',
   'persona.friction_reported': 'frictions',
+  'signal.failed_action': 'signals',
+  'signal.loop': 'signals',
+  'signal.backtrack': 'signals',
+  'signal.error': 'signals',
+  'signal.validation_error': 'signals',
+  'signal.small_target': 'signals',
   'persona.opinion_changed': 'opinions',
   'persona.goal_done': 'outcomes',
   'persona.abandoned': 'outcomes',

@@ -482,3 +482,29 @@ test('M2: two segments on different roles each log in with their own recorded se
     assert.match(seen.get(p.id) ?? '', expected, `${p.id} (${p.segment_id}) saw the wrong login`);
   }
 });
+
+// —— M3 ——
+
+test('M3: a broken link and a rejected form raise signal.error and signal.validation_error right after their steps', async (t) => {
+  const w = await world(t, { defects: 'D03' });
+  const { events } = await w.go(
+    walk([
+      (req) => say('Jobs is in the menu.', { type: 'click', ref: ref(req, 'link', 'Jobs') }),
+      say('Page not found. Back.', { type: 'back' }),
+      (req) => say('This one, then.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }),
+      (req) => say('Create job.', { type: 'click', ref: ref(req, 'link', 'Create job') }),
+      (req) => say('Publish and see what it asks for.', { type: 'click', ref: ref(req, 'button', 'Publish job') }),
+      say('It wants a title. Enough for today.', { type: 'abandon', text: 'Ran out of time' }),
+    ]),
+  );
+  const steps = of(events, 'persona.step');
+  const [broken] = of(events, 'signal.error');
+  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
+  assert.equal(broken.seq, steps[0].seq + 1, 'written right after its step');
+  assert.equal(of(events, 'signal.error').length, 1, "Chromium's console line for the 404 is not a second error");
+  const [rejected] = of(events, 'signal.validation_error');
+  assert.deepEqual(rejected.payload, { step_no: 5, url: `${w.gym.url}/jobs/new`, ref: steps[4].payload.action.ref, message: 'Enter a job title' });
+  assert.equal(rejected.seq, steps[4].seq + 1);
+  assert.deepEqual(of(events, 'signal.backtrack').map((e) => [e.payload.step_no, e.payload.kind]), [[2, 'revisit']], 'the back, not where the form posted to');
+  assert.deepEqual(of(events, 'signal.failed_action'), [], 'every click did something');
+});

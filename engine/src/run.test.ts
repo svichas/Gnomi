@@ -9,6 +9,7 @@ import { createScriptedGateway } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
+import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { BlobStore, BrowserPool, LlmAttempt, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 import type {
@@ -183,6 +184,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
           return outcome;
         },
         inspect: async () => ({ login: false, challenge: null, live_key: null, ...opts.inspect?.(inspections++, page.url) }),
+        errors: () => [],
         async close() {
           if (!page.closed) open--;
           page.closed = true;
@@ -334,6 +336,19 @@ test('three identical failed actions in a row end the episode', async () => {
   assert.deepEqual(of(r.events, 'signal.repeated_failure')[0].payload, { step_no: 6, action: 'click', error: 'ref_not_found' });
   assert.equal(of(r.events, 'persona.abandoned').length, 0, 'an engine stop is not the persona giving up');
   assert.equal(report.personas[0].outcome, 'repeated_failure');
+});
+
+test('signals follow their step under the thresholds frozen in the run, or the defaults on a legacy run', async () => {
+  assert.deepEqual(newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }).signals, DEFAULT_SIGNALS);
+  const script = [step('click', 'e9'), step('read', 'e1'), step('read', 'e1'), step('done', null, 'Done')];
+  const act = (a: { ref: string | null }) => (a.ref === 'e9' ? { dom_changed: false } : {});
+  const legacy = begin(script, { act, config: { signals: undefined } });
+  await legacy.run.done;
+  assert.deepEqual(legacy.types().slice(3, 12), ['llm.call', 'persona.step', 'signal.failed_action', 'llm.call', 'persona.step', 'llm.call', 'persona.step', 'signal.loop', 'llm.call']);
+  assert.deepEqual(of(legacy.events, 'signal.failed_action')[0].payload, { step_no: 1, url: 'http://gym.test/', ref: 'e9', action: 'click', error: 'no_effect' });
+  const lenient = begin(script, { act, config: { signals: { ...DEFAULT_SIGNALS, loop_visits: 4 } } });
+  await lenient.run.done;
+  assert.equal(of(lenient.events, 'signal.loop').length, 0);
 });
 
 test("abandon ends the episode with the persona's own reason", async () => {
