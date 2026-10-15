@@ -1,4 +1,4 @@
-import { cloneElement, createContext, useContext, useEffect, useId, useRef, useState } from 'react';
+import { cloneElement, useEffect, useId, useRef, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { call, errorText } from './engine.ts';
 
@@ -75,12 +75,8 @@ export function ProgressBar({ value, max, label }: { value: number; max: number;
   );
 }
 
-/** Set while a report is drawn into a file: screenshots come from `images` (a missing path is left out), `shown` lists each one drawn, and nothing is interactive. */
-export const StaticFile = createContext<{ images: Map<string, string>; shown: string[] } | null>(null);
-
 /** A screenshot, fetched only once it scrolls into view: a report or a timeline can hold hundreds. */
 export function Screenshot({ path, alt }: { path: string; alt: string }) {
-  const file = useContext(StaticFile);
   const box = useRef<HTMLDivElement>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -105,11 +101,6 @@ export function Screenshot({ path, alt }: { path: string; alt: string }) {
       watcher.disconnect();
     };
   }, [path]);
-  if (file) {
-    file.shown.push(path);
-    const image = file.images.get(path);
-    return image ? <img src={image} alt={alt} className="max-h-128 rounded-lg border border-stone-200" /> : <p className="text-sm text-stone-500">This screenshot is not included in the file.</p>;
-  }
   return (
     <div ref={box} className="min-h-12">
       {src ? <img src={src} alt={alt} className="w-full rounded-lg border border-stone-200" /> : <p className="text-sm text-stone-500">{failed ? 'The screenshot could not be loaded.' : 'Loading screenshot...'}</p>}

@@ -1,14 +1,13 @@
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import type { Report as ReportData } from '@gnomi/engine/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
 import type { ReportFormat } from '../../reports.ts';
-import { Note, StaticFile, secondaryButton, useAction } from './ui.tsx';
+import { Note, secondaryButton, useAction } from './ui.tsx';
 
 /** Saves the report as a file. The file is drawn on demand, so the screen never loads the static renderer or the inlined styles. */
 export function ExportReport({ report }: { report: ReportData }) {
   const [format, setFormat] = useState<ReportFormat>('html');
   const { busy, outcome, run } = useAction();
-  if (useContext(StaticFile)) return null; // the exported file has no controls
   const save = () =>
     run(async () => {
       const { reportFile } = await import('./reportFile.tsx');
@@ -32,7 +31,7 @@ export function ExportReport({ report }: { report: ReportData }) {
           ))}
         </select>
         <button type="button" onClick={() => void save()} disabled={busy} className={secondaryButton}>
-          {busy ? 'Exporting...' : 'Export'}
+          {busy ? 'Exporting...' : 'Export report'}
         </button>
       </div>
       {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}

@@ -1,12 +1,11 @@
-import { useContext } from 'react';
+import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { Outcome, Report as ReportData, ReportDimension, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
-import { ExportReport } from './ReportExport.tsx';
-import { Note, Screenshot, StaticFile, usd } from './ui.tsx';
+import { Note, usd } from './ui.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -31,8 +30,14 @@ function OutcomeChip({ outcome }: { outcome: Outcome }) {
 
 type Inspect = (personaId: string, seq?: number) => void;
 
+// Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
+type RenderScreenshot = (path: string, alt: string) => ReactNode;
+
+/** True while the report is drawn into an exported file, which has no inspector to open. */
+export const InFile = createContext(false);
+
 function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
-  if (useContext(StaticFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>; // a file has no inspector
+  if (useContext(InFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>;
   return (
     <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
       {name}
@@ -40,7 +45,7 @@ function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; s
   );
 }
 
-function Friction({ friction, onInspect }: { friction: ReportFriction; onInspect: Inspect }) {
+function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportFriction; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   return (
     <li className="rounded-lg border border-amber-300 bg-amber-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
@@ -53,11 +58,7 @@ function Friction({ friction, onInspect }: { friction: ReportFriction; onInspect
       {friction.quote && (
         <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
       )}
-      {friction.screenshot && (
-        <div className="mt-3">
-          <Screenshot path={friction.screenshot} alt={`The page at step ${friction.step_no}, as ${friction.persona_name} saw it`} />
-        </div>
-      )}
+      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>
   );
@@ -127,7 +128,7 @@ function SegmentTable({ report }: { report: ReportData }) {
   );
 }
 
-function FrictionsBySegment({ report, filtered, onInspect }: { report: ReportData; filtered: boolean; onInspect: Inspect }) {
+function FrictionsBySegment({ report, filtered, onInspect, renderScreenshot }: { report: ReportData; filtered: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const known = new Set(report.segments.map((segment) => segment.id));
   const groups = [
     ...report.segments.map((segment) => ({ key: segment.id ?? segment.name, name: segment.name, items: report.frictions.filter((f) => f.segment_id === segment.id) })),
@@ -149,7 +150,7 @@ function FrictionsBySegment({ report, filtered, onInspect }: { report: ReportDat
               </h4>
               <ol className="space-y-3">
                 {group.items.map((friction) => (
-                  <Friction key={friction.seq} friction={friction} onInspect={onInspect} />
+                  <Friction key={friction.seq} friction={friction} onInspect={onInspect} renderScreenshot={renderScreenshot} />
                 ))}
               </ol>
             </div>
@@ -318,7 +319,9 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
   );
 }
 
-export function Report({ report, filter = {}, onInspect }: { report: ReportData; filter?: ProfileFilter; onInspect: Inspect }) {
+const noScreenshot: RenderScreenshot = () => null;
+
+export function Report({ report, filter = {}, onInspect, renderScreenshot = noScreenshot }: { report: ReportData; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot }) {
   const selectedPersonas = report.personas.filter((persona) => matchesProfileValues(persona.attributes, filter));
   const ids = new Set(selectedPersonas.map((persona) => persona.id));
   const filtered = !!filter.dimension && !!filter.value;
@@ -333,12 +336,9 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
   ];
   return (
     <section aria-labelledby="report-title" className="space-y-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 id="report-title" className="text-base font-semibold text-stone-900">
-          Report
-        </h2>
-        <ExportReport report={report} />
-      </div>
+      <h2 id="report-title" className="text-base font-semibold text-stone-900">
+        Report
+      </h2>
       <Note tone="info">{report.banner}</Note>
       {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
@@ -357,7 +357,7 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
       {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
-      <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} />
+      <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
       <PersonaOutcomes report={details} onInspect={onInspect} />
       <Methods methods={report.methods} personas={report.personas} />
     </section>

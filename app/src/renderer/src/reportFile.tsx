@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Report as ReportData } from '@gnomi/engine/types.ts';
 import { reportToMarkdown } from '@gnomi/engine/report/markdown.ts';
 import type { ReportFormat } from '../../reports.ts';
-import { Report } from './Report.tsx';
-import { StaticFile, when } from './ui.tsx';
+import { InFile, Report } from './Report.tsx';
+import { when } from './ui.tsx';
 import css from './styles.css?inline';
 
 // Screenshots past this are left out, so a 50-persona run stays under the roadmap's 25 MB (M3) with room for the markup.
@@ -21,7 +22,7 @@ const PRINT = `@media print {
 
 const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function Page({ report }: { report: ReportData }) {
+function Page({ report, screenshot }: { report: ReportData; screenshot: (path: string, alt: string) => ReactNode }) {
   return (
     <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
       <header>
@@ -30,27 +31,33 @@ function Page({ report }: { report: ReportData }) {
           Run {report.run_id} on {report.poi.start_url}, started {when(report.started_at)}
         </p>
       </header>
-      <Report report={report} onInspect={() => {}} />
+      <Report report={report} onInspect={() => {}} renderScreenshot={screenshot} />
     </main>
   );
 }
 
 /** One HTML file drawn by the report component itself: styles inline, evidence screenshots as small data URLs, no scripts, nothing fetched. */
 export async function reportHtml(report: ReportData, thumbnails: (paths: string[]) => Promise<Record<string, string>>): Promise<string> {
-  const file = { images: new Map<string, string>(), shown: [] as string[] };
+  const images = new Map<string, string>();
+  const shown: string[] = [];
+  const screenshot = (path: string, alt: string) => {
+    shown.push(path);
+    const image = images.get(path);
+    return image ? <img src={image} alt={alt} className="max-h-128 rounded-lg border border-stone-200" /> : <p className="text-sm text-stone-500">This screenshot is not included in the file.</p>;
+  };
   const draw = () =>
     renderToStaticMarkup(
-      <StaticFile value={file}>
-        <Page report={report} />
-      </StaticFile>,
+      <InFile value>
+        <Page report={report} screenshot={screenshot} />
+      </InFile>,
     );
   draw(); // the first pass only learns which screenshots the report shows, in order
-  const made = await thumbnails([...new Set(file.shown)]);
+  const made = await thumbnails([...new Set(shown)]);
   let left = IMAGE_BYTES;
-  for (const path of file.shown) {
+  for (const path of shown) {
     const image = made[path];
     if (!image || image.length > left) continue;
-    file.images.set(path, image);
+    images.set(path, image);
     left -= image.length;
   }
   return `<!doctype html>

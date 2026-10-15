@@ -152,12 +152,11 @@ try {
     await app.evaluate(({ dialog }, dir) => {
       dialog.showSaveDialog = async (options: Electron.SaveDialogOptions) => ({ canceled: false, filePath: `${dir}/${options.defaultPath}` });
     }, exported);
-    const report = page.locator('section[aria-labelledby=report-title]');
     const file = (format: string) => readFileSync(join(exported, `gnomi-report-r-0001.${format}`));
     for (const format of ['html', 'pdf', 'json', 'md']) {
-      await report.getByLabel('Export format').selectOption(format);
-      await report.getByRole('button', { name: 'Export' }).click();
-      await report.getByText(new RegExp(`Report exported to .*gnomi-report-r-0001\\.${format}$`)).waitFor({ timeout: 60_000 });
+      await page.getByLabel('Export format').selectOption(format);
+      await page.getByRole('button', { name: 'Export report' }).click();
+      await page.getByText(new RegExp(`Report exported to .*gnomi-report-r-0001\\.${format}$`)).waitFor({ timeout: 60_000 });
       assert.ok(file(format).length > 0, `the ${format} file is empty`);
     }
     const html = file('html').toString();
