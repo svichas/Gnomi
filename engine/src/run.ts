@@ -4,6 +4,7 @@ import { personaEnvironment } from './audience/locations.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
+import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
@@ -272,6 +273,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     } finally {
       clearTimeout(clock);
     }
+    // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
+    if (!halted) await runReportModels({ config, llm: budgetedLlm, record, events: () => store.events(run_id) });
 
     const stopped = halted as EventPayloads['run.stopped'] | null;
     record(stopped ? { ...base, type: 'run.stopped', payload: stopped } : { ...base, type: 'run.finished', payload: {} });

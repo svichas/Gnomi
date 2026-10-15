@@ -61,6 +61,40 @@ export const DEMO_NAVIGATOR: Responder = (() => {
   };
 })();
 
+/** The JSON object a report-model request carries as its one text part (report/models.ts). */
+function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
+  const part = req.user.find((p) => p.type === 'text');
+  try {
+    return part ? JSON.parse(part.text) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** One theme per friction group the judge was shown, saying plainly that no model named it. */
+export const DEMO_JUDGE: Responder = (req) => {
+  const groups = (requestJson(req).groups ?? []) as { id: string }[];
+  return {
+    themes: groups.map((group, i) => ({
+      title: `Scripted demo theme ${i + 1}: no model named it`,
+      description: `Scripted demo: no judge model ran, so this is friction group ${group.id} as the engine grouped it.`,
+      group_ids: [group.id],
+    })),
+  };
+};
+
+/** A labelled placeholder suggestion for every theme the author was shown. */
+export const DEMO_AUTHOR: Responder = (req) => {
+  const themes = (requestJson(req).themes ?? []) as { id: string }[];
+  return {
+    suggestions: themes.map((theme) => ({
+      theme_id: theme.id,
+      change: 'Scripted demo suggestion: no author model ran, so this is not a real suggested change.',
+      solution: 'Run with a model API key to get a suggested change and a possible solution for this theme.',
+    })),
+  };
+};
+
 /** The ref of the first `- role "name" … [ref=eN]` line in the request's page snapshot, for scripts that walk a known site. */
 export function findRef(req: LlmRequest<unknown>, role: string, name: string): string | null {
   const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');

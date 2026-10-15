@@ -8,6 +8,7 @@ import { createGateway, InvalidOutputError } from './llm/gateway.ts';
 import { surveySchema } from './agent/prompt.ts';
 import { createScriptedGateway } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { buildReport } from './report/build.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
@@ -249,7 +250,7 @@ test('opinion changes cite each persona’s own recorded step, retain prior valu
   await r.run.done;
   const changes = of(r.events, 'persona.opinion_changed');
   assert.equal(changes.length, 4, 'identical and null opinions do not create changes');
-  assert.equal(of(r.events, 'llm.call').length, 10, 'one call per ordinary step and one survey per persona');
+  assert.equal(of(r.events, 'llm.call').filter((e) => e.persona_id).length, 10, 'one call per ordinary step and one survey per persona');
   for (const id of ['a', 'b']) {
     const own = changes.filter((event) => event.persona_id === id);
     assert.deepEqual(own.map((event) => [event.payload.before, event.payload.after]), [[null, initial], [initial, updated]]);
@@ -279,7 +280,11 @@ test('invalid opinion output cannot create a ledger entry or fabricate confidenc
 
 test('a run logs its lifecycle in seq order, keeps the evidence and writes report.json', async () => {
   const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };
-  const r = begin([step('click', 'e1', null, friction), step('done', null, 'Posted the job')]);
+  const steps = [step('click', 'e1', null, friction), step('done', null, 'Posted the job')];
+  // Once the episode is over the judge names the one friction group and the author suggests a change; both answers are logged.
+  const judged = { themes: [{ title: 'The Jobs link leads nowhere', description: 'Jobs opens a page that is not found.', group_ids: ['g1'] }] };
+  const suggested = { suggestions: [{ theme_id: 'g1', change: 'Point the Jobs link at the job list.', solution: 'Fix the route behind the link.' }] };
+  const r = begin((req, n) => (req.role === 'judge' ? judged : req.role === 'author' ? suggested : steps[n]));
   const report = await r.run.done;
 
   assert.deepEqual(r.types(), [
@@ -294,6 +299,10 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
     'persona.goal_done',
     'llm.call',
     'persona.survey',
+    'llm.call',
+    'report.themes',
+    'llm.call',
+    'report.suggestions',
     'run.finished',
     'report.generated',
   ]);
@@ -312,6 +321,14 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
   assert.deepEqual([report.personas[0].outcome, report.personas[0].outcome_text], ['done', 'Posted the job']);
   assert.equal(report.frictions[0].screenshot, 'runs/r-0001/shots/p-001-0001.jpg');
   assert.deepEqual(JSON.parse(new TextDecoder().decode(r.files.get('runs/r-0001/report.json'))), report);
+  assert.deepEqual(
+    report.themes?.map((t) => [t.title, t.named_by, t.suggestion?.change]),
+    [
+      ['The Jobs link leads nowhere', 'judge', 'Point the Jobs link at the job list.'],
+      ['The save button was hard to find', 'rules', undefined], // the survey's friction, which the judge left unnamed
+    ],
+  );
+  assert.deepEqual(buildReport(r.events), report); // the log alone, model answers included, gives the same report
   assert.deepEqual(r.finished, [{ status: 'finished', stop_reason: null, cost_usd: 0 }]);
   assert.ok(r.pages.every((p) => p.closed));
 });
@@ -451,7 +468,7 @@ test('two invalid outputs make a failed step, not a crash', async () => {
   const r = begin([{ thought: 'no action' }, { thought: 'still none', feeling: 9 }, step('done', null, 'Posted')]);
   const report = await r.run.done;
   assert.deepEqual(
-    of(r.events, 'llm.call').map((e) => e.payload.status),
+    of(r.events, 'llm.call').filter((e) => e.persona_id).map((e) => e.payload.status),
     ['invalid_output', 'invalid_output', 'ok', 'ok'],
   );
   const [failed, done] = of(r.events, 'persona.step');

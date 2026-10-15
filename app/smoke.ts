@@ -40,6 +40,9 @@ async function stage(name: string, body: () => Promise<void>) {
 async function expectReport(page: Page) {
   const report = page.locator('section[aria-labelledby=report-title]');
   assert.match(await report.innerText(), /Frictions found \([1-9]/);
+  // The scripted judge and author name the themes and label their suggestions, so a key-free run shows ranked themes.
+  const themes = report.getByRole('region', { name: /Potential frictions, ranked \([1-9]/ });
+  assert.match(await themes.innerText(), /Scripted demo theme 1: no model named it[\s\S]*Generated suggestion/);
   const friction = report.getByRole('region', { name: /Frictions found/ }).locator('li').first();
   await friction.scrollIntoViewIfNeeded();
   const image = friction.getByRole('img');
@@ -141,6 +144,13 @@ try {
     await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
+    // The ranked themes at the window's size and at 720 px wide, for a look at the evidence layout.
+    const themes = page.getByRole('region', { name: /Potential frictions, ranked/ });
+    await themes.screenshot({ path: join(shots, 'report-themes.png') });
+    const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
+    await themes.screenshot({ path: join(shots, 'report-themes-720.png') });
+    await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
     ran = true;
   });
 
