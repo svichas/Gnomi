@@ -1,0 +1,76 @@
+/* Reference tokens; importing this file does not restyle app components. */
+@font-face {
+  font-family: 'Inter';
+  src: url('./fonts/InterVariable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --gnomi-paper: #f6f5f0;
+  --gnomi-ink: #222823;
+  --gnomi-olive: #58684e;
+  --gnomi-sage: #e7ebdd;
+  --gnomi-stone: #686d65;
+
+  --gnomi-canvas: var(--gnomi-paper);
+  --gnomi-surface: #ffffff;
+  --gnomi-text: var(--gnomi-ink);
+  --gnomi-text-muted: var(--gnomi-stone);
+  --gnomi-action: var(--gnomi-olive);
+  --gnomi-action-hover: #47573e;
+  --gnomi-on-action: var(--gnomi-paper);
+  --gnomi-selected: var(--gnomi-sage);
+  --gnomi-line: #d8dcd2;
+  --gnomi-control-border: #87917d;
+  --gnomi-focus: var(--gnomi-olive);
+  --gnomi-success: #34704f;
+  --gnomi-warning: #90651e;
+  --gnomi-error: #aa5147;
+  --gnomi-info: #496d85;
+
+  /* Segment colors are categorical, not severity or trust indicators. */
+  --gnomi-segment-1: #58684e;
+  --gnomi-segment-2: #56768a;
+  --gnomi-segment-3: #8a6a83;
+  --gnomi-segment-4: #a27b36;
+  --gnomi-segment-5: #417f78;
+
+  --gnomi-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --gnomi-font-mono: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --gnomi-radius-small: 4px;
+  --gnomi-radius-control: 8px;
+  --gnomi-radius-panel: 12px;
+  --gnomi-space-unit: 4px;
+  --gnomi-duration: 160ms;
+}
+
+[data-theme='dark'] {
+  --gnomi-canvas: var(--gnomi-ink);
+  --gnomi-surface: #2d352d;
+  --gnomi-text: var(--gnomi-paper);
+  --gnomi-text-muted: #adb5a7;
+  --gnomi-action: #b8c8a9;
+  --gnomi-action-hover: #c9d6bd;
+  --gnomi-on-action: var(--gnomi-ink);
+  --gnomi-selected: #3c4936;
+  --gnomi-line: #46503f;
+  --gnomi-control-border: #87917d;
+  --gnomi-focus: #b8c8a9;
+  --gnomi-success: #9ec9a9;
+  --gnomi-warning: #dfc28a;
+  --gnomi-error: #e7ada3;
+  --gnomi-info: #a8c5d8;
+  --gnomi-segment-1: #b8c8a9;
+  --gnomi-segment-2: #a8c5d8;
+  --gnomi-segment-3: #cab4cc;
+  --gnomi-segment-4: #dfc28a;
+  --gnomi-segment-5: #9ec9a9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --gnomi-duration: 0ms;
+  }
+}
