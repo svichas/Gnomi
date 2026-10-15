@@ -68,6 +68,16 @@ The no-cost rehearsal verified 50 terminal episodes at peak concurrency 12, the 
 
 Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time, profile adherence or language compliance. Default prior-tool lists are empty until configured, and language values represent ordered preferences rather than proficiency scores.
 
+**M3 is in progress** on branch `m3-friction-report`, in parallel with the open M2 live measurements (deferred by the user on 15 October). The first batch adds:
+
+- Objective signals (failed action, loop, backtrack, console/page/HTTP error, visible validation error, small mobile target) detected after every step and written to the log, with thresholds frozen in the run snapshot.
+- An end-of-episode survey per persona and POI (sentiment, confidence, likes, frictions, would continue), answered by the navigator model, admitted like a step so stops and the cost cap prevent it, and shown in the inspector.
+- The friction pipeline: candidates from self-reports, abandon reasons, survey frictions and signals; trust levels; deterministic grouping; a judge pass that merges and names themes, validated against group ids with deterministic fallback; segment-weighted scoring; evidence; labelled author suggestions; sentiment by segment; what went well; methods additions. Judge and author answers are logged, so the report still rebuilds from the log alone. Any run stop skips the report model calls.
+- Report export as single-file HTML rendered from the report component with inlined thumbnails, PDF printed from that HTML, JSON and Markdown.
+- Gym v2: D13–D25, five of them visual-only, with `v1` (D01–D12) and `none` (control) selections.
+
+All M3 acceptance criteria (recall, precision, stability, control-run false positives) need live runs on Gym v2 and human theme mapping; none has been measured.
+
 ---
 
 ## M0 — Walking skeleton: one persona finds one friction

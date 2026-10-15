@@ -79,10 +79,17 @@
 ## M3 — friction pipeline and report
 
 - [x] Commit the shared signal and survey event contract.
-- [ ] Gym v2: 25 defects, five visual-only, control mode.
-- [ ] Objective signal detectors and capture.
-- [ ] End-of-episode survey.
-- [ ] Themes: trust, grouping, judge merge, scoring, evidence, suggestions, what went well.
-- [ ] Export: HTML, JSON, PDF, Markdown.
-- [ ] Integrate, full checks, Electron verification, roadmap status.
+- [x] Gym v2: 25 defects, five visual-only, control mode.
+- [x] Objective signal detectors and capture.
+- [x] End-of-episode survey.
+- [x] Themes: trust, grouping, judge merge, scoring, evidence, suggestions, what went well.
+- [x] Export: HTML, JSON, PDF, Markdown.
+- [x] Integrate, full checks, Electron verification, roadmap status.
 - [ ] Live Gym v2 acceptance (recall, precision, stability, control run) once credentials and a spend allowance exist.
+
+## M3 first-batch results — 15 October 2026
+
+- Five worktree sessions (Gym v2, signals, survey, themes, export) merged into `m3-friction-report`. The estimate and lifecycle-test conflicts were resolved by keeping both the survey and the judge/author calls.
+- Integration fix: report model calls ran after a projected-cost stop and spent past the cap ($1.10 against $1). Any run stop now skips them; the existing projected-cost regression caught it.
+- `npm test`: 462 passing (347 engine, 62 Gym, 53 app), no failures or skips. Typecheck, app build, main smoke (19 stages, including export: HTML 93 KB, PDF 404 KB, JSON 9 KB, Markdown 6 KB for the smoke run), project smoke and profile smoke all passed.
+- All model calls were scripted. M3 acceptance (recall, precision, stability, control run, 25 MB export for 50 personas with real screenshots) is unmeasured.
