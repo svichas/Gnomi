@@ -63,6 +63,7 @@ export interface Persona {
   seed: number;
   attributes?: Record<string, AttributeValue>; // custom and additional default fields, sampled from persona_schema
   profile_signature?: string; // writer input identity; stale biographies must be regenerated after profile changes
+  posting_propensity?: number; // 0–1, sampled: how readily this persona posts in social rounds (tech.md §6.6); absent before M4
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'google' | 'openai_compatible';
@@ -183,6 +184,15 @@ export interface RunConfig {
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
   signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
+  injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
+}
+
+/** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */
+export interface InjectedPost {
+  round: number;
+  persona_id: string;
+  poi_id: string;
+  text: string;
 }
 
 /** Objective-signal thresholds (tech.md §8.1), frozen per run so a report can cite what was detected. */
@@ -265,8 +275,11 @@ export interface EventPayloads {
   'run.reset_called': { url: string; status: number | null; error: string | null };
   'run.finished': Record<string, never>;
   'run.stopped': { reason: 'user' | 'cost_budget' | 'wall_clock' | 'tripwire' | 'error'; detail: string | null };
+  // Rounds (tech.md §6.4): the envelope's `round` says which; each round is a usage slice then a social phase.
+  'run.round_started': Record<string, never>;
+  'run.round_ended': Record<string, never>;
   'run.concurrency_changed': { concurrency: number; reason: string }; // e.g. backing off after a provider's rate limit
-  'persona.created': { persona: Persona };
+  'persona.created': { persona: Persona; follows?: string[] }; // follows: persona ids from the run's follow graph (M4)
   'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[] };
   'persona.step': {
     step_no: number;
@@ -296,6 +309,10 @@ export interface EventPayloads {
   'persona.abandoned': { step_no: number; reason: string };
   'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
   'persona.resumed': { step_no: number };
+  // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a harness post, not a model's.
+  'social.feed_viewed': { post_ids: string[] };
+  'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };
+  'social.reaction': { post_id: string; kind: 'agree' | 'disagree' };
   'containment.blocked_request': { host: string; url: string; method: string };
   'containment.tripwire': { kind: 'live_payment_key' | 'production_host'; detail: string };
   'signal.budget_exceeded': { step_no: number; budget: number };

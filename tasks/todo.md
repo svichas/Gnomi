@@ -93,3 +93,13 @@
 - Integration fix: report model calls ran after a projected-cost stop and spent past the cap ($1.10 against $1). Any run stop now skips them; the existing projected-cost regression caught it.
 - `npm test`: 462 passing (347 engine, 62 Gym, 53 app), no failures or skips. Typecheck, app build, main smoke (19 stages, including export: HTML 93 KB, PDF 404 KB, JSON 9 KB, Markdown 6 KB for the smoke run), project smoke and profile smoke all passed.
 - All model calls were scripted. M3 acceptance (recall, precision, stability, control run, 25 MB export for 50 personas with real screenshots) is unmeasured.
+
+## M4 — social swarm and live graph
+
+- [x] Commit the shared social contract and influence rule.
+- [ ] Social engine: rounds, follow graph, feed, socialiser, influence, injection.
+- [ ] Swarm graph and feed in the app.
+- [ ] Opinion spread report and homogeneity.
+- [ ] M4 acceptance runner (scripted rehearsal).
+- [ ] Integrate, full checks, Electron verification, roadmap status.
+- [ ] Live M4 acceptance (influence audit, spread over five seeds, graph frame rate) once credentials and a spend allowance exist.

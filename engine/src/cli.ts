@@ -77,6 +77,15 @@ function describe(e: GnomiEvent): string {
       return `step ${e.payload.step_no}: ${e.payload.box[2]}×${e.payload.box[3]} target`;
     case 'persona.survey':
       return `${e.payload.poi_id}: sentiment ${e.payload.sentiment}, ${e.payload.would_continue ? 'would' : 'would not'} continue: "${e.payload.reason}"`;
+    case 'run.round_started':
+    case 'run.round_ended':
+      return `round ${e.round}`;
+    case 'social.feed_viewed':
+      return `${e.payload.post_ids.length} posts`;
+    case 'social.post':
+      return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (injected)' : ''}: "${e.payload.text}"`;
+    case 'social.reaction':
+      return `${e.payload.kind} ${e.payload.post_id}`;
     case 'run.finished':
       return '';
     case 'run.stopped':
