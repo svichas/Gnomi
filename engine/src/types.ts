@@ -242,6 +242,13 @@ export interface Opinion {
   frictions: string[];
 }
 
+/** Every objective signal names the step, page and element it is about, so the report can group it with self-reports. */
+export interface SignalBase {
+  step_no: number;
+  url: string; // the page the step acted on
+  ref: string | null; // the step's target element, if any
+}
+
 export interface EventPayloads {
   'run.started': { config: RunConfig };
   'run.reset_called': { url: string; status: number | null; error: string | null };
@@ -282,6 +289,23 @@ export interface EventPayloads {
   'containment.tripwire': { kind: 'live_payment_key' | 'production_host'; detail: string };
   'signal.budget_exceeded': { step_no: number; budget: number };
   'signal.repeated_failure': { step_no: number; action: ActionType; error: string }; // the engine ended the episode, not the persona
+  // Objective signals (tech.md §8.1), written right after the step they describe, never recomputed.
+  'signal.failed_action': SignalBase & { action: ActionType; error: string }; // 'ref_not_found' | 'no_effect' | 'not_editable' | 'timeout' | message
+  'signal.loop': SignalBase & { snapshot_hash: string; visits: number };
+  'signal.backtrack': SignalBase & { kind: 'repeated_back' | 'revisit' };
+  'signal.error': SignalBase & { kind: 'console' | 'exception' | 'http'; status: number | null; message: string };
+  'signal.validation_error': SignalBase & { message: string };
+  'signal.small_target': SignalBase & { box: [x: number, y: number, width: number, height: number] };
+  // End-of-episode survey per POI (tech.md §8.2); `reason` renders like a think-aloud line.
+  'persona.survey': {
+    poi_id: string;
+    sentiment: number; // integer −2…+2
+    confidence: number; // 0…1, self-reported
+    likes: string[];
+    frictions: string[];
+    would_continue: boolean;
+    reason: string;
+  };
   'llm.call': {
     role: LlmRole;
     provider: string;

@@ -75,3 +75,14 @@
 - Independent review found and fixed SDK zero-filling of missing usage, scripted failures masked as unmeasured live criteria, and shared-allowance cancellation hiding the engine's stop reason. The harness retains an explicit allowance stop cause and accounts for attempts even if an observer fails.
 - [Final scripted acceptance evidence](../engine/acceptance-results/verified-20261015/acceptance.json) verified 50 terminal episodes, 150 steps, peak 12 browser contexts, a real German browser environment, and matching reports after reopening both SQLite logs. This local artifact is retained in an ignored output directory. Live performance, cost and thought/profile quality remain `NOT_RUN`; setup model cost is zero because the fixture is authored.
 - No paid calls were made. Live measurement remains pending local credentials and a recorded-spend allowance. See [the acceptance guide](../docs/m2-acceptance.md).
+
+## M3 — friction pipeline and report
+
+- [x] Commit the shared signal and survey event contract.
+- [ ] Gym v2: 25 defects, five visual-only, control mode.
+- [ ] Objective signal detectors and capture.
+- [ ] End-of-episode survey.
+- [ ] Themes: trust, grouping, judge merge, scoring, evidence, suggestions, what went well.
+- [ ] Export: HTML, JSON, PDF, Markdown.
+- [ ] Integrate, full checks, Electron verification, roadmap status.
+- [ ] Live Gym v2 acceptance (recall, precision, stability, control run) once credentials and a spend allowance exist.

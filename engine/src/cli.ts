@@ -63,6 +63,20 @@ function describe(e: GnomiEvent): string {
       return `${e.payload.kind}: ${e.payload.detail}`;
     case 'signal.repeated_failure':
       return `step ${e.payload.step_no}: the same ${e.payload.action} failed three times in a row (${e.payload.error})`;
+    case 'signal.failed_action':
+      return `step ${e.payload.step_no}: ${e.payload.action} failed (${e.payload.error})`;
+    case 'signal.loop':
+      return `step ${e.payload.step_no}: ${e.payload.url} seen ${e.payload.visits} times`;
+    case 'signal.backtrack':
+      return `step ${e.payload.step_no}: ${e.payload.kind} on ${e.payload.url}`;
+    case 'signal.error':
+      return `step ${e.payload.step_no}: ${e.payload.kind}${e.payload.status ? ` ${e.payload.status}` : ''} ${e.payload.message}`;
+    case 'signal.validation_error':
+      return `step ${e.payload.step_no}: "${e.payload.message}"`;
+    case 'signal.small_target':
+      return `step ${e.payload.step_no}: ${e.payload.box[2]}×${e.payload.box[3]} target`;
+    case 'persona.survey':
+      return `${e.payload.poi_id}: sentiment ${e.payload.sentiment}, ${e.payload.would_continue ? 'would' : 'would not'} continue: "${e.payload.reason}"`;
     case 'run.finished':
       return '';
     case 'run.stopped':
