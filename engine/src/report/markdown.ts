@@ -33,7 +33,10 @@ export function reportToMarkdown(report: Report): string {
     '',
     '## Cost and time',
     '',
-    `- Cost: $${report.cost_usd.toFixed(4)}`,
+    `- Recorded cost: $${report.cost_usd.toFixed(4)}`,
+    ...((report.unreported_usage_calls ?? 0) > 0 ? [
+      `- ${report.unreported_usage_calls} model call${report.unreported_usage_calls === 1 ? '' : 's'} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`,
+    ] : []),
     `- Tokens: ${report.input_tokens} in, ${report.output_tokens} out`,
     `- LLM calls: ${report.llm_calls}`,
     `- Duration: ${duration}`,

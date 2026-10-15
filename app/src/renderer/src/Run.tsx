@@ -7,6 +7,7 @@ import { countStates, filterEvents, filterPersonas, isEnd, merge, personaProgres
 import type { Filters, PersonaState } from './activity.ts';
 import { BlockedBanner } from './Blocked.tsx';
 import { call, errorText, onEvent } from './engine.ts';
+import { missingUsageText, recordedCost } from './cost.ts';
 import { Inspector } from './Inspector.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { Report } from './Report.tsx';
@@ -124,7 +125,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const states = useMemo(() => personaStates(events, personas), [events, personas]);
   const counts = countStates(states);
   const progress = useMemo(() => personaProgress(events), [events]);
-  const cost = useMemo(() => events.reduce((sum, event) => (event.type === 'llm.call' ? sum + event.payload.cost_usd : sum), 0), [events]);
+  const usage = useMemo(() => recordedCost(events), [events]);
+  const cost = usage.cost_usd;
   const pace = events.findLast((event) => event.type === 'run.concurrency_changed');
   const concurrency = pace?.type === 'run.concurrency_changed' ? pace.payload.concurrency : setup.concurrency;
   const groups = useMemo(() => setup.schema ? groupProfiles(personas, setup.schema) : [], [personas, setup.schema]);
@@ -140,7 +142,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
   const stats: [string, string][] = [
     ['Status', status],
     ['Personas finished', `${finished} of ${personas.length}`],
-    ['Cost so far', setup.costBudget ? `${usd(cost)} of ${usd(setup.costBudget)}` : usd(cost)],
+    ['Recorded cost', setup.costBudget ? `${usd(cost)} of ${usd(setup.costBudget)}` : usd(cost)],
     ['Browsers at once', concurrency === null ? '1' : String(concurrency)],
   ];
   const chips: [string, number][] = [
@@ -176,7 +178,7 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
         </dl>
         {setup.costBudget !== null && (
           <div className="mt-3">
-            <ProgressBar value={cost} max={setup.costBudget} label="Cost against the budget" />
+            <ProgressBar value={Math.min(cost, setup.costBudget)} max={setup.costBudget} label="Recorded cost against the budget" />
           </div>
         )}
         <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-600">
@@ -186,7 +188,8 @@ function RunDetail({ runId, row, onRunEnded }: { runId: string; row: RunRow | un
             </span>
           ))}
         </p>
-        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Stopping after the current steps...</p>}
+        {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Canceling outstanding model requests. Browser actions already started may finish.</p>}
+        {missingUsageText(usage.unreported_usage_calls) && <p className="mt-3 text-sm text-amber-800" role="status">{missingUsageText(usage.unreported_usage_calls)}</p>}
       </section>
 
       {waiting.length > 0 && (
@@ -246,7 +249,7 @@ export function Run({ runId, runs, onSelect, onRunEnded }: { runId: string | nul
                 >
                   <span className="block font-medium text-stone-900">{run.run_id}</span>
                   <span className="block text-xs text-stone-500">
-                    {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)}`}
+                    {run.status === 'running' ? STATUS_WORDS.running : `${STATUS_WORDS[run.status]} - ${usd(run.cost_usd)} recorded`}
                   </span>
                   <span className="block text-xs text-stone-500">{when(run.started_at)}</span>
                   <span className="block text-xs text-stone-500">{count(runSetup(run.config).personas.length, 'persona')}</span>

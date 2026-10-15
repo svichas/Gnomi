@@ -344,7 +344,8 @@ try {
     const text = await summary.innerText();
     assert.match(text, /6 personas: 3 Recruiters, 3 Hiring managers/);
     assert.match(text, /About \$[\d.]+(–\$[\d.]+)? and \d+(–\d+)? minutes?/);
-    assert.match(text, /Stops at \$2\.00 or 60 minutes, with 3 browsers at a time/);
+    assert.match(text, /Recorded cost limit: \$2\.00\. Time limit: 60 minutes\. Up to 3 browsers at a time/);
+    assert.match(text, /billed cost can exceed the limit/);
     await page.screenshot({ path: join(shots, 'summary-estimate.png') });
     await summary.getByRole('button', { name: 'Cancel' }).click();
     await summary.waitFor({ state: 'hidden' });

@@ -148,6 +148,7 @@ test('the reset hook outcome says whether it worked', () => {
 
 test('the stop reason reads as a sentence, with its detail after it', () => {
   assert.equal(stopText('user'), 'You stopped the run');
+  assert.equal(stopText('cost_budget: projected spend would exceed $5'), 'The run stopped for its cost budget: projected spend would exceed $5');
   assert.equal(stopText('tripwire: The persona tried to open https://acme.com/.'), 'The run was halted by a safety check: The persona tried to open https://acme.com/.');
   assert.equal(stopText('something else'), 'something else');
 });

@@ -214,7 +214,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       <Card title="Budgets">
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Cost budget (USD)" hint="The run stops when this is spent.">
+            <Field label="Cost budget (USD)" hint="Stops new work at the recorded cost limit and cancels outstanding model requests.">
               <NumberInput label="Cost budget (USD)" value={settings.cost_budget_usd} onChange={(v) => set('cost_budget_usd', v)} min={0} step={0.5} />
             </Field>
             <Field label="Time budget (minutes)" hint="The run stops after this long.">
@@ -224,6 +224,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
               <NumberInput label="Concurrency (1-32)" value={settings.concurrency} onChange={(v) => set('concurrency', v)} min={1} max={32} />
             </Field>
           </div>
+          <p className="text-xs text-stone-500">Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed this limit. Persona generation is charged separately.</p>
           <Check checked={settings.screenshots} onChange={(on) => set('screenshots', on)}>
             Show each page to the model as a screenshot
           </Check>

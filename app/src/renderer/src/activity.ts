@@ -65,7 +65,7 @@ function describeAction(action: Action, target: ActionTarget | null): string {
 
 const STOP_REASONS = {
   user: 'You stopped the run',
-  cost_budget: 'The run reached its cost limit',
+  cost_budget: 'The run stopped for its cost budget',
   wall_clock: 'The run reached its time limit',
   tripwire: 'The run was halted by a safety check',
   error: 'The run stopped because of an error',

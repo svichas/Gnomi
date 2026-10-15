@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { Outcome, Report as ReportData, ReportDimension, ReportFriction, ReportMethods, ReportPersona, ReportSegment } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
+import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { Note, Screenshot, usd } from './ui.tsx';
 
@@ -213,7 +214,7 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
     ['Seed', String(methods.seed)],
     ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
     ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}</ul>],
-    ['Budgets', `Stop at ${usd(methods.budgets.cost_usd)} or ${methods.budgets.wall_clock_min} minutes, ${methods.budgets.concurrency} browsers at a time`],
+    ['Budgets', `${usd(methods.budgets.cost_usd)} recorded cost limit, ${methods.budgets.wall_clock_min} minutes, ${methods.budgets.concurrency} browsers at a time`],
     [
       'Concurrency changes',
       methods.concurrency_changes.length === 0 ? (
@@ -323,7 +324,7 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
   const stats = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
-    ['Cost', usd(report.cost_usd)],
+    ['Recorded cost', usd(report.cost_usd)],
     ['Duration', duration(report.duration_ms)],
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
@@ -347,6 +348,7 @@ export function Report({ report, filter = {}, onInspect }: { report: ReportData;
           </div>
         ))}
       </dl>
+      {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} />

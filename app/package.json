@@ -11,6 +11,7 @@
     "smoke": "electron-vite build && node smoke.ts",
     "smoke:projects": "electron-vite build && node projects.smoke.ts",
     "smoke:profiles": "electron-vite build && node profiles.smoke.ts",
+    "smoke:budget": "electron-vite build && node budget.smoke.ts",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {

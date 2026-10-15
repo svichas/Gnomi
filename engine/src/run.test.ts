@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { test } from 'node:test';
-import { InvalidOutputError } from './llm/gateway.ts';
+import { mock, test } from 'node:test';
+import { createGateway, InvalidOutputError } from './llm/gateway.ts';
+import { createScriptedGateway } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
-import type { BlobStore, BrowserPool, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
+import type { BlobStore, BrowserPool, LlmAttempt, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 import type {
   Action,
   ActionOutcome,
@@ -125,7 +126,7 @@ interface Options {
   delayMs?: number; // per model call
   onCall?: (req: LlmRequest<unknown>, run: RunHandle) => void;
   /** Overrides an action's outcome; may call the page's onBlockedRequest as a browser would. */
-  act?: (a: Action, page: PageOptions) => Partial<ActionOutcome>;
+  act?: (a: Action, page: PageOptions) => Partial<ActionOutcome> | Promise<Partial<ActionOutcome>>;
   /** Flags for the n-th inspection of the run (0 is the first page's first load), given the page's current URL. */
   inspect?: (n: number, url: string) => Partial<PageFlags>;
   onEvent?: (e: GnomiEvent, run: RunHandle) => void;
@@ -177,7 +178,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
         snapshot: async () => ({ url: page.url, title: 'Dashboard · Gym ATS', text: '- link "Jobs" [ref=e1]', hash: 'h1' }),
         screenshot: async () => new Uint8Array([0xff, 0xd8, 0xff]),
         async act(action) {
-          const outcome = { ok: true, url_before: page.url, url_after: page.url, dom_changed: true, error: null, target: { role: 'link', name: 'Jobs', box: null }, text: null, ...opts.act?.(action, options) };
+          const outcome = { ok: true, url_before: page.url, url_after: page.url, dom_changed: true, error: null, target: { role: 'link', name: 'Jobs', box: null }, text: null, ...await opts.act?.(action, options) };
           page.url = outcome.url_after;
           return outcome;
         },
@@ -206,6 +207,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
   const llm: LlmGateway = opts.llm?.(record) ?? {
     async call<T>(req: LlmRequest<T>) {
       for (let attempt = 1; ; attempt++) {
+        req.signal?.throwIfAborted();
         const n = calls.get(req.persona_id) ?? 0;
         calls.set(req.persona_id, n + 1);
         if (handle) opts.onCall?.(req, handle);
@@ -214,11 +216,11 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
         const parsed = req.schema.safeParse(output);
         const payload = { role: req.role, provider: 'fake', model: req.model.model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
         const request = { system: req.system, user: req.user.map((part) => (part.type === 'text' ? part : { type: 'image', bytes: part.data.byteLength })) };
-        record(
-          { run_id: req.run_id ?? '', round: 1, persona_id: req.persona_id, poi_id: null, type: 'llm.call', payload: { ...payload, cost_usd: opts.cost ?? 0, latency_ms: 0, status: parsed.success ? 'ok' : 'invalid_output', error: parsed.success ? null : 'invalid' } },
-          { request, response: output },
-        );
+        const attemptResult: LlmAttempt = { payload: { ...payload, cost_usd: opts.cost ?? 0, latency_ms: 0, usage_reported: true, status: parsed.success ? 'ok' : 'invalid_output', error: parsed.success ? null : 'invalid' }, transcript: { request, response: output } };
+        record({ run_id: req.run_id ?? '', round: 1, persona_id: req.persona_id, poi_id: null, type: 'llm.call', payload: attemptResult.payload }, attemptResult.transcript);
+        req.onAttempt?.(attemptResult);
         if (parsed.success) return { object: parsed.data, cost_usd: opts.cost ?? 0 };
+        req.signal?.throwIfAborted();
         if (attempt === 2) throw new InvalidOutputError('invalid twice');
       }
     },
@@ -358,10 +360,10 @@ test('two invalid outputs make a failed step, not a crash', async () => {
   assert.equal(report.personas[0].outcome, 'done');
 });
 
-test('stop() ends the run as stopped by the user once the step in flight is done', async () => {
+test('stop() discards an answer returned after cancellation before it can become a browser action', async () => {
   const r = begin(forever, { onCall: (req, run) => req.persona_id && run.stop() });
   const report = await r.run.done;
-  assert.equal(of(r.events, 'persona.step').length, 1);
+  assert.equal(of(r.events, 'persona.step').length, 0);
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
     [{ reason: 'user', detail: null }],
@@ -462,14 +464,14 @@ test('a rate limit halves the concurrency once per burst and records it', async 
   assert.equal(of(r.events, 'persona.goal_done').length, 8);
 });
 
-test('the cost budget stops new steps across concurrent personas, and the spend stays within one step per persona in flight', async () => {
+test('projected cost can stop admission early while already admitted calls and actions settle', async () => {
   const personas = Array.from({ length: 6 }, (_, i) => persona(`p-${i}`, { patience: 5 }));
   const r = begin(forever, { personas, settings: { concurrency: 3, cost_budget_usd: 1 }, cost: 0.1, delayMs: 2 });
   const report = await r.run.done;
   const spent = r.finished[0].cost_usd;
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
-    [{ reason: 'cost_budget', detail: 'the $1 budget was reached' }],
+    [{ reason: 'cost_budget', detail: 'the next steps were projected to reach the $1 budget' }],
   );
   assert.ok(spent <= 1 + 1e-9, `spent ${spent}`);
   assert.ok(spent >= 1 - (3 + 1) * 0.1 - 1e-9, `stopped too early: ${spent}`);
@@ -477,6 +479,110 @@ test('the cost budget stops new steps across concurrent personas, and the spend 
   assert.ok(r.files.has('runs/r-0001/report.json'));
   assert.equal(report.status, 'stopped');
   assert.ok(r.pages.every((p) => p.closed));
+});
+
+test('a final done response at the recorded cap stops the run and still writes its report', async () => {
+  const r = begin([], { settings: { cost_budget_usd: 0.25 }, llm: (record) => createScriptedGateway([step('done', null, 'Done')], record, { costPerCall: 0.25 }) });
+  const report = await r.run.done;
+  assert.deepEqual([report.status, report.stop_reason], ['stopped', 'cost_budget: the $0.25 recorded-cost budget was reached']);
+  assert.equal(of(r.events, 'persona.step').length, 0);
+  assert.equal(of(r.events, 'persona.goal_done').length, 0);
+  assert.equal(r.finished[0].cost_usd, 0.25);
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+  assert.ok(r.pages.every((page) => page.closed));
+});
+
+test('a paid invalid response at the cap stops the actual gateway before its retry and produces a stopped report', async () => {
+  let attempts = 0;
+  const fetch = mock.method(globalThis, 'fetch', async () => {
+    attempts++;
+    return Response.json({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1_000, output_tokens: 200, cache_read_input_tokens: 3_000, cache_creation_input_tokens: 0 } });
+  });
+  try {
+    const r = begin([], {
+      settings: { cost_budget_usd: 0.00023 },
+      llm: (record) => createGateway({ secrets: { get: () => 'sk-test-no-network-12345678' }, localBaseUrl: null, record }),
+    });
+    const report = await r.run.done;
+    assert.equal(attempts, 1);
+    const calls = of(r.events, 'llm.call');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].payload.status, 'invalid_output');
+    assert.equal(calls[0].payload.usage_reported, true);
+    assert.equal(r.finished[0].cost_usd, calls[0].payload.cost_usd);
+    assert.equal(report.status, 'stopped');
+    assert.match(report.stop_reason ?? '', /^cost_budget:/);
+    assert.equal(of(r.events, 'persona.step').length, 0);
+    assert.ok(r.files.has('runs/r-0001/report.json'));
+  } finally { fetch.mock.restore(); }
+});
+
+test('concurrent late responses retain all reported usage but dispatch no actions or later personas after the cap', async () => {
+  const ready = Promise.withResolvers<void>();
+  const recorded = Promise.withResolvers<void>();
+  const releases = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+  const requests: LlmRequest<unknown>[] = [];
+  let actions = 0;
+  const r = begin([], {
+    personas: Array.from({ length: 4 }, (_, i) => persona(`p-${i}`)), settings: { concurrency: 3, cost_budget_usd: 0.5 },
+    act: () => { actions++; return {}; },
+    onEvent: (event) => { if (event.type === 'llm.call') recorded.resolve(); },
+    llm: (record) => ({ async call<T>(req: LlmRequest<T>) {
+      const index = requests.length;
+      requests.push(req as LlmRequest<unknown>);
+      if (requests.length === 3) ready.resolve();
+      await releases[index].promise; // Deliberately ignores abort, as a late provider response can.
+      const object = req.schema.parse(step('click', 'e1'));
+      const attempt: LlmAttempt = {
+        payload: { role: req.role, provider: 'late-test', model: req.model.model, input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: index === 0 ? 0.6 : 0.4, latency_ms: 0, usage_reported: true, status: 'ok', error: null },
+        transcript: { request: req.user, response: object },
+      };
+      record({ run_id: req.run_id!, round: 1, persona_id: req.persona_id, poi_id: null, type: 'llm.call', payload: attempt.payload }, attempt.transcript);
+      req.onAttempt?.(attempt);
+      return { object, cost_usd: attempt.payload.cost_usd };
+    } }),
+  });
+  await ready.promise;
+  releases[0].resolve();
+  await recorded.promise;
+  const cancelledAtCap = requests.every((req) => req.signal?.aborted);
+  releases.slice(1).forEach((release) => release.resolve());
+  const report = await r.run.done;
+  assert.equal(cancelledAtCap, true);
+  assert.deepEqual([requests.length, actions, of(r.events, 'persona.step').length, r.pages.length], [3, 0, 0, 3]);
+  assert.ok(Math.abs(r.finished[0].cost_usd - 1.4) < 1e-12, 'late provider usage stays in the total even though no action runs');
+  assert.equal(of(r.events, 'llm.call').length, 3);
+  assert.equal(report.status, 'stopped');
+  assert.ok(r.pages.every((page) => page.closed));
+});
+
+test('a browser action dispatched before the cap settles and is recorded while later actions are refused', async () => {
+  const acting = Promise.withResolvers<void>();
+  const crossed = Promise.withResolvers<void>();
+  const releaseAction = Promise.withResolvers<void>();
+  let actions = 0;
+  let calls = 0;
+  const r = begin([], {
+    personas: [persona('first'), persona('crossing'), persona('not-started')], settings: { concurrency: 2, cost_budget_usd: 0.5 },
+    act: async () => { actions++; acting.resolve(); await releaseAction.promise; return {}; },
+    onEvent: (event) => { if (event.type === 'llm.call' && event.payload.cost_usd === 0.6) crossed.resolve(); },
+    llm: (record) => ({ async call<T>(req: LlmRequest<T>) {
+      calls++;
+      const first = req.persona_id === 'first';
+      if (!first) await acting.promise;
+      return createScriptedGateway([step('click', 'e1')], record, { costPerCall: first ? 0.1 : 0.6 }).call(req);
+    } }),
+  });
+  await crossed.promise;
+  releaseAction.resolve();
+  const report = await r.run.done;
+  const steps = of(r.events, 'persona.step');
+  assert.deepEqual([actions, calls, steps.length], [1, 2, 1]);
+  assert.equal(steps[0].persona_id, 'first');
+  assert.ok(steps[0].seq > of(r.events, 'llm.call')[1].seq, 'the already-dispatched action remains truthful evidence after cutoff');
+  assert.ok(Math.abs(r.finished[0].cost_usd - 0.7) < 1e-12);
+  assert.equal(report.status, 'stopped');
+  assert.ok(r.pages.every((page) => page.closed));
 });
 
 test('the wall-clock budget ends the run the same way', async () => {

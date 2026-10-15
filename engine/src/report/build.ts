@@ -225,6 +225,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     steps: ofType(events, 'persona.step').length,
     frictions,
     cost_usd: total((e) => e.payload.cost_usd),
+    unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,
     // llm.call keeps Anthropic's split: input_tokens is uncached input only.
     input_tokens: total((e) => e.payload.input_tokens + e.payload.cache_read_tokens + e.payload.cache_write_tokens),

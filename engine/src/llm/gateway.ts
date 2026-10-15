@@ -4,7 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { APICallError, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type JSONValue, type LanguageModel, type LanguageModelUsage } from 'ai';
 import { z } from 'zod';
-import type { LlmGateway, LlmRequest, LlmResult, Recorder, SecretName, SecretsStore, UserPart } from '../seams.ts';
+import type { LlmAttempt, LlmGateway, LlmRequest, LlmResult, Recorder, SecretName, SecretsStore, UserPart } from '../seams.ts';
 import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
 import { createLimiter, DEFAULT_LIMITS, realClock, type Clock, type Limit } from './limiter.ts';
 import { costUsd, type TokenUsage } from './prices.ts';
@@ -35,6 +35,20 @@ const OVERLOADED = /overloaded/i;
 // Key shapes: Anthropic and OpenAI sk-…, Google AIza…. The key in hand is replaced literally as well.
 const KEY_PATTERN = /\b(?:sk-[\w-]{8,}|AIza[\w-]{8,})/g;
 const redact = (text: string, key?: string) => (key ? text.replaceAll(key, '[redacted]') : text).replace(KEY_PATTERN, '[redacted]');
+
+/** Some SDK adapters fill omitted usage fields with zero; only the provider's raw fields establish completeness. */
+function usageReported(provider: ProviderId, usage: LanguageModelUsage | undefined): boolean {
+  const count = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (!count(usage?.inputTokens) || !count(usage?.outputTokens)) return false;
+  const raw = usage.raw;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const [input, output] = provider === 'google' ? ['promptTokenCount', 'candidatesTokenCount']
+    : provider === 'openai_compatible' ? ['prompt_tokens', 'completion_tokens'] : ['input_tokens', 'output_tokens'];
+  if (!count(raw[input]) || !count(raw[output])) return false;
+  // A Google total larger than the available components can reveal omitted reasoning or tool-use tokens.
+  return provider !== 'google' || raw.totalTokenCount == null ||
+    (count(raw.totalTokenCount) && raw.totalTokenCount === usage.inputTokens + usage.outputTokens);
+}
 
 /** The request as a transcript keeps it: screenshots are already stored as blobs, so images become a size. */
 export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
@@ -128,6 +142,7 @@ export function createGateway({
 
   return {
     async call<T>(req: LlmRequest<T>): Promise<LlmResult<T>> {
+      req.signal?.throwIfAborted();
       const { provider } = req.model;
       costUsd(req.model, NO_TOKENS); // throws before spending money on a model the budget cannot price
       const credential = provider === 'openai_compatible' ? localBaseUrl : secrets.get(SECRET[provider]);
@@ -143,7 +158,9 @@ export function createGateway({
       let invalid = 0; // answers that did not fit the schema; the second one ends the call
       let retries = 0; // transient failures that were tried again
       for (;;) {
+        req.signal?.throwIfAborted();
         await bucket(provider)?.acquire(estimateTokens(system, user), req.signal);
+        req.signal?.throwIfAborted();
         const started = clock.now();
         let object: T | undefined;
         let usage: LanguageModelUsage | undefined;
@@ -192,17 +209,22 @@ export function createGateway({
             error = hideKey(err instanceof Error ? err.message : String(err));
           }
         }
+        const cache_read_tokens = usage?.inputTokenDetails.cacheReadTokens ?? 0;
+        const cache_write_tokens = usage?.inputTokenDetails.cacheWriteTokens ?? 0;
         const tokens: TokenUsage = {
-          input_tokens: usage?.inputTokenDetails.noCacheTokens ?? 0,
+          input_tokens: usage?.inputTokenDetails.noCacheTokens ?? Math.max(0, (usage?.inputTokens ?? 0) - cache_read_tokens - cache_write_tokens),
           output_tokens: usage?.outputTokens ?? 0,
-          cache_read_tokens: usage?.inputTokenDetails.cacheReadTokens ?? 0,
-          cache_write_tokens: usage?.inputTokenDetails.cacheWriteTokens ?? 0,
+          cache_read_tokens,
+          cache_write_tokens,
         };
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
-        // A setup call has no run to log into: it is priced and returned, nothing more.
+        const attempt: LlmAttempt = {
+          payload: { role: req.role, provider, model: req.model.model, ...tokens, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
+          transcript: JSON.parse(hideKey(JSON.stringify({ request: transcriptRequest({ ...req, system }, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
+        };
+        // Setup calls have no run ledger; observers still receive their attempt below.
         if (req.run_id !== null) {
-          const transcript = { request: transcriptRequest({ ...req, system }, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } };
           record(
             {
               run_id: req.run_id,
@@ -210,12 +232,15 @@ export function createGateway({
               persona_id: req.persona_id,
               poi_id: null,
               type: 'llm.call',
-              payload: { role: req.role, provider, model: req.model.model, ...tokens, cost_usd, latency_ms: clock.now() - started, status, error },
+              payload: attempt.payload,
             },
-            JSON.parse(hideKey(JSON.stringify(transcript))),
+            attempt.transcript,
           );
         }
+        req.onAttempt?.(attempt);
+        // Keep a successful response and its usage even if a budget observer just cancelled other work.
         if (status === 'ok') return { object: object as T, cost_usd: spent };
+        req.signal?.throwIfAborted();
 
         if (status === 'error') {
           const api = APICallError.isInstance(thrown) ? thrown : null;
@@ -231,6 +256,7 @@ export function createGateway({
           }
           // A provider's retry-after is a floor; the jitter spreads the personas out so they do not all return together.
           await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal);
+          req.signal?.throwIfAborted();
           retries++;
           continue;
         }

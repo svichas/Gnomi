@@ -5,6 +5,7 @@ import type {
   ActionOutcome,
   Device,
   EventType,
+  EventPayloads,
   GnomiEvent,
   LlmRole,
   ModelChoice,
@@ -130,6 +131,12 @@ export interface PageDriver {
 
 export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: Uint8Array; mediaType: 'image/jpeg' };
 
+/** One provider attempt, including failed/invalid answers. Transcripts are credential-redacted. */
+export interface LlmAttempt {
+  payload: EventPayloads['llm.call'];
+  transcript: { request: unknown; response: unknown };
+}
+
 export interface LlmRequest<T> {
   role: LlmRole;
   model: ModelChoice;
@@ -141,6 +148,8 @@ export interface LlmRequest<T> {
   user: UserPart[]; // volatile suffix
   schema: ZodType<T>;
   signal?: AbortSignal;
+  /** Synchronous notification after recording each attempt, before returning or retrying; also runs for setup calls. */
+  onAttempt?(attempt: LlmAttempt): void;
 }
 
 /** A scripted model's answer to one request (tests and GNOMI_FAKE_LLM). */

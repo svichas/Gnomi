@@ -292,6 +292,7 @@ export interface EventPayloads {
     cache_write_tokens: number;
     cost_usd: number;
     latency_ms: number;
+    usage_reported?: boolean; // false means provider usage was absent/incomplete; cost may understate billing
     status: 'ok' | 'error' | 'invalid_output';
     error: string | null;
   };
@@ -372,6 +373,7 @@ export interface Report {
   frictions: ReportFriction[]; // in seq order
   cost_usd: number;
   llm_calls: number;
+  unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports
   input_tokens: number;
   output_tokens: number;
   started_at: number;
