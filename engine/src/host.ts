@@ -6,7 +6,7 @@ import { validateCountries } from './audience/locations.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -76,7 +76,7 @@ function pool(): Promise<BrowserPool> {
 
 /** The model gateway for this project's routing; onThrottle tells a run to back off (tech.md §9.5). */
 function gateway(record: Recorder, onThrottle?: (provider: ProviderId) => void): LlmGateway {
-  if (FAKE_LLM) return createScriptedGateway({ navigator: DEMO_NAVIGATOR, persona_writer: DEMO_PERSONA_WRITER }, record);
+  if (FAKE_LLM) return createScriptedGateway({ navigator: DEMO_NAVIGATOR, persona_writer: DEMO_PERSONA_WRITER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
   return createGateway({ secrets: { get: (name) => secrets.get(name) ?? null }, localBaseUrl: project().settings.local_base_url, record, onThrottle });
 }
 

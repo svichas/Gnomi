@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { launchBrowserPool } from './browser/pool.ts';
 import { createGateway } from './llm/gateway.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -63,10 +63,28 @@ function describe(e: GnomiEvent): string {
       return `${e.payload.kind}: ${e.payload.detail}`;
     case 'signal.repeated_failure':
       return `step ${e.payload.step_no}: the same ${e.payload.action} failed three times in a row (${e.payload.error})`;
+    case 'signal.failed_action':
+      return `step ${e.payload.step_no}: ${e.payload.action} failed (${e.payload.error})`;
+    case 'signal.loop':
+      return `step ${e.payload.step_no}: ${e.payload.url} seen ${e.payload.visits} times`;
+    case 'signal.backtrack':
+      return `step ${e.payload.step_no}: ${e.payload.kind} on ${e.payload.url}`;
+    case 'signal.error':
+      return `step ${e.payload.step_no}: ${e.payload.kind}${e.payload.status ? ` ${e.payload.status}` : ''} ${e.payload.message}`;
+    case 'signal.validation_error':
+      return `step ${e.payload.step_no}: "${e.payload.message}"`;
+    case 'signal.small_target':
+      return `step ${e.payload.step_no}: ${e.payload.box[2]}×${e.payload.box[3]} target`;
+    case 'persona.survey':
+      return `${e.payload.poi_id}: sentiment ${e.payload.sentiment}, ${e.payload.would_continue ? 'would' : 'would not'} continue: "${e.payload.reason}"`;
     case 'run.finished':
       return '';
     case 'run.stopped':
       return e.payload.detail ? `${e.payload.reason}: ${e.payload.detail}` : e.payload.reason;
+    case 'report.themes':
+      return `${e.payload.poi_id}: ${e.payload.themes.length} themes named by the judge`;
+    case 'report.suggestions':
+      return `${e.payload.poi_id}: ${e.payload.suggestions.length} suggested changes from the author`;
     case 'report.generated':
       return `${e.payload.path} (${e.payload.friction_count} frictions)`;
   }
@@ -132,7 +150,7 @@ async function main(): Promise<void> {
       const llm =
         apiKey && !values['fake-llm']
           ? createGateway({ secrets: { get: (name) => (name === 'anthropic_api_key' ? apiKey : null) }, localBaseUrl: null, record, onThrottle: (provider) => run?.throttle(provider) })
-          : createScriptedGateway({ navigator: DEMO_NAVIGATOR }, record);
+          : createScriptedGateway({ navigator: DEMO_NAVIGATOR, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
       console.log(`Project folder: ${dir}`);
       // Nobody can resume a blocked persona from a terminal, so a block ends her episode at once.
       const config = store.createRun({ ...newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }), pause_timeout_ms: 0 });

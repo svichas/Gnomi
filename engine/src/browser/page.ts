@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playwright-core';
-import type { PageDriver, StorageState } from '../seams.ts';
+import type { PageDriver, PageError, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
 import type { Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
@@ -14,6 +14,8 @@ const SETTLE_MS = 3_000; // cap on waiting for the page to go quiet after an act
 const QUIET_MS = 250; // no DOM mutation for this long counts as settled
 const WAIT_MS = 1_000;
 const READ_CHARS = 2_000;
+const MAX_ERRORS = 20;
+const ERROR_RESOURCES = new Set(['document', 'xhr', 'fetch']);
 // Password inputs, including one a "show password" toggle turned into type=text.
 const SECRET = 'input[type="password" i], input[autocomplete*="password" i]';
 // Model-supplied: reject anything that is not a ref before it reaches Playwright's selector engine.
@@ -108,6 +110,26 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
       return '';
     }
   };
+
+  // What went wrong in the page since errors() was last drained (tech.md §8.1), each distinct error once.
+  // shortcut: at most MAX_ERRORS per step, so a page that throws on every frame cannot flood the log, upgrade to counts if a report needs them.
+  let pageErrors: PageError[] = [];
+  const capture = (error: PageError) => {
+    const message = error.message.split('\n')[0].slice(0, 200);
+    if (pageErrors.length < MAX_ERRORS && !pageErrors.some((e) => e.kind === error.kind && e.status === error.status && e.message === message)) pageErrors.push({ ...error, message });
+  };
+  page.on('console', (msg) => {
+    // Chromium also logs every failed load as a console error: 4xx/5xx come from 'response' below, and containment's refusals are not the product's.
+    if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource:')) capture({ kind: 'console', status: null, message: msg.text() });
+  });
+  page.on('pageerror', (error) => capture({ kind: 'exception', status: null, message: error.message }));
+  page.on('response', (response) => {
+    const request = response.request();
+    if (response.status() < 400 || !ERROR_RESOURCES.has(request.resourceType())) return;
+    const url = new URL(response.url());
+    // The containment proxy answers unlisted hosts with a 403 of its own, so only allowed hosts count.
+    if (allows(url.hostname)) capture({ kind: 'http', status: response.status(), message: `${request.method()} ${url.origin}${url.pathname}` }); // no query string: it can carry tokens
+  });
   /** True when the page load that just happened was refused by containment (a failed load or a refusal page on an unlisted host). */
   const refusedByContainment = () => {
     const url = page.url();
@@ -246,6 +268,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
     },
 
     inspect: () => inspect(page),
+
+    errors() {
+      const drained = pageErrors;
+      pageErrors = [];
+      return drained;
+    },
 
     close: () => context.close(),
   };

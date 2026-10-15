@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE } from '../llm/scripted.ts';
+import { BUILTIN_PERSONA } from '../persona.ts';
+import type { Recorder, Responder } from '../seams.ts';
+import { DEFAULT_SETTINGS } from '../settings.ts';
+import type { GnomiEvent, LlmRole, NewEvent, RunConfig } from '../types.ts';
+import { buildReport } from './build.ts';
+import { runReportModels } from './models.ts';
+
+const JOBS = 'http://gym.test/jobs/new';
+const config: RunConfig = {
+  run_id: 'r-1',
+  seed: 1,
+  project: {
+    name: 'Gym', description: 'A demo ATS.', goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS,
+    poi: { id: 'poi', type: 'web', name: 'Gym', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null },
+  },
+  personas: [BUILTIN_PERSONA],
+  sessions: [],
+  reset: false,
+  pause_timeout_ms: 0,
+  app_version: '0.0.0',
+};
+const who = { run_id: 'r-1', round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: 'poi' } as const;
+const where = (url: string) => ({ url, ref: null });
+
+/** A finished episode with frictions on two pages, then the report models with the given responders. */
+async function analyse(responders: Partial<Record<LlmRole, Responder>>) {
+  const events: GnomiEvent[] = [];
+  const record: Recorder = (event: NewEvent) => {
+    const stored = { ...event, seq: events.length + 1, ts: events.length } as GnomiEvent;
+    events.push(stored);
+    return stored;
+  };
+  record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config } });
+  record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
+  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 1, severity: 3, what: 'Save does nothing', expected: 'Saved', where: where(JOBS) } });
+  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 4, severity: 2, what: 'Home is empty', expected: 'Jobs', where: where('http://gym.test/') } });
+  const requests: { role: LlmRole; user: string }[] = [];
+  const llm = createScriptedGateway(
+    Object.fromEntries(Object.entries(responders).map(([role, respond]) => [role, (req: Parameters<Responder>[0]) => {
+      requests.push({ role: req.role, user: req.user.map((p) => (p.type === 'text' ? p.text : '')).join('') });
+      return respond!(req);
+    }])),
+    record,
+  );
+  await runReportModels({ config, llm, record, events: () => events });
+  return { events, requests, types: events.slice(4).map((e) => e.type), report: buildReport(events) };
+}
+
+const judged = { themes: [{ title: 'Saving a job fails', description: 'Save does nothing.', group_ids: ['g1'] }] };
+const suggested = { suggestions: [{ theme_id: 'g1', change: 'Make Save save the job.', solution: 'Submit the form and show the saved job.' }] };
+
+test('the judge names themes and the author suggests changes; both answers are logged and folded into the report', async () => {
+  const { types, requests, report } = await analyse({ judge: () => judged, author: () => suggested });
+  assert.deepEqual(types, ['llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(JSON.parse(requests[0].user).groups.map((g: { id: string }) => g.id), ['g1', 'g2']);
+  assert.deepEqual(JSON.parse(requests[1].user).themes.map((t: { id: string }) => t.id), ['g1', 'g2'], 'the author sees the themes the judge left');
+  assert.deepEqual(report.themes?.map((t) => [t.id, t.title, t.named_by, t.suggestion?.change ?? null]), [
+    ['g1', 'Saving a job fails', 'judge', 'Make Save save the job.'],
+    ['g2', 'Reported friction on /', 'rules', null],
+  ]);
+  assert.deepEqual(report.methods.limitations, ['Suggested changes cover 1 of 2 themes.']);
+  assert.ok(report.themes?.every((t) => t.seqs.length > 0));
+});
+
+test('a malformed judge answer is retried once, then the themes stay deterministic and the author still runs', async () => {
+  const { types, report } = await analyse({ judge: () => ({ themes: 'nope' }), author: () => suggested });
+  assert.deepEqual(types, ['llm.call', 'llm.call', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(report.themes?.map((t) => [t.title, t.named_by]), [['Reported friction on /jobs/new', 'rules'], ['Reported friction on /', 'rules']]);
+  assert.match(report.methods.limitations?.[0] ?? '', /^The judge model did not name the themes/);
+});
+
+test('without a model (no key, no responder) nothing is logged and the report falls back to rules', async () => {
+  const { types, report } = await analyse({});
+  assert.deepEqual(types, []);
+  assert.equal(report.themes?.length, 2);
+  assert.ok(report.themes?.every((t) => t.named_by === 'rules' && t.suggestion === null));
+  assert.equal(report.methods.limitations?.length, 2);
+});
+
+test('the scripted demo judge and author give every group a labelled theme and suggestion, so key-free runs show themes', async () => {
+  const { types, report } = await analyse({ judge: DEMO_JUDGE, author: DEMO_AUTHOR });
+  assert.deepEqual(types, ['llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(report.themes?.map((t) => [t.title, t.named_by]), [
+    ['Scripted demo theme 1: no model named it', 'judge'],
+    ['Scripted demo theme 2: no model named it', 'judge'],
+  ]);
+  assert.ok(report.themes?.every((t) => t.suggestion?.change.startsWith('Scripted demo suggestion')));
+  assert.deepEqual(report.methods.limitations, []);
+});

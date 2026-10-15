@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
-import { stepSchema } from '../agent/prompt.ts';
+import { stepSchema, surveySchema } from '../agent/prompt.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent } from '../types.ts';
@@ -115,6 +115,8 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
 
   const a1 = await step('p-1');
   const b1 = await step('p-2'); // another persona starts from the beginning, even though p-1 is mid-way
+  const survey = (await gateway.call({ ...request({ run_id: 'r-demo-1', persona_id: 'p-1' }), purpose: 'survey', schema: surveySchema })).object;
+  assert.match(survey.reason, /Scripted demo/, 'a survey request gets a valid demo survey and leaves the steps where they were');
   const a2 = await step('p-1');
   const a3 = await step('p-1');
   const b2 = await step('p-2');

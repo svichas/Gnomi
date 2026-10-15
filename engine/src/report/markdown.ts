@@ -1,4 +1,4 @@
-import type { Report, ReportFriction, ReportMethods, ReportSegment } from '../types.ts';
+import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
@@ -26,6 +26,9 @@ export function reportToMarkdown(report: Report): string {
     '',
     `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}.`,
     ...dimensionLines(report),
+    ...themeLines(report),
+    ...sentimentLines(report),
+    ...wentWellLines(report),
     '',
     '## Frictions',
     '',
@@ -59,6 +62,72 @@ function dimensionLines(report: Report): string[] {
       '| --- | --- | --- | --- | --- |',
       ...dimension.values.map((group) => `| ${cell(formatAttributeValue(group.value))} | ${group.personas} | ${pct(group.completion)} | ${pct(group.with_friction)} | ${group.sentiment === null ? 'No recorded feeling' : group.sentiment.toFixed(2)} |`),
     ]),
+  ];
+}
+
+export const TRUST_TEXT = {
+  confirmed: 'a self-report backed by an objective signal',
+  observed: 'an objective signal only',
+  reported: 'a self-report only',
+} as const;
+
+function themeLines(report: Report): string[] {
+  if (!report.themes) return [];
+  if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
+  return [
+    '', '## Themes', '',
+    'Ranked by segment-weighted affected share × median severity × trust. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
+    ...report.themes.flatMap((theme) => themeToMarkdown(theme)),
+  ];
+}
+
+function themeToMarkdown(t: ReportTheme): string[] {
+  const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
+  return [
+    '', `### ${t.rank}. ${line(t.title)}`, '',
+    line(t.description), '',
+    `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
+    `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
+    `- Affected by segment: ${affected.join('; ') || 'none'}`,
+    ...(t.pages.length > 0 ? [`- Pages: ${t.pages.join(', ')}`] : []),
+    ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),
+    `- Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`,
+    '', 'Evidence:', '',
+    ...t.evidence.map(evidenceToMarkdown),
+    ...(t.suggestion
+      ? ['', `**Suggested change (generated suggestion):** ${line(t.suggestion.change)}`, '', `**Possible solution (generated suggestion):** ${line(t.suggestion.solution)}`]
+      : []),
+  ];
+}
+
+function evidenceToMarkdown(e: ReportEvidence, i: number): string {
+  const at = e.step_no === null ? 'survey' : `step ${e.step_no}`;
+  const signals = e.signals.length > 0 ? `; signals: ${e.signals.join(', ')}` : '';
+  return [
+    `${i + 1}. ${line(e.persona_name)} (${at}, severity ${e.severity}, ${e.trust}${signals}): ${line(e.what)}`,
+    ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
+    ...(e.url ? [`   - Page: ${e.url}`] : []),
+    `   - Screenshot: ${e.screenshot ?? 'none'}`,
+    `   - Event: #${e.seq}`,
+  ].join('\n');
+}
+
+function sentimentLines(report: Report): string[] {
+  if (!report.sentiment?.length) return [];
+  return [
+    '', '## Sentiment by segment', '',
+    'From the end-of-episode survey, on a scale from -2 to +2 with 0 neutral.', '',
+    '| Segment | Surveyed | Mean sentiment | Would continue |',
+    '| --- | --- | --- | --- |',
+    ...report.sentiment.map((s) => `| ${cell(s.name)} | ${s.surveyed} | ${s.sentiment === null ? 'no answers' : s.sentiment.toFixed(2)} | ${s.surveyed === 0 ? '-' : pct(s.would_continue)} |`),
+  ];
+}
+
+function wentWellLines(report: Report): string[] {
+  if (!report.went_well?.length) return [];
+  return [
+    '', '## What went well', '',
+    ...report.went_well.map((like, i) => `${i + 1}. ${line(like.text)} (${like.count} mention${like.count === 1 ? '' : 's'} by ${like.personas} persona${like.personas === 1 ? '' : 's'})`),
   ];
 }
 
@@ -114,6 +183,8 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(blocked.length > 0 ? blocked : ['- Blocked personas: none']),
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
+    ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
+    ...(m.limitations?.length ? m.limitations.map((l) => `- Limitation: ${line(l)}`) : m.limitations ? ['- Limitations: none'] : []),
   ];
 }
 

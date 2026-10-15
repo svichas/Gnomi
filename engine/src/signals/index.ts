@@ -1,0 +1,93 @@
+import type { PageError } from '../seams.ts';
+import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../types.ts';
+
+// Objective friction signals (tech.md §8.1): pure rules over one persona's steps. The agent loop runs them right after each
+// step and writes what they find to the log, so a report cites what was detected under the run's frozen thresholds.
+
+export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 40 };
+
+export type Step = Pick<EventPayloads['persona.step'], 'step_no' | 'action' | 'target' | 'result' | 'snapshot_hash'>;
+type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target';
+export type Signal = { [K in Detected]: { type: K; payload: EventPayloads[K] } }[Detected];
+type SignalOf<K extends Detected> = Extract<Signal, { type: K }>;
+
+// The §8.1 failures. Model mistakes (invalid output, a missing option) and Gnomi's own refusals (password fields, other hosts) are not the product's.
+const FAILURES = new Set(['ref_not_found', 'not_editable', 'timeout']);
+// Validation wording, matched only on lines a button click made appear.
+const ERRORISH = /\b(?:error|invalid|required|incorrect|failed|went wrong|already (?:exists|taken|in use|registered|a user)|must (?:be|contain|match|include|have)|please (?:enter|choose|select|fill|provide|correct)|(?:enter|choose|select|provide) (?:a|an|your|the|at least)|not (?:valid|allowed|found|match))\b/i;
+
+const base = (step: Step): SignalBase => ({ step_no: step.step_no, url: step.result.url_before, ref: step.action.ref });
+/** A page's identity for loops and revisits: its URL without the fragment. */
+const pageKey = (url: string) => url.split('#')[0];
+/** The steps among `steps` in the `window` steps ending at `end`, end included. */
+const within = (steps: Step[], end: Step, window: number) => steps.filter((s) => s.step_no > end.step_no - window && s.step_no <= end.step_no);
+/** A click on a button: the only action here that can submit a form, so the only one that takes a snapshot after it. */
+export const isSubmit = (step: Step) => step.action.type === 'click' && step.result.ok && step.target?.role === 'button';
+
+export function failedAction(step: Step): SignalOf<'signal.failed_action'> | null {
+  const { action, result } = step;
+  const error = result.error !== null && FAILURES.has(result.error) ? result.error : action.type === 'click' && result.ok && !result.dom_changed && result.url_after === result.url_before ? 'no_effect' : null;
+  return error ? { type: 'signal.failed_action', payload: { ...base(step), action: action.type, error } } : null;
+}
+
+/** The same page state (URL and snapshot hash) seen loop_visits times within loop_window steps; once per loop, not on every further visit. */
+export function loop(history: Step[], step: Step, t: SignalThresholds): SignalOf<'signal.loop'> | null {
+  const steps = [...history, step];
+  const key = (s: Step) => `${pageKey(s.result.url_before)} ${s.snapshot_hash}`;
+  const visits = (end: Step) => within(steps, end, t.loop_window).filter((s) => key(s) === key(end)).length;
+  const count = visits(step);
+  if (count < t.loop_visits) return null;
+  // A visit earlier in the window already reached the threshold: the same loop, already reported.
+  if (within(history, step, t.loop_window).some((s) => key(s) === key(step) && visits(s) >= t.loop_visits)) return null;
+  return { type: 'signal.loop', payload: { ...base(step), snapshot_hash: step.snapshot_hash, visits: count } };
+}
+
+/**
+ * The back_count-th `back` within back_window steps, or the persona's own move to a page acted on in the previous revisit_window
+ * steps. Where a submit lands is the app's choice (a form re-rendered at /jobs, a save that returns to the list), not a backtrack.
+ */
+export function backtrack(history: Step[], step: Step, t: SignalThresholds): SignalOf<'signal.backtrack'> | null {
+  const backs = within([...history, step], step, t.back_window).filter((s) => s.action.type === 'back').length;
+  if (step.action.type === 'back' && backs === t.back_count) return { type: 'signal.backtrack', payload: { ...base(step), kind: 'repeated_back' } };
+  const to = pageKey(step.result.url_after);
+  const revisit = !isSubmit(step) && to !== pageKey(step.result.url_before) && within(history, step, t.revisit_window + 1).some((s) => pageKey(s.result.url_before) === to);
+  return revisit ? { type: 'signal.backtrack', payload: { ...base(step), kind: 'revisit' } } : null;
+}
+
+// Snapshot lines without what changes on every render (refs, boxes, focus), so the same message reads the same before and after.
+const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]/g, '').trim()));
+const textOf = (line: string) => /: (.+)$/.exec(line)?.[1] ?? /"(.+)"/.exec(line)?.[1] ?? line.replace(/^- /, '');
+
+/** After a button click, a control newly marked aria-invalid, or a new line in error wording. */
+export function validationError(step: Step, before: string | null, after: string | null): SignalOf<'signal.validation_error'> | null {
+  if (before === null || after === null || !isSubmit(step)) return null;
+  const seen = lines(before);
+  const fresh = [...lines(after)].filter((line) => !seen.has(line));
+  const samePage = pageKey(step.result.url_after) === pageKey(step.result.url_before);
+  const invalid = fresh.find((line) => line.includes(' [invalid]'));
+  // A new page's "required" hints are not errors: after a navigation, wording counts only beside an invalid control or in an alert.
+  const worded = fresh.find((line) => ERRORISH.test(textOf(line)) && (samePage || invalid !== undefined || line.startsWith('- alert')));
+  const message = worded ? textOf(worded) : invalid ? `${invalid.replace(/^- | \[invalid\]/g, '')} is marked invalid` : null;
+  return message ? { type: 'signal.validation_error', payload: { ...base(step), message: message.slice(0, 200) } } : null;
+}
+
+export function smallTarget(step: Step, device: Device, t: SignalThresholds): SignalOf<'signal.small_target'> | null {
+  const box = step.target?.box;
+  if (device !== 'mobile' || step.action.type !== 'click' || !box) return null;
+  const [, , width, height] = box;
+  return width > 0 && height > 0 && Math.min(width, height) < t.small_target_px ? { type: 'signal.small_target', payload: { ...base(step), box } } : null;
+}
+
+/**
+ * Every signal one step raises. `history` is the episode's earlier steps; `errors` what the page captured since the last step;
+ * `before`/`after` the snapshot texts around a submit (after is null for other actions). A done or abandon step did nothing
+ * on the page, so only errors captured meanwhile count.
+ */
+export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds }): Signal[] {
+  const { history, step, device, errors, before, after, thresholds: t } = input;
+  const ended = step.action.type === 'done' || step.action.type === 'abandon';
+  const found: (Signal | null)[] = ended ? [] : [failedAction(step), loop(history, step, t), backtrack(history, step, t)];
+  for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), ...error } });
+  if (!ended) found.push(validationError(step, before, after), smallTarget(step, device, t));
+  return found.filter((signal): signal is Signal => signal !== null);
+}

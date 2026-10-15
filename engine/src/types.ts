@@ -182,6 +182,17 @@ export interface RunConfig {
   reset: boolean; // POST the POI's reset hook before the run
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
+  signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
+}
+
+/** Objective-signal thresholds (tech.md §8.1), frozen per run so a report can cite what was detected. */
+export interface SignalThresholds {
+  loop_visits: number; // the same page state seen this many times…
+  loop_window: number; // …within this many steps is a loop
+  back_count: number; // this many `back` actions…
+  back_window: number; // …within this many steps is a backtrack
+  revisit_window: number; // so is returning to a page acted on in this many previous steps
+  small_target_px: number; // a mobile tap target narrower or shorter than this, in CSS pixels
 }
 
 export type RunStatus = 'running' | 'finished' | 'stopped' | 'interrupted';
@@ -242,6 +253,13 @@ export interface Opinion {
   frictions: string[];
 }
 
+/** Every objective signal names the step, page and element it is about, so the report can group it with self-reports. */
+export interface SignalBase {
+  step_no: number;
+  url: string; // the page the step acted on
+  ref: string | null; // the step's target element, if any
+}
+
 export interface EventPayloads {
   'run.started': { config: RunConfig };
   'run.reset_called': { url: string; status: number | null; error: string | null };
@@ -282,6 +300,23 @@ export interface EventPayloads {
   'containment.tripwire': { kind: 'live_payment_key' | 'production_host'; detail: string };
   'signal.budget_exceeded': { step_no: number; budget: number };
   'signal.repeated_failure': { step_no: number; action: ActionType; error: string }; // the engine ended the episode, not the persona
+  // Objective signals (tech.md §8.1), written right after the step they describe, never recomputed.
+  'signal.failed_action': SignalBase & { action: ActionType; error: string }; // 'ref_not_found' | 'no_effect' | 'not_editable' | 'timeout' | message
+  'signal.loop': SignalBase & { snapshot_hash: string; visits: number };
+  'signal.backtrack': SignalBase & { kind: 'repeated_back' | 'revisit' };
+  'signal.error': SignalBase & { kind: 'console' | 'exception' | 'http'; status: number | null; message: string };
+  'signal.validation_error': SignalBase & { message: string };
+  'signal.small_target': SignalBase & { box: [x: number, y: number, width: number, height: number] };
+  // End-of-episode survey per POI (tech.md §8.2); `reason` renders like a think-aloud line.
+  'persona.survey': {
+    poi_id: string;
+    sentiment: number; // integer −2…+2
+    confidence: number; // 0…1, self-reported
+    likes: string[];
+    frictions: string[];
+    would_continue: boolean;
+    reason: string;
+  };
   'llm.call': {
     role: LlmRole;
     provider: string;
@@ -296,7 +331,23 @@ export interface EventPayloads {
     status: 'ok' | 'error' | 'invalid_output';
     error: string | null;
   };
+  // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
+  // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
+  'report.themes': { poi_id: string; themes: JudgeTheme[] }; // the judge's semantic merge and naming of friction groups
+  'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
+}
+
+export interface JudgeTheme {
+  title: string;
+  description: string;
+  group_ids: string[]; // deterministic friction groups this theme merges
+}
+
+export interface AuthorSuggestion {
+  theme_id: string;
+  change: string; // one sentence
+  solution: string; // a short possible solution
 }
 
 export type EventType = keyof EventPayloads;
@@ -359,6 +410,67 @@ export interface ReportSegment {
   frictions: number;
 }
 
+/** Evidence trust within the simulation (tech.md §8.1): a self-report backed by a signal, a signal alone, a self-report alone. */
+export type Trust = 'confirmed' | 'observed' | 'reported';
+
+export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target';
+
+/** One member friction shown as evidence for a theme. */
+export interface ReportEvidence {
+  seq: number; // the self-report, survey or signal event
+  step_seq: number | null; // the persona.step it happened at, for the inspector; null for survey answers
+  persona_id: string;
+  persona_name: string;
+  segment_id: string | null;
+  step_no: number | null;
+  url: string | null;
+  severity: number;
+  trust: Trust;
+  what: string;
+  quote: string; // the persona's think-aloud at that step, or the survey's reason
+  screenshot: string | null;
+  signals: SignalKind[];
+}
+
+/** Frictions grouped into one problem, ranked by segment-weighted affected share × severity × trust (tech.md §8.2). */
+export interface ReportTheme {
+  id: string; // its group ids joined by '+'
+  poi_id: string;
+  rank: number; // 1 first, within the POI
+  title: string;
+  description: string;
+  named_by: 'judge' | 'rules'; // rules: the judge did not run, failed or left the group out
+  trust: Trust; // the highest among member frictions
+  severity: number; // median member severity, 1–4
+  impact: number; // Σ share_s × affected_s
+  score: number; // impact × severity × trust weight
+  personas: number;
+  frictions: number;
+  pages: string[]; // page patterns, ids normalised out
+  elements: string[]; // role "name"
+  affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[];
+  evidence: ReportEvidence[]; // at most three, highest severity first
+  seqs: number[]; // every member's events, so the theme always links to the log
+  suggestion: { change: string; solution: string } | null; // generated by the author model; a suggestion, not a finding
+}
+
+/** End-of-episode survey answers per segment (tech.md §8.2 step 8). */
+export interface ReportSentiment {
+  segment_id: string | null;
+  name: string;
+  surveyed: number;
+  sentiment: number | null; // mean, −2…+2
+  would_continue: number; // share of surveyed personas
+}
+
+/** A survey like and how many personas named it. */
+export interface ReportLike {
+  text: string;
+  count: number;
+  personas: number;
+  seqs: number[];
+}
+
 export interface Report {
   run_id: string;
   status: 'running' | 'finished' | 'stopped';
@@ -371,6 +483,10 @@ export interface Report {
   weighted: { completion: number; with_friction: number }; // Σ share × rate over segments: each segment counts by its share, not its persona count
   steps: number; // all personas together
   frictions: ReportFriction[]; // in seq order
+  // M3 friction pipeline; absent in reports written before it. Themes are ranked within each POI.
+  themes?: ReportTheme[];
+  sentiment?: ReportSentiment[];
+  went_well?: ReportLike[];
   cost_usd: number;
   llm_calls: number;
   unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports
@@ -395,4 +511,6 @@ export interface ReportMethods {
   tripwires: { kind: string; detail: string }[];
   reset: { url: string; status: number | null; error: string | null } | null;
   concurrency_changes: { concurrency: number; reason: string }[];
+  signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
+  limitations?: string[]; // what the report's analysis could not do, in plain words
 }

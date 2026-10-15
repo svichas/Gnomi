@@ -8,6 +8,7 @@ import { opinionSchema } from '../opinion/index.ts';
 import { ACTION_TYPES } from '../types.ts';
 import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import type { UserPart } from '../seams.ts';
+import type { EpisodeEnd } from './loop.ts';
 
 /** Providers require nullable fields; locally, older scripted responses may omit opinion. */
 export function stepSchema(persona: Persona) {
@@ -92,10 +93,40 @@ const languageName = (tag: string) => {
   }
 };
 
+/** The first name as subject; pronouns only when the profile schema lets them into prompts. */
+function wordsFor(persona: Persona, project: ProjectConfig): Words {
+  const pronouns = isAttributeEnabled(project.persona_schema, 'pronouns', 'prompt') ? persona.pronouns : 'they';
+  return { p: first(persona), ...PRONOUNS[pronouns] };
+}
+
+/** The profile as prompts see it: only attributes the schema enables for prompts, grouped, plus the segment's context. */
+function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string): string {
+  const segmentContext = segment
+    ? [
+        `  account: ${ACCOUNT[segment.account_state]}`,
+        `  arrived: ${ENTRY[segment.entry]}`,
+        ...(segment.typical_goals.length ? [`  usually here to: ${segment.typical_goals.join('; ')}`] : []),
+      ]
+    : [];
+  const groups = new Map<string, string[]>();
+  for (const { attribute, value } of profileEntries(persona, project.persona_schema, 'prompt')) {
+    const formatted = attribute.id === 'pronouns' ? `${value}/${obj}`
+      : attribute.id === 'country' ? `${countryName(String(value))} (${value})`
+      : Array.isArray(value) ? value.join(', ') : String(value);
+    const rows = groups.get(attribute.group) ?? [];
+    rows.push(`  ${attribute.id}: ${formatted}`);
+    // Attribute descriptions are load-bearing, especially for a project-specific custom dimension.
+    rows.push(`    # ${attribute.description}`);
+    groups.set(attribute.group, rows);
+  }
+  if (segmentContext.length) groups.set('context', [...(groups.get('context') ?? []), ...segmentContext]);
+  return [...groups].map(([group, rows]) => `${group}:\n${rows.join('\n')}`).join('\n');
+}
+
 /** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). */
 export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, stepBudget: number): string {
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
-  const w: Words = { p: first(persona), ...PRONOUNS[enabled('pronouns') ? persona.pronouns : 'they'] };
+  const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
   const goal = segment?.goal_override ?? project.goal;
   const skill =
@@ -124,26 +155,7 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
     ...(english ? [] : [`${p}'s first language is ${languageName(environment.locale)}; English is a second language.`]),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
-  const segmentContext = segment
-    ? [
-        `  account: ${ACCOUNT[segment.account_state]}`,
-        `  arrived: ${ENTRY[segment.entry]}`,
-        ...(segment.typical_goals.length ? [`  usually here to: ${segment.typical_goals.join('; ')}`] : []),
-      ]
-    : [];
-  const groups = new Map<string, string[]>();
-  for (const { attribute, value } of profileEntries(persona, project.persona_schema, 'prompt')) {
-    const formatted = attribute.id === 'pronouns' ? `${value}/${obj}`
-      : attribute.id === 'country' ? `${countryName(String(value))} (${value})`
-      : Array.isArray(value) ? value.join(', ') : String(value);
-    const rows = groups.get(attribute.group) ?? [];
-    rows.push(`  ${attribute.id}: ${formatted}`);
-    // Attribute descriptions are load-bearing, especially for a project-specific custom dimension.
-    rows.push(`    # ${attribute.description}`);
-    groups.set(attribute.group, rows);
-  }
-  if (segmentContext.length) groups.set('context', [...(groups.get('context') ?? []), ...segmentContext]);
-  const profile = [...groups].map(([group, rows]) => `${group}:\n${rows.join('\n')}`).join('\n');
+  const profile = profileBlock(persona, project, segment, obj);
 
   return `This is ${persona.name}. ${p} is using ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Each turn shows what is on ${p}'s screen right now, and the question is always the same: what does ${p} do next, and what does ${p} think and feel along the way?
 
@@ -267,4 +279,60 @@ export function userParts(opts: {
     `What does ${p} do next?`,
   ].join('\n');
   return opts.screenshot ? [{ type: 'image', data: opts.screenshot, mediaType: 'image/jpeg' }, { type: 'text', text }] : [{ type: 'text', text }];
+}
+
+/** The episode endings that get a survey: the persona's own and the engine's per-persona stops, never a run-wide one. */
+export type SurveyedEnd = Exclude<EpisodeEnd, 'blocked' | 'stopped'>;
+
+/** The end-of-episode survey (tech.md §8.2). What would make the persona stop comes before what it liked (§6.8). */
+export const surveySchema = z.object({
+  frictions: opinionSchema.shape.frictions,
+  likes: opinionSchema.shape.likes,
+  sentiment: opinionSchema.shape.sentiment,
+  confidence: opinionSchema.shape.confidence,
+  would_continue: z.boolean(),
+  reason: z.string().trim().min(1).max(500),
+}).strict();
+
+const ENDING: Record<SurveyedEnd, (p: string) => string> = {
+  done: (p) => `${p} finished the task`,
+  abandoned: (p) => `${p} gave up`,
+  budget_exceeded: (p) => `${p} ran out of patience before finishing`,
+  repeated_failure: (p) => `${p} stopped after the same action failed three times in a row`,
+};
+
+/** The survey's system prompt: the same persona and goal as the steps, a survey in place of the action format. */
+export function surveySystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null): string {
+  const { p, obj, poss } = wordsFor(persona, project);
+  const { locale } = personaEnvironment(persona);
+  return `This is ${persona.name}. ${p} has just used ${project.name} to get something done at work and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
+
+<persona>
+${profileBlock(persona, project, segment, obj)}
+</persona>
+
+${p}'s task: "${segment?.goal_override ?? project.goal}"
+How ${p} reads it: ${persona.goal_interpretation}
+The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+
+Answer with one JSON object, every text in ${poss} own voice and in ${languageName(locale)} (${locale}):
+- frictions: what would make ${p} stop using ${project.name}, up to 5 short statements (at most 500 characters each); empty when nothing would.
+- likes: what ${p} liked, up to 5 short statements (at most 500 characters each); empty when nothing stood out.
+- sentiment: ${poss} overall view of ${project.name}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
+- confidence: how sure ${p} is of that view, from 0 to 1.
+- would_continue: whether ${p} would keep using ${project.name} for tasks like this one.
+- reason: why, as ${p} would say it, in at most 40 words.
+Answer from what ${p} saw and did in this session only. Do not invent praise, friction or certainty: when ${p} gave up or got stuck, the true answer says so.`;
+}
+
+/** The volatile part: how the episode ended, how long it took and the frictions the persona reported on the way. */
+export function surveyParts(opts: { persona: Persona; end: SurveyedEnd; detail: string | null; steps: number; frictions: string[] }): UserPart[] {
+  const p = first(opts.persona);
+  const text = [
+    `The session is over after ${opts.steps} step${opts.steps === 1 ? '' : 's'}: ${ENDING[opts.end](p)}${opts.detail ? ` ("${opts.detail}")` : ''}.`,
+    ...(opts.frictions.length ? [`Frictions ${p} reported along the way:`, ...opts.frictions.map((f) => `- "${f}"`)] : [`${p} reported no frictions along the way.`]),
+    '',
+    `What would make ${p} stop using the product, what did ${p} like, and would ${p} keep using it?`,
+  ].join('\n');
+  return [{ type: 'text', text }];
 }

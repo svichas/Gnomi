@@ -12,7 +12,7 @@ import type { Page } from 'playwright-core';
 import { GYM_ACCOUNTS, startGym } from '../../gym/server.ts';
 import { DEMO_PERSONA_WRITER, syncPersonas } from './audience/index.ts';
 import { launchBrowserPool } from './browser/pool.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR, findRef } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SURVEY, findRef } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -138,7 +138,8 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
   ) => {
     let handle: RunHandle | undefined;
     const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-    const scripted = createScriptedGateway({ navigator }, record, { costPerCall: opts.costPerCall ?? 0 });
+    // Walks script the steps only; every persona answers the demo survey at the end.
+    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
     let calls = 0;
     const llm: LlmGateway = {
       async call<T>(req: LlmRequest<T>) {
@@ -390,7 +391,7 @@ function peakInFlight(events: GnomiEvent[]): number {
 }
 
 test('M2: 50 personas from a four-segment audience run at concurrency 12 on the Gym with all twelve defects', async (t) => {
-  const w = await world(t, { defects: 'all', candidatesDelayMs: 200 });
+  const w = await world(t, { defects: 'v1', candidatesDelayMs: 200 });
   const audience = audienceOf([segment('seg-1', 40), segment('seg-2', 30), segment('seg-3', 20), segment('seg-4', 10)], 50);
   const { personas } = await w.sample(audience);
   assert.equal(personas.length, 50);
@@ -475,10 +476,36 @@ test('M2: two segments on different roles each log in with their own recorded se
   const seen = new Map<string, string>();
   for (const { seq, request_json } of w.store.transcripts(config.run_id)) {
     const call = w.store.events(config.run_id).find((e) => e.seq === seq);
-    seen.set(call?.persona_id ?? '', request_json);
+    if (!seen.has(call?.persona_id ?? '')) seen.set(call?.persona_id ?? '', request_json); // the step, not the survey after it
   }
   for (const p of personas) {
     const expected = p.segment_id === 'seg-r' ? /Signed in as Priya Natarajan · Recruiter/ : /Signed in as Dana Okafor · Hiring manager/;
     assert.match(seen.get(p.id) ?? '', expected, `${p.id} (${p.segment_id}) saw the wrong login`);
   }
+});
+
+// —— M3 ——
+
+test('M3: a broken link and a rejected form raise signal.error and signal.validation_error right after their steps', async (t) => {
+  const w = await world(t, { defects: 'D03' });
+  const { events } = await w.go(
+    walk([
+      (req) => say('Jobs is in the menu.', { type: 'click', ref: ref(req, 'link', 'Jobs') }),
+      say('Page not found. Back.', { type: 'back' }),
+      (req) => say('This one, then.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }),
+      (req) => say('Create job.', { type: 'click', ref: ref(req, 'link', 'Create job') }),
+      (req) => say('Publish and see what it asks for.', { type: 'click', ref: ref(req, 'button', 'Publish job') }),
+      say('It wants a title. Enough for today.', { type: 'abandon', text: 'Ran out of time' }),
+    ]),
+  );
+  const steps = of(events, 'persona.step');
+  const [broken] = of(events, 'signal.error');
+  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
+  assert.equal(broken.seq, steps[0].seq + 1, 'written right after its step');
+  assert.equal(of(events, 'signal.error').length, 1, "Chromium's console line for the 404 is not a second error");
+  const [rejected] = of(events, 'signal.validation_error');
+  assert.deepEqual(rejected.payload, { step_no: 5, url: `${w.gym.url}/jobs/new`, ref: steps[4].payload.action.ref, message: 'Enter a job title' });
+  assert.equal(rejected.seq, steps[4].seq + 1);
+  assert.deepEqual(of(events, 'signal.backtrack').map((e) => [e.payload.step_no, e.payload.kind]), [[2, 'revisit']], 'the back, not where the form posted to');
+  assert.deepEqual(of(events, 'signal.failed_action'), [], 'every click did something');
 });

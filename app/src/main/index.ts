@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, safeStorage, session, shell, utilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
 import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
+import { REPORT_FORMATS } from '../reports.ts';
+import type { ReportFormat } from '../reports.ts';
 import { ProjectLibrary } from './projects.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
@@ -215,6 +217,49 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
   } finally {
     changingProject = false;
   }
+});
+
+// Evidence screenshots shrunk for an exported report; one that cannot be read is left out.
+const THUMBNAIL_WIDTH = 640;
+ipcMain.handle('report-thumbnails', async (_event, paths: unknown) => {
+  if (!Array.isArray(paths) || !paths.every((path) => typeof path === 'string')) throw new Error('Unknown screenshots.');
+  const thumbnails: Record<string, string> = {};
+  for (const path of paths) {
+    const blob = await request('get_blob', { path }).catch(() => null); // the engine hands out run files only
+    const image = blob && nativeImage.createFromBuffer(Buffer.from(blob.base64, 'base64'));
+    if (!image || image.isEmpty()) continue;
+    const small = image.getSize().width > THUMBNAIL_WIDTH ? image.resize({ width: THUMBNAIL_WIDTH, quality: 'good' }) : image;
+    thumbnails[path] = `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`;
+  }
+  return thumbnails;
+});
+
+/** Prints exported HTML in a hidden window with no scripts and a session of its own, where the app's CSP (no inline styles) does not apply. */
+async function printPdf(html: string): Promise<Buffer> {
+  const dir = mkdtempSync(join(app.getPath('temp'), 'gnomi-print-'));
+  const win = new BrowserWindow({ show: false, webPreferences: { javascript: false, sandbox: true, partition: 'gnomi-print' } });
+  try {
+    writeFileSync(join(dir, 'report.html'), html);
+    await win.loadFile(join(dir, 'report.html'));
+    return await win.webContents.printToPDF({ printBackground: true });
+  } finally {
+    win.destroy();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+ipcMain.handle('save-report', async (_event, format: unknown, runId: unknown, content: unknown): Promise<string | null> => {
+  if (typeof format !== 'string' || !Object.hasOwn(REPORT_FORMATS, format)) throw new Error('Unknown export format.');
+  if (typeof runId !== 'string' || typeof content !== 'string') throw new Error('Nothing to export.');
+  const kind = format as ReportFormat;
+  const result = await dialog.showSaveDialog({
+    title: 'Export report',
+    defaultPath: `gnomi-report-${runId.replace(/[^\w-]/g, '')}.${kind}`,
+    filters: [{ name: REPORT_FORMATS[kind], extensions: [kind] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  writeFileSync(result.filePath, kind === 'pdf' ? await printPdf(content) : content);
+  return result.filePath;
 });
 
 function createWindow(started: Promise<Startup>) {

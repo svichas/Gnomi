@@ -55,3 +55,17 @@ The user selected finishing M2 before M3 and explicitly chose to retain concurre
 The engine agent owns gateway/scripted per-attempt notifications, cancellation, scheduler integration and regressions. The app agent owns recorded-cost presentation and missing-usage aggregation/export. The acceptance agent owns a dedicated opt-in runner and evidence checks. The coordinator owns shared interfaces, documentation, integration review and full validation.
 
 The acceptance runner retains its manifest, project/event log, report and evidence. Scripted runs verify the harness but cannot satisfy live-model criteria. Setup and navigation costs/times are separated. Language/profile compliance and defect recall require evidence review. Live execution requires configured local credentials and an explicit spending allowance; available environment keys are currently absent.
+
+# M3 — friction pipeline and report
+
+M2 stays open only for live-provider measurements, which need local credentials and a spending allowance. M3 starts in parallel on branch `m3-friction-report`. The shared event contract (`signal.*` payloads with `SignalBase`, `persona.survey`) is committed first in `engine/src/types.ts`; each agent works in its own worktree cut from that commit, and the coordinator merges.
+
+## Agent ownership
+
+1. Gym v2 agent (`gym/`): 25 catalogued defects including five visual-only ones, every defect behind a flag, all-off control mode.
+2. Signals agent (`engine/src/signals/`, browser capture, step hook): detectors from tech.md §8.1 written synchronously after each step, thresholds frozen in the run snapshot.
+3. Survey agent (episode end, prompt, estimate, inspector): one structured `persona.survey` per persona and POI after the episode.
+4. Themes agent (`engine/src/report/`, report UI): candidates, trust, deterministic grouping, judge merge, scoring, evidence, author suggestions, what went well, methods appendix.
+5. Export agent (app main process, export module): single-file HTML from the report components, JSON, PDF via `printToPDF`, Markdown.
+
+Overlaps to expect at merge: `agent/loop.ts` (2, 3), `llm` estimates (3, 4), `Report.tsx` (4, 5). Live recall/precision/stability acceptance needs paid runs; scripted and pure-function tests establish behaviour only.

@@ -203,6 +203,34 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         screenshot: null,
       },
     ],
+    // Both self-reports are on one page with no named element: one deterministic theme, named by rules.
+    themes: [
+      {
+        id: 'g1',
+        poi_id: 'poi-gym',
+        rank: 1,
+        title: 'Reported friction on /jobs/new',
+        description: 'The required field gives no error.',
+        named_by: 'rules',
+        trust: 'reported',
+        severity: 2.5,
+        impact: 1,
+        score: 1.25,
+        personas: 1,
+        frictions: 2,
+        pages: ['localhost:3001/jobs/new'],
+        elements: [],
+        affected: [{ segment_id: null, name: 'Built-in persona', affected: 1, reached: 1, rate: 1 }],
+        evidence: [
+          { seq: 7, step_seq: 6, persona_id: 'p-001', persona_name: 'Priya Natarajan', segment_id: null, step_no: 2, url, severity: 3, trust: 'reported', what: 'The required field gives no error.', quote: 'The form gives no error text.', screenshot: null, signals: [] },
+          { seq: 3, step_seq: 4, persona_id: 'p-001', persona_name: 'Priya Natarajan', segment_id: null, step_no: 1, url, severity: 2, trust: 'reported', what: 'The Save button is ambiguous.', quote: 'Looking for the way to post a job.', screenshot: 'runs/r-0001/shots/p-001-0001.jpg', signals: [] },
+        ],
+        seqs: [3, 7],
+        suggestion: null,
+      },
+    ],
+    sentiment: [],
+    went_well: [],
     cost_usd: 0.75,
     unreported_usage_calls: 0,
     llm_calls: 2,
@@ -223,6 +251,12 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       tripwires: [],
       reset: null,
       concurrency_changes: [],
+      signal_thresholds: null,
+      limitations: [
+        'The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.',
+        'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
+        'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
+      ],
     },
   });
 });
@@ -552,8 +586,13 @@ test('a population run reopened from the store folds to the same report', (t) =>
   const { run_id: _run_id, ...snapshot } = populationConfig([recruiters, managers]);
   const run = store.createRun(snapshot);
   const live = populationScript(populationConfig([recruiters, managers])).map(([, event]) => store.append(event));
+  // The judge's and author's answers are events too, so the reopened log rebuilds them.
+  const poi = { ...runEnv, persona_id: null, poi_id: 'poi-gym' } as const;
+  live.push(store.append({ ...poi, type: 'report.themes', payload: { poi_id: 'poi-gym', themes: [{ title: 'The job form', description: 'Every friction on it.', group_ids: ['g1', 'g2'] }] } }));
+  live.push(store.append({ ...poi, type: 'report.suggestions', payload: { poi_id: 'poi-gym', suggestions: [{ theme_id: 'g1+g2', change: 'Simplify the form.', solution: 'Fewer fields.' }] } }));
   const original = buildReport(live);
   assert.equal(original.frictions.length, 5);
+  assert.deepEqual(original.themes?.[0].suggestion, { change: 'Simplify the form.', solution: 'Fewer fields.' });
   store.close();
 
   const reopened = openProject(dir);

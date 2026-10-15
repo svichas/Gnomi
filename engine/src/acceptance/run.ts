@@ -4,10 +4,10 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import { arch, cpus, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { DEFECT_IDS, startGym } from '../../../gym/server.ts';
+import { GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
 import { createGateway } from '../llm/gateway.ts';
-import { createScriptedGateway, DEMO_SCRIPT } from '../llm/scripted.ts';
+import { createScriptedGateway, DEMO_SCRIPT, DEMO_SURVEY } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { buildReport } from '../report/build.ts';
@@ -27,6 +27,7 @@ interface CaseResult { id: string; criteria: Criterion[]; facts?: Facts; project
 function scriptedNavigator(): Responder {
   const calls = new Map<string, number>();
   return (request) => {
+    if (request.purpose === 'survey') return DEMO_SURVEY;
     const key = request.persona_id ?? '';
     const index = calls.get(key) ?? 0;
     calls.set(key, index + 1);
@@ -94,7 +95,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
     const record = createRecorder(store, () => {});
     const actual = options.mode === 'live'
       ? createGateway({ secrets: { get: (name) => name === 'anthropic_api_key' ? env.ANTHROPIC_API_KEY!.trim() : null }, localBaseUrl: null, record, onThrottle: (provider) => run?.throttle(provider) })
-      : createScriptedGateway({ navigator: id === 'german-locale' ? () => ({
+      : createScriptedGateway({ navigator: id === 'german-locale' ? (request) => request.purpose === 'survey' ? DEMO_SURVEY : ({
         thought: 'Dies ist ein geskripteter Test: Die Seite zeigt Deutsch und die Berliner Zeitzone.', feeling: 0,
         action: { type: 'done', ref: null, text: 'Geskriptete Prüfung beendet.' }, friction: null,
       }) : scriptedNavigator() }, record);
@@ -170,7 +171,7 @@ export async function runAcceptance(options: Options, env: Record<string, string
   const started = Date.now();
   let fixture_preparation_ms = 0;
   try {
-    gym = await startGym({ port: 0, defects: 'all' }); // keep the real 4-second D09 delay
+    gym = await startGym({ port: 0, defects: 'v1' }); // Gym v1, the M2 set; keep the real 4-second D09 delay
     const fixtureStart = performance.now();
     const base = fixture(gym.url);
     fixture_preparation_ms = Math.round(performance.now() - fixtureStart);
@@ -179,7 +180,7 @@ export async function runAcceptance(options: Options, env: Record<string, string
       fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
-      gym: { defects: DEFECT_IDS, candidates_delay_ms: 4000, login: false }, revision, dirty, source_sha256,
+      gym: { defects: GYM_V1_DEFECT_IDS, candidates_delay_ms: 4000, login: false }, revision, dirty, source_sha256,
       package_lock_sha256: hash(readFileSync(join(source, 'package-lock.json'))),
       price_table: { file: 'price-table.ts', sha256: hash(prices), source_checked_date: /const CHECKED = '([^']+)'/.exec(prices)?.[1] ?? 'unknown', model_availability: 'Unverified; no model-list probe is performed. Costs use the repository price table, not a provider invoice.' },
       runtime: { node: process.version, platform: platform(), arch: arch(), cpu: cpus()[0]?.model, cpu_count: cpus().length }, started_at: new Date(started).toISOString(),

@@ -40,6 +40,9 @@ async function stage(name: string, body: () => Promise<void>) {
 async function expectReport(page: Page) {
   const report = page.locator('section[aria-labelledby=report-title]');
   assert.match(await report.innerText(), /Frictions found \([1-9]/);
+  // The scripted judge and author name the themes and label their suggestions, so a key-free run shows ranked themes.
+  const themes = report.getByRole('region', { name: /Potential frictions, ranked \([1-9]/ });
+  assert.match(await themes.innerText(), /Scripted demo theme 1: no model named it[\s\S]*Generated suggestion/);
   const friction = report.getByRole('region', { name: /Frictions found/ }).locator('li').first();
   await friction.scrollIntoViewIfNeeded();
   const image = friction.getByRole('img');
@@ -104,7 +107,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'hasKey', 'clearKey', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -141,7 +144,40 @@ try {
     await page.getByRole('heading', { name: 'Report' }).waitFor({ timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
+    // The ranked themes at the window's size and at 720 px wide, for a look at the evidence layout.
+    const themes = page.getByRole('region', { name: /Potential frictions, ranked/ });
+    await themes.screenshot({ path: join(shots, 'report-themes.png') });
+    const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+    await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
+    await themes.screenshot({ path: join(shots, 'report-themes-720.png') });
+    await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
     ran = true;
+  });
+
+  await stage('the report exports to HTML, PDF, JSON and Markdown files', async () => {
+    assert.ok(ran, 'needs the run above');
+    const exported = join(tmp, 'exports');
+    mkdirSync(exported);
+    // The save dialog is replaced: each file lands under its suggested name.
+    await app.evaluate(({ dialog }, dir) => {
+      dialog.showSaveDialog = async (options: Electron.SaveDialogOptions) => ({ canceled: false, filePath: `${dir}/${options.defaultPath}` });
+    }, exported);
+    const file = (format: string) => readFileSync(join(exported, `gnomi-report-r-0001.${format}`));
+    for (const format of ['html', 'pdf', 'json', 'md']) {
+      await page.getByLabel('Export format').selectOption(format);
+      await page.getByRole('button', { name: 'Export report' }).click();
+      await page.getByText(new RegExp(`Report exported to .*gnomi-report-r-0001\\.${format}$`)).waitFor({ timeout: 60_000 });
+      assert.ok(file(format).length > 0, `the ${format} file is empty`);
+    }
+    const html = file('html').toString();
+    assert.doesNotMatch(html, /<script/i);
+    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'the HTML loads something from outside the file');
+    assert.match(html, /<img src="data:image\/jpeg;base64,/);
+    assert.doesNotMatch(html, /<button\b/, 'the file has inspector links');
+    assert.equal(file('pdf').subarray(0, 5).toString(), '%PDF-');
+    assert.equal(JSON.parse(file('json').toString()).run_id, 'r-0001');
+    assert.match(file('md').toString(), /^# Gnomi report: Post a job/);
+    console.log(`      sizes: ${['html', 'pdf', 'json', 'md'].map((format) => `${format} ${file(format).length} B`).join(', ')}`);
   });
 
   await stage('a third-party host is blocked: the report lists it and it received nothing', async () => {
@@ -376,7 +412,10 @@ try {
     const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
     await page.getByRole('button', { name: /^Inspect / }).first().click();
     await inspector.waitFor();
-    const image = inspector.getByRole('region', { name: 'Timeline' }).getByRole('img').first();
+    // Opinions and the survey come first; the timeline's screenshots load once they are scrolled into view.
+    const timeline = inspector.getByRole('region', { name: 'Timeline' });
+    await timeline.scrollIntoViewIfNeeded();
+    const image = timeline.getByRole('img').first();
     await image.waitFor();
     await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
     await inspector.getByText('Full profile').click();
@@ -388,6 +427,10 @@ try {
     assert.match(await opinions.innerText(), /Self-reported confidence\s+50%/);
     assert.match(await opinions.innerText(), /Likes[\s\S]+Sample like from the scripted demo/);
     assert.match(await opinions.innerText(), /Frictions[\s\S]+Sample friction from the scripted demo/);
+    const survey = inspector.getByRole('region', { name: 'Survey' });
+    assert.match(await survey.innerText(), /Would keep using it\s+No/);
+    assert.match(await survey.innerText(), /Scripted demo survey: no model was called/);
+    await survey.screenshot({ path: join(shots, 'inspector-survey.png') });
     await opinions.getByRole('button', { name: 'View source step 2' }).click();
     const evidence = inspector.getByRole('region', { name: 'Timeline' }).locator('li.ring-2');
     assert.match(await evidence.innerText(), /Step 2[\s\S]+Scripted demo: logging a sample friction/i);
