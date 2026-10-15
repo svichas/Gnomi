@@ -163,6 +163,7 @@ try {
     assert.doesNotMatch(html, /<script/i);
     assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'the HTML loads something from outside the file');
     assert.match(html, /<img src="data:image\/jpeg;base64,/);
+    assert.doesNotMatch(html, /<button\b/, 'the file has inspector links');
     assert.equal(file('pdf').subarray(0, 5).toString(), '%PDF-');
     assert.equal(JSON.parse(file('json').toString()).run_id, 'r-0001');
     assert.match(file('md').toString(), /^# Gnomi report: Post a job/);
