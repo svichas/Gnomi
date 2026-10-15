@@ -47,3 +47,11 @@ Acceptance: valid templates round-trip; malformed templates and weakened core fi
 ## Following slice — current opinions
 
 Add a bounded optional opinion snapshot to the existing navigator response: sentiment, confidence, likes and frictions. When it changes, record `persona.opinion_changed` with the prior value and a causal step sequence. Fold the log to display the current opinion for each POI in the inspector, with a link back to the evidence. Legacy responses/logs remain readable; absent opinions are shown as absent, never inferred from step feeling. This adds no model call. Social influence and the end-of-episode survey remain M4 and M3 respectively.
+
+## Third batch — budget enforcement and live acceptance
+
+The user selected finishing M2 before M3 and explicitly chose to retain concurrency: cancel immediately at the recorded cap and report uncertain in-flight charges. Check recorded spend after every provider attempt, including invalid outputs, and prevent further requests, retries or browser actions once the budget stop is raised. Already-started browser actions may settle and remain logged. Preserve late usage in the final report and distinguish recorded cost from incomplete provider usage; the threshold does not promise a strict final provider bill.
+
+The engine agent owns gateway/scripted per-attempt notifications, cancellation, scheduler integration and regressions. The app agent owns recorded-cost presentation and missing-usage aggregation/export. The acceptance agent owns a dedicated opt-in runner and evidence checks. The coordinator owns shared interfaces, documentation, integration review and full validation.
+
+The acceptance runner retains its manifest, project/event log, report and evidence. Scripted runs verify the harness but cannot satisfy live-model criteria. Setup and navigation costs/times are separated. Language/profile compliance and defect recall require evidence review. Live execution requires configured local credentials and an explicit spending allowance; available environment keys are currently absent.

@@ -55,3 +55,23 @@
 - Main smoke verifies current opinion sentiment/confidence/likes/frictions and the source-step link; reviewed the highlighted evidence screenshot.
 - Review regressions fixed: mutable run snapshots, private sampled values after rule changes, audience-seed changes, stale open persona edits, custom IDs colliding with omitted defaults, and synthetic invalid-output feelings in report dimensions. A 50-person weighted-choice test checks distinct segment distributions against binomial sampling tolerance.
 - M2 remains open for live-provider acceptance and the concurrency budget-overshoot decision; see `docs/roadmap.md`.
+
+## Budget enforcement and live acceptance — third batch
+
+- [x] Audit engine budget behavior, app claims and existing acceptance evidence.
+- [x] Resolve the concurrent-call overshoot contract: preserve concurrency, cancel immediately at recorded cap, report uncertain charges.
+- [x] Observe every attempt; cancel at the recorded cap and suppress later requests/actions.
+- [x] Preserve usage/transcripts and expose unreported usage in live/report costs.
+- [x] Add an opt-in acceptance runner with retained evidence and honest criterion statuses.
+- [x] Run focused regressions, full checks and Electron verification; review integrated changes.
+- [x] Record measured acceptance and remaining live-provider limitations in the roadmap.
+- [ ] Run live-provider measurements and review German thoughts/profile adherence once local credentials and a recorded-spend allowance are available. Frozen-fixture browsing does not close live persona-writer quality acceptance.
+
+## Third-batch results — 15 October 2026
+
+- Full suite: 394 tests passed (302 engine, 44 Gym, 48 app), no failures or skips. Final acceptance review added one regression; all five acceptance tests then passed. Full typecheck and production app build passed; the engine typecheck also passed after the final harness changes.
+- Main Electron smoke and the new budget smoke passed. Reviewed the stopped-report screenshots at desktop and 720px, including $5.25 recorded against a $5 cap and a missing-usage warning.
+- A mutation in a disposable source copy removed the per-attempt budget check; the paid-invalid-response regression failed with two requests instead of one, confirming that it detects the original retry gap.
+- Independent review found and fixed SDK zero-filling of missing usage, scripted failures masked as unmeasured live criteria, and shared-allowance cancellation hiding the engine's stop reason. The harness retains an explicit allowance stop cause and accounts for attempts even if an observer fails.
+- [Final scripted acceptance evidence](../engine/acceptance-results/verified-20261015/acceptance.json) verified 50 terminal episodes, 150 steps, peak 12 browser contexts, a real German browser environment, and matching reports after reopening both SQLite logs. This local artifact is retained in an ignored output directory. Live performance, cost and thought/profile quality remain `NOT_RUN`; setup model cost is zero because the fixture is authored.
+- No paid calls were made. Live measurement remains pending local credentials and a recorded-spend allowance. See [the acceptance guide](../docs/m2-acceptance.md).
