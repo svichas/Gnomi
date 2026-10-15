@@ -44,12 +44,21 @@ async function stage(name: string, body: () => Promise<void>) {
 /** Hovers and clicks the first node with this key prefix on the swarm canvas, found through the sigma instance on its container. */
 async function clickNode(page: Page, prefix: string): Promise<string> {
   const canvas = page.locator('.sigma-container');
-  const box = (await canvas.boundingBox())!;
-  const node = await canvas.evaluate((element, prefix) => {
+  const locate = () => canvas.evaluate((element, prefix) => {
     const sigma = (element as HTMLElement & { sigma: { getGraph(): { nodes(): string[] }; getNodeDisplayData(key: string): { x: number; y: number }; framedGraphToViewport(at: { x: number; y: number }): { x: number; y: number } } }).sigma;
     const key = sigma.getGraph().nodes().find((candidate) => candidate.startsWith(prefix))!;
     return { key, ...sigma.framedGraphToViewport(sigma.getNodeDisplayData(key)) };
   }, prefix);
+  // The layout keeps moving nodes for seconds after the graph changes (SETTLE_MS in Swarm.tsx): aim once this one is still.
+  let node = await locate();
+  for (const deadline = Date.now() + 20_000; ; ) {
+    await page.waitForTimeout(300);
+    const next = await locate();
+    if (Math.hypot(next.x - node.x, next.y - node.y) < 0.5) break;
+    if (Date.now() > deadline) throw new Error(`the swarm layout was still moving ${node.key} after 20 seconds`);
+    node = next;
+  }
+  const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + node.x, box.y + node.y);
   await page.getByRole('region', { name: 'Swarm graph' }).getByRole('status').waitFor(); // the hover card
   await page.mouse.click(box.x + node.x, box.y + node.y);
