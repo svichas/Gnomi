@@ -390,7 +390,7 @@ function peakInFlight(events: GnomiEvent[]): number {
 }
 
 test('M2: 50 personas from a four-segment audience run at concurrency 12 on the Gym with all twelve defects', async (t) => {
-  const w = await world(t, { defects: 'all', candidatesDelayMs: 200 });
+  const w = await world(t, { defects: 'v1', candidatesDelayMs: 200 });
   const audience = audienceOf([segment('seg-1', 40), segment('seg-2', 30), segment('seg-3', 20), segment('seg-4', 10)], 50);
   const { personas } = await w.sample(audience);
   assert.equal(personas.length, 50);

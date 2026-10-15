@@ -1,11 +1,12 @@
 // Gym ATS, a seeded-defect demo app Gnomi is measured against (catalogue: gym/defects.yaml). No dependencies.
-// startGym({ port, defects, login, thirdParty, liveKey, captcha }): port defaults to 4317 (0 = any free port); defects default to all of DEFECT_IDS; other options default off. Env: PORT, GYM_DEFECTS, GYM_LOGIN=1, GYM_THIRD_PARTY, GYM_LIVE_KEY=1, GYM_CAPTCHA=1.
+// startGym({ port, defects, login, thirdParty, liveKey, captcha }): port defaults to 4317 (0 = any free port); defects default to "all" (DEFECT_IDS, Gym v2), "v1" is D01–D12 and "none" the control build; other options default off. Env: PORT, GYM_DEFECTS, GYM_LOGIN=1, GYM_THIRD_PARTY, GYM_LIVE_KEY=1, GYM_CAPTCHA=1.
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-export const DEFECT_IDS = ["D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12"];
+export const GYM_V1_DEFECT_IDS = ["D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12"];
+export const DEFECT_IDS = [...GYM_V1_DEFECT_IDS, "D13", "D14", "D15", "D16", "D17", "D18", "D19", "D20", "D21", "D22", "D23", "D24", "D25"];
 const DEPARTMENTS = ["Engineering", "Design", "Product", "Sales", "People"];
 const EMPLOYMENT_TYPES = ["Full-time", "Part-time", "Contract", "Internship"];
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
@@ -22,7 +23,7 @@ const ROLE_LABELS: Record<Role, string> = { recruiter: "Recruiter", hiring_manag
 
 type On = (id: string) => boolean;
 type Ctx = { on: On; thirdParty?: string; liveKey: boolean; captcha: boolean; account?: Account };
-type Config = { defects: Set<string>; login: boolean; thirdParty?: string; liveKey: boolean; captcha: boolean; candidatesDelayMs: number };
+type Config = { defects: Set<string>; login: boolean; thirdParty?: string; liveKey: boolean; captcha: boolean; candidatesDelayMs: number; decisionDelayMs: number };
 type Job = {
   id: number;
   title: string;
@@ -148,6 +149,7 @@ export async function startGym(opts: {
   liveKey?: boolean;
   captcha?: boolean;
   candidatesDelayMs?: number; // test-only: shortens the D09 delay, which defaults to 4 s
+  decisionDelayMs?: number; // test-only: shortens the D15 delay, which defaults to 3 s
 } = {}): Promise<{ url: string; close(): Promise<void> }> {
   const app = createApp({
     defects: parseDefects(opts.defects ?? "all"),
@@ -156,6 +158,7 @@ export async function startGym(opts: {
     liveKey: opts.liveKey ?? false,
     captcha: opts.captcha ?? false,
     candidatesDelayMs: opts.candidatesDelayMs ?? 4000,
+    decisionDelayMs: opts.decisionDelayMs ?? 3000,
   });
   const server = createServer((req, res) => {
     // A client that aborts mid-body rejects readBody; drop that socket instead of crashing the process.
@@ -182,6 +185,7 @@ export async function startGym(opts: {
 
 function parseDefects(spec: string): Set<string> {
   if (spec === "all") return new Set(DEFECT_IDS);
+  if (spec === "v1") return new Set(GYM_V1_DEFECT_IDS);
   if (spec === "none") return new Set();
   const ids = spec.split(",").map((id) => id.trim()).filter(Boolean);
   const unknown = ids.find((id) => !DEFECT_IDS.includes(id));
@@ -276,7 +280,9 @@ function createApp(config: Config) {
         delete errors.hiringManager;
         return send(res, 200, jobFormPage(c, values, errors, `Invitation sent to ${values.hiringManager}`));
       }
-      if (errors.title || errors.department || errors.hiringManager) return send(res, 200, jobFormPage(c, values, errors));
+      // D19 (defect): a form that comes back with an error has lost its description and employment type.
+      const kept = c.on("D19") ? { ...values, type: BLANK.type, description: BLANK.description } : values;
+      if (errors.title || errors.department || errors.hiringManager) return send(res, 200, jobFormPage(c, kept, errors));
       const job: Job = {
         ...values,
         // D07 (defect): the description is silently cut to 200 characters on save.
@@ -300,7 +306,8 @@ function createApp(config: Config) {
         const error = c.on("D08") ? "Something went wrong" : `${email} is already a user`;
         return send(res, 200, usersPage(c, store.users, { email, role, error }));
       }
-      store.users.push({ name: "", email, role, status: "Invited" });
+      // D13 (defect): every invitation is saved as a recruiter, whatever role was chosen.
+      store.users.push({ name: "", email, role: c.on("D13") ? "recruiter" : role, status: "Invited" });
       return send(res, 200, usersPage(c, store.users, { email: "", role: "recruiter", notice: `Invitation sent to ${email}` }));
     }
 
@@ -317,10 +324,14 @@ function createApp(config: Config) {
       const decision = form.get("decision");
       const feedback = (form.get("feedback") ?? "").trim();
       if (decision === "advance" || decision === "reject") {
+        // D15 (defect): recording a decision takes seconds with no progress indication.
+        if (c.on("D15")) await new Promise((resolve) => setTimeout(resolve, config.decisionDelayMs));
         candidate.decision = decision === "advance" ? "Advance" : "Reject";
         return send(res, 200, reviewPage(c, candidate, `Decision recorded: ${candidate.decision}`));
       }
       if (!feedback) return send(res, 200, reviewPage(c, candidate, undefined, "Write some feedback before sending"));
+      // D14 (defect): feedback with an apostrophe crashes the save, and the text is lost.
+      if (c.on("D14") && /['’]/.test(feedback)) return send(res, 500, "Internal Server Error");
       candidate.feedback.push(feedback);
       return send(res, 200, reviewPage(c, candidate, "Feedback sent"));
     }
@@ -330,7 +341,7 @@ function createApp(config: Config) {
     if (path === "/") return send(res, 200, dashboardPage(c, store));
     if (path === "/jobs") return send(res, 200, jobsPage(c, store.jobs));
     if (path === "/jobs/new") return send(res, 200, jobFormPage(c, BLANK, {}));
-    if (path === "/reviews") return send(res, 200, reviewsPage(c, pendingReviews(store)));
+    if (path === "/reviews") return send(res, 200, reviewsPage(c, pendingReviews(c, store)));
     if (candidate) return send(res, 200, reviewPage(c, candidate));
     if (path === "/candidates") {
       // D09 (defect): the candidates page answers after a delay with no loading state.
@@ -371,7 +382,8 @@ const options = (items: string[], selected: string) =>
   items.map((item) => `<option value="${esc(item)}"${item === selected ? " selected" : ""}>${esc(item)}</option>`).join("");
 const badge = (status: Job["status"]) => `<span class="badge${status === "Live" ? " live" : ""}">${status}</span>`;
 const banner = (message: string) => `<p class="banner" role="status">${esc(message)}</p>`;
-const pendingReviews = (store: Store) => store.candidates.filter((x) => !x.decision);
+// D20 (defect): decided candidates stay in the review queue and its count.
+const pendingReviews = (c: Ctx, store: Store) => store.candidates.filter((x) => c.on("D20") || !x.decision);
 const hasUserNamed = (users: User[], name: string) =>
   users.some((u) => u.name !== "" && u.name.toLowerCase() === name.toLowerCase());
 
@@ -444,12 +456,12 @@ function dashboardPage(c: Ctx, store: Store): string {
   return layout(c, "dashboard", "Dashboard", `
 <h1>Dashboard</h1>
 <div class="stats">
-<div class="card"><p class="stat-label">Live jobs</p><p class="stat-value">${live.length}</p></div>
+<div class="card"><p class="stat-label">Live jobs</p><p class="stat-value">${c.on("D17") ? store.jobs.length : live.length}</p></div>
 <div class="card"><p class="stat-label">Draft jobs</p><p class="stat-value">${store.jobs.length - live.length}</p></div>
 <div class="card"><p class="stat-label">Total jobs</p><p class="stat-value">${store.jobs.length}</p></div>
 </div>
 <section class="card" aria-labelledby="review-heading">
-<h2 id="review-heading"><a href="/reviews">Awaiting your review (${pendingReviews(store).length})</a></h2>
+<h2 id="review-heading"><a href="/reviews">Awaiting your review (${pendingReviews(c, store).length})</a></h2>
 </section>
 <section class="card" aria-labelledby="open-jobs">
 <div class="page-head"><h2 id="open-jobs">Open jobs</h2><a href="/jobs">View all jobs</a></div>
@@ -458,11 +470,23 @@ function dashboardPage(c: Ctx, store: Store): string {
 }
 
 function jobsPage(c: Ctx, jobs: Job[]): string {
+  // D22 (defect): the status is a coloured dot; its text is only for screen readers.
+  const status = (s: Job["status"]) =>
+    c.on("D22") ? `<span class="dot${s === "Live" ? " live" : ""}"><span class="sr-only">${s}</span></span>` : badge(s);
   const rows = jobs
-    .map((j) => `<tr><td><a href="/jobs/${j.id}">${esc(j.title)}</a></td><td>${esc(j.department)}</td><td>${badge(j.status)}</td></tr>`)
+    .map((j) => `<tr><td><a href="/jobs/${j.id}">${esc(j.title)}</a></td><td>${esc(j.department)}</td><td>${status(j.status)}</td></tr>`)
     .join("");
+  // D21 (defect): Create job is a bare plus that shows only on hover; its accessible name is unchanged.
+  const create = c.on("D21")
+    ? '<a class="btn primary reveal" href="/jobs/new" aria-label="Create job">+</a>'
+    : '<a class="btn primary" href="/jobs/new">Create job</a>';
+  const style = [
+    c.on("D21") ? ".reveal { opacity: 0; } .page-head:hover .reveal, .reveal:focus { opacity: 1; }" : "",
+    c.on("D22") ? ".dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #f08c00; } .dot.live { background: #2f9e44; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }" : "",
+  ].join(" ").trim();
   return layout(c, "jobs", "Jobs", `
-<div class="page-head"><h1>Jobs</h1><a class="btn primary" href="/jobs/new">Create job</a></div>
+${style ? `<style>${style}</style>` : ""}
+<div class="page-head"><h1>Jobs</h1>${create}</div>
 <table>
 <thead><tr><th scope="col">Title</th><th scope="col">Department</th><th scope="col">Status</th></tr></thead>
 <tbody>${rows}</tbody>
@@ -553,7 +577,9 @@ function candidatesPage(c: Ctx): string {
 }
 
 function reviewsPage(c: Ctx, pending: Candidate[]): string {
-  const items = pending.map((x) => `<li><a href="/reviews/${x.id}">${esc(x.name)}</a> · ${esc(x.job)}</li>`).join("");
+  // D18 (defect): each link opens the next candidate in the queue, not the one it names.
+  const href = (i: number) => `/reviews/${pending[c.on("D18") ? (i + 1) % pending.length : i].id}`;
+  const items = pending.map((x, i) => `<li><a href="${href(i)}">${esc(x.name)}</a> · ${esc(x.job)}</li>`).join("");
   return layout(c, "reviews", "Reviews", `
 <h1>Reviews</h1>
 <section class="card" aria-labelledby="queue-heading">
@@ -564,6 +590,8 @@ function reviewsPage(c: Ctx, pending: Candidate[]): string {
 
 function reviewPage(c: Ctx, cand: Candidate, notice?: string, error?: string): string {
   const icons = c.on("D06");
+  // D23 (defect): Send feedback works but is styled like a disabled button.
+  const greyed = c.on("D23") ? ' style="background: #e3e6ec; color: #9aa1ad; cursor: not-allowed"' : "";
   // D05 (defect): on narrow screens the actions are pushed below the tall resume.
   const narrow = c.on("D05") ? "<style>@media (max-width: 599px) { .review-actions { order: 1; } }</style>" : "";
   const resume = cand.resume.map((s) => `<h3>${esc(s.heading)}</h3>${s.lines.map((l) => `<p>${esc(l)}</p>`).join("")}`).join("");
@@ -586,7 +614,7 @@ ${narrow}
 <textarea id="feedback" name="feedback" rows="4"${error ? ' aria-invalid="true" aria-describedby="feedback-error"' : ""}></textarea>
 ${error ? `<p class="error" id="feedback-error">${esc(error)}</p>` : ""}
 </div>
-<button class="btn primary" type="submit">Send feedback</button>
+<button class="btn primary" type="submit"${greyed}>Send feedback</button>
 </form>
 </section>
 <article class="card resume" aria-label="Resume">${resume}</article>
@@ -597,6 +625,8 @@ function usersPage(c: Ctx, users: User[], form: { email: string; role: Role; not
   const rows = users
     .map((u) => `<tr><td>${u.name ? esc(u.name) : "—"}</td><td>${u.email ? esc(u.email) : "—"}</td><td>${ROLE_LABELS[u.role]}</td><td>${u.status}</td></tr>`)
     .join("");
+  // D24 (defect): Send invitation is white on pale blue, about 1.8:1 contrast.
+  const pale = c.on("D24") ? ' style="background: #b8c0f0"' : "";
   const roles = ROLES.map((r) => `<option value="${r}"${r === form.role ? " selected" : ""}>${ROLE_LABELS[r]}</option>`).join("");
   return layout(c, "settings", "Users", `
 ${form.notice ? banner(form.notice) : ""}
@@ -617,22 +647,27 @@ ${form.error ? `<p class="error" id="invite-error">${esc(form.error)}</p>` : ""}
 <label for="invite-role">Role</label>
 <select id="invite-role" name="role">${roles}</select>
 </div>
-<button class="btn primary" type="submit">Send invitation</button>
+<button class="btn primary" type="submit"${pale}>Send invitation</button>
 </form>
 </section>`);
 }
 
 function approvalsPage(c: Ctx, approvals: boolean, notice?: string): string {
   const label = c.on("D12") ? "Disable approval bypass" : "Require approval before a job goes live";
+  // D25 (defect): a decorative tip covers Save. Clicks pass through and it is hidden from the accessibility tree, so only a screenshot shows it.
+  const tip = c.on("D25")
+    ? '<p class="tip" aria-hidden="true" style="position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0; padding: 16px; background: #fff4d6; border: 1px solid #f0d58c; border-radius: 6px; pointer-events: none">Tip: approval rules apply to jobs created after you save.</p>'
+    : "";
   return layout(c, "settings", "Approvals", `
 ${notice ? banner(notice) : ""}
 <h1>Approvals</h1>
-<form class="card" method="post" action="/settings/approvals">
+<form class="card" method="post" action="/settings/approvals"${tip ? ' style="position: relative"' : ""}>
 <div class="field check">
 <input id="approval" name="approval" type="checkbox" value="on"${approvals ? " checked" : ""}>
 <label for="approval">${label}</label>
 </div>
 <button class="btn primary" type="submit">Save</button>
+${tip}
 </form>`);
 }
 
@@ -642,7 +677,7 @@ function settingsPage(c: Ctx): string {
 <section class="card">
 <p>Account and team settings arrive in a later release.</p>
 <ul>
-<li><a href="/settings/users">Users</a></li>
+<li><a href="/settings/users">${c.on("D16") ? "Seats" : "Users"}</a></li>
 <li><a href="/settings/approvals">Approvals</a></li>
 <li><a href="/billing">Billing</a></li>
 <li><a href="/locale">Locale echo</a></li>

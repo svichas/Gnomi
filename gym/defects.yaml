@@ -94,3 +94,107 @@
   affects: [admin]
   visual_only: false
   toggle: D12
+- id: D13
+  title: Inviting a user as Hiring manager or Admin saves them as a Recruiter
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [settings/users]
+  affects: [admin]
+  visual_only: false
+  toggle: D13
+- id: D14
+  title: Feedback containing an apostrophe fails with a bare server error and the text is lost
+  type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: ["reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D14
+- id: D15
+  title: Recording an Advance or Reject decision takes 3 seconds with no progress indication
+  type: performance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: ["reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D15
+- id: D16
+  title: Settings links to the users page as Seats
+  type: label        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [settings]
+  affects: [admin]
+  visual_only: false
+  toggle: D16
+- id: D17
+  title: Dashboard Live jobs figure counts draft jobs too
+  type: content        # flow | label | affordance | error-handling | performance | visual | content
+  severity: low
+  pages: [dashboard]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D17
+- id: D18
+  title: Review queue links open the next candidate instead of the one named
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [reviews]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D18
+- id: D19
+  title: A job form that comes back with an error has lost its description and employment type
+  type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [jobs/new]
+  affects: [recruiter]
+  visual_only: false
+  toggle: D19
+- id: D20
+  title: Decided candidates stay in the review queue and the dashboard count
+  type: content        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [reviews, dashboard]
+  affects: [hiring_manager]
+  visual_only: false
+  toggle: D20
+- id: D21
+  title: Create job is a bare plus icon that appears only on hover
+  type: affordance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [jobs]
+  affects: [recruiter]
+  visual_only: true
+  toggle: D21
+- id: D22
+  title: Job status on the jobs list is a coloured dot with no visible text
+  type: visual        # flow | label | affordance | error-handling | performance | visual | content
+  severity: low
+  pages: [jobs]
+  affects: [recruiter]
+  visual_only: true
+  toggle: D22
+- id: D23
+  title: Send feedback is styled like a disabled button although it works
+  type: affordance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: ["reviews/:id"]
+  affects: [hiring_manager]
+  visual_only: true
+  toggle: D23
+- id: D24
+  title: Send invitation is white on pale blue, about 1.8:1 contrast
+  type: visual        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  pages: [settings/users]
+  affects: [admin]
+  visual_only: true
+  toggle: D24
+- id: D25
+  title: A tip callout is drawn over the approvals Save button
+  type: visual        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [settings/approvals]
+  affects: [admin]
+  visual_only: true
+  toggle: D25
