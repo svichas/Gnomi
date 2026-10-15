@@ -37,6 +37,20 @@ M0 Walking skeleton ──► M1 Real staging apps ──► M2 Audience ──�
 
 Total: about 27 weeks of calendar time with two engineers, roughly seven months to a shippable 1.0. M5 can run in parallel with M4 if a third engineer joins.
 
+## Implementation status — 15 October 2026
+
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented. **M2 remains in progress; M3 has not started.** The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
+
+The first M2 gap-closure batch adds:
+
+- Country mixes and optional per-segment employer lists, deterministic sampling, and country/city/timezone/language/employer displays on persona cards and in the inspector.
+- Persona-specific browser locale, timezone, ordered language preferences and `Accept-Language`; the navigator prompt requires thoughts in the persona's first language. The Gym's `/locale` page and a real-browser regression cover Germany → `de-DE`, `Europe/Berlin` and German-first language preferences.
+- A local project home with create, open, rename, duplicate, delete to Trash and folder export. Duplicates carry configuration and personas; exports also carry run history and screenshots. Neither includes recorded logins or provider keys. Project switches refuse active runs, recording and pending project work; unsaved edits require Save, Discard or Cancel.
+
+Country sampling currently uses one reference city per supported country (14 countries), not a demographic distribution within countries. Legacy personas retain their language and use UTC when no timezone was stored. Folder export is available; ZIP packaging and import remain M6.
+
+**Still required for M2:** the configurable profile schema, remaining full-profile traits (including decision role and prior tools), attribute switches/custom sampling/templates/report dimensions, structured current opinions, and live-provider acceptance measurements. The existing concurrency tests allow one in-flight step per active persona after the budget is reached; the stricter one-step acceptance below still needs resolution. Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time or language compliance.
+
 ---
 
 ## M0 — Walking skeleton: one persona finds one friction
