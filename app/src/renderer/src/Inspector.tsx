@@ -111,7 +111,10 @@ export function Inspector(props: {
               <div><dt className="text-xs text-stone-500">Self-reported confidence</dt><dd>{Math.round(survey.confidence * 100)}%</dd></div>
             </dl>
             <p className="italic text-stone-600">&ldquo;{survey.reason}&rdquo;</p>
-            {([['Frictions', survey.frictions], ['Likes', survey.likes]] as const).map(([label, items]) => <div key={label}>
+            {(survey.items
+              ? ([['Frictions', 'friction'], ['Objections', 'objection'], ['Likes', 'like']] as const).map(([label, kind]) => [label, survey.items!.filter((i) => i.kind === kind).map((i) => `${i.where}: ${i.what}${i.severity ? ` (severity ${i.severity} of 4)` : ''}`)] as const)
+              : ([['Frictions', survey.frictions], ['Likes', survey.likes]] as const)
+            ).map(([label, items]) => <div key={label}>
               <h5 className="text-xs font-medium text-stone-500">{label}</h5>
               {items.length ? <ul className="list-disc space-y-1 pl-4">{items.map((item, i) => <li key={i} className="break-words">{item}</li>)}</ul> : <p className="text-stone-500">None reported</p>}
             </div>)}

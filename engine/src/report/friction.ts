@@ -9,9 +9,13 @@ export const SIGNAL_KINDS: SignalKind[] = ['failed_action', 'loop', 'backtrack',
 /** Severity (1–4) of a signal nobody reported; a backtrack is often just a persona reading again. */
 export const SIGNAL_SEVERITY: Record<SignalKind, number> = { failed_action: 2, loop: 2, backtrack: 1, error: 2, validation_error: 2, small_target: 2 };
 const ABANDON_SEVERITY = 3; // the persona gave up
-const SURVEY_SEVERITY = 2; // the survey asks for frictions, not their severity
+const SURVEY_SEVERITY = 2; // surveys before structured items asked for frictions, not their severity
 
-export type CandidateKind = 'friction' | 'abandoned' | 'survey' | SignalKind;
+/** survey: a friction named in the end-of-episode survey; objection: a reason not to adopt, from the survey. */
+export type CandidateKind = 'friction' | 'abandoned' | 'survey' | 'objection' | SignalKind;
+
+/** Objections are reasons not to adopt; everything else got in the way of the task. They are ranked and shown apart. */
+export const categoryOf = (kind: CandidateKind): 'friction' | 'objection' => (kind === 'objection' ? 'objection' : 'friction');
 
 /** The frame or passage of the first of these that has one: a friction's own before its step's. Empty for web POIs. */
 export function stepEvidence(...from: (StepEvidence | undefined)[]): StepEvidence {
@@ -113,11 +117,17 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
     } else if (e.type === 'persona.abandoned') {
       reports.push({ ...atStep(e, e.payload.step_no, null), kind: 'abandoned', severity: ABANDON_SEVERITY, text: e.payload.reason });
     } else if (e.type === 'persona.survey') {
-      for (const text of e.payload.frictions) {
-        surveys.push({
-          poi_id: e.payload.poi_id, persona_id: e.persona_id ?? '', step_no: null, step_seq: null, url: null, page: null, element: null,
-          kind: 'survey', severity: SURVEY_SEVERITY, trust: 'reported', text, quote: e.payload.reason, screenshot: null, seqs: [e.seq], signals: [],
-        });
+      const survey = (kind: 'survey' | 'objection', text: string, where: string, severity: number): Candidate => ({
+        poi_id: e.payload.poi_id, persona_id: e.persona_id ?? '', step_no: null, step_seq: null, url: null, page: null, element: where.trim() || null,
+        kind, severity: clampSeverity(severity), trust: 'reported', text, quote: e.payload.reason, screenshot: null, seqs: [e.seq], signals: [],
+      });
+      if (e.payload.items) {
+        for (const item of e.payload.items) {
+          if (item.kind !== 'like') surveys.push(survey(item.kind === 'objection' ? 'objection' : 'survey', item.what, item.where, item.severity ?? SURVEY_SEVERITY));
+        }
+      } else {
+        // Older surveys and buyers' answers are plain lists; a buyer's are what would stop the purchase, so objections.
+        for (const text of e.payload.frictions) surveys.push(survey(e.payload.buyer ? 'objection' : 'survey', text, '', SURVEY_SEVERITY));
       }
     } else if (isSignal(e)) {
       const kind = e.type.slice(7) as SignalKind;
@@ -162,9 +172,14 @@ function signalText(e: SignalEvent): string {
   }
 }
 
-/** Survey answers have no page, so they group by their words; the rest by (poi, page, element), else (poi, page, kind). */
+/**
+ * Survey answers have no page, so they group by the part of the product they name (their words, in surveys before that);
+ * the rest by (poi, page, element), else (poi, page, kind).
+ */
 export function groupKey(c: Candidate): string {
-  if (c.kind === 'survey') return JSON.stringify([c.poi_id, null, 'survey', normaliseText(c.text)]);
+  if (c.kind === 'survey' || c.kind === 'objection') {
+    return JSON.stringify([c.poi_id, null, c.kind, c.element ? `where ${normaliseText(c.element)}` : normaliseText(c.text)]);
+  }
   return c.element ? JSON.stringify([c.poi_id, c.page, 'element', c.element.toLowerCase()]) : JSON.stringify([c.poi_id, c.page, 'kind', c.kind]);
 }
 
@@ -176,6 +191,40 @@ export function groupCandidates(candidates: Candidate[]): Group[] {
     const group = groups.get(key);
     if (group) group.members.push(c);
     else groups.set(key, { id: `g${groups.size + 1}`, poi_id: c.poi_id, page: c.page, element: c.element, kind: c.kind, members: [c] });
+  }
+  return [...groups.values()];
+}
+
+/** One survey like: who said it, where and what. */
+export interface Like {
+  poi_id: string;
+  persona_id: string;
+  seq: number;
+  where: string | null;
+  text: string;
+}
+
+export interface LikeGroup {
+  id: string; // l1, l2, … in order of the first member's survey
+  poi_id: string;
+  where: string | null;
+  members: Like[];
+}
+
+/** Every survey like, grouped like survey frictions: by the part of the product it names, else by its words. */
+export function likeGroups(events: GnomiEvent[]): LikeGroup[] {
+  const groups = new Map<string, LikeGroup>();
+  for (const e of events) {
+    if (e.type !== 'persona.survey') continue;
+    const likes = e.payload.items ? e.payload.items.filter((i) => i.kind === 'like').map((i) => ({ where: i.where.trim() || null, text: i.what })) : e.payload.likes.map((text) => ({ where: null, text }));
+    for (const { where, text } of likes) {
+      if (!normaliseText(text)) continue;
+      const key = JSON.stringify([e.payload.poi_id, where ? `where ${normaliseText(where)}` : normaliseText(text)]);
+      const like: Like = { poi_id: e.payload.poi_id, persona_id: e.persona_id ?? '', seq: e.seq, where, text };
+      const group = groups.get(key);
+      if (group) group.members.push(like);
+      else groups.set(key, { id: `l${groups.size + 1}`, poi_id: e.payload.poi_id, where, members: [like] });
+    }
   }
   return [...groups.values()];
 }

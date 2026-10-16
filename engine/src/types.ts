@@ -383,7 +383,8 @@ export interface EventPayloads {
     sentiment: number; // integer −2…+2
     confidence: number; // 0…1, self-reported
     likes: string[];
-    frictions: string[];
+    frictions: string[]; // the friction and objection items' `what`, so readers of older logs keep working
+    items?: SurveyItem[]; // structured answers, from this release on; absent in older logs and in buyers' answers
     buyer?: BuyerAnswers; // segments of kind buyer answer the buying survey (agent/buyer.ts)
     would_continue: boolean; // buyers: would buy or recommend buying
     reason: string;
@@ -409,9 +410,33 @@ export interface EventPayloads {
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
   'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
-  'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
+  'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
+}
+
+/**
+ * One structured survey answer (tech.md §8.2): a friction got in the way of the task, an objection is a reason to doubt or
+ * not adopt the product, a like is something that worked. `where` names the page, screen, section or feature it is about.
+ */
+export interface SurveyItem {
+  kind: 'friction' | 'objection' | 'like';
+  where: string;
+  what: string;
+  severity: number | null; // 1–4 for frictions and objections; null for likes
+}
+
+/** How much a finding rests on: one persona, a few, or a clear share of those who used the point of interest. */
+export type EvidenceLevel = 'strong' | 'some' | 'single';
+
+/** k of n personas, with a 95% Wilson interval: what the share could plausibly be with this few personas. */
+export interface Prevalence {
+  personas: number; // k: personas with the finding
+  exposed: number; // n: personas who used the point of interest
+  share: number; // k ÷ n
+  low: number;
+  high: number;
+  level: EvidenceLevel;
 }
 
 /** A buyer's answers beyond the shared survey fields (tech.md §7: buyers answer a buying survey). */
@@ -427,6 +452,9 @@ export interface JudgeTheme {
   description: string;
   group_ids: string[]; // deterministic friction groups this theme merges
 }
+
+/** The judge's merge and naming of survey likes (ids l1, l2, …), in the same call as the friction themes. */
+export type JudgeLike = JudgeTheme;
 
 /** The judge's tag of one post about the POI with the friction groups it talks about (tech.md §8.2 step 7). */
 export interface JudgePostTag {
@@ -530,10 +558,12 @@ export interface ReportTheme {
   title: string;
   description: string;
   named_by: 'judge' | 'rules'; // rules: the judge did not run, failed or left the group out
+  category?: 'friction' | 'objection'; // objection: a reason not to adopt, from the survey; absent before structured surveys
+  prevalence?: Prevalence; // absent in reports written before it
   trust: Trust; // the highest among member frictions
   severity: number; // median member severity, 1–4
   impact: number; // Σ share_s × affected_s
-  score: number; // impact × severity × trust weight
+  score: number; // prevalence.low × severity × trust weight; before prevalence, impact × severity × trust weight
   personas: number;
   frictions: number;
   pages: string[]; // page patterns, ids normalised out
@@ -563,10 +593,14 @@ export interface ReportComparison {
 
 /** A survey like and how many personas named it. */
 export interface ReportLike {
-  text: string;
+  text: string; // the judge's title, else the words of the first answer
   count: number;
   personas: number;
   seqs: number[];
+  description?: string; // what worked and where, when the judge merged and named the likes
+  where?: string[]; // the parts of the product the answers name
+  quotes?: { persona_id: string; persona_name: string; what: string }[]; // up to three, one per persona
+  prevalence?: Prevalence; // in reports from structured surveys on
 }
 
 /** The buying survey of one segment about one POI (report/buyers.ts). */

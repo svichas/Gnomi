@@ -143,7 +143,18 @@ interface Options {
   survey?: unknown;
 }
 
-const SURVEY = { frictions: ['The save button was hard to find'], likes: ['Clear job form'], sentiment: 1, confidence: 0.7, would_continue: true, reason: 'It worked in the end.' };
+const SURVEY = {
+  frictions: [{ where: 'job form', what: 'The save button was hard to find', severity: 2 }],
+  objections: [],
+  likes: [{ where: 'job form', what: 'Clear job form' }],
+  sentiment: 1, confidence: 0.7, would_continue: true, reason: 'It worked in the end.',
+};
+/** What the survey above is logged as. */
+const SURVEY_PAYLOAD = {
+  sentiment: 1, confidence: 0.7, would_continue: true, reason: 'It worked in the end.',
+  frictions: ['The save button was hard to find'], likes: ['Clear job form'],
+  items: [{ kind: 'friction', where: 'job form', what: 'The save button was hard to find', severity: 2 }, { kind: 'like', where: 'job form', what: 'Clear job form', severity: null }],
+};
 
 function begin(respond: Respond | unknown[], opts: Options = {}) {
   const events: GnomiEvent[] = [];
@@ -417,7 +428,7 @@ test('every episode that ends on its own gets one survey from the navigator, abo
   const surveys = of(r.events, 'persona.survey');
   assert.deepEqual(surveys.map((e) => e.persona_id).sort(), ['abandoned', 'budget', 'done', 'stuck']);
   for (const survey of surveys) {
-    assert.deepEqual([survey.poi_id, survey.payload], ['poi-1', { poi_id: 'poi-1', ...SURVEY }]);
+    assert.deepEqual([survey.poi_id, survey.payload], ['poi-1', { poi_id: 'poi-1', ...SURVEY_PAYLOAD }]);
     assert.ok(r.events.every((e) => e.persona_id !== survey.persona_id || e.seq <= survey.seq), 'the survey is the persona’s last event');
   }
   for (const req of asked.values()) {

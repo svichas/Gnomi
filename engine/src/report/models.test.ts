@@ -26,7 +26,7 @@ const who = { run_id: 'r-1', round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: '
 const where = (url: string) => ({ url, ref: null });
 
 /** A finished episode with frictions on two pages, then the report models with the given responders. */
-async function analyse(responders: Partial<Record<LlmRole, Responder>>) {
+async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: NewEvent[] = []) {
   const events: GnomiEvent[] = [];
   const record: Recorder = (event: NewEvent) => {
     const stored = { ...event, seq: events.length + 1, ts: events.length } as GnomiEvent;
@@ -37,6 +37,7 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>) {
   record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
   record({ ...who, type: 'persona.friction_reported', payload: { step_no: 1, severity: 3, what: 'Save does nothing', expected: 'Saved', where: where(JOBS) } });
   record({ ...who, type: 'persona.friction_reported', payload: { step_no: 4, severity: 2, what: 'Home is empty', expected: 'Jobs', where: where('http://gym.test/') } });
+  for (const event of extra) record(event);
   const requests: { role: LlmRole; user: string }[] = [];
   const llm = createScriptedGateway(
     Object.fromEntries(Object.entries(responders).map(([role, respond]) => [role, (req: Parameters<Responder>[0]) => {
@@ -46,9 +47,10 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>) {
     record,
   );
   await runReportModels({ config, llm, record, events: () => events });
-  return { events, requests, types: events.slice(4).map((e) => e.type), report: buildReport(events) };
+  return { events, requests, types: events.slice(4 + extra.length).map((e) => e.type), report: buildReport(events) };
 }
 
+const FEW = 'Only 1 persona used a point of interest, so every share has a wide range and the order of the problems is rough.';
 const judged = { themes: [{ title: 'Saving a job fails', description: 'Save does nothing.', group_ids: ['g1'] }] };
 const suggested = { suggestions: [{ theme_id: 'g1', change: 'Make Save save the job.', solution: 'Submit the form and show the saved job.' }] };
 
@@ -61,7 +63,7 @@ test('the judge names themes and the author suggests changes; both answers are l
     ['g1', 'Saving a job fails', 'judge', 'Make Save save the job.'],
     ['g2', 'Reported friction on /', 'rules', null],
   ]);
-  assert.deepEqual(report.methods.limitations, ['Suggested changes cover 1 of 2 themes.']);
+  assert.deepEqual(report.methods.limitations, ['Suggested changes cover 1 of 2 themes.', FEW]);
   assert.ok(report.themes?.every((t) => t.seqs.length > 0));
 });
 
@@ -77,7 +79,7 @@ test('without a model (no key, no responder) only the start is logged and the re
   assert.deepEqual(types, ['report.started']);
   assert.equal(report.themes?.length, 2);
   assert.ok(report.themes?.every((t) => t.named_by === 'rules' && t.suggestion === null));
-  assert.equal(report.methods.limitations?.length, 2);
+  assert.equal(report.methods.limitations?.length, 3);
 });
 
 test('the scripted demo judge and author give every group a labelled theme and suggestion, so key-free runs show themes', async () => {
@@ -88,7 +90,7 @@ test('the scripted demo judge and author give every group a labelled theme and s
     ['Scripted demo theme 2: no model named it', 'judge'],
   ]);
   assert.ok(report.themes?.every((t) => t.suggestion?.change.startsWith('Scripted demo suggestion')));
-  assert.deepEqual(report.methods.limitations, []);
+  assert.deepEqual(report.methods.limitations, [FEW]);
 });
 
 test('every POI is judged at once, and the author writes in parallel batches of three; a failed batch loses only its own themes', async () => {
@@ -134,3 +136,19 @@ test('every POI is judged at once, and the author writes in parallel batches of 
   assert.ok(!kept.some((id) => batches[1].includes(id)));
 });
 
+
+test('survey likes go to the same judge call, which merges and names them for what went well', async () => {
+  const items = [
+    { kind: 'like' as const, where: 'job form', what: 'The form is short', severity: null },
+    { kind: 'objection' as const, where: 'pricing', what: 'No price for a team', severity: 3 },
+  ];
+  const surveyed: NewEvent = { ...who, type: 'persona.survey', payload: { poi_id: 'poi', sentiment: 1, confidence: 0.5, likes: ['The form is short'], frictions: ['No price for a team'], items, would_continue: true, reason: 'Fine.' } };
+  const { types, requests, report, events } = await analyse({ judge: DEMO_JUDGE, author: DEMO_AUTHOR }, [surveyed]);
+  assert.deepEqual(types, ['report.started', 'llm.call', 'report.themes', 'llm.call', 'report.suggestions'], 'one judge call, as before');
+  const shown = JSON.parse(requests[0].user);
+  assert.deepEqual(shown.likes, [{ id: 'l1', where: 'job form', personas: 1, texts: ['The form is short'] }]);
+  assert.deepEqual(shown.groups.map((g: { id: string; category: string }) => [g.id, g.category]), [['g1', 'friction'], ['g2', 'friction'], ['g3', 'objection']]);
+  assert.ok(events.some((e) => e.type === 'report.themes' && e.payload.likes?.length === 1));
+  assert.deepEqual(report.went_well?.map((l) => [l.text, l.personas]), [['Scripted demo like 1: no model named it', 1]]);
+  assert.equal(report.themes?.find((t) => t.id === 'g3')?.category, 'objection');
+});

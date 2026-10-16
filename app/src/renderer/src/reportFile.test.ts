@@ -117,3 +117,19 @@ test('the report puts the most severe problem first and folds each persona, ever
   assert.ok(html.includes('0 of 1 persona reached the goal.'), 'the verdict leads the report');
   assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'every fold prints open');
 });
+
+test('a problem one persona met is a single report, below and apart from one several met, whatever its severity', async () => {
+  const report = fixture(1, 2);
+  const theme = (id: string, severity: number, personas: number, exposed: number, category?: 'objection') => ({
+    id, poi_id: 'poi-gym', rank: 1, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, impact: 1, score: 1,
+    personas, frictions: personas, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null, ...(category ? { category } : {}),
+    prevalence: { personas, exposed, share: personas / exposed, low: 0.1, high: 0.6, level: personas === 1 ? 'single' as const : 'strong' as const },
+  });
+  report.themes = [theme('lone', 4, 1, 10), theme('shared', 2, 4, 10), theme('doubt', 3, 3, 10, 'objection')];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.includes('Fix first: <span class="font-medium">Theme shared</span>'), 'the verdict names the problem several met');
+  assert.ok(html.includes('4 of 10 personas affected (40%, likely 10%–60%)'), 'the share and its range are spelled out');
+  assert.ok(html.indexOf('Theme shared') < html.indexOf('Objections (1)') && html.indexOf('Objections (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
+  assert.ok(html.indexOf('Single reports (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
+  assert.ok(html.includes('What to fix first (1)'));
+});

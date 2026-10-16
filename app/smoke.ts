@@ -70,8 +70,11 @@ async function clickNode(page: Page, prefix: string): Promise<string> {
 async function expectReport(page: Page) {
   const report = page.locator('section[aria-labelledby=report-title]');
   // The scripted judge and author name the themes and label their suggestions, so a key-free run shows ranked themes.
-  const themes = report.getByRole('region', { name: /What to fix first \([1-9]/ });
-  assert.match(await themes.innerText(), /Scripted demo theme \d+: no model named it[\s\S]*Generated suggestion/);
+  // Problems more than one persona met come first; with a small swarm they can all be single reports, folded below them.
+  const singles = report.locator('section[aria-labelledby=singles-title]');
+  if (await singles.count()) await unfold(singles.locator('details').first());
+  const findings = await report.locator('section[aria-labelledby=themes-title], section[aria-labelledby=singles-title]').allInnerTexts();
+  assert.match(findings.join('\n'), /Scripted demo theme \d+: no model named it[\s\S]*Generated suggestion/);
   // Each persona's frictions are folded away: open the first persona with one.
   const persona = report.getByRole('region', { name: /How each persona did/ }).locator('details').filter({ has: page.locator('ol > li') }).first();
   await unfold(persona);

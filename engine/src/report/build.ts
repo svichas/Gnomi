@@ -253,7 +253,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     frictions,
     themes: analysis.themes,
     sentiment: competitors.size ? sentimentBySegment(ours, ctx) : analysis.sentiment,
-    went_well: competitors.size ? wentWell(ours) : analysis.went_well,
+    went_well: competitors.size ? wentWell(ours, ctx) : analysis.went_well,
     ...(comparisons.length ? { comparisons } : {}),
     ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),

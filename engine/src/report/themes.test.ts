@@ -53,10 +53,13 @@ const run = log(
   ['persona.step', 'b2', step(1, HOME)],
 );
 
-test('scoring: affected share per segment, weighted by share, × median severity × the highest trust', () => {
+test('scoring: the low end of the share of personas affected × median severity × the highest trust; impact per segment beside it', () => {
   const [theme] = analyseFrictions(run, ctx).themes;
+  // 3 of the 5 personas who used the POI: 60%, with a 95% Wilson range of 23% to 88%; median severity of 3, 2, 4 is 3;
+  // a1 is confirmed, so trust 1.0; score 0.2307 × 3 × 1. Three personas and over a quarter: strong evidence.
+  assert.deepEqual(theme.prevalence, { personas: 3, exposed: 5, share: 0.6, low: 0.2307, high: 0.8824, level: 'strong' });
   // Recruiters 2 of 3 who reached the page, hiring managers 1 of 1 (b2 never reached it):
-  // impact = 0.6 × 2/3 + 0.4 × 1 = 0.8; median severity of 3, 2, 4 is 3; a1 is confirmed, so trust 1.0; score 2.4.
+  // impact = 0.6 × 2/3 + 0.4 × 1 = 0.8.
   assert.deepEqual(theme.affected, [
     { segment_id: 'rec', name: 'Recruiters', affected: 2, reached: 3, rate: 2 / 3 },
     { segment_id: 'hm', name: 'Hiring managers', affected: 1, reached: 1, rate: 1 },
@@ -64,7 +67,7 @@ test('scoring: affected share per segment, weighted by share, × median severity
   assert.ok(Math.abs(theme.impact - 0.8) < 1e-12);
   assert.equal(theme.severity, 3);
   assert.equal(theme.trust, 'confirmed');
-  assert.ok(Math.abs(theme.score - 2.4) < 1e-12);
+  assert.ok(Math.abs(theme.score - 0.2307 * 3) < 1e-12);
   assert.deepEqual([theme.rank, theme.personas, theme.frictions, theme.title], [1, 3, 3, 'Trouble with button "Save" on /jobs/new']);
 });
 
@@ -179,4 +182,70 @@ test('limitations say what the analysis could not do', () => {
   assert.deepEqual(analyseFrictions(log(['persona.step', 'a1', step(1)]), ctx), { themes: [], sentiment: [], went_well: [], limitations: [
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ] });
+});
+
+const structured = (items: EventPayloads['persona.survey']['items'] & object, sentiment = 0): EventPayloads['persona.survey'] => ({
+  ...survey(items.filter((i) => i.kind !== 'like').map((i) => i.what), items.filter((i) => i.kind === 'like').map((i) => i.what), sentiment),
+  items,
+});
+const item = (kind: 'friction' | 'objection' | 'like', where: string, what: string, severity: number | null = kind === 'like' ? null : 2) => ({ kind, where, what, severity });
+
+test('structured survey answers group by the part of the product they name, and objections stay apart from frictions', () => {
+  const events = log(
+    ['persona.survey', 'a1', structured([item('friction', 'Pricing page', 'Plans hide the seat limit', 3), item('objection', 'pricing page', 'No team price to show my boss', 4)])],
+    ['persona.survey', 'a2', structured([item('friction', 'pricing  page', 'Could not tell what a seat is', 2)])],
+    ['persona.survey', 'a3', structured([item('objection', 'Security', 'Nothing on where data is stored', 3)])],
+  );
+  const groups = groupCandidates(buildCandidates(events, 'poi'));
+  assert.deepEqual(groups.map((g) => [g.id, g.kind, g.element, g.members.map((m) => [m.persona_id, m.severity])]), [
+    ['g1', 'survey', 'Pricing page', [['a1', 3], ['a2', 2]]],
+    ['g2', 'objection', 'pricing page', [['a1', 4]]],
+    ['g3', 'objection', 'Security', [['a3', 3]]],
+  ]);
+  // The judge tries to fold the pricing objection into the pricing friction: the objection stays its own theme.
+  const judged = applyJudge(groups, [{ title: 'Pricing is unclear', description: 'd', group_ids: ['g1', 'g2'] }]);
+  assert.deepEqual(judged.drafts.map((d) => [d.groups.map((g) => g.id), d.named_by]), [[['g1'], 'judge'], [['g2'], 'rules'], [['g3'], 'rules']]);
+  const themes = analyseFrictions(events, ctx).themes;
+  assert.deepEqual(themes.map((t) => [t.id, t.category, t.prevalence?.personas, t.prevalence?.exposed, t.prevalence?.level]), [
+    ['g1', 'friction', 2, 3, 'some'],
+    ['g2', 'objection', 1, 3, 'single'],
+    ['g3', 'objection', 1, 3, 'single'],
+  ]);
+});
+
+test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {
+  const buyer = { ...survey(['Too expensive for us'], []), buyer: { would_buy: false, price: 'high', objections: ['Too expensive for us'], unclear: [] } } as EventPayloads['persona.survey'];
+  const kinds = buildCandidates(log(['persona.survey', 'a1', buyer], ['persona.survey', 'a2', survey(['It was long.'], [])]), 'poi').map((c) => [c.kind, c.element, c.severity]);
+  assert.deepEqual(kinds, [['objection', null, 2], ['survey', null, 2]]);
+});
+
+test('ranking: a problem one persona of many met ranks below one several met, even when it is a blocker', () => {
+  const many = new Map([...'abcdefghij'].map((id) => [id, { name: id, segment_id: 'rec' }]));
+  const wide: Context = { poi_id: 'poi', personas: many, segments: [{ id: 'rec', name: 'Recruiters', share: 100 }] };
+  const events = log(
+    ...[...'abcdefghij'].map((id) => ['persona.step', id, step(1, HOME)] as [EventType, string, object]),
+    ['persona.survey', 'a', structured([item('friction', 'export', 'Export crashed and I could not go on', 4)])],
+    ...[...'bcd'].map((id) => ['persona.survey', id, structured([item('friction', 'search', 'Search ignores the job title', 2)])] as [EventType, string, object]),
+  );
+  const themes = analyseFrictions(events, wide).themes;
+  assert.deepEqual(themes.map((t) => [t.title, t.prevalence?.level, t.rank]), [
+    ['Search ignores the job title', 'strong', 1],
+    ['Export crashed and I could not go on', 'single', 2],
+  ]);
+  assert.deepEqual(themes[0].prevalence, { personas: 3, exposed: 10, share: 0.3, low: 0.1078, high: 0.6032, level: 'strong' });
+});
+
+test('what went well: likes grouped by where, merged and named by the judge, with the share of personas who named them', () => {
+  const events = log(
+    ['persona.survey', 'a1', structured([item('like', 'Job form', 'The form is short'), item('like', 'Preview', 'Seeing the ad before posting')])],
+    ['persona.survey', 'a2', structured([item('like', 'job form', 'Few required fields')])],
+    ['persona.survey', 'b1', structured([item('like', 'Ad preview', 'Preview matches the board')])],
+  );
+  const judged = { ...events[0], seq: 50, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [], likes: [{ title: 'Previewing the ad before posting', description: 'They trusted the preview.', group_ids: ['l2', 'l3', 'l9'] }] } } as GnomiEvent;
+  const likes = wentWell([...events, judged], ctx);
+  assert.deepEqual(likes.map((l) => [l.text, l.description ?? null, l.where, l.personas, l.prevalence?.exposed, l.prevalence?.level]), [
+    ['Previewing the ad before posting', 'They trusted the preview.', ['Preview', 'Ad preview'], 2, 3, 'some'],
+    ['The form is short', null, ['Job form', 'job form'], 2, 3, 'some'],
+  ]);
+  assert.deepEqual(likes[0].quotes, [{ persona_id: 'a1', persona_name: 'Ana', what: 'Seeing the ad before posting' }, { persona_id: 'b1', persona_name: 'Bo', what: 'Preview matches the board' }]);
 });

@@ -215,10 +215,13 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         title: 'Reported friction on /jobs/new',
         description: 'The required field gives no error.',
         named_by: 'rules',
+        category: 'friction',
+        // One persona of one: the share's 95% range runs from 21% to 100%, and the score uses its low end.
+        prevalence: { personas: 1, exposed: 1, share: 1, low: 0.2065, high: 1, level: 'single' },
         trust: 'reported',
         severity: 2.5,
         impact: 1,
-        score: 1.25,
+        score: 0.2065 * 2.5 * 0.5,
         personas: 1,
         frictions: 2,
         pages: ['localhost:3001/jobs/new'],
@@ -258,6 +261,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       limitations: [
         'The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.',
         'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
+        'Only 1 persona used a point of interest, so every share has a wide range and the order of the problems is rough.',
         'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
       ],
     },

@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
+import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
@@ -68,8 +68,35 @@ function SeverityLegend() {
 }
 
 const bySeverity = (a: ReportFriction, b: ReportFriction) => b.severity - a.severity || a.seq - b.seq;
-/** The most severe first; within a level, the engine's score (affected share × severity × trust). */
-const byPriority = (a: ReportTheme, b: ReportTheme) => level(b.severity) - level(a.severity) || b.score - a.score;
+
+// How much a finding rests on (engine/src/report/themes.ts prevalence). Reports before it only have the persona count.
+const EVIDENCE_LEVEL = {
+  strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it', order: 3 },
+  some: { text: 'Some evidence', plain: 'two or more personas', order: 2 },
+  single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern', order: 1 },
+} as const satisfies Record<EvidenceLevel, { text: string; plain: string; order: number }>;
+const evidenceOf = (finding: { prevalence?: Prevalence; personas: number }): EvidenceLevel => finding.prevalence?.level ?? (finding.personas <= 1 ? 'single' : 'some');
+const isSingle = (theme: ReportTheme) => evidenceOf(theme) === 'single';
+
+/** Better evidence first; within it the most severe, then the engine's score (the low end of the share × severity × trust). */
+const byPriority = (a: ReportTheme, b: ReportTheme) =>
+  EVIDENCE_LEVEL[evidenceOf(b)].order - EVIDENCE_LEVEL[evidenceOf(a)].order || level(b.severity) - level(a.severity) || b.score - a.score;
+
+function EvidenceChip({ finding }: { finding: { prevalence?: Prevalence; personas: number } }) {
+  const { text, plain } = EVIDENCE_LEVEL[evidenceOf(finding)];
+  return <span title={`${text}: ${plain}`} className="whitespace-nowrap rounded-full border border-stone-300 px-2.5 py-0.5 text-xs font-medium text-stone-800">{text}</span>;
+}
+
+/** "4 of 20 personas (20%)", with the plausible range for this few personas a hover away. */
+function Share({ finding, noun }: { finding: { prevalence?: Prevalence; personas: number }; noun?: string }) {
+  const p = finding.prevalence;
+  if (!p) return <>{count(finding.personas, 'persona')}{noun && ` ${noun}`}</>;
+  return (
+    <span title={`With ${count(p.exposed, 'persona')}, the true share could plausibly be anywhere from ${pct(p.low)} to ${pct(p.high)} (95% range).`}>
+      {p.personas} of {count(p.exposed, 'persona')}{noun && ` ${noun}`} ({pct(p.share)}, likely {pct(p.low)}–{pct(p.high)})
+    </span>
+  );
+}
 
 const mood = (x: number) => (x <= -1 ? 'Negative' : x < -0.25 ? 'Leaning negative' : x <= 0.25 ? 'Neutral' : x < 1 ? 'Leaning positive' : 'Positive');
 
@@ -122,19 +149,24 @@ function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] 
   const total = report.personas.length;
   const outcomes = (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => [outcome, report.personas.filter((p) => p.outcome === outcome).length] as const).filter(([, n]) => n > 0);
   const done = outcomes.find(([outcome]) => outcome === 'done')?.[1] ?? 0;
-  const problems: { severity: number }[] = report.themes ? themes : report.frictions;
+  const singles = themes.filter(isSingle).length;
+  const problems: { severity: number }[] = report.themes ? themes.filter((t) => !isSingle(t)) : report.frictions;
   const levels = LEVELS.map((n) => [n, problems.filter((p) => level(p.severity) === n).length] as const).filter(([, n]) => n > 0);
   const answers = report.sentiment?.filter((row) => row.sentiment !== null && row.surveyed > 0) ?? [];
   const surveyed = answers.reduce((sum, row) => sum + row.surveyed, 0);
   const feeling = surveyed ? answers.reduce((sum, row) => sum + row.sentiment! * row.surveyed, 0) / surveyed : null;
   const carryOn = surveyed ? answers.reduce((sum, row) => sum + row.would_continue * row.surveyed, 0) / surveyed : 0;
-  const top = themes[0];
+  // The verdict names a problem more than one persona met; objections only lead when nothing got in the way.
+  const top = themes.find((t) => !isSingle(t) && t.category !== 'objection');
+  const doubt = top ? undefined : themes.find((t) => !isSingle(t));
   return (
     <section aria-labelledby="glance-title" className="space-y-3">
       <h3 id="glance-title" className={heading}>At a glance</h3>
       <p className="text-base text-stone-900">
         {done} of {count(total, 'persona')} reached the goal.
-        {top ? <> Fix first: <span className="font-medium">{top.title}</span>.</> : report.frictions.length === 0 && ' Nobody reported any friction.'}
+        {top ? <> Fix first: <span className="font-medium">{top.title}</span> (<Share finding={top} />).</>
+          : doubt ? <> Biggest objection: <span className="font-medium">{doubt.title}</span> (<Share finding={doubt} />).</>
+          : themes.length > 0 ? ' No problem came up for more than one persona.' : report.frictions.length === 0 && ' Nobody reported any friction.'}
       </p>
       <div className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
         <Tile label="Reached the goal" value={`${done} of ${total}`} detail={total ? `${pct(done / total)} of personas${report.segments.length > 1 ? `, ${pct(report.weighted.completion)} weighted by segment share` : ''}` : undefined}>
@@ -147,7 +179,7 @@ function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] 
             ))}
           </ul>
         </Tile>
-        <Tile label={report.themes ? 'Problems to fix' : 'Frictions reported'} value={String(problems.length)}>
+        <Tile label={report.themes ? 'Problems to fix' : 'Frictions reported'} value={String(problems.length)} detail={singles ? `Plus ${count(singles, 'single report')}, each from one persona.` : undefined}>
           <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-700">
             {levels.map(([n, c]) => (
               <li key={n} className="flex items-center gap-1.5"><span data-tone={SEVERITY[n].tone} className="tone-dot" />{c} {SEVERITY[n].text.toLowerCase()}</li>
@@ -249,9 +281,10 @@ function Priority({ theme, nested, onInspect, renderScreenshot }: { theme: Repor
     <li data-tone={SEVERITY[level(theme.severity)].tone} className="tone-edge space-y-3 rounded-lg border border-stone-200 bg-white p-4">
       <div className="flex flex-wrap items-center gap-2">
         <SeverityChip severity={theme.severity} />
+        <EvidenceChip finding={theme} />
         <TrustBadge trust={theme.trust} />
         <span className="text-xs tabular-nums text-stone-500">
-          {count(theme.personas, 'persona')} affected, {count(theme.frictions, 'friction')}
+          <Share finding={theme} noun="affected" />, {count(theme.frictions, 'report')}
         </span>
       </div>
       <div className="space-y-1">
@@ -288,7 +321,8 @@ function Priority({ theme, nested, onInspect, renderScreenshot }: { theme: Repor
 
 const TOP = 5; // problems shown before the fold
 
-function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+/** One list of findings, per POI when there are several; the first few open, the rest a click away. */
+function Findings({ themes, pois, empty, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; empty: string; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
   const items = (shown: ReportTheme[], nested?: boolean) =>
     shown.map((theme) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} nested={nested} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
@@ -297,57 +331,95 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
       <ol className="space-y-3">{items(shown.slice(0, TOP), nested)}</ol>
       {shown.length > TOP && (
         <details className="report-more" open={inFile}>
-          <summary>Show {count(shown.length - TOP, 'more problem')}</summary>
+          <summary>Show {count(shown.length - TOP, 'more')}</summary>
           <ol className="mt-3 space-y-3">{items(shown.slice(TOP), nested)}</ol>
         </details>
       )}
     </>
   );
+  if (themes.length === 0) return <p className="text-sm text-stone-600">{empty}</p>;
+  if (pois.length <= 1) return list(themes);
+  return pois.map((poi) => {
+    const own = themes.filter((theme) => theme.poi_id === poi.id);
+    return own.length === 0 ? null : (
+      <section key={poi.id} aria-label={poiName(poi)} className="space-y-3">
+        <h4 className="text-sm font-medium text-stone-900">{poiName(poi)}</h4>
+        {list(own, true)}
+      </section>
+    );
+  });
+}
+
+/**
+ * Problems and objections that more than one persona met, best evidence first, and the single reports apart: one persona is
+ * worth a look, not a reason to fix something first.
+ */
+function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const shared = themes.filter((t) => !isSingle(t));
+  const problems = shared.filter((t) => t.category !== 'objection');
+  const objections = shared.filter((t) => t.category === 'objection');
+  const singles = themes.filter(isSingle);
+  const props = { pois, onInspect, renderScreenshot };
   return (
-    <section aria-labelledby="themes-title" className="space-y-3">
-      <div className="space-y-1">
-        <h3 id="themes-title" className={heading}>What to fix first ({themes.length})</h3>
-        <p className="text-sm text-stone-600">What the personas ran into, grouped into problems, the most severe first.</p>
-      </div>
-      <SeverityLegend />
-      {themes.length === 0 ? (
-        <p className="text-sm text-stone-600">No problems to fix in this run.</p>
-      ) : pois.length > 1 ? (
-        pois.map((poi) => {
-          const own = themes.filter((theme) => theme.poi_id === poi.id);
-          return (
-            <section key={poi.id} aria-label={`What to fix in ${poi.name}`} className="space-y-3">
-              <h4 className="text-sm font-medium text-stone-900">{poiName(poi)}</h4>
-              {own.length ? list(own, true) : <p className="text-sm text-stone-600">No problems to fix here.</p>}
-            </section>
-          );
-        })
-      ) : (
-        list(themes)
+    <>
+      <section aria-labelledby="themes-title" className="space-y-3">
+        <div className="space-y-1">
+          <h3 id="themes-title" className={heading}>What to fix first ({problems.length})</h3>
+          <p className="text-sm text-stone-600">What got in the personas' way, grouped into problems. Problems more personas met come first; the range says how sure that share is with this many personas.</p>
+        </div>
+        <SeverityLegend />
+        <Findings themes={problems} empty={singles.length ? 'No problem came up for more than one persona. The single reports are below.' : 'No problems to fix in this run.'} {...props} />
+        <p className="text-xs text-stone-500">
+          {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}.
+          {' '}Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.
+        </p>
+      </section>
+      {objections.length > 0 && (
+        <section aria-labelledby="objections-title" className="space-y-3">
+          <div className="space-y-1">
+            <h3 id="objections-title" className={heading}>Objections ({objections.length})</h3>
+            <p className="text-sm text-stone-600">Why personas would doubt or not adopt it, even where it worked.</p>
+          </div>
+          <Findings themes={objections} empty="" {...props} />
+        </section>
       )}
-      <p className="text-xs text-stone-500">
-        Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.
-      </p>
-    </section>
+      {singles.length > 0 && (
+        <Fold id="singles-title" title={`Single reports (${singles.length})`} hint="Each from one persona: worth a look, not yet a pattern">
+          <Findings themes={singles} empty="" {...props} />
+        </Fold>
+      )}
+    </>
   );
 }
 
 function WentWell({ likes }: { likes: ReportLike[] }) {
+  const shown = likes.filter((like) => evidenceOf(like) !== 'single');
+  const once = likes.length - shown.length;
   return (
     <section aria-labelledby="went-well-title" className="space-y-3">
-      <h3 id="went-well-title" className={heading}>What went well</h3>
+      <div className="space-y-1">
+        <h3 id="went-well-title" className={heading}>What went well</h3>
+        <p className="text-sm text-stone-600">What the personas said worked, the most often named first.</p>
+      </div>
+      {shown.length === 0 && <p className="text-sm text-stone-600">Nothing was named by more than one persona.</p>}
       <ul className="grid gap-2 sm:grid-cols-2">
-        {likes.slice(0, 10).map((like, i) => (
-          <li key={i} data-tone="good" className="tone-edge rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm">
-            <span className="text-stone-900">{like.text}</span>
+        {shown.slice(0, 10).map((like, i) => (
+          <li key={i} data-tone="good" className="tone-edge space-y-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm">
+            <span className="block font-medium text-stone-900">{like.text}</span>
+            {like.description && <span className="block text-stone-700">{like.description}</span>}
             <span className="block text-xs tabular-nums text-stone-500">
-              {count(like.personas, 'persona')}
-              {like.count > like.personas && `, ${count(like.count, 'mention')}`}
+              <Share finding={like} noun="named it" />
+              {like.where?.length ? `, about ${like.where.slice(0, 3).join(', ')}` : ''}
             </span>
           </li>
         ))}
       </ul>
-      {likes.length > 10 && <p className="text-xs text-stone-500">And {count(likes.length - 10, 'more like')} named once or twice.</p>}
+      {(shown.length > 10 || once > 0) && (
+        <p className="text-xs text-stone-500">
+          {shown.length > 10 && `And ${count(shown.length - 10, 'more')} named by a few. `}
+          {once > 0 && `${count(once, 'more like')} named by one persona each.`}
+        </p>
+      )}
     </section>
   );
 }
