@@ -78,21 +78,22 @@ test('an explicit high-effort override enables thinking for a persona request', 
   assert.equal(bodies[0].reasoning_effort, 'high');
 });
 
-test('other DeepSeek roles explicitly use their intended low or high reasoning effort', async () => {
+test('routine DeepSeek roles disable thinking while the report author reserves room for high effort', async () => {
   const bodies = stubCompletion();
   const gateway = setup();
-  const cases: Array<[LlmRole, 'low' | 'high']> = [
-    ['navigator', 'low'],
-    ['socialiser', 'low'],
-    ['judge', 'low'],
-    ['author', 'high'],
+  const cases: Array<[LlmRole, 'disabled' | 'enabled', 'high' | undefined, number]> = [
+    ['navigator', 'disabled', undefined, 4096],
+    ['socialiser', 'disabled', undefined, 4096],
+    ['judge', 'disabled', undefined, 4096],
+    ['author', 'enabled', 'high', 16_384],
   ];
 
   for (const [role] of cases) await gateway.call(request({ role }));
 
-  for (const [index, [role, effort]] of cases.entries()) {
-    assert.deepEqual(bodies[index].thinking, { type: 'enabled' }, `${role} must explicitly enable thinking.`);
+  for (const [index, [role, thinking, effort, tokens]] of cases.entries()) {
+    assert.deepEqual(bodies[index].thinking, { type: thinking }, `${role} must explicitly set its thinking mode.`);
     assert.equal(bodies[index].reasoning_effort, effort, `${role} must not inherit DeepSeek's effort default.`);
+    assert.equal(bodies[index].max_tokens, tokens, `${role} must reserve room for its answer and reasoning.`);
   }
 });
 
