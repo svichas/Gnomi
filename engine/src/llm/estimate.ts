@@ -78,5 +78,5 @@ export function estimateReport({ personas, settings, pois = 1, at = new Date() }
     cost[1] += pois * price(settings.routing[role], input[1], output[1]);
   }
   const unpriced = REPORT_CALLS.map(({ role }) => settings.routing[role]).filter((m) => !isPriced(m)).map((m) => m.model);
-  return { calls: pois * REPORT_CALLS.length, cost_usd: cost, minutes: [pois * REPORT_MINUTES[0], pois * REPORT_MINUTES[1]], unpriced: [...new Set(unpriced)] };
+  return { calls: pois * REPORT_CALLS.length, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
 }

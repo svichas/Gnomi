@@ -15,7 +15,7 @@ import type { ProjectConfig } from '../engine/src/types.ts';
 
 declare global {
   interface Window {
-    completionSmoke: { abandon(): void; finish(): void; save(): void; holdReports(): void; releaseReports(): void; reportRequests: number; reportResponses: number };
+    completionSmoke: { abandon(): void; progress(count: number): void; finish(): void; save(): void; holdReports(): void; releaseReports(): void; reportRequests: number; reportResponses: number };
   }
 }
 
@@ -44,11 +44,18 @@ for (const persona of personas) {
   store.append({ ...base, persona_id: persona.id, type: 'persona.abandoned', payload: { step_no: 6, reason: 'The task cannot be completed.' } });
 }
 const abandonedEvents = store.events(config.run_id).slice(initialEvents.length);
+// The report phase as the app sees it: two of three surveys, the judge and author starting, then the judge's themes.
+for (const persona of personas.slice(0, 2)) {
+  store.append({ ...base, persona_id: persona.id, type: 'persona.survey', payload: { poi_id: 'fixture', sentiment: -1, confidence: 0.6, likes: [], frictions: ['The task cannot be completed.'], would_continue: false, reason: 'Stuck.' } });
+}
+store.append({ ...base, type: 'report.started', payload: { pois: ['fixture'] } });
+store.append({ ...base, poi_id: 'fixture', type: 'report.themes', payload: { poi_id: 'fixture', themes: [] } });
+const reportEvents = store.events(config.run_id).slice(initialEvents.length + abandonedEvents.length);
 store.append({ ...base, type: 'run.finished', payload: {} });
 store.append({ ...base, type: 'report.generated', payload: { path: `runs/${config.run_id}/report.json`, friction_count: 0 } });
 store.finishRun(config.run_id, 'finished', null, 0);
 const allEvents = store.events(config.run_id);
-const endEvents = allEvents.slice(initialEvents.length + abandonedEvents.length);
+const endEvents = allEvents.slice(initialEvents.length + abandonedEvents.length + reportEvents.length);
 const info: ProjectInfo = { dir: projectDir, project, persona: personas[0], personas, diversity: null, runs: store.listRuns(), sessions: [], setup_calls: [] };
 const report = buildReport(allEvents);
 store.close();
@@ -66,13 +73,13 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
-  await page.addInitScript(({ info, initialEvents, abandonedEvents, endEvents, report }) => {
+  await page.addInitScript(({ info, initialEvents, abandonedEvents, reportEvents, endEvents, report }) => {
     let port: MessagePort | undefined;
     const scenario = sessionStorage.getItem('completion-scenario');
     let ended = scenario === 'historical';
     let hold = scenario === 'race';
     const pending: (() => void)[] = [];
-    const visible = ended ? [...initialEvents, ...abandonedEvents, ...endEvents] : [...initialEvents];
+    const visible = ended ? [...initialEvents, ...abandonedEvents, ...reportEvents, ...endEvents] : [...initialEvents];
     const emit = (event: (typeof visible)[number]) => {
       visible.push(event);
       port?.dispatchEvent(new MessageEvent('message', { data: { kind: 'event', event } }));
@@ -81,6 +88,7 @@ try {
       reportRequests: 0,
       reportResponses: 0,
       abandon() { abandonedEvents.forEach(emit); },
+      progress(count: number) { reportEvents.slice(visible.length - initialEvents.length - abandonedEvents.length, count).forEach(emit); },
       finish() { ended = true; endEvents.filter((event) => event.type === 'run.finished').forEach(emit); },
       save() { endEvents.filter((event) => event.type === 'report.generated').forEach(emit); },
       holdReports() { hold = true; },
@@ -109,7 +117,7 @@ try {
       if (message.method === 'get_report' && hold) pending.push(respond);
       else queueMicrotask(respond);
     };
-  }, { info, initialEvents, abandonedEvents, endEvents, report });
+  }, { info, initialEvents, abandonedEvents, reportEvents, endEvents, report });
   await page.reload();
   const status = page.getByRole('region', { name: 'Run status' });
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor();
@@ -119,8 +127,29 @@ try {
   await page.waitForFunction(() => document.querySelector('.run-status')?.textContent?.includes('Gave up 3'));
   assert.match(await status.innerText(), /3 of 3/);
   assert.match(await status.innerText(), /Preparing report/);
-  await page.screenshot({ path: join(shots, 'all-abandoned-preparing.png') });
-  console.log('ok    all three personas gave up and the run shows Preparing report');
+  const preparing = page.getByRole('progressbar', { name: 'Preparing the report', exact: true });
+  const steps = page.locator('.report-steps li');
+  const active = () => page.locator('.report-steps li[aria-current="step"]').innerText();
+  assert.equal(await preparing.getAttribute('aria-valuenow'), '0');
+  assert.match(await active(), /Collecting their survey answers\s*0 of 3/);
+  await page.evaluate(() => window.completionSmoke.progress(2));
+  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.includes('2 of 3'));
+  await page.evaluate(() => window.completionSmoke.progress(3));
+  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.startsWith('Grouping'));
+  assert.equal(await preparing.getAttribute('aria-valuenow'), '20');
+  assert.equal(await steps.first().getAttribute('data-state'), 'done');
+  await page.locator('.report-progress').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(500); // the meter eases to its new width
+  await page.screenshot({ path: join(shots, 'report-progress.png') });
+  await page.evaluate(() => window.completionSmoke.progress(4));
+  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.startsWith('Writing'));
+  assert.equal(await preparing.getAttribute('aria-valuenow'), '70');
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.locator('.report-progress').scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'the report progress fits a phone width');
+  await page.screenshot({ path: join(shots, 'report-progress-375.png') });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  console.log('ok    all three personas gave up; Preparing report shows surveys, themes and suggestions as the log advances');
 
   await page.evaluate(() => window.completionSmoke.finish());
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor({ state: 'detached' });

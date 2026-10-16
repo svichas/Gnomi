@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { LlmGateway, Recorder } from '../seams.ts';
-import type { GnomiEvent, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
+import type { AuthorSuggestion, GnomiEvent, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
@@ -53,10 +53,11 @@ export interface ReportModelDeps {
   events: () => GnomiEvent[]; // the run's log as it is now
 }
 
-// One call each per POI, so a slow reasoning model is worth waiting for: DeepSeek's judge needed over 60 s for 48 groups.
+// One judge call per POI and an author call per batch, so a slow reasoning model is worth waiting for: DeepSeek's judge needed over 60 s for 48 groups.
 const REPORT_TIMEOUT_MS = 180_000;
+const AUTHOR_BATCH = 3; // themes per author call; the calls run together, so the wait is one short answer, not one long one
 
-/** After the episodes end and before the run's end event: one judge call, then one author call, per POI with frictions. */
+/** After the episodes end and before the run's end event: per POI with frictions, in parallel, a judge call, then the author calls. */
 export async function runReportModels({ config, llm, record, events }: ReportModelDeps): Promise<void> {
   const { run_id, project } = config;
   const { routing } = project.settings;
@@ -64,7 +65,9 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
   const product = { name: project.name, description: project.description, goal: project.goal };
 
   const all = frictionGroups(events(), project.pois[0]?.id ?? '');
-  for (const poi_id of new Set(all.map((g) => g.poi_id))) {
+  const pois = [...new Set(all.map((g) => g.poi_id))];
+  record({ ...base, poi_id: null, type: 'report.started', payload: { pois } });
+  await Promise.all(pois.map(async (poi_id) => {
     const { groups, posts } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id));
     const social = posts.length > 0; // without posts the call is the M3 one
     try {
@@ -88,23 +91,21 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
     // shortcut: the author sees the theme's evidence but not the page snapshot at the evidence step (tech.md §8.2 step 6);
     // the snapshot text is only in the navigator's transcript. Add it when suggestions prove too generic.
     const themes = authorThemes((buildReport(events()).themes ?? []).filter((t) => t.poi_id === poi_id));
-    if (themes.length === 0) continue;
-    try {
-      const { object } = await llm.call({
-        role: 'author',
-        model: routing.author,
-        run_id,
-        persona_id: null,
-        round: 1,
-        purpose: 'report_suggestions',
-        timeout_ms: REPORT_TIMEOUT_MS,
-        system: AUTHOR_SYSTEM,
-        user: [{ type: 'text', text: JSON.stringify({ product, themes }) }],
-        schema: authorSchema,
-      });
-      record({ ...base, poi_id, type: 'report.suggestions', payload: { poi_id, suggestions: object.suggestions } });
-    } catch {
-      // As above: the report shows the themes without suggestions and says so in its methods appendix.
-    }
-  }
+    const batches = Array.from({ length: Math.ceil(themes.length / AUTHOR_BATCH) }, (_, i) => themes.slice(i * AUTHOR_BATCH, (i + 1) * AUTHOR_BATCH));
+    // A failed batch only leaves its own themes without suggestions, as a failed single call left them all.
+    const answers = await Promise.allSettled(batches.map((batch) => llm.call<{ suggestions: AuthorSuggestion[] }>({
+      role: 'author',
+      model: routing.author,
+      run_id,
+      persona_id: null,
+      round: 1,
+      purpose: 'report_suggestions',
+      timeout_ms: REPORT_TIMEOUT_MS,
+      system: AUTHOR_SYSTEM,
+      user: [{ type: 'text', text: JSON.stringify({ product, themes: batch }) }],
+      schema: authorSchema,
+    })));
+    const suggestions = answers.flatMap((answer) => answer.status === 'fulfilled' ? answer.value.object.suggestions : []);
+    if (suggestions.length) record({ ...base, poi_id, type: 'report.suggestions', payload: { poi_id, suggestions } });
+  }));
 }

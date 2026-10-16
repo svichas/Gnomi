@@ -84,7 +84,7 @@ test('other DeepSeek roles explicitly use their intended low or high reasoning e
   const cases: Array<[LlmRole, 'low' | 'high']> = [
     ['navigator', 'low'],
     ['socialiser', 'low'],
-    ['judge', 'high'],
+    ['judge', 'low'],
     ['author', 'high'],
   ];
 

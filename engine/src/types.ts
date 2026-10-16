@@ -408,6 +408,7 @@ export interface EventPayloads {
   };
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
+  'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
   'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };

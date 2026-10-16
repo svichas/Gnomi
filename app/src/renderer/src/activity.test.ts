@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/engine/types.ts';
 import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/engine/persona.ts';
-import { countStates, filterEvents, filterPersonas, isPreparingReport, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, timelineSummary, toRows, waitingBlocks } from './activity.ts';
+import { countStates, filterEvents, filterPersonas, isPreparingReport, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, reportProgress, resetOutcome, runSetup, stopText, timelineSummary, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -276,3 +276,17 @@ test('steps taken and the latest feeling are counted per persona', () => {
   const progress = personaProgress([step(1, 'a', 1, 0), step(2, 'b', 1, -2), step(3, 'a', 2, 1), event(4, 'run.finished', {}, null)]);
   assert.deepEqual([...progress], [['a', { steps: 2, feeling: 1 }], ['b', { steps: 1, feeling: -2 }]]);
 });
+
+test('report progress follows the log: surveys, then the judge and the author for each POI', () => {
+  const started = (seq: number, who: string, poi: string) => event(seq, 'persona.episode_started', { poi_id: poi, device: 'desktop', start_url: 'http://gym.test/' }, who);
+  const survey = (seq: number, who: string, poi: string) => event(seq, 'persona.survey', { poi_id: poi, sentiment: 0, confidence: 0.5, likes: [], frictions: [], would_continue: true, reason: 'Fine.' }, who);
+  const log = [started(1, 'a', 'web'), started(2, 'b', 'web'), started(3, 'b', 'copy'), survey(4, 'a', 'web'), survey(5, 'b', 'web')];
+  assert.deepEqual(reportProgress(log), { stage: 'surveys', surveys: { done: 2, total: 3 }, pois: { total: 0, themed: 0, suggested: 0 }, fraction: 0.2 * 2 / 3 });
+  log.push(event(6, 'report.started', { pois: ['web', 'copy'] }, null));
+  assert.deepEqual([reportProgress(log).stage, reportProgress(log).fraction], ['themes', 0.2], 'a survey that never came does not hold the report back');
+  log.push(event(7, 'report.themes', { poi_id: 'web', themes: [] }, null));
+  log.push(event(8, 'report.suggestions', { poi_id: 'copy', suggestions: [] }, null)); // its judge failed, the author still answered
+  assert.deepEqual(reportProgress(log), { stage: 'suggestions', surveys: { done: 3, total: 3 }, pois: { total: 2, themed: 2, suggested: 1 }, fraction: 0.2 + 0.5 + 0.15 });
+  assert.equal(reportProgress([started(1, 'a', 'web'), event(2, 'report.started', { pois: [] }, null)]).fraction, 0.95, 'without frictions only saving is left');
+});
+

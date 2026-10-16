@@ -256,7 +256,7 @@ test('a role sets how hard the model thinks and how much room it has', async () 
   await gateway.call(request({ role: 'judge', model: { provider: 'openai', model: 'gpt-6-luna' } }));
   await gateway.call(request({ role: 'author', model: { provider: 'google', model: 'gemini-4-argon' } }));
   assert.deepEqual([sent.bodies[0].output_config.effort, sent.bodies[0].max_tokens], ['high', 16_384]);
-  assert.deepEqual(sent.bodies.slice(1, 4).map((b) => b.reasoning.effort), ['high', 'low', 'medium'], 'GPT-6.1 Sol cannot switch reasoning off, so a routine step on it is low');
+  assert.deepEqual(sent.bodies.slice(1, 4).map((b) => b.reasoning.effort), ['high', 'low', 'none'], 'GPT-6.1 Sol cannot switch reasoning off, so a routine step on it is low; the judge thinks little');
   assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
 });
 
