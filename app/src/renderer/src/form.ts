@@ -1,4 +1,4 @@
-import { withPois } from '@gnomi/engine/poi/pois.ts';
+import { logsIn, withPois } from '@gnomi/engine/poi/pois.ts';
 import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/engine/settings.ts';
 import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
@@ -101,7 +101,10 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
 
 /** The logins a run needs: each segment's role, or the built-in persona's role when there is no audience. */
 export function rolesInUse(config: ProjectConfig): string[] {
-  const roles = config.audience ? config.audience.segments.filter((segment) => segment.share > 0).map((segment) => segment.role) : [config.role];
+  // Only personas that open a web app in full mode load a login; texts and designs are read without one.
+  const roles = config.audience
+    ? config.audience.segments.filter((segment) => segment.share > 0 && logsIn(config.pois, segment)).map((segment) => segment.role)
+    : [logsIn(config.pois, null) ? config.role : null];
   return [...new Set(roles.filter((role): role is string => role !== null))];
 }
 

@@ -108,6 +108,16 @@ test('every role in use needs the session key and a recorded login before the ru
   assert.deepEqual((await call('get_project', {})).sessions, [info]);
 });
 
+test('a run that only reads a text skips the login, which only a web app would load', async () => {
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'pricing.md' });
+  await call('save_project', { project: project({}, { role: 'recruiter', pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
+  const { run_id } = await call('start_run', { reset: false });
+  await new Promise<void>((resolve) => {
+    const poll = setInterval(() => events.some((e) => e.run_id === run_id && e.type === 'report.generated') && (clearInterval(poll), resolve()), 50);
+  });
+  assert.equal((await call('get_report', { run_id })).status, 'finished');
+});
+
 test('record_session refuses a role the session store cannot name, and a production target, before any browser opens', async () => {
   await assert.rejects(call('record_session', { role: 'Recruiters team' }), /1–40 lowercase letters/);
   await call('save_project', { project: project({ start_url: 'https://www.acme.com/' }) });

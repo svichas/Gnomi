@@ -18,11 +18,11 @@ import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { preflight } from './poi/index.ts';
-import { loginPoi, webPois } from './poi/pois.ts';
+import { browses, loginPoi, webPois } from './poi/pois.ts';
 import { validatePersonaSchema } from './profile/schema.ts';
 import { personaProfileIsCurrent } from './profile/signature.ts';
 import { buildReport } from './report/build.ts';
-import { createRecorder, newRunConfig, roleOf, startRun, type RunHandle } from './run.ts';
+import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from './run.ts';
 import { allowedHosts, checkTarget } from './safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
 import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo } from './protocol.ts';
@@ -339,7 +339,10 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
       verified.push(checked.info);
     }
-    const browserPool = await pool();
+    // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
+    const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
+      ? await pool()
+      : { newPage: async (opts) => (await pool()).newPage(opts) };
     if (runs.size) throw new Error('A run is already in progress'); // checked again: the awaits above let another start slip in
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     let run: RunHandle | undefined;
