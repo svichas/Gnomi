@@ -71,6 +71,22 @@ test('caps the total size by dropping whole lines from the end', () => {
   assert.ok(kept.length > 0);
 });
 
+test('over the cap, keeps what the persona scrolled to and drops what is furthest from it', () => {
+  // Scrolled to the bottom: the top of the page sits far above the viewport, the credits section is on screen.
+  const raw = lines(
+    '- main [ref=e1] [box=0,-3000,1280,3800]:',
+    ...Array.from({ length: 30 }, (_, i) => `  - paragraph [ref=e${10 + i}] [box=0,${-3000 + i * 100},1280,20]: Plan detail ${i}`),
+    '  - heading "AI credits" [ref=e2] [box=0,100,1280,28]',
+    '  - paragraph [ref=e3] [box=0,140,1280,20]: 5,000 AI credits $0.12/credit',
+  );
+  const capped = pruneSnapshot(raw, { maxChars: 600 });
+  assert.ok(capped.length <= 600, `${capped.length}`);
+  assert.match(capped, /^- main \[ref=e1\].*\n… \(truncated\)\n/);
+  assert.match(capped, /heading "AI credits"[\s\S]*\$0\.12\/credit$/);
+  assert.doesNotMatch(capped, /Plan detail 0\b/);
+  assert.match(capped, /Plan detail 29/);
+});
+
 test('strips a password value, inline or as a "- text:" child, and nothing else', () => {
   const raw = lines(
     '- textbox "Password" [ref=e24] [box=69,348,153,21]: hunter2-secret',
@@ -152,4 +168,10 @@ test('snapshotTargets reads role, accessible name and box per ref', () => {
   assert.deepEqual(targets.get('e2'), { role: 'button', name: 'Say "hi": now', box: [1.5, 2, 3, 4] });
   assert.deepEqual(targets.get('e3'), { role: 'img', name: '', box: null });
   assert.equal(targets.size, 3);
+});
+
+test('snapshotTargets names an unlabelled target by its inline text, never by a field value', () => {
+  const targets = snapshotTargets(lines('- listitem [ref=e1] [cursor=pointer] [box=48,466,379,37]: 101 - 200 employees', '- textbox [ref=e2] [box=1,2,3,4]: hunter2-secret'));
+  assert.equal(targets.get('e1')?.name, '101 - 200 employees');
+  assert.equal(targets.get('e2')?.name, '');
 });

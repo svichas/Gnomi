@@ -35,6 +35,11 @@ const pages: Record<string, string> = {
   '/shared-label': `<!doctype html>${head}<label>Credentials<input aria-label="Username"><input aria-label="Password" type="password" value="${SECRET}"></label>`,
   '/long': `<!doctype html><html><head>${head}<title>Long page</title></head><body><main><h1>Long page</h1>
 <p>${'Lorem ipsum dolor sit amet. '.repeat(150)}</p><div style="height:1500px"></div><ul>${items}</ul><div style="height:3000px"></div><button>Bottom button</button></main></body></html>`,
+  // A custom drop-down closed with opacity 0, as workable.com/pricing builds it, and a native checkbox under a custom skin.
+  '/custom-select': `<!doctype html><html><head>${head}<title>Custom select</title></head><body>
+<div role="combobox" aria-label="Dropdown"><button type="button" onclick="this.nextElementSibling.style.opacity = '1'; this.nextElementSibling.style.pointerEvents = 'auto'">1 - 20 employees</button>
+<div style="opacity:0;pointer-events:none"><ol><li>1 - 20 employees</li><li>21 - 50 employees</li></ol></div></div>
+<label><input type="checkbox" style="opacity:0"> Annual billing</label></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -177,6 +182,23 @@ test('select of an option that does not exist is option_not_found', async (t) =>
   const ref = refOf((await page.snapshot()).text, /combobox "Department" \[ref=(\w+)\]/);
   const outcome = await act(page, 'select', ref, 'Nope');
   assert.deepEqual([outcome.ok, outcome.error], [false, 'option_not_found']);
+});
+
+test('select on a custom list that is not a <select> is not_a_select', async (t) => {
+  const page = await open(t, '/custom-select');
+  const ref = refOf((await page.snapshot()).text, /combobox "Dropdown" \[ref=(\w+)\]/);
+  const outcome = await act(page, 'select', ref, '21 - 50 employees');
+  assert.deepEqual([outcome.ok, outcome.error], [false, 'not_a_select']);
+});
+
+test('content at opacity 0 stays out of the snapshot until it shows, a transparent form field stays in', async (t) => {
+  const page = await open(t, '/custom-select');
+  const closed = (await page.snapshot()).text;
+  assert.doesNotMatch(closed, /21 - 50 employees/);
+  assert.match(closed, /checkbox "Annual billing"/);
+  await act(page, 'click', refOf(closed, /button "1 - 20 employees" \[ref=(\w+)\]/));
+  // Shows once the page's own style opens it: the snapshot put the page's styles back.
+  assert.match((await page.snapshot()).text, /listitem \[ref=\w+\].*: 21 - 50 employees/);
 });
 
 test('personas can type passwords while existing and entered values stay out of snapshots', async (t) => {
