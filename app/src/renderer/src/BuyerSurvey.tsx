@@ -65,7 +65,7 @@ export function BuyerSurvey({ rows, pois }: { rows: ReportBuyers[]; pois: Report
   const shown = pois.filter((poi) => rows.some((row) => row.poi_id === poi.id));
   return (
     <section aria-labelledby="buyers-title" className="space-y-3">
-      <h3 id="buyers-title" className="text-sm font-semibold text-stone-900">
+      <h3 id="buyers-title" className="text-base font-semibold text-stone-900">
         Buying survey
       </h3>
       {shown.map((poi) => (

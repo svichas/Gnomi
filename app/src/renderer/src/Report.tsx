@@ -1,12 +1,13 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
+import { PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
 
 function duration(ms: number | null) {
@@ -16,26 +17,68 @@ function duration(ms: number | null) {
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
+const heading = 'text-base font-semibold text-stone-900';
 
-const OUTCOMES: Record<Outcome, { text: string; style: string }> = {
-  done: { text: 'Goal reached', style: 'bg-green-100 text-green-900' },
-  abandoned: { text: 'Gave up', style: 'bg-amber-100 text-amber-900' },
-  budget_exceeded: { text: 'Ran out of steps', style: 'bg-amber-100 text-amber-900' },
-  repeated_failure: { text: 'Got stuck', style: 'bg-amber-100 text-amber-900' },
-  blocked: { text: 'Blocked', style: 'bg-red-100 text-red-900' },
-  incomplete: { text: 'Did not finish', style: 'bg-stone-200 text-stone-800' },
+// Tones are styled in styles.css; a tone always sits beside its label, never stands in for it (brand.md §5).
+type Tone = 'good' | 'warn' | 'high' | 'bad' | 'neutral';
+
+const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
+  done: { text: 'Reached the goal', tone: 'good' },
+  abandoned: { text: 'Gave up', tone: 'warn' },
+  budget_exceeded: { text: 'Ran out of steps', tone: 'warn' },
+  repeated_failure: { text: 'Got stuck', tone: 'warn' },
+  blocked: { text: 'Blocked', tone: 'bad' },
+  incomplete: { text: 'Did not finish', tone: 'neutral' },
 };
 
 function OutcomeChip({ outcome }: { outcome: Outcome }) {
-  return <span className={`whitespace-nowrap rounded-full px-3 py-0.5 text-xs font-semibold ${OUTCOMES[outcome].style}`}>{OUTCOMES[outcome].text}</span>;
+  return <span data-tone={OUTCOMES[outcome].tone} className="tone-chip">{OUTCOMES[outcome].text}</span>;
 }
+
+// The persona prompt's scale (engine/src/agent/prompt.ts): 1 is a small irritation, 4 means the persona cannot go on.
+const SEVERITY = {
+  4: { text: 'Blocker', plain: 'they could not go on', tone: 'bad' },
+  3: { text: 'Major', plain: 'hard to get past', tone: 'high' },
+  2: { text: 'Moderate', plain: 'slowed them down', tone: 'warn' },
+  1: { text: 'Minor', plain: 'a small irritation', tone: 'neutral' },
+} as const satisfies Record<number, { text: string; plain: string; tone: Tone }>;
+const LEVELS = [4, 3, 2, 1] as const;
+
+/** A theme's severity is a median, so it can fall between two levels: it rounds to the worse one. */
+const level = (severity: number) => Math.min(4, Math.max(1, Math.round(severity))) as keyof typeof SEVERITY;
+
+function SeverityChip({ severity }: { severity: number }) {
+  const { text, plain, tone } = SEVERITY[level(severity)];
+  return <span data-tone={tone} title={`Severity ${severity} of 4: ${plain}`} className="tone-chip">{text}</span>;
+}
+
+function SeverityLegend() {
+  return (
+    <ul aria-label="Severity" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
+      {LEVELS.map((n) => (
+        <li key={n} className="flex items-center gap-1.5">
+          <span data-tone={SEVERITY[n].tone} className="tone-dot" />
+          <span><span className="font-medium text-stone-900">{SEVERITY[n].text}</span>: {SEVERITY[n].plain}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const bySeverity = (a: ReportFriction, b: ReportFriction) => b.severity - a.severity || a.seq - b.seq;
+/** The most severe first; within a level, the engine's score (affected share × severity × trust). */
+const byPriority = (a: ReportTheme, b: ReportTheme) => level(b.severity) - level(a.severity) || b.score - a.score;
+
+const mood = (x: number) => (x <= -1 ? 'Negative' : x < -0.25 ? 'Leaning negative' : x <= 0.25 ? 'Neutral' : x < 1 ? 'Leaning positive' : 'Positive');
 
 type Inspect = (personaId: string, seq?: number) => void;
 
 // Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
 type RenderScreenshot = (path: string, alt: string) => ReactNode;
 
-/** True while the report is drawn into an exported file, which has no inspector to open. */
+/** True while the report is drawn into an exported file, which has no inspector to open and prints every fold open. */
 export const InFile = createContext(false);
 
 function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
@@ -47,23 +90,73 @@ function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; s
   );
 }
 
-function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportFriction; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+/** A section that starts closed in the app: secondary detail stays one click away. */
+function Fold({ id, title, hint, children }: { id: string; title: string; hint: string; children: ReactNode }) {
+  const inFile = useContext(InFile);
   return (
-    <li className="rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no}{friction.frame !== undefined && ` - frame ${friction.frame + 1}`} - severity {friction.severity} of 4
+    <section aria-labelledby={id}>
+      <details className="disclosure" open={inFile}>
+        <summary>
+          <h3 id={id} className="text-sm font-semibold text-stone-900">{title}</h3>
+          <span>{hint}</span>
+        </summary>
+        <div className="disclosure-body">{children}</div>
+      </details>
+    </section>
+  );
+}
+
+function Tile({ label, value, detail, children }: { label: string; value: string; detail?: string; children?: ReactNode }) {
+  return (
+    <div className="space-y-2 rounded-lg bg-stone-50 p-4">
+      <p className="text-xs font-medium text-stone-500">{label}</p>
+      <p className="text-2xl font-medium tracking-tight tabular-nums text-stone-900">{value}</p>
+      {detail && <p className="text-xs text-stone-600">{detail}</p>}
+      {children}
+    </div>
+  );
+}
+
+/** The run in one sentence and three numbers: who got there, what is in the way and how it felt. Always the full run. */
+function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] }) {
+  const total = report.personas.length;
+  const outcomes = (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => [outcome, report.personas.filter((p) => p.outcome === outcome).length] as const).filter(([, n]) => n > 0);
+  const done = outcomes.find(([outcome]) => outcome === 'done')?.[1] ?? 0;
+  const problems: { severity: number }[] = report.themes ? themes : report.frictions;
+  const levels = LEVELS.map((n) => [n, problems.filter((p) => level(p.severity) === n).length] as const).filter(([, n]) => n > 0);
+  const answers = report.sentiment?.filter((row) => row.sentiment !== null && row.surveyed > 0) ?? [];
+  const surveyed = answers.reduce((sum, row) => sum + row.surveyed, 0);
+  const feeling = surveyed ? answers.reduce((sum, row) => sum + row.sentiment! * row.surveyed, 0) / surveyed : null;
+  const carryOn = surveyed ? answers.reduce((sum, row) => sum + row.would_continue * row.surveyed, 0) / surveyed : 0;
+  const top = themes[0];
+  return (
+    <section aria-labelledby="glance-title" className="space-y-3">
+      <h3 id="glance-title" className={heading}>At a glance</h3>
+      <p className="text-base text-stone-900">
+        {done} of {count(total, 'persona')} reached the goal.
+        {top ? <> Fix first: <span className="font-medium">{top.title}</span>.</> : report.frictions.length === 0 && ' Nobody reported any friction.'}
       </p>
-      <p className="mt-1 font-medium text-stone-900">{friction.what}</p>
-      <p className="mt-1 text-sm text-stone-700">
-        <span className="font-medium">Expected:</span> {friction.expected}
-      </p>
-      <Passage passage={friction.passage} />
-      {friction.quote && (
-        <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
-      )}
-      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
-      <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
-    </li>
+      <div className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
+        <Tile label="Reached the goal" value={`${done} of ${total}`} detail={total ? `${pct(done / total)} of personas${report.segments.length > 1 ? `, ${pct(report.weighted.completion)} weighted by segment share` : ''}` : undefined}>
+          <span aria-hidden="true" className="flex h-2 overflow-hidden rounded-full bg-stone-200">
+            {outcomes.map(([outcome, n]) => <span key={outcome} data-tone={OUTCOMES[outcome].tone} className="tone-fill" style={{ width: pct(n / total) }} />)}
+          </span>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-700">
+            {outcomes.map(([outcome, n]) => (
+              <li key={outcome} className="flex items-center gap-1.5"><span data-tone={OUTCOMES[outcome].tone} className="tone-dot" />{n} {OUTCOMES[outcome].text.toLowerCase()}</li>
+            ))}
+          </ul>
+        </Tile>
+        <Tile label={report.themes ? 'Problems to fix' : 'Frictions reported'} value={String(problems.length)}>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-700">
+            {levels.map(([n, c]) => (
+              <li key={n} className="flex items-center gap-1.5"><span data-tone={SEVERITY[n].tone} className="tone-dot" />{c} {SEVERITY[n].text.toLowerCase()}</li>
+            ))}
+          </ul>
+        </Tile>
+        {feeling !== null && <Tile label="How they felt" value={mood(feeling)} detail={`${signed(feeling)} on a −2 to +2 scale. ${pct(carryOn)} would carry on using it.`} />}
+      </div>
+    </section>
   );
 }
 
@@ -71,7 +164,7 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
 function Passage({ passage }: { passage: ReportFriction['passage'] }) {
   if (!passage?.text) return null;
   return (
-    <p className="mt-2 text-sm text-stone-700">
+    <p className="text-sm text-stone-700">
       <span className="font-medium">In the text:</span> &ldquo;{passage.text}&rdquo;
     </p>
   );
@@ -82,140 +175,6 @@ const Th = ({ children }: { children: ReactNode }) => (
     {children}
   </th>
 );
-
-/** Each segment's completion and friction, then the same two rates weighted by share (roadmap M2). */
-function SegmentTable({ report }: { report: ReportData }) {
-  const total = report.segments.reduce((sum, segment) => sum + segment.personas, 0);
-  const ofPersonas = (segment: ReportSegment, rate: number) => `${pct(rate)} (${Math.round(rate * segment.personas)} of ${segment.personas})`;
-  return (
-    <section aria-labelledby="segments-title" className="space-y-3">
-      <h3 id="segments-title" className="text-sm font-semibold text-stone-900">
-        Results by segment
-      </h3>
-      <div className="overflow-x-auto rounded-lg border border-stone-200">
-        <table className="w-full text-sm">
-          <thead className="bg-stone-50">
-            <tr>
-              <Th>Segment</Th>
-              <Th>Share</Th>
-              <Th>Personas</Th>
-              <Th>Reached the goal</Th>
-              <Th>Reported friction</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-100">
-            {report.segments.map((segment) => (
-              <tr key={segment.id ?? segment.name}>
-                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
-                  {segment.name}
-                </th>
-                <td className="px-3 py-2">{segment.share}%</td>
-                <td className="px-3 py-2">{segment.personas}</td>
-                <td className="px-3 py-2">{ofPersonas(segment, segment.completion)}</td>
-                <td className="px-3 py-2">{ofPersonas(segment, segment.with_friction)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot className="border-t border-stone-200 bg-stone-50">
-            <tr>
-              <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
-                Weighted by share
-              </th>
-              <td className="px-3 py-2">100%</td>
-              <td className="px-3 py-2">{total}</td>
-              <td className="px-3 py-2 font-medium">{pct(report.weighted.completion)}</td>
-              <td className="px-3 py-2 font-medium">{pct(report.weighted.with_friction)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <ul className="space-y-1 text-sm text-stone-600">
-        <li>
-          <span className="font-medium text-stone-900">Weighted completion {pct(report.weighted.completion)}.</span> Each segment counts by its share of the audience, not by how many personas it has.
-        </li>
-        <li>
-          <span className="font-medium text-stone-900">Weighted friction {pct(report.weighted.with_friction)}.</span> The share of people who ran into trouble, counted the same way.
-        </li>
-      </ul>
-    </section>
-  );
-}
-
-function FrictionsBySegment({ report, filtered, onInspect, renderScreenshot }: { report: ReportData; filtered: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
-  const known = new Set(report.segments.map((segment) => segment.id));
-  const groups = [
-    ...report.segments.map((segment) => ({ key: segment.id ?? segment.name, name: segment.name, items: report.frictions.filter((f) => f.segment_id === segment.id) })),
-    { key: 'other', name: 'Other', items: report.frictions.filter((f) => f.segment_id !== null && !known.has(f.segment_id)) },
-  ].filter((group) => group.items.length > 0);
-  return (
-    <section aria-labelledby="frictions-title">
-      <h3 id="frictions-title" className="mb-2 text-sm font-semibold text-stone-900">
-        Frictions found ({report.frictions.length})
-      </h3>
-      {groups.length === 0 ? (
-        <p className="text-sm text-stone-600">No persona reported any friction in this {filtered ? 'selection' : 'run'}.</p>
-      ) : (
-        <div className="space-y-5">
-          {groups.map((group) => (
-            <div key={group.key}>
-              <h4 className="mb-2 text-sm font-medium text-stone-800">
-                {group.name} ({group.items.length})
-              </h4>
-              <ol className="space-y-3">
-                {group.items.map((friction) => (
-                  <Friction key={friction.seq} friction={friction} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-                ))}
-              </ol>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function PersonaOutcomes({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
-  const segmentName = (persona: ReportPersona) => report.segments.find((segment) => segment.id === persona.segment_id)?.name ?? '';
-  return (
-    <section aria-labelledby="outcomes-title">
-      <h3 id="outcomes-title" className="mb-2 text-sm font-semibold text-stone-900">
-        What each persona did
-      </h3>
-      <div className="overflow-x-auto rounded-lg border border-stone-200">
-        <table className="w-full text-sm">
-          <thead className="bg-stone-50">
-            <tr>
-              <Th>Persona</Th>
-              <Th>Segment</Th>
-              <Th>Device</Th>
-              <Th>Outcome</Th>
-              <Th>Steps</Th>
-              <Th>Frictions</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-100">
-            {report.personas.map((persona) => (
-              <tr key={persona.id}>
-                <th scope="row" className="px-3 py-2 text-left font-normal">
-                  <PersonaLink id={persona.id} name={persona.name} onInspect={onInspect} />
-                  {persona.job_title && <span className="block text-xs text-stone-500">{persona.job_title}</span>}
-                </th>
-                <td className="px-3 py-2">{segmentName(persona)}</td>
-                <td className="px-3 py-2">{persona.device}</td>
-                <td className="px-3 py-2">
-                  <OutcomeChip outcome={persona.outcome} />
-                  {persona.outcome_text && <span className="mt-1 block max-w-xs break-words text-xs text-stone-500">{persona.outcome_text}</span>}
-                </td>
-                <td className="px-3 py-2">{persona.steps}</td>
-                <td className="px-3 py-2">{persona.frictions}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
 
 const TRUST: Record<Trust, { text: string; style: string }> = {
   confirmed: { text: 'Confirmed', style: 'border-indigo-300 bg-indigo-50 text-indigo-900' },
@@ -268,7 +227,8 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
       <div className="min-w-0 space-y-1">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
           <PersonaLink id={evidence.persona_id} name={evidence.persona_name} seq={evidence.step_seq ?? evidence.seq} onInspect={onInspect} />
-          <span>{at}, severity {evidence.severity} of 4</span>
+          <span>{at}</span>
+          <SeverityChip severity={evidence.severity} />
           <TrustBadge trust={evidence.trust} />
           {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
         </p>
@@ -281,78 +241,116 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
   );
 }
 
-function Theme({ theme, nested, onInspect, renderScreenshot }: { theme: ReportTheme; nested?: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+/** One problem: how bad and how widespread, the suggested fix in plain words, and the evidence a click away. */
+function Priority({ theme, nested, onInspect, renderScreenshot }: { theme: ReportTheme; nested?: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const Title = nested ? 'h5' : 'h4';
+  const inFile = useContext(InFile);
   return (
-    <li className="space-y-3 rounded-lg border border-stone-200 p-4">
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
-        <span className="text-sm font-semibold tabular-nums text-stone-500">{theme.rank}.</span>
-        <Title className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</Title>
+    <li data-tone={SEVERITY[level(theme.severity)].tone} className="tone-edge space-y-3 rounded-lg border border-stone-200 bg-white p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <SeverityChip severity={theme.severity} />
         <TrustBadge trust={theme.trust} />
+        <span className="text-xs tabular-nums text-stone-500">
+          {count(theme.personas, 'persona')} affected, {count(theme.frictions, 'friction')}
+        </span>
       </div>
-      <p className="text-sm text-stone-700">{theme.description}</p>
-      <p className="text-xs tabular-nums text-stone-500">
-        {count(theme.personas, 'persona')}, {count(theme.frictions, 'friction')}, median severity {theme.severity} of 4
-        {theme.named_by === 'rules' && '. Title generated from the page and element'}
-      </p>
-      <Affected theme={theme} />
-      <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
-        {theme.evidence.map((evidence, i) => (
-          <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-        ))}
-      </ul>
+      <div className="space-y-1">
+        <Title className="text-base font-medium text-stone-900">{theme.title}</Title>
+        <p className="text-sm text-stone-700">{theme.description}</p>
+      </div>
       {theme.suggestion && (
-        <div className="space-y-1 rounded-lg border border-dashed border-stone-300 bg-stone-50 p-3 text-sm">
-          <p className="text-xs font-medium text-stone-500">Generated suggestion: consider it, then validate with real people</p>
-          <p className="text-stone-900">
-            <span className="font-medium">Suggested change:</span> {theme.suggestion.change}
-          </p>
-          <p className="text-stone-700">
-            <span className="font-medium">Possible solution:</span> {theme.suggestion.solution}
-          </p>
+        <div className="space-y-1 rounded-lg bg-indigo-50 p-3 text-sm">
+          <p className="text-xs font-semibold text-indigo-700">Try this</p>
+          <p className="font-medium text-stone-900">{theme.suggestion.change}</p>
+          <p className="text-xs text-stone-500">Generated suggestion: try it with real people before you ship it.</p>
         </div>
       )}
+      <details className="report-more" open={inFile}>
+        <summary>{theme.suggestion ? 'How to do it, and the evidence' : 'Who it affected and why'}</summary>
+        <div className="mt-3 space-y-3">
+          {theme.suggestion && (
+            <p className="text-sm text-stone-700">
+              <span className="font-medium text-stone-900">How:</span> {theme.suggestion.solution}
+            </p>
+          )}
+          <Affected theme={theme} />
+          <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
+            {theme.evidence.map((evidence, i) => (
+              <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+            ))}
+          </ul>
+          {theme.named_by === 'rules' && <p className="text-xs text-stone-500">Title generated from the page and element.</p>}
+        </div>
+      </details>
     </li>
   );
 }
 
-function Themes({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+const TOP = 5; // problems shown before the fold
+
+function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const inFile = useContext(InFile);
+  const items = (shown: ReportTheme[], nested?: boolean) =>
+    shown.map((theme) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} nested={nested} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
   const list = (shown: ReportTheme[], nested?: boolean) => (
-    <ol className="space-y-4">
-      {shown.map((theme) => (
-        <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} nested={nested} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-      ))}
-    </ol>
+    <>
+      <ol className="space-y-3">{items(shown.slice(0, TOP), nested)}</ol>
+      {shown.length > TOP && (
+        <details className="report-more" open={inFile}>
+          <summary>Show {count(shown.length - TOP, 'more problem')}</summary>
+          <ol className="mt-3 space-y-3">{items(shown.slice(TOP), nested)}</ol>
+        </details>
+      )}
+    </>
   );
   return (
     <section aria-labelledby="themes-title" className="space-y-3">
-      <h3 id="themes-title" className="text-sm font-semibold text-stone-900">
-        Potential frictions, ranked ({themes.length})
-      </h3>
-      <p className="text-xs text-stone-500">
-        Ranked by the segment-weighted share of personas affected × median severity × trust. Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.
-      </p>
+      <div className="space-y-1">
+        <h3 id="themes-title" className={heading}>What to fix first ({themes.length})</h3>
+        <p className="text-sm text-stone-600">What the personas ran into, grouped into problems, the most severe first.</p>
+      </div>
+      <SeverityLegend />
       {themes.length === 0 ? (
-        <p className="text-sm text-stone-600">No frictions to group into themes in this run.</p>
+        <p className="text-sm text-stone-600">No problems to fix in this run.</p>
       ) : pois.length > 1 ? (
-        // Themes are ranked within each point of interest, so each gets its own list.
         pois.map((poi) => {
           const own = themes.filter((theme) => theme.poi_id === poi.id);
           return (
-            <section key={poi.id} aria-label={`Potential frictions in ${poi.name}`} className="space-y-3">
+            <section key={poi.id} aria-label={`What to fix in ${poi.name}`} className="space-y-3">
               <h4 className="text-sm font-medium text-stone-900">{poiName(poi)}</h4>
-              {own.length ? list(own, true) : <p className="text-sm text-stone-600">No frictions to group into themes.</p>}
+              {own.length ? list(own, true) : <p className="text-sm text-stone-600">No problems to fix here.</p>}
             </section>
           );
         })
       ) : (
         list(themes)
       )}
+      <p className="text-xs text-stone-500">
+        Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.
+      </p>
     </section>
   );
 }
 
-const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
+function WentWell({ likes }: { likes: ReportLike[] }) {
+  return (
+    <section aria-labelledby="went-well-title" className="space-y-3">
+      <h3 id="went-well-title" className={heading}>What went well</h3>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {likes.slice(0, 10).map((like, i) => (
+          <li key={i} data-tone="good" className="tone-edge rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm">
+            <span className="text-stone-900">{like.text}</span>
+            <span className="block text-xs tabular-nums text-stone-500">
+              {count(like.personas, 'persona')}
+              {like.count > like.personas && `, ${count(like.count, 'mention')}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {likes.length > 10 && <p className="text-xs text-stone-500">And {count(likes.length - 10, 'more like')} named once or twice.</p>}
+    </section>
+  );
+}
 
 /** A −2…+2 track with the neutral midpoint marked; the number is always shown beside it. */
 function SentimentScale({ value }: { value: number }) {
@@ -367,37 +365,68 @@ function SentimentScale({ value }: { value: number }) {
   );
 }
 
-function Sentiment({ rows }: { rows: ReportSentiment[] }) {
+/** A rate as a short bar and its count, so a column reads at a glance. */
+function Rate({ rate, of, tone }: { rate: number; of: number; tone: Tone }) {
   return (
-    <section aria-labelledby="sentiment-title" className="space-y-2">
-      <h3 id="sentiment-title" className="text-sm font-semibold text-stone-900">
-        Sentiment by segment
-      </h3>
+    <span className="flex items-center gap-2 whitespace-nowrap">
+      <span aria-hidden="true" className="h-1.5 w-14 overflow-hidden rounded-full bg-stone-100">
+        <span data-tone={tone} className="tone-fill block h-full" style={{ width: pct(rate) }} />
+      </span>
+      <span className="tabular-nums">
+        {pct(rate)} <span className="text-stone-500">({Math.round(rate * of)} of {of})</span>
+      </span>
+    </span>
+  );
+}
+
+/** Each segment's completion, friction and survey answers, then the two rates weighted by share (roadmap M2). */
+function SegmentTable({ report }: { report: ReportData }) {
+  const surveys = report.sentiment && report.sentiment.length > 0 ? report.sentiment : null;
+  return (
+    <section aria-labelledby="segments-title" className="space-y-3">
+      <h3 id="segments-title" className={heading}>Results by segment</h3>
       <div className="overflow-x-auto rounded-lg border border-stone-200">
         <table className="w-full text-sm">
           <thead className="bg-stone-50">
             <tr>
               <Th>Segment</Th>
-              <Th>Surveyed</Th>
-              <Th>Mean sentiment, −2 to +2</Th>
-              <Th>Would continue</Th>
+              <Th>Share</Th>
+              <Th>Reached the goal</Th>
+              <Th>Ran into friction</Th>
+              {surveys && <Th>Mood, −2 to +2</Th>}
+              {surveys && <Th>Would carry on</Th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {rows.map((row) => (
-              <tr key={row.segment_id ?? row.name}>
-                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
-                  {row.name}
-                </th>
-                <td className="px-3 py-2 tabular-nums">{row.surveyed}</td>
-                <td className="px-3 py-2">{row.sentiment === null ? 'No answers' : <SentimentScale value={row.sentiment} />}</td>
-                <td className="px-3 py-2 tabular-nums">{row.surveyed === 0 ? '-' : pct(row.would_continue)}</td>
-              </tr>
-            ))}
+            {report.segments.map((segment) => {
+              const survey = surveys?.find((row) => row.segment_id === segment.id);
+              return (
+                <tr key={segment.id ?? segment.name}>
+                  <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">{segment.name}</th>
+                  <td className="px-3 py-2 tabular-nums">{segment.share}%</td>
+                  <td className="px-3 py-2"><Rate rate={segment.completion} of={segment.personas} tone="good" /></td>
+                  <td className="px-3 py-2"><Rate rate={segment.with_friction} of={segment.personas} tone="warn" /></td>
+                  {surveys && <td className="px-3 py-2">{survey?.sentiment == null ? 'No answers' : <SentimentScale value={survey.sentiment} />}</td>}
+                  {surveys && <td className="px-3 py-2 tabular-nums">{survey?.surveyed ? pct(survey.would_continue) : '-'}</td>}
+                </tr>
+              );
+            })}
           </tbody>
+          <tfoot className="border-t border-stone-200 bg-stone-50">
+            <tr>
+              <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">Weighted by share</th>
+              <td className="px-3 py-2">100%</td>
+              <td className="px-3 py-2 font-medium tabular-nums">{pct(report.weighted.completion)}</td>
+              <td className="px-3 py-2 font-medium tabular-nums">{pct(report.weighted.with_friction)}</td>
+              {surveys && <td colSpan={2} />}
+            </tr>
+          </tfoot>
         </table>
       </div>
-      <p className="text-xs text-stone-500">From each persona's end-of-episode survey, 0 is neutral. Means are per segment, without weighting.</p>
+      <p className="text-xs text-stone-500">
+        The weighted row counts each segment by its share of the audience, not by how many personas it has.
+        {surveys && ' Mood and carrying on come from each persona’s survey at the end, 0 is neutral, without weighting.'}
+      </p>
     </section>
   );
 }
@@ -411,7 +440,7 @@ function Comparison({ comparison, pois }: { comparison: ReportComparison; pois: 
   const id = `comparison-${comparison.poi_id}`;
   return (
     <section aria-labelledby={id} className="space-y-2">
-      <h3 id={id} className="text-sm font-semibold text-stone-900">
+      <h3 id={id} className={heading}>
         {competitor} compared with {product}
       </h3>
       <div className="overflow-x-auto rounded-lg border border-stone-200">
@@ -450,23 +479,100 @@ function Comparison({ comparison, pois }: { comparison: ReportComparison; pois: 
   );
 }
 
-function WentWell({ likes }: { likes: ReportLike[] }) {
+function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportFriction; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const inFile = useContext(InFile);
+  const shot = friction.screenshot && renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`);
   return (
-    <section aria-labelledby="went-well-title" className="space-y-2">
-      <h3 id="went-well-title" className="text-sm font-semibold text-stone-900">
-        What went well
-      </h3>
-      <ol className="space-y-1 text-sm">
-        {likes.slice(0, 10).map((like, i) => (
-          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-stone-100 pb-1">
-            <span className="text-stone-900">{like.text}</span>
-            <span className="text-xs tabular-nums text-stone-500">
-              {count(like.count, 'mention')} by {count(like.personas, 'persona')}
-            </span>
-          </li>
+    <li data-tone={SEVERITY[level(friction.severity)].tone} className={`tone-edge grid gap-3 rounded-lg border border-stone-200 bg-white p-3 ${shot ? 'sm:grid-cols-[minmax(0,1fr)_16rem]' : ''}`}>
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+          <SeverityChip severity={friction.severity} />
+          <span>
+            Step {friction.step_no}
+            {friction.frame !== undefined && `, frame ${friction.frame + 1}`}
+          </span>
+          {!inFile && (
+            <button type="button" onClick={() => onInspect(friction.persona_id, friction.seq)} className="text-link ml-auto">
+              Open this step
+            </button>
+          )}
+        </div>
+        <p className="font-medium text-stone-900">{friction.what}</p>
+        <p className="text-sm text-stone-700">
+          <span className="font-medium">They expected:</span> {friction.expected}
+        </p>
+        <Passage passage={friction.passage} />
+        {friction.quote && <blockquote className="border-l-4 border-stone-200 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>}
+        <p className="break-all text-xs text-stone-500">{friction.url}</p>
+      </div>
+      {shot && <div>{shot}</div>}
+    </li>
+  );
+}
+
+/** One persona folded to who they are and how it ended; opening it lists what got in their way, the worst first. */
+function PersonaReport({ persona, segment, frictions, onInspect, renderScreenshot }: { persona: ReportPersona; segment?: string; frictions: ReportFriction[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const inFile = useContext(InFile);
+  return (
+    <li>
+      <details className="disclosure" open={inFile}>
+        <summary>
+          <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-3">
+            <PersonaAvatar name={persona.name} id={persona.id} />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-stone-900">{persona.name}</p>
+              <p className="text-xs font-normal text-stone-500">{[persona.job_title, segment, persona.device].filter(Boolean).join(' · ')}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-normal text-stone-600">
+            <OutcomeChip outcome={persona.outcome} />
+            {frictions.length === 0 ? 'No friction' : <span className="flex items-center gap-1.5 whitespace-nowrap">{count(frictions.length, 'friction')}, worst <SeverityChip severity={frictions[0].severity} /></span>}
+          </div>
+        </summary>
+        <div className="disclosure-body space-y-3">
+          <p className="text-sm text-stone-700">
+            <span className="font-medium text-stone-900">{OUTCOMES[persona.outcome].text}</span> after {count(persona.steps, 'step')}.{persona.outcome_text && ` ${persona.outcome_text}`}
+          </p>
+          {frictions.length === 0 ? (
+            <p className="text-sm text-stone-600">{persona.name} reported no friction.</p>
+          ) : (
+            <ol className="space-y-3" aria-label={`What got in ${persona.name}'s way`}>
+              {frictions.map((friction) => (
+                <Friction key={friction.seq} friction={friction} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+              ))}
+            </ol>
+          )}
+          {!inFile && (
+            <button type="button" onClick={() => onInspect(persona.id)} className="text-link">
+              Open {persona.name}&rsquo;s timeline
+            </button>
+          )}
+        </div>
+      </details>
+    </li>
+  );
+}
+
+function Personas({ report, onInspect, renderScreenshot }: { report: ReportData; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const segmentName = (persona: ReportPersona) => report.segments.find((segment) => segment.id === persona.segment_id)?.name;
+  return (
+    <section aria-labelledby="personas-title" className="space-y-3">
+      <div className="space-y-1">
+        <h3 id="personas-title" className={heading}>How each persona did ({report.personas.length})</h3>
+        <p className="text-sm text-stone-600">Open a persona to see what got in their way, the most severe first.</p>
+      </div>
+      <ul className="space-y-2">
+        {report.personas.map((persona) => (
+          <PersonaReport
+            key={persona.id}
+            persona={persona}
+            segment={segmentName(persona)}
+            frictions={report.frictions.filter((friction) => friction.persona_id === persona.id).sort(bySeverity)}
+            onInspect={onInspect}
+            renderScreenshot={renderScreenshot}
+          />
         ))}
-      </ol>
-      {likes.length > 10 && <p className="text-xs text-stone-500">And {count(likes.length - 10, 'more like')} named once or twice.</p>}
+      </ul>
     </section>
   );
 }
@@ -572,12 +678,9 @@ function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; person
 /** How talk about the product and each theme travelled on the simulated feed (tech.md §8.2 step 7). */
 function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; personas: ReportPersona[]; onInspect: Inspect }) {
   return (
-    <section aria-labelledby="spread-title" className="space-y-3">
-      <h3 id="spread-title" className="text-sm font-semibold text-stone-900">
-        Opinion spread
-      </h3>
+    <div className="space-y-3">
       <p className="text-xs text-stone-500">
-        How talk travelled on the simulated feed. First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.
+        First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.
       </p>
       {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a point of interest.</p>}
       {spread.map((poi) => (
@@ -590,10 +693,7 @@ function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; perso
             <ol className="space-y-4" aria-label={`Themes talked about on the feed, about ${poi.name}`}>
               {poi.themes.map((theme) => (
                 <li key={theme.theme_id} className="space-y-2 rounded-lg border border-stone-200 p-4">
-                  <h4 className="font-medium text-stone-900">
-                    <span className="mr-2 tabular-nums text-stone-500">{theme.rank}.</span>
-                    {theme.title}
-                  </h4>
+                  <h4 className="font-medium text-stone-900">{theme.title}</h4>
                   <SpreadBody stats={theme} personas={personas} onInspect={onInspect} />
                 </li>
               ))}
@@ -601,7 +701,7 @@ function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; perso
           )}
         </div>
       ))}
-    </section>
+    </div>
   );
 }
 
@@ -619,8 +719,6 @@ function Homogeneity({ value }: { value: ReportHomogeneity }) {
 
 const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
 const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
-
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 /** What the run was set up with, allowed to do and what got in its way (idea.md §6.5), so a team can change a setting and run again. */
 function Methods({ methods, personas }: { methods: ReportMethods; personas: ReportPersona[] }) {
@@ -699,26 +797,21 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
     ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];
   return (
-    <section aria-labelledby="methods-title">
-      <h3 id="methods-title" className="mb-2 text-sm font-semibold text-stone-900">
-        Methods
-      </h3>
-      <dl className="divide-y divide-stone-100 rounded-lg border border-stone-200 text-sm">
-        {rows.map(([label, value]) => (
-          <div key={label} className="grid gap-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-            <dt className="text-stone-500">{label}</dt>
-            <dd className="break-words text-stone-900">{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
+    <dl className="divide-y divide-stone-100 rounded-lg border border-stone-200 text-sm">
+      {rows.map(([label, value]) => (
+        <div key={label} className="grid gap-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+          <dt className="text-stone-500">{label}</dt>
+          <dd className="break-words text-stone-900">{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
 function DimensionTable({ dimension, selected }: { dimension: ReportDimension; selected?: string }) {
   return (
     <section aria-labelledby="profile-results-title" className="space-y-3">
-      <h3 id="profile-results-title" className="text-sm font-semibold text-stone-900">Results by profile: {dimension.name}</h3>
+      <h3 id="profile-results-title" className={heading}>Results by profile: {dimension.name}</h3>
       <div className="max-h-80 overflow-auto rounded-lg border border-stone-200">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-stone-50"><tr><Th>{dimension.name}</Th><Th>Personas</Th><Th>Reached the goal</Th><Th>Reported friction</Th><Th>Mean latest feeling</Th></tr></thead>
@@ -746,7 +839,8 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
   const filtered = !!filter.dimension && !!filter.value;
   const details = filtered ? { ...report, personas: selectedPersonas, frictions: report.frictions.filter((friction) => ids.has(friction.persona_id)) } : report;
   const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
-  const stats = [
+  const themes = [...(report.themes ?? [])].sort(byPriority);
+  const facts = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
     ['Recorded cost', usd(report.cost_usd)],
@@ -754,38 +848,46 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
   return (
-    <section aria-labelledby="report-title" className="space-y-5 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-      <h2 id="report-title" className="text-base font-semibold text-stone-900">
-        Report
-      </h2>
-      <Note tone="info">{report.banner}</Note>
-      {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
-      <div>
-        <p className="text-sm text-stone-600">The goal: {report.goal}</p>
-        {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map(poiName).join(', ')}</p>}
-        {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
-      </div>
-      {filtered && <h3 className="text-sm font-semibold text-stone-900">Full-run totals</h3>}
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-lg bg-stone-50 px-3 py-2">
-            <dt className="text-xs text-stone-500">{label}</dt>
-            <dd className="text-sm font-medium text-stone-900">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
+    <section aria-labelledby="report-title" className="space-y-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
+      <header className="space-y-3">
+        <div className="space-y-1">
+          <h2 id="report-title" className="text-xl font-medium tracking-tight text-stone-900">
+            Report
+          </h2>
+          <p className="text-sm text-stone-700">
+            <span className="font-medium text-stone-900">Goal:</span> {report.goal}
+          </p>
+          {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map(poiName).join(', ')}</p>}
+          {report.status === 'stopped' && report.stop_reason && <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
+        </div>
+        <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+          {facts.map(([label, value]) => (
+            <div key={label} className="flex gap-1.5">
+              <dt className="text-stone-500">{label}</dt>
+              <dd className="font-medium tabular-nums text-stone-900">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <Note tone="info">{report.banner}</Note>
+        {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
+        {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas under How each persona did. Everything else describes the full run.</p>}
+      </header>
+      <Glance report={report} themes={themes} />
+      {report.themes && <Priorities themes={themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
+      {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
-      {report.themes && <Themes themes={report.themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
-      {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
       {report.buyers && report.buyers.length > 0 && <BuyerSurvey rows={report.buyers} pois={report.pois} />}
-      {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
       {report.comparisons?.map((comparison) => <Comparison key={comparison.poi_id} comparison={comparison} pois={report.pois} />)}
-      {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}
-      <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-      <PersonaOutcomes report={details} onInspect={onInspect} />
-      <Methods methods={report.methods} personas={report.personas} />
+      <Personas report={details} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+      {report.spread && (
+        <Fold id="spread-title" title="Opinion spread" hint="How talk travelled on the simulated feed">
+          <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />
+        </Fold>
+      )}
+      <Fold id="methods-title" title="Methods" hint="What the run was set up with and what got in its way">
+        <Methods methods={report.methods} personas={report.personas} />
+      </Fold>
     </section>
   );
 }

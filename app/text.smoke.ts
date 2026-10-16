@@ -93,10 +93,11 @@ try {
   const buyers = report.locator('section[aria-labelledby=buyers-title]');
   assert.match(await buyers.innerText(), /Team leads\s+2\s/, 'both team leads answered as buyers');
   assert.doesNotMatch(await buyers.innerText(), /Planners/, 'users answer the usage survey');
-  assert.match(await report.getByRole('region', { name: /Sentiment by segment/ }).innerText(), /Team leads[\s\S]*Planners/);
-  const quoted = report.getByRole('region', { name: /Frictions found \(3\)/ }).getByText('In the text:');
-  assert.equal(await quoted.count(), 3);
-  assert.match(await report.getByRole('region', { name: /Frictions found/ }).innerText(), /In the text: “# Plotline pricing”/);
+  assert.match(await report.getByRole('region', { name: 'Results by segment' }).innerText(), /Mood[\s\S]*Team leads[\s\S]*Planners/);
+  const personas = report.getByRole('region', { name: /How each persona did/ });
+  await personas.locator('details').evaluateAll((all) => all.forEach((details) => { (details as HTMLDetailsElement).open = true; }));
+  assert.equal(await personas.getByText('In the text:').count(), 3);
+  assert.match(await personas.innerText(), /In the text: “# Plotline pricing”/);
   await page.screenshot({ path: join(shots, 'text-report.png'), fullPage: true });
 
   const assets = join(projectDir, 'assets');
