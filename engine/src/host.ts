@@ -114,7 +114,12 @@ function writer(config: ProjectConfig, emit?: (progress: PersonaProgress) => voi
     llm: gateway(current().record), model: config.settings.routing.persona_writer, project: config, roles,
     signal: setupTask?.stop.signal,
     cache: { get: (key) => store.getPersonaDraft(key), set: (key, value) => store.putPersonaDraft(key, value) },
-    onProgress(done, total) { Object.assign(progress, { done, total }); notify(); },
+    onProgress(done, total, persona) {
+      Object.assign(progress, { done, total });
+      if (persona) progress.recent = [persona.name, ...(progress.recent ?? [])].slice(0, 3);
+      notify();
+    },
+    onSketched(sketched) { progress.sketched = sketched; notify(); },
     onStage(stage) { progress.stage = stage; notify(); },
     onAttempt(req, attempt) {
       store.recordSetupCall({ task_id, persona_id: req.persona_id, purpose: req.purpose ?? 'setup' }, attempt);

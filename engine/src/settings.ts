@@ -44,7 +44,7 @@ export const DEFAULT_SETTINGS: RunSettings = {
   routing: PROVIDER_DEFAULTS.anthropic,
   local_base_url: null,
   concurrency: 12,
-  persona_concurrency: 12,
+  persona_concurrency: 32,
   cost_budget_usd: 5,
   wall_clock_budget_min: 60,
   screenshots: true,

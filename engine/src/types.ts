@@ -92,6 +92,8 @@ export interface PersonaProgress {
   done: number;
   total: number;
   stage?: 'sketching' | 'repairing_names' | 'writing' | 'saving';
+  sketched?: number;
+  recent?: string[]; // names of the latest written personas, newest first
   calls?: number;
   failed_attempts?: number;
   elapsed_ms?: number;
@@ -101,7 +103,7 @@ export interface RunSettings {
   routing: Routing;
   local_base_url: string | null; // the OpenAI-compatible endpoint behind provider 'openai_compatible', e.g. http://localhost:11434/v1
   concurrency: number; // personas in flight, each with its own browser context (default 12, at most 32)
-  persona_concurrency?: number; // independent writer pool, 1–32; old projects default to 12
+  persona_concurrency?: number; // independent writer pool, 1–32; old projects default to 32
   cost_budget_usd: number;
   wall_clock_budget_min: number;
   screenshots: boolean; // send each step's screenshot to the navigator; always stored as evidence

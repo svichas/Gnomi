@@ -18,7 +18,8 @@ export interface AudienceDeps {
   model: ModelChoice; // the persona_writer route
   project: ProjectConfig;
   roles?: string[]; // recorded login names a proposed segment may use; defaults to project.role
-  onProgress?(done: number, total: number): void;
+  onProgress?(done: number, total: number, persona?: Persona): void; // persona: the one just written
+  onSketched?(sketched: number): void;
   onStage?(stage: 'sketching' | 'repairing_names' | 'writing'): void;
   onAttempt?(request: LlmRequest<unknown>, attempt: LlmAttempt): void;
   cache?: { get(key: string): unknown; set(key: string, value: unknown): void };

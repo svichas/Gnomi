@@ -450,7 +450,8 @@ test('verbalized sampling picks by probability, the same way for the same seed',
 test('a second invalid answer surfaces as a clear error, stops the other writes, and returns no population', async () => {
   const audience = await proposed();
   const { llm, calls } = gateway((req) => (req.persona_id === 'p-seg1-05' ? { candidates: [] } : DEMO_PERSONA_WRITER(req)));
-  await assert.rejects(syncPersonas(audience, [], deps(llm)), (err: Error) => {
+  const twelve = { ...project, settings: { ...project.settings, persona_concurrency: 12 } };
+  await assert.rejects(syncPersonas(audience, [], deps(llm, { project: twelve })), (err: Error) => {
     assert.match(err.message, /^The persona writer failed on p-seg1-05 \(Everyday users\): Invalid output twice/);
     assert.ok(err.cause instanceof InvalidOutputError);
     return true;
@@ -458,7 +459,7 @@ test('a second invalid answer surfaces as a clear error, stops the other writes,
   assert.ok(calls.length < 20, `stopped after ${calls.length} calls`);
 });
 
-test('an abort stops the sync with its reason, and the default pool allows twelve writes in flight', async () => {
+test('an abort stops the sync with its reason, and the default pool allows thirty-two writes in flight', async () => {
   const audience = await proposed();
   const stop = new AbortController();
   stop.abort();
@@ -476,7 +477,7 @@ test('an abort stops the sync with its reason, and the default pool allows twelv
       return { object: req.schema.parse(DEMO_PERSONA_WRITER(req as LlmRequest<unknown>)), cost_usd: 0 };
     },
   };
-  await syncPersonas(audience, [], deps(slow));
-  assert.equal(peak, 12);
+  await syncPersonas({ ...audience, persona_count: 40 }, [], deps(slow));
+  assert.equal(peak, 32);
   await assert.rejects(syncPersonas({ ...audience, persona_count: 201 }, [], deps(slow)), /persona_count must be a whole number from 1 to 200/);
 });

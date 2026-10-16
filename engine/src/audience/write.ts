@@ -118,13 +118,27 @@ export interface Job {
 export const BIOGRAPHY_SYSTEM = `Expand the selected person's sketch into a 150 to 200 word first-person biography. Return only background. Preserve their identity, history, job and voice; keep all sampled traits fixed. Use only supplied prompt attributes and respect omitted fields. Do not invent demographic attributes, stereotype, exaggerate behaviour or judge the product: they have not used it yet. Do not introduce a different name.`;
 const NAMES_SYSTEM = `Suggest four different full names for the selected person, consistent with their supplied attributes. Avoid the taken names. Return only names; do not rewrite their profile or biography. No famous people, placeholders or stereotypes.`;
 
-/** Names settle in job order after all answers are in, so a deterministic writer always gives the same population. `taken` (nameKey → name) gains the new names. */
+/**
+ * Each persona is written as soon as its sketch is in and every earlier slot holds its name: names settle in job order,
+ * so a deterministic writer always gives the same population. `taken` (nameKey → name) gains the new names.
+ */
 export async function writePersonas(jobs: Job[], taken: Map<string, string>, deps: AudienceDeps): Promise<{ personas: Persona[]; cost_usd: number }> {
-  let concurrency = deps.project.settings.persona_concurrency ?? 12;
+  let concurrency = deps.project.settings.persona_concurrency ?? 32;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) throw new Error('Persona concurrency must be a whole number from 1 to 32.');
   const stop = new AbortController();
   const signal = deps.signal ? AbortSignal.any([deps.signal, stop.signal]) : stop.signal;
   let cost_usd = 0;
+
+  // One pool of model calls. A started persona's rename and biography go before the next sketch, so people finish early.
+  let active = 0;
+  const queues: (() => void)[][] = [[], []];
+  const slot = (priority: 0 | 1) => new Promise<void>((resolve) => {
+    if (active < concurrency) { active++; resolve(); } else queues[priority].push(resolve);
+  });
+  const release = () => {
+    const next = active <= concurrency ? (queues[0].shift() ?? queues[1].shift()) : undefined; // over a lowered limit, shrink
+    if (next) next(); else active--;
+  };
 
   const ask = async <T>(job: Job, purpose: string, schema: z.ZodType<T>, system: string, extra = '', avoid: string[] | null = null, max_output_tokens = 3072): Promise<T> => {
     try {
@@ -151,10 +165,16 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
       const key = JSON.stringify([job.id, job.seed, req.model, deps.project.settings.local_base_url, purpose, system, req.user, z.toJSONSchema(schema)]);
       const cached = schema.safeParse(deps.cache?.get(key));
       if (cached.success) return cached.data;
-      const { object, cost_usd: cost } = await deps.llm.call(req);
-      cost_usd += cost;
-      deps.cache?.set(key, object);
-      return object;
+      await slot(purpose === 'write_persona' ? 1 : 0);
+      try {
+        signal.throwIfAborted();
+        const { object, cost_usd: cost } = await deps.llm.call(req);
+        cost_usd += cost;
+        deps.cache?.set(key, object);
+        return object;
+      } finally {
+        setImmediate(release); // once this answer's next stage is queued, so it takes the slot ahead of a new sketch
+      }
     } catch (err) {
       if (signal.aborted) throw signal.reason; // the user's abort, or the first failure, which stops every other write
       const reason = err instanceof Error ? err.message : String(err);
@@ -164,68 +184,50 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
     }
   };
 
-  let done = 0;
-  if (jobs.length) deps.onProgress?.(0, jobs.length);
-  const parallel = async (indices: number[], work: (i: number) => Promise<void>) => {
-    let next = 0;
-    const results = await Promise.allSettled(Array.from({ length: Math.min(concurrency, indices.length) }, async (_, worker) => {
-      while (next < indices.length && worker < concurrency) {
-        signal.throwIfAborted();
-        await work(indices[next++]);
-      }
-    }));
-    const failed = results.find((r) => r.status === 'rejected');
-    if (failed?.status === 'rejected') throw failed.reason;
-  };
-  const indices = jobs.map((_, i) => i);
-  const drafts: Candidate[][] = [];
-  if (jobs.length) deps.onStage?.('sketching');
-  await parallel(indices, async (i) => { drafts[i] = (await ask(jobs[i], 'write_persona', writeSchema, WRITER_SYSTEM)).candidates; });
+  let done = 0, sketched = 0;
+  // The furthest stage any persona has reached; they overlap now, so the label only moves forward.
+  const STAGES = ['sketching', 'repairing_names', 'writing'] as const;
+  let reached = -1;
+  const stage = (s: (typeof STAGES)[number]) => { if (STAGES.indexOf(s) > reached) { reached = STAGES.indexOf(s); deps.onStage?.(s); } };
+  if (jobs.length) { deps.onProgress?.(0, jobs.length); stage('sketching'); }
 
-  const selected: Candidate[] = [];
-  const select = (i: number, c: Candidate) => { selected[i] = c; taken.set(nameKey(c.name), c.name); };
-  const clashed: number[] = [];
-  jobs.forEach((job, i) => {
-    const c = choose(drafts[i], job.seed, taken);
-    if (c) select(i, c);
-    else clashed.push(i);
-  });
-  // Each answer offers four names. At most four slots share an exclusion list, so even
-  // identical (compliant) answers leave a fresh name for every slot in that batch.
-  if (clashed.length) deps.onStage?.('repairing_names');
-  const repaired: Record<number, Candidate[]> = {};
-  for (let offset = 0; offset < clashed.length; offset += 4) {
-    const batch = clashed.slice(offset, offset + 4);
-    const avoid = [...taken.values()];
-    await parallel(batch, async (i) => {
-      const c = choose(drafts[i], jobs[i].seed, new Set())!;
-      const result = await ask(jobs[i], 'rename_persona', namesSchema, NAMES_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, avoid, deps.model.provider === 'deepseek' ? 256 : 1024);
-      repaired[i] = result.names.map((name) => ({ ...c, name }));
-    });
-    for (const i of batch) select(i, choose(repaired[i], jobs[i].seed, taken) ?? choose(repaired[i], jobs[i].seed, new Set())!);
-  }
-
+  const keep = (c: Candidate) => { taken.set(nameKey(c.name), c.name); return c; };
   const personas: Persona[] = [];
-  if (jobs.length) deps.onStage?.('writing');
-  await parallel(indices, async (i) => {
-    const job = jobs[i];
-    const c = selected[i];
-    const expanded = await ask(job, 'expand_persona', biographySchema, BIOGRAPHY_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, null, deps.model.provider === 'deepseek' ? 1024 : 2048);
-    personas[i] = {
-      id: job.id,
-      ...job.traits,
-      name: c.name,
-      job_title: c.job_title,
-      industry: c.industry,
-      background: expanded.background,
-      context_of_use: c.context_of_use,
-      goal_interpretation: c.goal_interpretation,
-      voice: c.voice,
-      seed: job.seed,
-      posting_propensity: postingPropensity(job.seed),
-      profile_signature: profileSignature(deps.project, job.segment, job.seed),
-    };
-    deps.onProgress?.(++done, jobs.length);
+  let named: Promise<unknown> = Promise.resolve();
+  const work = jobs.map((job, i) => {
+    const draft = ask(job, 'write_persona', writeSchema, WRITER_SYSTEM).then(({ candidates }) => { deps.onSketched?.(++sketched); return candidates; });
+    // Each slot chooses only after the slot before it, and a clash is renamed against every name settled so far.
+    const selected = Promise.all([draft, named]).then(async ([drafts]) => {
+      const picked = choose(drafts, job.seed, taken);
+      if (picked) return keep(picked);
+      stage('repairing_names');
+      const c = choose(drafts, job.seed, new Set())!;
+      const result = await ask(job, 'rename_persona', namesSchema, NAMES_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, [...taken.values()], deps.model.provider === 'deepseek' ? 256 : 1024);
+      const repaired = result.names.map((name) => ({ ...c, name }));
+      return keep(choose(repaired, job.seed, taken) ?? choose(repaired, job.seed, new Set())!);
+    });
+    named = selected;
+    return selected.then(async (c) => {
+      stage('writing');
+      const expanded = await ask(job, 'expand_persona', biographySchema, BIOGRAPHY_SYSTEM, `\n${SELECTED_LABEL}${JSON.stringify(c)}`, null, deps.model.provider === 'deepseek' ? 1024 : 2048);
+      personas[i] = {
+        id: job.id,
+        ...job.traits,
+        name: c.name,
+        job_title: c.job_title,
+        industry: c.industry,
+        background: expanded.background,
+        context_of_use: c.context_of_use,
+        goal_interpretation: c.goal_interpretation,
+        voice: c.voice,
+        seed: job.seed,
+        posting_propensity: postingPropensity(job.seed),
+        profile_signature: profileSignature(deps.project, job.segment, job.seed),
+      };
+      deps.onProgress?.(++done, jobs.length, personas[i]);
+    });
   });
+  const failed = (await Promise.allSettled(work)).find((r) => r.status === 'rejected');
+  if (failed?.status === 'rejected') throw failed.reason;
   return { personas, cost_usd };
 }

@@ -81,10 +81,14 @@ try {
   await panel.getByText(/12 model attempts · 1 failed attempts/).waitFor();
   await page.evaluate(() => window.audienceSmoke!.progress(0, 50, { stage: 'repairing_names' }));
   await panel.getByText('Resolving duplicate names…', { exact: true }).waitFor();
-  await page.evaluate(() => window.audienceSmoke!.progress(1, 50, { stage: 'writing', calls: 51 }));
-  await panel.getByText('Writing the selected biographies…', { exact: true }).waitFor();
+  await page.evaluate(() => window.audienceSmoke!.progress(0, 50, { stage: 'sketching', sketched: 3 }));
   await meter.waitFor();
-  assert.equal(await meter.getAttribute('aria-valuenow'), '1');
+  assert.equal(await meter.getAttribute('aria-valuenow'), '3', 'the meter moves with the first sketches');
+  await page.evaluate(() => window.audienceSmoke!.progress(1, 50, { stage: 'writing', calls: 51, sketched: 12, recent: ['Ana Ruiz'] }));
+  await panel.getByText('Writing the selected biographies…', { exact: true }).waitFor();
+  await panel.getByText('Just written: Ana Ruiz', { exact: true }).waitFor();
+  assert.equal(await meter.getAttribute('aria-valuenow'), '13');
+  assert.equal(await meter.getAttribute('aria-valuetext'), '1 of 50 personas written');
   assert.equal(await panel.locator('.build-counter strong').innerText(), '1 / 50');
   assert.ok(await review.isDisabled());
   assert.ok(await panel.getByLabel('Number of personas', { exact: true }).isDisabled());
