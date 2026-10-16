@@ -47,8 +47,9 @@ export function Review(props: {
   onRecheck(): void;
   onChecked(): Promise<void>;
   onStarted(runId: string): void;
+  onSocial(on: boolean): void; // saves the setting and checks again, as the estimate changes
 }) {
-  const { config, info, onFix, onBack, onRecheck, onChecked, onStarted } = props;
+  const { config, info, onFix, onBack, onRecheck, onChecked, onStarted, onSocial } = props;
   const saved = typeof config === 'string' ? null : config;
   const roles = saved ? rolesInUse(saved) : [];
   const [reset, setReset] = useState(false);
@@ -175,6 +176,18 @@ export function Review(props: {
           ) : (
             <Fact label="People">{info?.persona ? `${info.persona.name}, ${info.persona.job_title} (the built-in persona)` : 'One built-in persona'}</Fact>
           )}
+          <Fact label="Social rounds">
+            {saved.audience ? (
+              <>
+                <Check checked={saved.settings.social ?? false} onChange={onSocial}>Let personas interact in a shared feed</Check>
+                <span className="block pl-6 text-xs text-stone-500">
+                  {socialRounds(saved.settings, saved.audience)
+                    ? `${socialRounds(saved.settings, saved.audience)} rounds: each persona uses the product for a while, then reads posts from the people it follows and may post, reply or react. Change the number of rounds in Settings.`
+                    : 'Off: each persona tries the product on its own.'}
+                </span>
+              </>
+            ) : 'Off: the built-in persona runs alone.'}
+          </Fact>
         </Section>
 
         <Section title="Cost and time" edit={fix('settings', 'Edit budgets')}>
@@ -193,7 +206,6 @@ export function Review(props: {
           {(['navigator', ...(socialRounds(saved.settings, saved.audience) ? ['socialiser' as const] : []), 'judge', 'author'] satisfies LlmRole[]).map((role) => (
             <Fact key={role} label={ROLE_TEXT[role].label}>{PROVIDER_LABELS[saved.settings.routing[role].provider]} · {saved.settings.routing[role].model}</Fact>
           ))}
-          <Fact label="Social rounds">{socialRounds(saved.settings, saved.audience) ? `${socialRounds(saved.settings, saved.audience)} rounds of reading and posting between stretches of use` : 'Off'}</Fact>
         </Section>
 
         <Section title="Where they can go" edit={fix('project', 'Edit access')} wide>

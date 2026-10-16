@@ -161,11 +161,11 @@ export function App() {
   }
 
   // The review describes what will start, so every visit saves the project first and checks again from scratch.
-  async function openReview() {
+  async function openReview(settings?: RunSettings) {
     setTab('review');
     setReview(null);
     let config: ProjectConfig | string;
-    try { config = await save(); } catch (err) { config = errorText(err); }
+    try { config = await save(settings); } catch (err) { config = errorText(err); }
     setReview({ key: ++reviews.current, config });
   }
   // A live run holds the user on its page, which shows its progress and its Stop button; a pill says why.
@@ -267,6 +267,11 @@ export function App() {
                   onFix={fix}
                   onBack={() => setTab('audience')}
                   onRecheck={() => void openReview()}
+                  onSocial={(social) => {
+                    const settings = { ...draft.settings, social };
+                    setSettings(settings);
+                    void openReview(settings);
+                  }}
                   onChecked={refresh}
                   onStarted={(id) => {
                     setRunId(id);

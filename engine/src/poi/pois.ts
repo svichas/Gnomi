@@ -39,5 +39,11 @@ export const poisFor = (pois: Poi[], segment: Segment | null): Poi[] => pois.fil
 
 export const webPois = (pois: Poi[]): WebPoi[] => pois.filter((poi): poi is WebPoi => poi.type === 'web');
 
+/** Whether a segment's personas open a browser at all: texts and designs are read from their files, never browsed. */
+export const browses = (pois: Poi[], segment: Segment | null): boolean => webPois(poisFor(pois, segment)).length > 0;
+
+/** Whether a segment's personas need their login: only a web POI in full mode loads a recorded session. */
+export const logsIn = (pois: Poi[], segment: Segment | null): boolean => webPois(poisFor(pois, segment)).some((poi) => poi.mode === 'full');
+
 /** The web POI a login is recorded on and whose start page a recorded session replaces: the first one in full mode. */
 export const loginPoi = (pois: Poi[]): WebPoi | null => webPois(pois).find((poi) => poi.mode === 'full') ?? null;

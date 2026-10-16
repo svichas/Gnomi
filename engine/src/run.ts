@@ -6,7 +6,7 @@ import { InvalidOutputError } from './llm/gateway.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
 import { comparisonFor } from './poi/compare.ts';
 import { poiBudget, runnerFor } from './poi/index.ts';
-import { poisFor, webPois } from './poi/pois.ts';
+import { logsIn, poisFor, webPois } from './poi/pois.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { observeOptions } from './browser/observe.ts';
 import { buildReport } from './report/build.ts';
@@ -22,7 +22,7 @@ import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, P
 export interface RunDeps {
   store: ProjectStore;
   blobs: BlobStore;
-  browsers: BrowserPool;
+  browsers: Pick<BrowserPool, 'newPage'>;
   llm: LlmGateway;
   record: Recorder;
   /** Where each role's storage state is loaded from; null when no session key has arrived. */
@@ -55,9 +55,11 @@ export function segmentOf(persona: Persona, project: ProjectConfig): Segment | n
   return project.audience?.segments.find((s) => s.id === persona.segment_id) ?? null;
 }
 
-/** The login a persona uses: its segment's role, or the project's for the built-in persona. */
+/** The login a persona uses: its segment's role, or the project's for the built-in persona; none when it opens no web app in full mode. */
 export function roleOf(persona: Persona, project: ProjectConfig): string | null {
-  return persona.segment_id === null ? project.role : (segmentOf(persona, project)?.role ?? null);
+  const segment = segmentOf(persona, project);
+  if (!logsIn(project.pois, segment)) return null;
+  return persona.segment_id === null ? project.role : (segment?.role ?? null);
 }
 
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
