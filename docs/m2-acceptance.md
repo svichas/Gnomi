@@ -26,17 +26,17 @@ The manifest records the selected default routing, price-table snapshot, source/
 
 ## Smaller runs and other providers
 
-Three options trade coverage for spend. They work in every mode (M2, `--m3`, `--m4`):
+Three options trade coverage for spend. They work in every mode (M2, `--m3`, `--m4`, `--m5`):
 
 - `--provider deepseek` routes every role to DeepSeek's defaults and reads `DEEPSEEK_API_KEY` instead of `ANTHROPIC_API_KEY`. A DeepSeek navigator reads text only, so visual-only defects cannot be found.
 - `--personas N` runs the first personas of each segment of the same frozen fixture, apportioned by share with at least one per segment (4 to 50). The people do not change, only how many of them run.
-- `--seeds N` runs the first N seeds of the M3 or M4 suite.
+- `--seeds N` runs the first N seeds of the M3 or M4 suite, or of M5's design runs.
 
 ```sh
 npm run acceptance -w @gnomi/engine -- --live --provider deepseek --personas 4 --allowance-usd 0.5 --out acceptance-results/m2-small
 ```
 
-Below 50 personas, the duration, cost and 12-browser targets (and M3's and M4's scale-dependent criteria, including spread, which saturates in a small population) report their figures as `NOT_RUN` with a "Reduced scale" note, because they are claims about fifty people. Execution, population and replay are still checked for the smaller population, and the review sheets work the same way.
+Below 50 personas, the duration, cost and 12-browser targets (and M3's and M4's scale-dependent criteria, including spread, which saturates in a small population; [M5's mode](m5-acceptance.md) has its own scale rules) report their figures as `NOT_RUN` with a "Reduced scale" note, because they are claims about fifty people. Execution, population and replay are still checked for the smaller population, and the review sheets work the same way.
 
 ## Read the results
 
