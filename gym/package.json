@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "start": "node server.ts",
-    "test": "node --test \"*.test.ts\""
+    "assets": "node generate-assets.ts",
+    "test": "node --test \"*.test.ts\"",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
   }
 }
