@@ -440,7 +440,7 @@ try {
     await audience.getByRole('button', { name: 'Generate personas' }).click();
     await audience.getByText(/6 personas are ready/).waitFor({ timeout: 120_000 });
     const seen = await page.evaluate(() => (window as unknown as { progressSeen: string[] }).progressSeen);
-    assert.ok(seen.some((progress) => /^\d+\/6$/.test(progress)), `the progress bar never showed a total of 6: ${seen}`);
+    assert.ok(seen.some((progress) => /^\d+\/12$/.test(progress)), `the progress bar never showed a total of 12 (a sketch and a write for each of 6): ${seen}`);
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
     await audience.getByText('Recruiters (3)').waitFor();
     await audience.getByText('Hiring managers (3)').waitFor();
