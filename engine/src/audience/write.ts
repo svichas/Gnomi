@@ -6,8 +6,9 @@ import type { AudienceDeps } from './index.ts';
 import { fnv1a, mulberry32, postingPropensity, type Traits } from './sample.ts';
 import { getPersonaSchema, isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { profileSignature } from '../profile/signature.ts';
+import { latin } from '../llm/english.ts';
 
-const text = z.string().trim().min(1);
+const text = latin(z.string().trim().min(1));
 const candidate = z.object({
   name: text,
   job_title: text,
@@ -46,7 +47,7 @@ Rules:
 - Only attributes in Sampled traits and Prompt attributes are available. Never infer omitted attributes in any output field. When pronouns are omitted, use neutral language. Output slots absent from Written fields remain "Not specified" and do not appear in the biography or voice.
 - Each person is an individual, not a representative of a group. No stereotypes, no national, cultural, gender or disability caricature, and no demographic labels such as "as a woman" or "as a non-native speaker": the name, the situation and the voice carry who they are.
 - Keep behaviour mild and grounded in the traits. Low patience means stopping sooner, not rudeness; low tech skill means working with what is on screen, not helplessness. Most people are reasonable and busy.
-- A first language other than English shapes the name and the voice, not the quality of their English. Write every field in English.
+- A first language other than English shapes the name and the voice, not the quality of their English. Write every field in English, in Latin letters: a name from another script is romanized, as on a passport.
 - They have not used this product yet: say nothing about its quality or its problems.`;
 
 const FREQUENCY: Record<UsageFrequency, string> = {
@@ -115,8 +116,8 @@ export interface Job {
   traits: Traits;
 }
 
-export const BIOGRAPHY_SYSTEM = `Expand the selected person's sketch into a 150 to 200 word first-person biography. Return only background. Preserve their identity, history, job and voice; keep all sampled traits fixed. Use only supplied prompt attributes and respect omitted fields. Do not invent demographic attributes, stereotype, exaggerate behaviour or judge the product: they have not used it yet. Do not introduce a different name.`;
-const NAMES_SYSTEM = `Suggest four different full names for the selected person, consistent with their supplied attributes. Avoid the taken names. Return only names; do not rewrite their profile or biography. No famous people, placeholders or stereotypes.`;
+export const BIOGRAPHY_SYSTEM = `Expand the selected person's sketch into a 150 to 200 word first-person biography. Return only background. Preserve their identity, history, job and voice; keep all sampled traits fixed. Use only supplied prompt attributes and respect omitted fields. Do not invent demographic attributes, stereotype, exaggerate behaviour or judge the product: they have not used it yet. Do not introduce a different name. Write in English, in Latin letters.`;
+const NAMES_SYSTEM = `Suggest four different full names for the selected person, consistent with their supplied attributes. Avoid the taken names. Return only names, in Latin letters (romanized from another script); do not rewrite their profile or biography. No famous people, placeholders or stereotypes.`;
 
 /**
  * Each persona is written as soon as its sketch is in and every earlier slot holds its name: names settle in job order,
