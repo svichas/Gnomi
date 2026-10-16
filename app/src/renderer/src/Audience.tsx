@@ -210,7 +210,7 @@ export function AudienceTab(props: {
                 </details>
               </div>
               <div className="audience-toolbar-actions">
-                <Button onClick={propose} disabled={plan.busy} small>
+                <Button onClick={propose} disabled={plan.busy} loading={building === 'audience'} small>
                   <Icon name="spark" size={14} />Propose segments again
                 </Button>
                 <Button onClick={() => onAudience(null)} disabled={plan.busy} small>
@@ -295,7 +295,9 @@ export function AudienceTab(props: {
       )}
       <ActionBar>
         <Button className="mr-auto" onClick={props.onBack}><Icon name="back" size={16} />Back to setup</Button>
-        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><Button variant="primary" disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</Button></div>
+        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : stale.size ? 'Your audience changed. Generate personas again to continue.' : needsPersonas ? 'Generate personas to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p>
+          {needsPersonas && <Button variant="primary" disabled={busy} loading={building === 'personas'} onClick={generate}><Icon name="people" size={16} />Generate personas</Button>}
+          <Button variant={needsPersonas ? 'secondary' : 'primary'} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</Button></div>
       </ActionBar>
     </div>
   );

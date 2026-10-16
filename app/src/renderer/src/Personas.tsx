@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { DiversityReport, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
-import { attributeValue, getPersonaSchema, isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
+import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/engine/profile/schema.ts';
 import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
 import { PersonaHeader, ProfileFields, personaLabel } from './ProfileFields.tsx';
 import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
+import { Icon } from './Icon.tsx';
 import { Bars, Button, Card, Field, inputClass, Note } from './ui.tsx';
 
 const ACCESSIBILITY: Record<Persona['accessibility_needs'], string> = {
@@ -60,70 +61,76 @@ const WRITTEN = [
   ['voice', 'Voice'],
 ] as const;
 const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
-const CARD_SUMMARY = ['job_title', 'employer', 'country', 'city', 'timezone', 'languages', 'device', 'tech_skill', 'patience'];
+const GLANCE = ['city', 'country', 'device'];
 
-/** One persona: the sampled traits are shown, only the written fields can be edited by hand. */
+/** One persona, collapsed to who and where they are; opening it shows the full profile, and only the written fields can be edited by hand. */
 function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: boolean; allotted: boolean; busy: boolean; onEdit(persona: Persona): Promise<boolean>; onRegenerate(): void; onRemove(): void }) {
   const { persona, schema, stale, allotted, busy, onEdit, onRegenerate, onRemove } = props;
   const [draft, setDraft] = useState<Persona | null>(null);
   useEffect(() => { if (stale) setDraft(null); }, [stale]);
   const name = personaLabel(persona, schema);
-  const summary = [...CARD_SUMMARY, ...getPersonaSchema(schema).attributes.filter((attribute) => !DEFAULT_IDS.has(attribute.id)).map((attribute) => attribute.id)];
+  const glance = profileEntries(persona, schema).filter(({ attribute }) => GLANCE.includes(attribute.id)).map(({ attribute, value }) => formatAttribute(attribute, value)).join(' · ');
   const written = WRITTEN.filter(([key]) => isAttributeEnabled(schema, key, 'card'));
   return (
     <li aria-label={`${name} persona`} className="persona-card">
-      <PersonaHeader persona={persona} schema={schema} stale={stale} />
-      {draft && !stale ? (
-        <div className="space-y-3">
-          {written.map(([key, label]) => (
-            <Field key={key} label={`${label} (${name})`}>
-              {key === 'name' || key === 'job_title' ? (
-                <input value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} className={inputClass} />
-              ) : (
-                <textarea value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} rows={key === 'background' ? 5 : 2} className={inputClass} />
+      <details>
+        <summary>
+          <PersonaHeader persona={persona} schema={schema} stale={stale} detail={glance} />
+          {stale && <span className="persona-badge">Out of date</span>}
+          <span className="persona-chevron"><Icon name="chevron" size={16} /></span>
+        </summary>
+        <div className="persona-body">
+          {draft && !stale ? (
+            <div className="space-y-3">
+              {written.map(([key, label]) => (
+                <Field key={key} label={`${label} (${name})`}>
+                  {key === 'name' || key === 'job_title' ? (
+                    <input value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} className={inputClass} />
+                  ) : (
+                    <textarea value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} rows={key === 'background' ? 5 : 2} className={inputClass} />
+                  )}
+                </Field>
+              ))}
+              <div className="flex gap-3">
+                <Button
+                  disabled={busy || stale}
+                  onClick={() => { if (!stale) void onEdit(draft).then((saved) => saved && setDraft(null)); }}
+                  aria-label={`Save edits to ${name}`}
+                  variant="primary"
+                >
+                  Save edits
+                </Button>
+                <Button onClick={() => setDraft(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="persona-columns">
+                <div className="persona-facts"><ProfileFields persona={persona} schema={schema} except={[...NARRATIVE_FIELDS, 'name', 'pronouns', 'job_title']} stale={stale} /></div>
+                {stale ? <p className="text-sm text-amber-800">Regenerate this persona to update their biography and voice.</p> : <div className="persona-story"><ProfileFields persona={persona} schema={schema} only={[...NARRATIVE_FIELDS]} /></div>}
+              </div>
+              <div className="persona-actions">
+                <Button onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} small>
+                  Edit
+                </Button>
+                <Button onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} small>
+                  Regenerate
+                </Button>
+                <Button onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} small>
+                  Remove
+                </Button>
+              </div>
+              {allotted && (
+                <p id={`comes-back-${persona.id}`} className="text-xs text-stone-500">
+                  It comes back when you generate again; lower the persona count or the segment&rsquo;s share instead.
+                </p>
               )}
-            </Field>
-          ))}
-          <div className="flex gap-3">
-            <Button
-              disabled={busy || stale}
-              onClick={() => { if (!stale) void onEdit(draft).then((saved) => saved && setDraft(null)); }}
-              aria-label={`Save edits to ${name}`}
-              variant="primary"
-            >
-              Save edits
-            </Button>
-            <Button onClick={() => setDraft(null)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="persona-facts"><ProfileFields persona={persona} schema={schema} only={summary} except={['job_title']} stale={stale} /></div>
-          {stale ? <p className="text-sm text-amber-800">Regenerate this persona to update their biography and voice.</p> : <div className="persona-story"><ProfileFields persona={persona} schema={schema} only={[...NARRATIVE_FIELDS]} /></div>}
-          <details className="persona-more">
-            <summary>Full profile</summary>
-            <div className="pt-3"><ProfileFields persona={persona} schema={schema} except={[...summary, ...NARRATIVE_FIELDS, 'name', 'pronouns']} stale={stale} /></div>
-          </details>
-          <div className="persona-actions">
-            <Button onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} small>
-              Edit
-            </Button>
-            <Button onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} small>
-              Regenerate
-            </Button>
-            <Button onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} small>
-              Remove
-            </Button>
-          </div>
-          {allotted && (
-            <p id={`comes-back-${persona.id}`} className="text-xs text-stone-500">
-              It comes back when you generate again; lower the persona count or the segment&rsquo;s share instead.
-            </p>
+            </>
           )}
-        </>
-      )}
+        </div>
+      </details>
     </li>
   );
 }
@@ -160,7 +167,7 @@ export function PersonaList(props: {
               {group.name} ({group.people.length})
             </summary>
             <div className="space-y-3 border-t border-stone-200 p-4">
-              <ul className="grid gap-3 lg:grid-cols-2">
+              <ul className="space-y-2">
                 {group.people.map((persona) => (
                   <PersonaCard
                     key={persona.id}
