@@ -4,6 +4,7 @@
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from './audience/locations.ts';
 import { randomUUID } from 'node:crypto';
+import { assetMime, assetPath, importLocalFile, importText } from './assets.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
@@ -382,11 +383,13 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       ...(persona_id === null ? {} : { personaId: persona_id }),
     }),
   get_report: ({ run_id }) => buildReport(current().store.events(run_id)),
+  import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
-    // The renderer only ever needs run evidence; recorded logins under sessions/ stay out of its reach even encrypted.
-    if (!path.startsWith('runs/')) throw new Error('Only files from a run can be opened');
-    const data = await current().blobs.get(path);
-    return { mime: 'image/jpeg', base64: Buffer.from(data).toString('base64') };
+    // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.
+    const asset = path.startsWith('assets/') ? path.slice('assets/'.length) : null;
+    if (asset === null && !path.startsWith('runs/')) throw new Error('Only files from a run or a point of interest can be opened');
+    const data = await current().blobs.get(asset === null ? path : assetPath(asset));
+    return { mime: asset === null ? 'image/jpeg' : assetMime(asset), base64: Buffer.from(data).toString('base64') };
   },
 };
 
