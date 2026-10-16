@@ -37,9 +37,9 @@ M0 Walking skeleton ──► M1 Real staging apps ──► M2 Audience ──�
 
 Total: about 27 weeks of calendar time with two engineers, roughly seven months to a shippable 1.0. M5 can run in parallel with M4 if a third engineer joins.
 
-## Implementation status — 15 October 2026
+## Implementation status — 16 October 2026
 
-M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented. **M2 remains in progress; M3 has not started.** The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3 and M4 are merged into `main`. **M2, M3 and M4 each still need full-scale live acceptance;** M5–M7 have not started. The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
 
 The first M2 gap-closure batch adds:
 
@@ -68,7 +68,7 @@ The no-cost rehearsal verified 50 terminal episodes at peak concurrency 12, the 
 
 Scripted tests establish execution and persistence, not live-model detection quality, cost, completion time, profile adherence or language compliance. Default prior-tool lists are empty until configured, and language values represent ordered preferences rather than proficiency scores.
 
-**M3 is in progress** on branch `m3-friction-report`, in parallel with the open M2 live measurements (deferred by the user on 15 October). The first batch adds:
+**M3's first batch is merged** (it was built on `m3-friction-report`, in parallel with the open M2 live measurements, deferred by the user on 15 October). It adds:
 
 - Objective signals (failed action, loop, backtrack, console/page/HTTP error, visible validation error, small mobile target) detected after every step and written to the log, with thresholds frozen in the run snapshot.
 - An end-of-episode survey per persona and POI (sentiment, confidence, likes, frictions, would continue), answered by the navigator model, admitted like a step so stops and the cost cap prevent it, and shown in the inspector.
@@ -78,14 +78,21 @@ Scripted tests establish execution and persistence, not live-model detection qua
 
 All M3 acceptance criteria (recall, precision, stability, control-run false positives) need live runs on Gym v2 and human theme mapping; none has been measured.
 
-**M4 is in progress** on branch `m4-social-swarm`, stacked on M3. The first batch adds:
+**M4's first batch is merged** (built on `m4-social-swarm`, stacked on M3). It adds:
 
 - Social rounds (off by default, a run setting with R rounds, default 5): usage slices that resume each episode, then a social phase. Also a seeded follow graph (6–12 follows, 70% within segment, 10% hubs), feeds of unseen followed posts plus two trending posts, one socialiser call per persona and phase (post, reply, react or stay silent) with opinion updates that cite feed posts, and harness-injected posts.
 - A live swarm tab: Sigma 4 + Graphology with ForceAtlas2 in a worker, used/talked/influenced/friction edges coloured by segment, edge-type and round filters, a time scrubber rebuilt from the log, click-to-inspect, feed threads and social memory in the inspector. The frame-rate check measured 120 fps with 200 personas, 10 POIs and 5,125 connections under live inserts on a development Mac.
 - Opinion spread in the report: posts tagged to themes in the judge call, seed posts, repeats, segments crossed, influence edges, sentiment by round, first-hand versus second-hand frictions, and post/narrative homogeneity in the methods appendix. Markdown and the HTML/PDF export include it.
 - An M4 acceptance mode ([guide](m4-acceptance.md)): an injected complaint over five seeds, same- versus cross-segment spread, an influence audit sheet and a replay check. The scripted rehearsal passes replay; spread and the influence audit need live runs and stay `NOT_RUN`.
 
-Live spread, influence plausibility and graph frame rate on a typical designer laptop are unmeasured.
+Live spread, influence plausibility and graph frame rate on a typical designer laptop are unmeasured at full scale.
+
+**First live runs, 16 October (reduced scale, DeepSeek).** To limit spend, the acceptance runner gained `--provider deepseek`, `--personas N`, `--seeds N` and an M3 mode; criteria set for fifty people stay `NOT_RUN` at a smaller size. Five runs recorded $0.80 in total. Reviews were done by Claude (AI), not a human. [Details and caveats](../tasks/todo.md#low-cost-live-acceptance-on-deepseek--16-october-2026).
+
+- M2 (4 personas and the German probe): episodes, replay and German browser pass; German thoughts and profile adherence look right on review.
+- M3 (4 personas, 2 seeds and a control run): precision 0.67–0.71 against a 0.7 target, high-severity recall 0.4, top-ten overlap 0.83. The control run fails: one theme came from an unchecked checkbox a text-only navigator could not read (prompt fixed), and one from a fixture goal no Gym build supports.
+- M4 (8 personas, 2 seeds): scrubber replay passes; 6 of 6 sampled influence edges are plausible; spread cannot be judged at this size.
+- Fixed along the way: the judge and author timeout (60 s cut off DeepSeek's judge; now 180 s) and the navigator's reading of unchecked state markers.
 
 ---
 
