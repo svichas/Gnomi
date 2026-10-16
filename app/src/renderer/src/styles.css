@@ -513,3 +513,71 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .report-more > summary::before { content: '+'; width: 1em; text-align: center; }
 .report-more[open] > summary::before { content: '−'; }
 .report-more > summary:hover { text-decoration: underline; }
+
+/* POI setup: a readable sequence, focused editors, and descriptive ways to add material. */
+.poi-section-heading { display: flex; align-items: center; gap: 12px; }
+.poi-section-heading h2 { font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+.poi-count { font-size: 12px; color: var(--gnomi-text-muted); background: var(--gnomi-canvas); border-radius: 4px; padding: 2px 8px; }
+.poi-intro { margin: 8px 0 24px; color: var(--gnomi-text-muted); font-size: 13px; max-width: 58ch; }
+.poi-sequence-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; font-weight: 500; color: var(--gnomi-action); }
+.poi-sequence-label span { margin-left: auto; color: var(--gnomi-text-muted); font-weight: 400; }
+.poi-list { display: grid; gap: 12px; }
+.poi-item { min-width: 0; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); }
+.poi-item[data-expanded='true'] { border-color: var(--gnomi-control-border); }
+.poi-item-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--gnomi-canvas); }
+.poi-item[data-expanded='true'] .poi-item-header { border-radius: 12px 12px 0 0; background: var(--gnomi-selected); }
+.poi-order { flex-shrink: 0; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--gnomi-control-border); border-radius: 50%; color: var(--gnomi-action); font-size: 11px; font-variant-numeric: tabular-nums; }
+.poi-item-header h3 { flex: 1; min-width: 0; }
+.poi-toggle { display: flex; width: 100%; align-items: center; gap: 12px; padding: 8px 4px; text-align: left; border-radius: 8px; }
+.poi-item-icon { display: inline-flex; flex-shrink: 0; color: var(--gnomi-action); }
+.poi-item-copy { flex: 1; min-width: 0; }
+.poi-item-copy strong { display: block; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.poi-item-copy > span { display: block; font-size: 12px; color: var(--gnomi-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.poi-chevron { display: flex; color: var(--gnomi-text-muted); transition: transform var(--gnomi-duration); }
+.poi-toggle[aria-expanded='true'] .poi-chevron { transform: rotate(90deg); }
+.poi-item-actions { display: flex; flex-shrink: 0; }
+.poi-remove:hover:not(:disabled) { color: var(--gnomi-error); }
+.poi-editor { display: grid; gap: 20px; padding: 20px; border-top: 1px solid var(--gnomi-line); }
+.poi-editor .disclosure > summary { padding: 12px; gap: 8px; }
+.poi-editor .disclosure-body { padding: 16px; }
+.poi-editor-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--gnomi-line); padding-top: 12px; }
+.poi-editor-footer > span { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--gnomi-text-muted); }
+.poi-editor-footer .quiet-button { margin-left: auto; }
+.poi-add { margin-top: 24px; }
+.poi-add h3 { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+.poi-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.poi-choice { display: flex; align-items: flex-start; gap: 12px; padding: 16px; text-align: left; border: 1px solid var(--gnomi-control-border); border-radius: 8px; background: var(--gnomi-surface); transition: background-color var(--gnomi-duration), border-color var(--gnomi-duration); }
+.poi-choice:hover { background: var(--gnomi-selected); border-color: var(--gnomi-action); }
+.poi-choice-icon { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; background: var(--gnomi-canvas); color: var(--gnomi-action); }
+.poi-choice-copy { flex: 1; min-width: 0; }
+.poi-choice-copy strong { display: block; font-size: 13px; font-weight: 500; margin: 4px 0 6px; }
+.poi-choice-copy > span { display: block; color: var(--gnomi-text-muted); font-size: 12px; line-height: 1.6; }
+.poi-choice-copy small { display: block; color: var(--gnomi-text-muted); font-size: 11px; line-height: 1.5; margin-top: 8px; }
+.poi-choice > svg { margin-top: 8px; color: var(--gnomi-action); }
+.poi-empty { display: flex; gap: 16px; padding: 20px; background: var(--gnomi-canvas); border-radius: 8px; }
+.poi-empty h3 { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+.poi-empty p { color: var(--gnomi-text-muted); font-size: 13px; }
+.poi-site-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.poi-site-mode { display: flex; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--gnomi-control-border); border-radius: 8px; text-align: left; }
+.poi-site-mode[aria-pressed='true'] { border-color: var(--gnomi-action); background: var(--gnomi-selected); }
+.poi-site-mode > svg { margin-top: 2px; color: var(--gnomi-action); }
+.poi-site-mode strong { display: block; font-size: 13px; font-weight: 500; }
+.poi-site-mode small { display: block; margin-top: 4px; color: var(--gnomi-text-muted); font-size: 12px; }
+.poi-upload { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; padding: 24px 16px; border: 1px dashed var(--gnomi-control-border); border-radius: 8px; background: var(--gnomi-canvas); color: var(--gnomi-action); text-align: center; }
+.poi-upload:hover:not(:disabled) { background: var(--gnomi-selected); }
+.poi-upload strong { font-size: 13px; font-weight: 500; }
+.poi-upload small { font-size: 12px; color: var(--gnomi-text-muted); }
+@media (max-width: 600px) {
+  .poi-choices { grid-template-columns: minmax(0, 1fr); }
+  .poi-section { padding: 16px; }
+  .poi-item-header { flex-wrap: wrap; gap: 4px 8px; padding: 8px; }
+  .poi-item-header h3 { flex-basis: calc(100% - 40px); }
+  .poi-item-actions { margin-left: auto; }
+  .poi-editor { padding: 12px; gap: 16px; }
+  .poi-sequence-label span { width: 100%; margin-left: 0; }
+  .poi-site-modes { grid-template-columns: minmax(0, 1fr); }
+  .poi-choice { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .poi-chevron, .poi-choice { transition: none; }
+}

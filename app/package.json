@@ -10,6 +10,7 @@
     "typecheck": "tsc -p .",
     "smoke": "electron-vite build && node smoke.ts",
     "smoke:projects": "electron-vite build && node projects.smoke.ts",
+    "smoke:poi": "electron-vite build && node poi.smoke.ts",
     "smoke:text": "electron-vite build && node text.smoke.ts",
     "smoke:profiles": "electron-vite build && node profiles.smoke.ts",
     "smoke:budget": "electron-vite build && node budget.smoke.ts",

@@ -73,11 +73,15 @@ export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <div role="group" aria-label="Whose site this is" className="flex flex-wrap gap-2">
-          <Button small variant="quiet" aria-pressed={!observing} onClick={() => set('mode', 'full')}>Our product</Button>
-          <Button small variant="quiet" aria-pressed={observing} onClick={() => set('mode', 'observe_only')}>Competitor, observe only</Button>
+        <div role="group" aria-label="Whose site this is" className="poi-site-modes">
+          <button type="button" className="poi-site-mode" aria-label="Our product" aria-pressed={!observing} onClick={() => set('mode', 'full')}>
+            <Icon name={observing ? 'globe' : 'check'} size={18} /><span><strong>Our product</strong><small>Explore, click, and complete tasks</small></span>
+          </button>
+          <button type="button" className="poi-site-mode" aria-label="Competitor, observe only" aria-pressed={observing} onClick={() => set('mode', 'observe_only')}>
+            <Icon name={observing ? 'check' : 'globe'} size={18} /><span><strong>Competitor, observe only</strong><small>Browse and compare, without submitting</small></span>
+          </button>
         </div>
-        <p className="text-sm text-stone-600">
+        <p className="text-xs leading-relaxed text-stone-600">
           {observing
             ? 'Personas browse and read but never send anything: Gnomi blocks every form submission and other write, opens at most one page every two seconds, follows the site’s robots.txt and never uses a recorded login. Afterwards the survey asks them to compare it with your product.'
             : 'Personas use it as your users would: they click, type and submit, and can log in with a recorded login.'}
@@ -98,7 +102,7 @@ export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>
         </div>
       )}
       <details className="disclosure">
-        <summary><Icon name="settings" />Access & advanced options<span>Allowed websites and safety</span></summary>
+        <summary><Icon name="settings" />Website access & safety<span>Optional settings</span></summary>
         <div className="space-y-5 disclosure-body">
           <Card title="Safety">
             <div className="space-y-4">

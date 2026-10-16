@@ -1,6 +1,11 @@
 import type { CSSProperties } from 'react';
 
 const paths = {
+  up: 'M12 19V5m-6 6 6-6 6 6',
+  down: 'M12 5v14m-6-6 6 6 6-6',
+  trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7',
+  image: 'M4 3h16v18H4V3Zm0 13 5-5 4 4 3-3 4 4M16 7h.01',
+  figma: 'M12 9H8a3 3 0 0 1 0-6h8a3 3 0 0 1 0 6h-4Zm0-6v15a3 3 0 1 1-3-3H8a3 3 0 1 1 0-6m4 3a3 3 0 1 0 6 0 3 3 0 0 0-6 0Z',
   arrow: 'M5 12h14m-6-6 6 6-6 6',
   back: 'M19 12H5m6 6-6-6 6-6',
   chevron: 'm9 5 7 7-7 7',

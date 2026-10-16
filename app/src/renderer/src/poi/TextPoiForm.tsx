@@ -79,8 +79,8 @@ export function TextPoiForm({ draft, onChange }: PoiFormProps<TextPoi>) {
 
   return (
     <div className="space-y-3">
-      <Field label="Paste the text" hint="Markdown or plain text, as a reader would see it: a pricing page, an email, onboarding copy.">
-        <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={8} className={inputClass} />
+      <Field label="Paste the text" hint="Add the words you want feedback on, just as your reader would see them.">
+        <textarea value={pasted} onChange={(e) => setPasted(e.target.value)} rows={6} placeholder="Paste your email, pricing page, or onboarding copy here…" className={inputClass} />
       </Field>
       <div className="flex flex-wrap items-center gap-3">
         <Button small variant="primary" loading={busy} disabled={!pasted.trim()} onClick={() => void save({ text: pasted })}>

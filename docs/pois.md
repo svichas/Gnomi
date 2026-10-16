@@ -80,6 +80,14 @@ An episode runner must:
 - **Scripted.** `DEMO_NAVIGATOR` answers `read_text` with `DEMO_READ` (the part's first line as a labelled sample confusion at its real offsets) and `buyer_survey` with `DEMO_BUYER_SURVEY`. `poi/text.test.ts` runs Gym v3's pricing copy (D28) with a buyer and a user segment.
 - **App.** `TextPoiForm.tsx` takes pasted text or a `.md`/`.txt` file (read in the page, checked for UTF-8 and 2 MB, sent as `import_asset { text, name }`) and previews the saved text, with "Replace the text". The audience editor's Users / Buyers control sets `Segment.kind`. `npm run smoke:text -w @gnomi/app` pastes the pricing copy, marks a segment as buyers and runs it with the scripted models.
 
+## Project setup
+
+The Points of interest section offers four ways to add material: a web app, pasted or uploaded text, design images, or frames from Figma. Numbered rows show the order personas try them. Open a row to edit it, use the arrow controls to reorder it, or remove it with the trash control. Adding an item opens its editor and focuses its name. Collapsing an editor preserves unfinished text and ongoing imports. Changes are saved with **Save project** or **Continue to audience**.
+
+Names are optional. Audience selection is under **Who tries this?**, and website restrictions are under **Website access & safety**. Product sites still require the existing staging/production confirmation; competitor sites remain observe-only. The design picker accepts multiple PNG, JPEG, or WebP files, either selected or dropped.
+
+`npm run smoke:poi -w @gnomi/app` checks adding, collapsing without losing text, keyboard focus, reordering, removing, saving, the Figma entry point, and narrow layouts in a disposable Electron project.
+
 ## App registry: `app/src/renderer/src/poi/`
 
 - `index.ts` holds `POI_KINDS`: per type a `PoiKind` with `label`, `blank(id)`, `draft(poi)`, `toPoi(draft)` (the POI or a sentence saying what is missing) and `title(draft)`. Drafts are what the Project screen edits; `form.ts` turns them into `ProjectConfig.pois`.
