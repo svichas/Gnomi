@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
-import { configuredProviders, routeOptions, routeProblem, withAvailableProvider, type ProviderEntry } from './providers.ts';
+import { configuredProviders, egressList, routeOptions, routeProblem, withAvailableProvider, type ProviderEntry, type ProviderList } from './providers.ts';
 
 const entry = (provider: ProviderEntry['provider']): ProviderEntry => ({ provider, masked: 'sk-…abcd', remembered: true, test: null });
 
@@ -47,4 +47,13 @@ test('no provider or multiple connected providers do not silently choose a repla
   assert.equal(withAvailableProvider(DEFAULT_SETTINGS, [entry('deepseek'), entry('openai')]), DEFAULT_SETTINGS);
   const settings = { ...DEFAULT_SETTINGS, routing: PROVIDER_DEFAULTS.deepseek };
   assert.equal(withAvailableProvider(settings, [entry('deepseek'), entry('anthropic')]), settings);
+});
+
+test('the egress list names each connected provider and the local endpoint, and Figma only while a token is saved', () => {
+  const list = (over: Partial<ProviderList>): ProviderList => ({ keys: [], local_test: null, figma: null, ...over });
+  const hosts = (l: ProviderList, local: string | null = null) => egressList(l, local).map((e) => e.host);
+  assert.deepEqual(hosts(list({})), []);
+  assert.deepEqual(hosts(list({ keys: [entry('deepseek'), entry('google')] }), 'http://localhost:11434/v1'), ['api.deepseek.com', 'generativelanguage.googleapis.com', 'localhost:11434']);
+  assert.deepEqual(hosts(list({ keys: [entry('anthropic')] }), 'not a url'), ['api.anthropic.com']);
+  assert.deepEqual(hosts(list({ figma: { masked: 'fig…6789', remembered: true, test: null } })), ['api.figma.com', '*.amazonaws.com']);
 });

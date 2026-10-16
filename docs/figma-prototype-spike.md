@@ -209,6 +209,7 @@ Observation: the current frame PNG, with an open overlay composited over a dimme
 5. **Credential type (Developer Terms §3(a); authentication page).** Personal access tokens are described as for individual use and local tooling. May a commercially distributed app ask each user to paste one, or must it register an OAuth app (and then publish a privacy policy and gather consents, §7(b))? An OAuth app changes setup, rate-limit accounting (per user, plan and app) and distribution.
 6. **Sending frames to AI providers.** The terms I received do not address it and point to Figma AI Terms. Does sending a user's exported frames to a third-party model, using the user's own key, need anything from Figma or from the user beyond their own authority over the file?
 7. **Storage.** Is keeping exports and the raw file JSON in a local project folder, and in an exported report, within the terms?
+8. **The importer that now exists (M5).** Frame import is built ([pois.md](pois.md#figma-frames-enginesrcfigma)): users paste a personal access token in Settings, Gnomi calls `GET /v1/files/:key`, `/v1/files/:key/nodes` and `/v1/images/:key` read-only, downloads the renders from Figma's image storage and keeps the PNGs in the project. Questions 1, 4, 5 and 7 therefore apply to this importer now, not only to the simulation: settle them before a commercial release.
 
 ## 8. Corrections suggested to existing docs
 

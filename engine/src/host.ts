@@ -11,6 +11,9 @@ import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './llm/scripted.ts';
+import { figmaClient } from './figma/client.ts';
+import { fakeFigma } from './figma/fake.ts';
+import { importFrames, listFrames, previews } from './figma/frames.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -35,6 +38,11 @@ interface PortLike {
 
 // GNOMI_FAKE_LLM=1 runs scripted personas and a scripted persona writer with no key and no cost, for UI smoke tests and demos.
 const FAKE_LLM = process.env.GNOMI_FAKE_LLM === '1';
+
+// GNOMI_FAKE_FIGMA=1 answers Figma requests from a fixture file (engine/src/figma/fake.ts): no token, no network. Any other
+// value is that fixture's options as JSON, e.g. '{"nullRender":["1:5"]}' for a frame Figma cannot render.
+const fakeFigmaApi = process.env.GNOMI_FAKE_FIGMA ? fakeFigma(process.env.GNOMI_FAKE_FIGMA === '1' ? {} : JSON.parse(process.env.GNOMI_FAKE_FIGMA)) : undefined;
+const figma = () => figmaClient({ token: secrets.get('figma_token') ?? null, fetch: fakeFigmaApi });
 
 const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -254,6 +262,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const result = await testProviderKey(provider, credential);
     return result.ok ? { ok: true, error: null } : { ok: false, error: result.error };
   },
+  async figma_test() {
+    try {
+      await figma().check();
+      return { ok: true, error: null };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
+  figma_frames: ({ link }) => listFrames(figma(), link),
+  figma_previews: (params) => previews(figma(), params),
+  figma_import: (params) => importFrames(figma(), current().blobs, params),
   propose_audience: () => writeSetup(() => proposeAudience(writer(project()))),
   generate_personas: () => writeSetup(async () => {
     const { config, audience } = withAudience();
@@ -399,7 +418,7 @@ function serve(transport: Transport) {
   clients.add(transport);
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
-    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret';
+    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret' && !['figma_test', 'figma_frames', 'figma_previews'].includes(msg.method); // the rest of Figma's work reads no project
     if (projectTask) projectRequests++;
     try {
       const handler = handlers[msg.method] as (params: unknown) => unknown;

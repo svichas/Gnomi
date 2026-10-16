@@ -17,6 +17,7 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "smoke:ui": "electron-vite build && node ui.smoke.ts",
     "smoke:providers": "electron-vite build && node providers.smoke.ts",
+    "smoke:figma": "electron-vite build && node figma.smoke.ts",
     "smoke:audience": "electron-vite build && node audience.smoke.ts",
     "smoke:completion": "electron-vite build && node completion.smoke.ts"
   },
