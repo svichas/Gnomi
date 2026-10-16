@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Persona } from '@gnomi/engine/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '../../../../engine/src/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, setCountryShare, setShare } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
   assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
@@ -108,4 +108,16 @@ test('a persona the user added is told apart from one the shares allot, by the e
   assert.equal(addedByHand(person('seg-2', 9, addedSeed(99, 'seg-2', 9)), 100), false, 'seeded under another audience seed: not recognised, so it is treated as allotted');
   assert.equal(addedByHand({ ...person('seg-2', 9, addedSeed(99, 'seg-2', 9)), segment_id: null }, 99), false, 'the built-in persona has no segment');
   assert.equal(addedByHand(person('seg-2', 9, addedSeed(99, 'seg-2', 9)), null), false, 'no saved audience');
+});
+
+test('the persona count splits by share with at least 3 per segment, fewer only when the run is too small', () => {
+  const audience = (persona_count: number, shares: number[]) => {
+    const base = blankAudience('A product');
+    return { ...base, persona_count, segments: shares.map((share, i) => ({ ...base.segments[0], id: `seg-${i + 1}`, share })) };
+  };
+  assert.deepEqual(segmentCounts(audience(50, [50, 30, 20])), [25, 15, 10]);
+  assert.deepEqual(segmentCounts(audience(10, [90, 10])), [7, 3]);
+  assert.deepEqual(segmentCounts(audience(4, [90, 5, 5])), [2, 1, 1]);
+  assert.deepEqual(segmentCounts(audience(1, [60, 40])), [1, 0]);
+  assert.deepEqual(segmentCounts(audience(20, [100, 0])), [20, 0]);
 });

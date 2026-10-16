@@ -1,4 +1,12 @@
-import type { GnomiEvent } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, RunEstimate } from '@gnomi/engine/types.ts';
+
+const range = (low: number, high: number, show: (n: number) => string) => (show(low) === show(high) ? show(low) : `${show(low)}–${show(high)}`);
+
+/** "about $0.40–$0.90 and 3–6 minutes", with the models it could not price. */
+export function estimateText(estimate: RunEstimate): string {
+  const minutes = range(Math.max(1, Math.round(estimate.minutes[0])), Math.max(1, Math.round(estimate.minutes[1])), String);
+  return `About ${range(estimate.cost_usd[0], estimate.cost_usd[1], (n) => `$${n.toFixed(2)}`)} and ${minutes} ${minutes === '1' ? 'minute' : 'minutes'}`;
+}
 
 /** The meter uses recorded charges, including retries; absent legacy metadata proves neither complete nor missing usage. */
 export function recordedCost(events: GnomiEvent[]): { cost_usd: number; unreported_usage_calls: number } {

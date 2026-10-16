@@ -193,8 +193,8 @@ try {
 
   await card('Hiring team').getByRole('button', { name: 'Open Hiring team', exact: true }).click();
   await page.getByRole('heading', { name: 'What to test' }).waitFor();
-  await page.getByRole('button', { name: 'Start run', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Start run', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & start', exact: true }).click();
+  await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor({ timeout: 60_000 });
   await home();
   await card('Second app').getByRole('button', { name: 'Open Second app', exact: true }).click();

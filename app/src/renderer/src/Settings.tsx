@@ -5,7 +5,7 @@ import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } fro
 import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';
-import { Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
+import { ActionBar, Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
@@ -15,7 +15,7 @@ const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
 };
 
-const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
+export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
   navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
   persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
   socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },
@@ -320,15 +320,13 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         </div>
       </Card>
 
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={onSave} disabled={saving.busy} className={primaryButton}>
-            Save settings
-          </button>
-          {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
-        </div>
+      <ActionBar>
         {saving.outcome && <Note tone={saving.outcome.ok ? 'ok' : 'error'}>{saving.outcome.text}</Note>}
-      </div>
+        {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
+        <button type="button" onClick={onSave} disabled={saving.busy} className={primaryButton}>
+          Save settings
+        </button>
+      </ActionBar>
     </div>
   );
 }

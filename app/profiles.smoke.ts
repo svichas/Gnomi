@@ -147,8 +147,8 @@ try {
   await page.setViewportSize({ width: 1100, height: 780 });
 
   await tab('Project');
-  await page.getByRole('button', { name: 'Start run', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Start run', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & start', exact: true }).click();
+  await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click({ timeout: 120_000 });
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor({ timeout: 120_000 });
   await page.locator('summary').filter({ hasText: 'Audience filters' }).click();

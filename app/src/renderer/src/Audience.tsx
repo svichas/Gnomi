@@ -1,18 +1,61 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig } from '@gnomi/engine/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate } from '@gnomi/engine/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { personaProfileIsCurrent } from '@gnomi/engine/profile/signature.ts';
-import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, setShare } from './audience.ts';
+import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
+import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
 import { PersonaList } from './Personas.tsx';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
-import { Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
+import { ActionBar, Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
+
+/** Where the audience stands on its way to a run; the review step shows it too, at its last stage. */
+export function AudienceSteps({ stage }: { stage: 1 | 2 | 3 }) {
+  return (
+    <ol className="audience-steps" aria-label="Prepare your audience">
+      <li data-complete={stage > 1 || undefined} aria-current={stage === 1 ? 'step' : undefined}><span>{stage > 1 ? <Icon name="check" size={16} /> : '1'}</span><div><strong>Define audience</strong><small>Choose your groups</small></div></li>
+      <li data-complete={stage > 2 || undefined} aria-current={stage === 2 ? 'step' : undefined}><span>{stage > 2 ? <Icon name="check" size={16} /> : '2'}</span><div><strong>Build personas</strong><small>Create the people</small></div></li>
+      <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
+    </ol>
+  );
+}
+
+/** The size of the audience, up front: it sets how many people are written and what each run costs. */
+function PersonaCount({ audience, onChange, estimate, written }: { audience: Audience; onChange(count: number): void; estimate: RunEstimate | null; written: number }) {
+  const id = useId();
+  const count = audience.persona_count;
+  const counts = Number.isInteger(count) && count >= PERSONA_MINIMUM && count <= PERSONA_MAXIMUM ? segmentCounts(audience) : null;
+  return (
+    <div className="persona-count">
+      <div>
+        <label htmlFor={id} className="persona-count-label">Number of personas</label>
+        <NumberInput id={id} label="Number of personas" value={count} onChange={onChange} min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} aria-describedby={`${id}-hint`} />
+        <input type="range" aria-label="Adjust the number of personas" min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} value={Math.min(PERSONA_MAXIMUM, Math.max(PERSONA_MINIMUM, count))} onChange={(event) => onChange(Number(event.target.value))} className="persona-count-range" />
+        <p id={`${id}-hint`} className="persona-count-hint">{PERSONA_MINIMUM} to {PERSONA_MAXIMUM}. Use 1 for a quick check.</p>
+      </div>
+      <div>
+        {counts && (
+          <ul aria-label="Personas per segment" className="persona-count-split">
+            {audience.segments.map((segment, index) => (
+              <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+                <span className="segment-dot" /><span>{segment.name.trim() || 'Unnamed segment'}</span><strong>{counts[index]}</strong>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="persona-count-hint">Split by share, with at least 3 per segment when there are enough to go round.</p>
+        {estimate && <p className="persona-count-estimate"><span>Each run with the {written} personas written</span>{estimateText(estimate)}</p>}
+      </div>
+    </div>
+  );
+}
 
 /** The audience tab: who the product is for, in proportions the team controls (idea.md §5.1 step 3). */
 export function AudienceTab(props: {
@@ -45,6 +88,16 @@ export function AudienceTab(props: {
   const needsPersonas = audience !== null && (personas.length === 0 || stale.size > 0);
   const busy = plan.busy || people.busy;
   const stage = building === 'audience' || audience === null ? 1 : building === 'personas' || needsPersonas ? 2 : 3;
+  const [estimate, setEstimate] = useState<RunEstimate | null>(null);
+
+  // A run estimate for the personas already written; none while they are missing or out of date, as it would describe other people.
+  useEffect(() => {
+    setEstimate(null);
+    if (!audience || needsPersonas) return;
+    let current = true;
+    call('estimate_run', {}).then((result) => current && setEstimate(result.unpriced.length ? null : result), () => {});
+    return () => { current = false; };
+  }, [info, needsPersonas]);
 
   // Only while this tab is generating: a late message must not bring the bar back.
   useEffect(() => onProgress((progress) => setProgress((was) => was && progress)), []);
@@ -119,11 +172,7 @@ export function AudienceTab(props: {
   const several = segments.length > 1;
   return (
     <div className="space-y-5">
-      <ol className="audience-steps" aria-label="Prepare your audience">
-        <li data-complete={stage > 1 || undefined} aria-current={stage === 1 ? 'step' : undefined}><span>{stage > 1 ? <Icon name="check" size={16} /> : '1'}</span><div><strong>Define audience</strong><small>Choose your groups</small></div></li>
-        <li data-complete={stage > 2 || undefined} aria-current={stage === 2 ? 'step' : undefined}><span>{stage > 2 ? <Icon name="check" size={16} /> : '2'}</span><div><strong>Build personas</strong><small>Create the people</small></div></li>
-        <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
-      </ol>
+      <AudienceSteps stage={stage} />
       <Card title="Audience">
         {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
@@ -145,10 +194,8 @@ export function AudienceTab(props: {
         ) : (
           <div className="space-y-5">
             <div className="audience-toolbar">
-              <div>
-                <Field label="Number of personas" hint={`${PERSONA_MINIMUM} to ${PERSONA_MAXIMUM}. Use 1 for a quick check.`}>
-                  <NumberInput label="Number of personas" value={audience.persona_count} onChange={(v) => onAudience({ ...audience, persona_count: v })} min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} />
-                </Field>
+              <div className="audience-toolbar-main">
+                <PersonaCount audience={audience} onChange={(persona_count) => onAudience({ ...audience, persona_count })} estimate={estimate} written={personas.length} />
                 <details className="audience-seed">
                   <summary>Reproducibility options</summary>
                   <div className="audience-seed-body">
@@ -246,10 +293,10 @@ export function AudienceTab(props: {
           onAdd={(segmentId) => void change((cost) => `Added a persona (${usd(cost)}).`, () => call('add_persona', { segment_id: segmentId }))}
         />
       )}
-      <div className="flow-footer audience-footer">
-        <button type="button" className={secondaryButton} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
-        <div><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
-      </div>
+      <ActionBar>
+        <button type="button" className={`${secondaryButton} mr-auto`} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
+        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
+      </ActionBar>
     </div>
   );
 }

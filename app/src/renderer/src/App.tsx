@@ -9,6 +9,8 @@ import { Project } from './Project.tsx';
 import type { ProjectAction, ProjectCatalog } from '../../projects.ts';
 import { configuredProviders, withAvailableProvider, type ProviderList } from '../../providers.ts';
 import { ProjectDialog, Projects } from './Projects.tsx';
+import { Review } from './Review.tsx';
+import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
 import { Note, primaryButton, secondaryButton } from './ui.tsx';
@@ -18,6 +20,7 @@ import logo from '../../../../assets/brand/gnomi-logo.svg';
 const TABS = [
   { id: 'project', label: 'Setup' },
   { id: 'audience', label: 'Audience' },
+  { id: 'review', label: 'Review' },
   { id: 'run', label: 'Activity' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'] | 'settings';
@@ -38,7 +41,8 @@ export function App() {
   const [sessionsPersist, setSessionsPersist] = useState(true);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
-  const [reviewRequest, setReviewRequest] = useState(0);
+  const [review, setReview] = useState<{ key: number; config: ProjectConfig | string } | null>(null);
+  const reviews = useRef(0);
   const [returnTab, setReturnTab] = useState<Tab>('project');
   const [providers, setProviders] = useState<ProviderList | null>(null);
   const [revision, setRevision] = useState(0);
@@ -63,7 +67,7 @@ export function App() {
     baseline.current = JSON.stringify(next);
     setCatalog(projects);
     setRunId(project.runs.find((run) => run.status === 'running')?.run_id ?? project.runs[0]?.run_id ?? null);
-    setReviewRequest(0);
+    setReview(null);
     setRevision((was) => was + 1);
   }
 
@@ -150,6 +154,20 @@ export function App() {
     setUnsaved(null);
   }
 
+  // The review describes what will start, so every visit saves the project first and checks again from scratch.
+  async function openReview() {
+    setTab('review');
+    setReview(null);
+    let config: ProjectConfig | string;
+    try { config = await save(); } catch (err) { config = errorText(err); }
+    setReview({ key: ++reviews.current, config });
+  }
+  const go = (to: Tab) => (to === 'review' ? void openReview() : setTab(to));
+  const fix = (screen: ReviewScreen) => {
+    if (screen === 'settings') setReturnTab('review');
+    setTab(screen);
+  };
+
   const setForm = (update: (form: Form) => Form) => setDraft((was) => was && { ...was, form: update(was.form) });
   const setSettings = (settings: RunSettings) => setDraft((was) => was && { ...was, settings: providers ? withAvailableProvider(settings, providers.keys) : settings });
   const setAudience = (audience: Audience | null) => setDraft((was) => was && { ...was, audience });
@@ -161,14 +179,16 @@ export function App() {
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
   };
   const back = () => {
-    if (tab === 'settings') setTab(returnTab);
-    else if (tab === 'run') setTab('audience');
+    if (tab === 'settings') go(returnTab);
+    else if (tab === 'run') go('review');
+    else if (tab === 'review') setTab('audience');
     else if (tab === 'audience') setTab('project');
     else showHome();
   };
   const headings = {
     project: ['What would you like to learn?', 'Give your simulated users a place to start and a goal to try.'],
     audience: ['A few different perspectives.', 'Choose who will try your product. These personas are simulated users.'],
+    review: ['One last look before you start.', 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
     run: ['See the experience unfold.', 'Follow what people try, where they pause, and what they have to say.'],
     settings: ['Make Gnomi work for you.', 'Connect an AI provider and choose your limits.'],
   };
@@ -179,7 +199,7 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <button type="button" id="tab-settings" className="quiet-button header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') setTab(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></button>}
+        {!home && <button type="button" id="tab-settings" className="quiet-button header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></button>}
       </header>
 
       <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
@@ -195,9 +215,9 @@ export function App() {
           // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
           <div key={revision} hidden={home}>
             <div className="journey-nav">
-              <button type="button" className="quiet-button back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to audience' : 'Back to setup'}</button>
+              <button type="button" className="quiet-button back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</button>
               <nav aria-label="Project steps" className="step-nav">
-                {TABS.map(({ id, label }, index) => <button key={id} type="button" id={`tab-${id}`} aria-current={tab === id ? 'step' : undefined} onClick={() => setTab(id)}><span className="step-number">{index + 1}</span>{label}</button>)}
+                {TABS.map(({ id, label }, index) => <button key={id} type="button" id={`tab-${id}`} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span>{label}</button>)}
               </nav>
             </div>
             <div className="page-heading"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : currentProject?.name ?? 'Your project'}</p><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
@@ -213,18 +233,31 @@ export function App() {
                 sessionsPersist={sessionsPersist}
                 onSaved={refresh}
                 onAudience={() => setTab('audience')}
-                reviewRequest={reviewRequest}
+                onReview={() => void openReview()}
                 onSettings={() => { setReturnTab('project'); setTab('settings'); }}
                 needsProvider={providers !== null && configuredProviders(providers.keys, draft.settings.local_base_url).length === 0}
-                onStarted={(id) => {
-                  setRunId(id);
-                  setTab('run');
-                  void refresh();
-                }}
               />
             </div>
             <div role="region" id="panel-audience" aria-labelledby="tab-audience" hidden={tab !== 'audience'}>
-              <AudienceTab audience={draft.audience} onAudience={setAudience} schema={draft.persona_schema} onSchema={setSchema} info={info} description={draft.form.description} projectName={draft.form.name} goal={draft.form.goal} save={save} refresh={refresh} onBack={() => setTab('project')} onReview={() => { setTab('project'); setReviewRequest((value) => value + 1); }} />
+              <AudienceTab audience={draft.audience} onAudience={setAudience} schema={draft.persona_schema} onSchema={setSchema} info={info} description={draft.form.description} projectName={draft.form.name} goal={draft.form.goal} save={save} refresh={refresh} onBack={() => setTab('project')} onReview={() => void openReview()} />
+            </div>
+            <div role="region" id="panel-review" aria-labelledby="tab-review" hidden={tab !== 'review'}>
+              {review ? (
+                <Review
+                  key={review.key}
+                  config={review.config}
+                  info={info}
+                  onFix={fix}
+                  onBack={() => setTab('audience')}
+                  onRecheck={() => void openReview()}
+                  onChecked={refresh}
+                  onStarted={(id) => {
+                    setRunId(id);
+                    setTab('run');
+                    void refresh();
+                  }}
+                />
+              ) : <p className="text-sm text-stone-500">Saving your project and checking the run…</p>}
             </div>
             <div role="region" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
               <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onRunEnded={refresh} onSetup={() => setTab('project')} />

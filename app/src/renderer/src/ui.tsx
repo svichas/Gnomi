@@ -66,6 +66,25 @@ export function NumberInput(props: { value: number; onChange(value: number): voi
   );
 }
 
+/**
+ * A step's actions, floating at the foot of the window. It is rendered where the buttons were, so the focus order is unchanged,
+ * and the page is padded by its measured height (styles.css) so it never covers the last fields.
+ */
+export function ActionBar({ children }: { children: ReactNode }) {
+  const bar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = bar.current;
+    if (!element) return;
+    const watcher = new ResizeObserver(() => {
+      // A bar on a hidden tab measures 0; only the one showing sets the space.
+      if (element.offsetHeight) document.documentElement.style.setProperty('--action-bar-height', `${element.offsetHeight}px`);
+    });
+    watcher.observe(element);
+    return () => watcher.disconnect();
+  }, []);
+  return <div ref={bar} className="action-bar">{children}</div>;
+}
+
 export function ProgressBar({ value, max, label }: { value: number; max: number; label: string }) {
   return (
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-2 w-full overflow-hidden rounded-full bg-stone-200">

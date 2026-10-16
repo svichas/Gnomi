@@ -47,13 +47,13 @@
   ::selection { background: var(--gnomi-sage); color: var(--gnomi-ink); }
 }
 
-.app-header { min-height: 88px; display: flex; align-items: center; gap: 24px; padding: 12px 40px; background: var(--gnomi-surface); border-bottom: 1px solid var(--gnomi-line); }
+.app-header { min-height: 88px; display: flex; align-items: center; gap: 24px; padding: 12px 32px; background: var(--gnomi-surface); border-bottom: 1px solid var(--gnomi-line); }
 .brand-link { flex-shrink: 0; padding: 4px 8px; margin-left: -8px; border-radius: 8px; }
 .brand-link img { display: block; width: 130px; height: 40px; }
 .header-divider { width: 1px; height: 24px; background: var(--gnomi-line); }
 .header-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gnomi-text-muted); }
 .header-settings { margin-left: auto; }
-.app-main { max-width: 1200px; margin: auto; padding: 24px 40px 64px; }
+.app-main { max-width: 1200px; margin: auto; padding: 20px 32px 48px; }
 .projects-main { max-width: 1000px; padding-top: 64px; }
 .page-heading { margin: 32px 0; }
 .page-heading .eyebrow { font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 12px; color: var(--gnomi-action); }
@@ -125,7 +125,11 @@
 .persona-preview strong { font-weight: 500; }
 .persona-preview p { font-size: 12px; color: var(--gnomi-text-muted); }
 .persona-avatar { display: inline-flex; justify-content: center; align-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb, var(--avatar-color) 12%, white); border: 1px solid color-mix(in srgb, var(--avatar-color) 25%, white); color: var(--gnomi-ink); font-size: 11px; font-weight: 500; letter-spacing: .01em; }
-.flow-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 24px 0 8px; border-top: 1px solid var(--gnomi-line); margin-top: 24px; }
+/* A step's actions float at the foot of the window (ActionBar in ui.tsx); the page and focus scrolling leave room for the bar showing, so it covers nothing at the end. */
+.action-bar { position: fixed; z-index: 20; inset-inline: 0; bottom: 24px; width: calc(min(var(--action-bar-width, 1136px), 100% - 64px) - 48px); /* inset from the content's edges, so it never lines up with a card behind it */ margin: 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; box-shadow: 0 8px 24px #22282314; }
+.action-bar > p { flex: 1 1 240px; }
+.app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
+html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
 .disclosure { border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); }
 .disclosure > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; list-style: none; padding: 16px 20px; font-size: 13px; font-weight: 500; }
 .disclosure > summary::-webkit-details-marker { display: none; }
@@ -135,7 +139,33 @@
 .disclosure-body { border-top: 1px solid var(--gnomi-line); padding: 20px; }
 .disclosure-body .content-panel { padding: 0; border: 0; border-radius: 0; }
 .disclosure-body .content-panel + .content-panel { border-top: 1px solid var(--gnomi-line); padding-top: 20px; }
-.run-page { max-width: 960px; margin: auto; }
+.run-page { max-width: 960px; margin: auto; --action-bar-width: 960px; }
+.review-page { max-width: 960px; margin: auto; display: grid; gap: 24px; --action-bar-width: 960px; }
+.review-issues { padding: 20px 24px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-left: 3px solid var(--gnomi-warning); border-radius: 12px; }
+.review-issues[data-blocking] { border-left-color: var(--gnomi-error); }
+.review-issues h2 { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+.review-issues li { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--gnomi-line); }
+.review-issues li:last-child { border-bottom: 0; padding-bottom: 0; }
+.review-issues li > p { flex: 1 1 280px; }
+.review-issue-blocking { color: var(--gnomi-error); }
+.review-issue-warning { color: var(--gnomi-warning); }
+.review-ready { display: flex; gap: 16px; align-items: flex-start; padding: 24px; border: 1px solid var(--gnomi-sage); border-radius: 12px; background: var(--gnomi-selected); }
+.review-ready h2 { font-size: 18px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 4px; }
+.review-ready p { color: var(--gnomi-text-muted); font-size: 13px; max-width: 60ch; }
+.review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
+.review-wide { grid-column: 1 / -1; }
+.review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.review-card-head h2 { font-size: 16px; font-weight: 500; }
+.review-facts { display: grid; gap: 16px; }
+.review-facts dt { font-size: 12px; color: var(--gnomi-text-muted); margin-bottom: 2px; }
+.review-facts dd { overflow-wrap: anywhere; }
+.review-fact-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px; }
+.review-note { font-size: 12px; color: var(--gnomi-text-muted); }
+.review-segments { display: grid; gap: 6px; }
+.review-segments li { display: flex; align-items: flex-start; gap: 8px; }
+.review-segments .segment-dot { margin-top: 6px; }
+.review-segments strong { font-weight: 500; margin-right: 4px; }
+.review-status { font-size: 12px; color: var(--gnomi-text-muted); text-align: right; }
 .run-history-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 24px; color: var(--gnomi-text-muted); font-size: 12px; }
 .run-history-bar label { display: flex; align-items: center; gap: 8px; }
 .run-history-bar .text-link { margin-left: auto; }
@@ -235,8 +265,13 @@
   .timeline-toolbar .quiet-button { padding-right: 0; }
   .timeline-toolbar > div:last-child { flex-wrap: wrap; justify-content: flex-end; }
   .timeline-byline { gap: 6px; }
-  .flow-footer .button { flex: 1; }
+  .action-bar { bottom: 16px; width: calc(100% - 72px); }
+  .action-bar .button { flex: 1; }
   .empty-state { padding: 40px 8px; }
+}
+@media (max-width: 480px) {
+  /* Four steps do not fit a phone-width row: the others keep their number, and their name for screen readers. */
+  .step-nav button:not([aria-current]) { font-size: 0; gap: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
@@ -259,7 +294,7 @@
 .audience-next .eyebrow, .build-copy .eyebrow { color: var(--gnomi-action); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; margin-bottom: 8px; }
 .audience-next h3 { font-size: 18px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 8px; }
 .audience-next p:not(.eyebrow) { color: var(--gnomi-text-muted); font-size: 13px; max-width: 56ch; }
-.audience-footer > div { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 16px; }
+.audience-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 16px; }
 .audience-footer p { font-size: 12px; color: var(--gnomi-text-muted); max-width: 30ch; }
 .build-progress { display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); align-items: center; gap: 32px; padding: 24px; margin-bottom: 24px; border: 1px solid var(--gnomi-sage); background: var(--gnomi-selected); border-radius: 12px; }
 .build-scene { position: relative; min-width: 0; padding-bottom: 68px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-canvas); overflow: hidden; }
@@ -301,9 +336,6 @@
   .audience-steps { gap: 12px; }
   .audience-steps li { align-items: flex-start; flex-direction: column; gap: 8px; }
   .audience-steps small { display: none; }
-  .audience-footer, .audience-footer > div { align-items: stretch; flex-direction: column; width: 100%; }
-  .audience-footer > div { gap: 8px; }
-  .audience-footer p { max-width: none; }
 }
 .segment-options { border-top: 1px solid var(--gnomi-line); padding-top: 8px; }
 .page-heading h1:focus { outline: none; }
@@ -333,6 +365,18 @@
 .audience-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .audience-toolbar .field-input { width: 128px; }
 .audience-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.audience-toolbar-main { flex: 1 1 440px; min-width: 0; }
+.persona-count { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 32px; padding: 20px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-canvas); }
+.persona-count-label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 500; }
+.audience-toolbar .persona-count .field-input { width: 120px; padding: 4px 12px; font-size: 32px; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.persona-count-range { display: block; width: 100%; margin-top: 16px; accent-color: var(--gnomi-action); }
+.persona-count-hint { margin-top: 8px; font-size: 12px; color: var(--gnomi-text-muted); }
+.persona-count-split { display: grid; gap: 8px; }
+.persona-count-split li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.persona-count-split li > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-count-split strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.persona-count-estimate { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gnomi-line); font-size: 13px; }
+.persona-count-estimate span { display: block; font-size: 12px; color: var(--gnomi-text-muted); }
 .audience-seed { margin-top: 4px; }
 .audience-seed-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding-top: 4px; }
 .audience-seed-hint { margin-top: 4px; font-size: 12px; color: var(--gnomi-text-muted); }
@@ -379,4 +423,7 @@
   .audience-choices { grid-template-columns: minmax(0, 1fr); width: 100%; }
   .segment-share { order: 3; width: 100%; }
   .segment-body { grid-template-columns: minmax(0, 1fr); }
+  .persona-count { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .audience-footer { align-items: stretch; flex-direction: column; width: 100%; gap: 8px; }
+  .audience-footer p { max-width: none; }
 }

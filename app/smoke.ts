@@ -93,16 +93,23 @@ async function showActivity(page: Page) {
   return activity;
 }
 
-/** Presses Start run, confirms the pre-run summary and waits until the run's page is showing. */
+/** Opens the Review step from Setup and waits until the project saved; returns its panel. */
+async function openReview(page: Page) {
+  await page.getByRole('button', { name: 'Review & start', exact: true }).click();
+  const review = page.locator('#panel-review');
+  const saved = review.getByRole('region', { name: 'What they will try' });
+  await saved.or(review.getByRole('region', { name: 'Fix before you start' })).first().waitFor();
+  assert.ok(await saved.isVisible(), `the project did not save: ${await review.innerText()}`);
+  return review;
+}
+
+/** Opens the Review step, starts the run from its bar and waits until the run's page is showing. */
 async function startRun(page: Page, runId: string) {
-  await page.getByRole('button', { name: 'Start run' }).click();
-  const summary = page.getByRole('dialog');
-  await summary.or(page.getByRole('alert')).first().waitFor();
-  assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-  await summary.getByRole('button', { name: 'Start run' }).click();
+  const review = await openReview(page);
+  await review.getByRole('button', { name: 'Start run', exact: true }).click();
   const heading = page.getByRole('region', { name: 'Run status' });
-  await heading.or(summary.getByRole('alert')).first().waitFor({ timeout: 60_000 });
-  assert.ok(await heading.isVisible(), `the run did not start: ${await summary.getByRole('alert').allInnerTexts()}`);
+  await heading.or(review.getByRole('alert')).first().waitFor({ timeout: 60_000 });
+  assert.ok(await heading.isVisible(), `the run did not start: ${await review.getByRole('alert').allInnerTexts()}`);
 }
 
 const app = await electron.launch({
@@ -119,7 +126,7 @@ try {
 
   await stage('the window shows a project journey and a separate Settings control', async () => {
     await tab('Settings').waitFor();
-    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Activity']);
+    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Review', 'Activity']);
   });
 
   await stage('the engine started and opened the project', async () => {
@@ -298,15 +305,11 @@ try {
     await page.getByLabel('Add a host').fill('cdn.example.test');
     await page.getByRole('button', { name: 'Add host' }).click();
     await page.getByLabel('Reset hook URL (optional)').fill('http://localhost:9/reset');
-    await page.getByRole('button', { name: 'Start run' }).click();
-    const summary = page.getByRole('dialog');
-    await summary.or(page.getByRole('alert')).first().waitFor();
-    assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-    assert.match(await summary.innerText(), /Allowed hosts[\s\S]*cdn\.example\.test[\s\S]*Everything else is blocked/);
-    await summary.getByLabel('Reset staging before the run').waitFor();
+    const review = await openReview(page);
+    assert.match(await review.innerText(), /Allowed hosts[\s\S]*cdn\.example\.test[\s\S]*Everything else is blocked/);
+    await review.getByLabel('Reset staging before the run').waitFor();
     await page.screenshot({ path: join(shots, 'summary.png') });
-    await summary.getByRole('button', { name: 'Cancel' }).click();
-    await summary.waitFor({ state: 'hidden' });
+    await tab('Project').click();
   });
 
   await stage("Settings: providers are added, tested and removed, routes offer only configured ones, and a role's provider fills in its usual model", async () => {
@@ -377,6 +380,7 @@ try {
     await settings.getByLabel('Cost budget (USD)', { exact: true }).fill('2');
     await settings.getByLabel('Let personas read and post in a shared feed between stretches of use').check();
     assert.equal(await settings.getByLabel('Rounds (1-10)', { exact: true }).inputValue(), '5');
+    await settings.getByLabel('Rounds (1-10)', { exact: true }).fill('10'); // with patience 2 below, the population run's slices are two steps
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('Settings saved with the project.').waitFor();
     await page.screenshot({ path: join(shots, 'settings-models.png'), fullPage: true });
@@ -387,7 +391,7 @@ try {
   await stage('Audience: one segment, then proposed segments, and the shares always add up to 100', async () => {
     await tab('Audience').click();
     const audience = page.locator('#panel-audience');
-    const sliders = audience.getByRole('slider');
+    const sliders = audience.getByRole('list', { name: 'Segments', exact: true }).getByRole('slider'); // the share sliders, not the persona count
     const shares = () => sliders.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
     await audience.getByRole('button', { name: 'Build my own' }).click();
     assert.deepEqual(await shares(), [100]);
@@ -420,6 +424,10 @@ try {
     await audience.getByLabel('Add country').selectOption('DE');
     await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
     await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
+    // Social phases stop once every episode has ended, and the scripted persona ends on its third step: a 20-step budget
+    // over ten rounds gives slices of two steps, so the population run reaches a social phase before anyone ends.
+    for (const options of await audience.locator('summary').filter({ hasText: 'Habits, devices & scenarios' }).all()) await options.click();
+    for (const highest of await audience.getByLabel('Patience (1-5), highest', { exact: true }).all()) await highest.fill('2');
     // The generation may be quick, so a page observer keeps what the progress bar showed.
     await page.evaluate(() => {
       const seen: string[] = [];
@@ -473,19 +481,15 @@ try {
 
   await stage('the pre-run summary shows who will browse and an estimate', async () => {
     await tab('Project').click();
-    await page.getByRole('button', { name: 'Start run' }).click();
-    const summary = page.getByRole('dialog');
-    await summary.or(page.getByRole('alert')).first().waitFor();
-    assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-    await summary.getByText(/About \$/).waitFor();
-    const text = await summary.innerText();
-    assert.match(text, /6 personas: 3 Recruiters, 3 Hiring managers/);
+    const review = await openReview(page);
+    await review.getByText(/About \$/).waitFor();
+    const text = await review.innerText();
+    assert.match(text, /6 simulated people[\s\S]*Recruiters\s+3 personas[\s\S]*Hiring managers\s+3 personas/);
     assert.match(text, /About \$[\d.]+(–\$[\d.]+)? and \d+(–\d+)? minutes?/);
-    assert.match(text, /Recorded cost limit: \$2\.00\. Time limit: 60 minutes\. Up to 3 browsers at a time/);
+    assert.match(text, /Cost limit\s+\$2\.00[\s\S]*Time limit\s+60 minutes[\s\S]*Browsers at once\s+3/);
     assert.match(text, /billed cost can exceed the limit/);
     await page.screenshot({ path: join(shots, 'summary-estimate.png') });
-    await summary.getByRole('button', { name: 'Cancel' }).click();
-    await summary.waitFor({ state: 'hidden' });
+    await tab('Project').click();
   });
 
   let population = false;
@@ -617,7 +621,7 @@ try {
     await page.locator('#panel-settings').getByText('Works').waitFor(); // the local endpoint's last test outlives the page
     await tab('Audience').click();
     await page.locator('#panel-audience').getByRole('heading', { name: 'Personas (6)' }).waitFor();
-    assert.equal(await page.locator('#panel-audience').getByRole('slider').count(), 2);
+    assert.equal(await page.locator('#panel-audience').getByRole('list', { name: 'Segments', exact: true }).getByRole('slider').count(), 2);
     if (!ran) return; // nothing to open: the first run failed
     await tab('Run').click();
     await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');

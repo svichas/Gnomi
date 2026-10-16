@@ -1,5 +1,6 @@
 import type { Audience, Persona, Segment } from '@gnomi/engine/types.ts';
 import { validateCountries } from '@gnomi/engine/audience/locations.ts';
+import { apportion as splitByShare } from '@gnomi/engine/audience/sample.ts';
 
 // The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
 
@@ -103,6 +104,16 @@ export function removeSegment(audience: Audience, id: string): Audience {
 
 export const PERSONA_MINIMUM = 1;
 export const PERSONA_MAXIMUM = 200;
+
+/**
+ * How many personas each segment gets, split as the engine splits them (layout in engine/src/audience/index.ts): by share,
+ * at least 3 per segment with a share unless the run is too small to give every segment that many.
+ */
+export function segmentCounts(audience: Audience): number[] {
+  const shares = audience.segments.map((segment) => segment.share);
+  const active = shares.filter((share) => share > 0).length;
+  return splitByShare(shares, audience.persona_count, Math.min(3, Math.floor(audience.persona_count / Math.max(1, active))));
+}
 
 /** The audience as it is saved: names trimmed and blank goal lines dropped. */
 export function cleanAudience(audience: Audience): Audience {
