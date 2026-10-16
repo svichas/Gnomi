@@ -62,6 +62,18 @@ An episode runner must:
 - `PoiList.tsx` is the ordered list (add, rename, reorder, remove, choose segments) and maps each type to its form component, which gets `PoiFormProps`: `{ draft, onChange, sessions }`.
 - `web.ts` and `WebPoiForm.tsx` are today's web fields. `text.ts` + `TextPoiForm.tsx` and `design.ts` + `DesignPoiForm.tsx` are placeholders: the text and design pieces replace those two files each.
 
+## Figma frames: `engine/src/figma/`
+
+"Add from Figma" on the POI list (`poi/FigmaImportDialog.tsx`) is not a POI type: it adds a `design` POI whose frames are Figma frames, stored as PNG assets, with the Figma frame names as step names.
+
+- **Token.** Settings → Figma. Held like a provider key (`ProviderKeys` in `app/src/main/providers.ts`: encrypted `figma.key`, mask only in the page, last test remembered) and sent to the engine as the secret `figma_token`. The page never sees it; only the engine talks to Figma.
+- **Modules.** `link.ts` (a pasted link → file key and node; only the key goes to the API, the link itself is never requested), `client.ts` (read-only REST client: the token goes in the `X-Figma-Token` header to `api.figma.com` only, redirects refused, `Retry-After` waited out up to 20 s and otherwise an error saying how long; a 403 is told apart by asking `/v1/me`), `frames.ts` (list, previews, export and store). `fake.ts` is a fixture API shaped like Figma's responses.
+- **Host calls.** `figma_test`, `figma_frames {link}`, `figma_previews`, `figma_import` (which stores each PNG with `importAsset`, so the assets store's size and type checks apply). A frame that fails to export comes back in `failed` with its reason; the others are stored and the dialog lets the user retry or add what worked.
+- **Requests.** A listing is one request (the file at depth 2) plus one for the contents of its sections; previews and exports are render requests of at most 20 frames, pinned to the listed file `version`; downloads go to Figma's image storage without the token.
+- **Egress.** `api.figma.com` and `*.amazonaws.com` (render storage) are listed under Settings → Where Gnomi connects only while a token is saved (`egressList`).
+- **Tests.** No network: unit tests use `fake.ts`; `GNOMI_FAKE_FIGMA=1` (or its options as JSON) makes the host use it, which `npm run smoke:figma` drives. Against a real file this code has never run (no token was available): see the legal and real-file gates in [figma-prototype-spike.md](figma-prototype-spike.md).
+- **Not done.** The spike's suggestion to keep the full-depth page JSON with the version (the assets store has no JSON type); OAuth; importing prototype interactions.
+
 ## Not done here
 
 - Enforcing observe-only, the buyer survey, a vision check for designs, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).

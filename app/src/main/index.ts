@@ -147,6 +147,15 @@ ipcMain.handle('test-key', async (_event, provider: unknown): Promise<KeyTest> =
   return test;
 });
 
+ipcMain.handle('save-figma-token', (_event, token: unknown) => providers.saveFigma(typeof token === 'string' ? token : ''));
+ipcMain.handle('clear-figma-token', () => providers.removeFigma());
+ipcMain.handle('test-figma-token', async (): Promise<KeyTest> => {
+  const { ok, error } = await request('figma_test', {});
+  const test: KeyTest = { ok, error, at: Date.now() };
+  providers.recordTest('figma', test);
+  return test;
+});
+
 ipcMain.handle('list-projects', () => catalog());
 ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<ProjectActionResult> => {
   if (!input || !['create', 'open', 'rename', 'duplicate', 'delete', 'export'].includes(input.action)) throw new Error('Unknown project action.');

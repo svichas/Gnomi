@@ -157,7 +157,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {

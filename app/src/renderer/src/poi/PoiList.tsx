@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import type { ComponentType } from 'react';
 import { isEligible } from '@gnomi/engine/poi/pois.ts';
 import type { Poi, PoiType, Segment, SessionInfo } from '@gnomi/engine/types.ts';
 import { Button, Card, Check, Field, inputClass } from '../ui.tsx';
 import { DesignPoiForm } from './DesignPoiForm.tsx';
-import { nextPoiId, POI_KINDS, poiTitle, type PoiDraft, type PoiFormProps } from './index.ts';
+import { FigmaImportDialog, type FigmaDesign } from './FigmaImportDialog.tsx';
+import { draftOf, nextPoiId, POI_KINDS, poiTitle, type PoiDraft, type PoiFormProps } from './index.ts';
 import { TextPoiForm } from './TextPoiForm.tsx';
 import { WebPoiForm } from './WebPoiForm.tsx';
 
@@ -35,6 +37,7 @@ function Segments({ draft, segments, onChange }: { draft: PoiDraft; segments: Se
 /** The project's points of interest, in the order personas use them: add, rename, reorder, remove, and choose who uses each. */
 export function PoiList(props: { pois: PoiDraft[]; onChange(pois: PoiDraft[]): void; segments: Segment[]; sessions: SessionInfo[] }) {
   const { pois, onChange, segments, sessions } = props;
+  const [figma, setFigma] = useState(false);
   const update = (index: number, change: (draft: PoiDraft) => PoiDraft) => onChange(pois.map((draft, i) => (i === index ? change(draft) : draft)));
   const move = (index: number, by: number) => {
     const next = [...pois];
@@ -73,7 +76,17 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(pois: PoiDraft[]): v
               Add {POI_KINDS[type].label.toLowerCase()}
             </Button>
           ))}
+          <Button small onClick={() => setFigma(true)}>Add from Figma</Button>
         </div>
+        {figma && (
+          <FigmaImportDialog
+            onClose={() => setFigma(false)}
+            onAdd={({ name, frames }: FigmaDesign) => {
+              onChange([...pois, draftOf({ id: nextPoiId(pois), type: 'design', name, segments: null, frames })]);
+              setFigma(false);
+            }}
+          />
+        )}
       </div>
     </Card>
   );

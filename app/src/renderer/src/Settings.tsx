@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
 import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
-import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
+import { configuredProviders, egressList, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';
 import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
@@ -10,7 +10,7 @@ import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
 // What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
-const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
+const PROVIDER_NOTES: Partial<Record<ProviderId | 'figma', string>> = {
   deepseek: 'Its servers are in China. It reads text only, so it never sees screenshots, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
 };
@@ -37,10 +37,10 @@ function TestResult({ test }: { test: KeyTest | null }) {
 }
 
 /** One configured provider: its masked key or address, its last test, and Test and Remove. */
-function ProviderRow(props: { provider: ProviderId; detail: string; test: KeyTest | null; disabled: boolean; onTest(): Promise<string | null>; onRemove(): void }) {
+function ProviderRow(props: { provider: ProviderId | 'figma'; detail: string; test: KeyTest | null; disabled: boolean; onTest(): Promise<string | null>; onRemove(): void }) {
   const { provider, detail, test, disabled, onTest, onRemove } = props;
   const testing = useAction();
-  const label = PROVIDER_LABELS[provider];
+  const label = provider === 'figma' ? 'Figma' : PROVIDER_LABELS[provider];
   const note = PROVIDER_NOTES[provider];
   return (
     <li className="space-y-2 border-t border-stone-200 py-3 first:border-t-0 first:pt-0">
@@ -114,6 +114,25 @@ function AddProvider({ choices, disabled, onAdd }: { choices: ProviderId[]; disa
   );
 }
 
+/** The Figma token field. Like a provider's key it is dropped from the page as soon as main has it. */
+function AddFigmaToken({ disabled, onAdd }: { disabled: boolean; onAdd(token: string): Promise<boolean> }) {
+  const [value, setValue] = useState('');
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (await onAdd(value)) setValue('');
+  }
+  return (
+    <form onSubmit={submit} className="grid gap-3 rounded-lg bg-stone-50 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+      <Field label="Figma access token">
+        <input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Paste the token" autoComplete="off" spellCheck={false} className={inputClass} />
+      </Field>
+      <Button type="submit" disabled={disabled || !value.trim()} variant="primary">
+        Save token
+      </Button>
+    </form>
+  );
+}
+
 function ModelSelect({ role, choice, onChange }: { role: LlmRole; choice: ModelChoice; onChange(model: string): void }) {
   const models = [...new Set(Object.values(PROVIDER_DEFAULTS[choice.provider]).map((route) => route.model))];
   const [custom, setCustom] = useState(!models.includes(choice.model));
@@ -181,6 +200,30 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       return null;
     });
 
+  async function addFigma(token: string): Promise<boolean> {
+    let added = false;
+    await changing.run(async () => {
+      const entry = await window.gnomi.saveFigmaToken(token);
+      added = true;
+      await reloadProviders();
+      return entry.remembered ? null : { ok: true, text: 'Token accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
+    });
+    return added;
+  }
+
+  const removeFigma = () =>
+    changing.run(async () => {
+      await window.gnomi.clearFigmaToken();
+      await reloadProviders();
+      return null;
+    });
+
+  async function testFigma(): Promise<string | null> {
+    await window.gnomi.testFigmaToken();
+    await reloadProviders();
+    return null;
+  }
+
   async function test(provider: ProviderId): Promise<string | null> {
     if (provider === 'openai_compatible') {
       const saved = await save(); // the engine tests the address saved with the project
@@ -233,6 +276,41 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         {addable.length > 0 && <AddProvider choices={addable} disabled={changing.busy} onAdd={add} />}
         {changing.busy && <p className="mt-3 text-sm text-stone-500">Working...</p>}
         {changing.outcome && <div className="mt-3"><Note tone={changing.outcome.ok ? 'ok' : 'error'}>{changing.outcome.text}</Note></div>}
+      </Card>
+
+      <Card title="Figma">
+        <p className="mb-4 text-sm text-stone-600">
+          Optional. With a Figma access token Gnomi can import frames from a Figma file as a design to test. In Figma, open Settings → Security and generate a personal access token with the file_content:read scope; it expires within 90 days.
+          Use an account with a Dev or Full seat: a View or Collab seat allows only a few imports a month.
+        </p>
+        {list?.figma ? (
+          <ul>
+            <ProviderRow
+              provider="figma"
+              detail={list.figma.remembered ? list.figma.masked : `${list.figma.masked} · this session only`}
+              test={list.figma.test}
+              disabled={changing.busy}
+              onTest={testFigma}
+              onRemove={removeFigma}
+            />
+          </ul>
+        ) : (
+          list && <AddFigmaToken disabled={changing.busy} onAdd={addFigma} />
+        )}
+        <p className="mt-3 text-xs text-stone-500">Test checks that Figma accepts the token; whether it can open a particular file is checked when you import it. The token stays encrypted by your operating system, outside every project.</p>
+      </Card>
+
+      <Card title="Where Gnomi connects">
+        <p className="mb-3 text-sm text-stone-600">Besides the sites you test, Gnomi sends data only to these addresses. There is no telemetry.</p>
+        {list && (egressList(list, localUrl).length ? (
+          <ul className="space-y-1 text-sm">
+            {egressList(list, localUrl).map(({ host, why }) => (
+              <li key={host}><span className="font-mono text-stone-900">{host}</span> <span className="text-stone-500">· {why}</span></li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-stone-500">Nowhere yet: no provider is connected.</p>
+        ))}
       </Card>
 
       <details className="disclosure"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
