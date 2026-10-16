@@ -57,6 +57,7 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(pois: PoiDraft[]): v
                       <input value={draft.name} onChange={(e) => update(index, (was) => ({ ...was, name: e.target.value }))} placeholder={title} className={inputClass} />
                     </Field>
                   </div>
+                  {draft.type === 'web' && draft.mode === 'observe_only' && <span className="persona-badge">Competitor, observed only</span>}
                   <Button small variant="quiet" aria-label={`Move ${title} up`} disabled={index === 0} onClick={() => move(index, -1)}>Up</Button>
                   <Button small variant="quiet" aria-label={`Move ${title} down`} disabled={index === pois.length - 1} onClick={() => move(index, 1)}>Down</Button>
                   <Button small variant="quiet" aria-label={`Remove ${title}`} onClick={() => onChange(pois.filter((_, i) => i !== index))}>Remove</Button>

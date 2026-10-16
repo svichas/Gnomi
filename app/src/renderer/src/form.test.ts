@@ -90,6 +90,12 @@ test('a project saved before M1 or M5 opens with its one web app, empty safety s
   assert.equal(only(toConfig(draft)).name, 'localhost', 'a web app named after its host keeps following it');
 });
 
+test('a competitor, observed only, needs no not-production confirmation and drops its reset hook', () => {
+  const rival = only(toConfig(form({ url: 'https://rival.com/pricing', mode: 'observe_only', reset: 'https://rival.com/reset' })));
+  assert.deepEqual([rival.mode, rival.not_production, rival.reset_hook_url], ['observe_only', false, null]);
+  assert.match(String(toConfig(form({ url: 'https://rival.com/pricing', mode: 'full' }))), /Confirm that this is not a production site/, 'our own product still needs it');
+});
+
 test('POIs keep their order, names, modes and segments, and a problem says which POI has it', () => {
   const web = (id: string, url: string, over: Partial<WebPoi> = {}): WebPoi => ({ id, type: 'web', name: id, mode: 'full', segments: null, start_url: url, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, ...over });
   const pois = [

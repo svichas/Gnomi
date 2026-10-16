@@ -154,8 +154,8 @@ async function verify(config: ProjectConfig, role: string) {
   const store = unlockedSessions();
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
-  // The login POI's hosts first; the session's cookies go to every web POI, so any of their hosts may be reached.
-  const pois = [recordingPoi(config), ...webPois(config.pois)];
+  // The login POI's hosts first; the session's cookies go to every web POI in full mode, so any of their hosts may be reached.
+  const pois = [recordingPoi(config), ...webPois(config.pois).filter((poi) => poi.mode === 'full')];
   const result = await (await pool()).checkSession({
     storageState: saved.state,
     startUrl: saved.info.start_url,

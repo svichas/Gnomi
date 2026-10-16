@@ -859,8 +859,8 @@ test('blocked requests are logged, and a blocked page load on a production domai
     act: (a, page) => {
       if (a.ref !== 'e1') return {};
       clicks++;
-      if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false });
-      if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true });
+      if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false, reason: 'host' });
+      if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true, reason: 'host' });
       return {};
     },
   });

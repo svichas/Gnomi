@@ -63,16 +63,28 @@ function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string
   );
 }
 
-/** A web app: its start page, the production guard, and what personas may reach. */
+/** A web app: whose it is, its start page, the production guard, and what personas may reach. */
 export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>) {
   const set = <K extends keyof WebDraft>(key: K, value: WebDraft[K]) => onChange((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
-  const confirmHost = hostToConfirm(draft.url);
+  const observing = draft.mode === 'observe_only';
+  const confirmHost = observing ? null : hostToConfirm(draft.url);
   const start = startHost(draft.url);
   return (
     <div className="space-y-4">
-      <Field label="Start page URL" hint="The persona starts here and can reach this host. Use your staging address.">
-        <input type="url" value={draft.url} onChange={(e) => set('url', e.target.value)} placeholder="https://staging.example.com" spellCheck={false} className={inputClass} />
+      <div className="space-y-2">
+        <div role="group" aria-label="Whose site this is" className="flex flex-wrap gap-2">
+          <Button small variant="quiet" aria-pressed={!observing} onClick={() => set('mode', 'full')}>Our product</Button>
+          <Button small variant="quiet" aria-pressed={observing} onClick={() => set('mode', 'observe_only')}>Competitor, observe only</Button>
+        </div>
+        <p className="text-sm text-stone-600">
+          {observing
+            ? 'Personas browse and read but never send anything: Gnomi blocks every form submission and other write, opens at most one page every two seconds, follows the site’s robots.txt and never uses a recorded login. Afterwards the survey asks them to compare it with your product.'
+            : 'Personas use it as your users would: they click, type and submit, and can log in with a recorded login.'}
+        </p>
+      </div>
+      <Field label="Start page URL" hint={observing ? 'The persona starts here and can reach this host.' : 'The persona starts here and can reach this host. Use your staging address.'}>
+        <input type="url" value={draft.url} onChange={(e) => set('url', e.target.value)} placeholder={observing ? 'https://competitor.example.com' : 'https://staging.example.com'} spellCheck={false} className={inputClass} />
       </Field>
       {confirmHost !== null && (
         <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
@@ -96,12 +108,14 @@ export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>
               >
                 <input value={draft.production} onChange={(e) => set('production', e.target.value)} placeholder="acme.com, app.acme.com" spellCheck={false} className={inputClass} />
               </Field>
-              <Field
-                label="Reset hook URL (optional)"
-                hint="Gnomi sends a POST here before a run, when you tick the box on the Review step, so your staging data starts fresh. It must be on the start page's host or an allowed host."
-              >
-                <input type="url" value={draft.reset} onChange={(e) => set('reset', e.target.value)} placeholder="https://staging.example.com/internal/reset" spellCheck={false} className={inputClass} />
-              </Field>
+              {!observing && (
+                <Field
+                  label="Reset hook URL (optional)"
+                  hint="Gnomi sends a POST here before a run, when you tick the box on the Review step, so your staging data starts fresh. It must be on the start page's host or an allowed host."
+                >
+                  <input type="url" value={draft.reset} onChange={(e) => set('reset', e.target.value)} placeholder="https://staging.example.com/internal/reset" spellCheck={false} className={inputClass} />
+                </Field>
+              )}
             </div>
           </Card>
           <AllowedHosts

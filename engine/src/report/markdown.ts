@@ -8,6 +8,12 @@ const pct = (rate: number) => `${Math.round(rate * 100)}%`;
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 
+/** A POI as the report names it: a competitor's site says so. */
+export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi.name} (competitor, observed only)` : poi.name);
+
+/** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
+export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
+
 export function reportToMarkdown(report: Report): string {
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
@@ -16,7 +22,7 @@ export function reportToMarkdown(report: Report): string {
     '',
     `> ${report.banner}`,
     '',
-    `- Point${report.pois.length === 1 ? '' : 's'} of interest: ${report.pois.map((poi) => (poi.start_url ? `${poi.name} (${poi.start_url})` : poi.name)).join(', ')}`,
+    `- Point${report.pois.length === 1 ? '' : 's'} of interest: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
     '',
@@ -32,6 +38,7 @@ export function reportToMarkdown(report: Report): string {
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
+    ...comparisonLines(report),
     ...spreadLines(report),
     '',
     '## Frictions',
@@ -85,7 +92,7 @@ function themeLines(report: Report): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poi.name)}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme))),
   ];
@@ -167,6 +174,22 @@ function wentWellLines(report: Report): string[] {
   ];
 }
 
+const PREFERS = { product: 'Prefer the product', competitor: 'Prefer the competitor', no_preference: 'No preference' } as const;
+
+function comparisonLines(report: Report): string[] {
+  if (!report.comparisons?.length) return [];
+  const name = (id: string) => line(report.pois.find((poi) => poi.id === id)?.name ?? id);
+  return report.comparisons.flatMap((c) => [
+    '', `## ${name(c.poi_id)} compared with ${name(c.with_poi_id)}`, '',
+    `From the survey after the competitor's site, asked of personas who used ${name(c.with_poi_id)} first. "Product" is ${name(c.with_poi_id)}.`, '',
+    '| Segment | Compared | Prefer the product | Prefer the competitor | No preference |',
+    '| --- | --- | --- | --- | --- |',
+    ...c.segments.map((s) => `| ${cell(s.name)} | ${s.compared} | ${s.product} | ${s.competitor} | ${s.no_preference} |`),
+    '',
+    ...c.answers.map((a) => `- ${line(a.persona_name)} (${PREFERS[a.prefers].toLowerCase()}): "${line(a.reason)}" (event #${a.seq})`),
+  ]);
+}
+
 function spreadLines(report: Report): string[] {
   if (!report.spread) return [];
   const name = (id: string) => line(report.personas.find((p) => p.id === id)?.name ?? id);
@@ -242,7 +265,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     `- Budgets: $${m.budgets.cost_usd.toFixed(2)} cost, ${m.budgets.wall_clock_min} min wall clock, concurrency ${m.budgets.concurrency}`,
     `- Concurrency changes: ${m.concurrency_changes.map((c) => `${c.concurrency} (${line(c.reason)})`).join('; ') || 'none'}`,
     `- Allowed hosts: ${m.allowed_hosts.join(', ') || 'none'}`,
-    `- Blocked requests: ${m.blocked_requests.map((r) => `${r.host} (${r.count})`).join(', ') || 'none'}`,
+    `- Blocked requests: ${m.blocked_requests.map((r) => `${r.host} (${r.count}${r.reason ? `, ${BLOCK_REASON_TEXT[r.reason]}` : ''})`).join(', ') || 'none'}`,
     ...(blocked.length > 0 ? blocked : ['- Blocked personas: none']),
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,

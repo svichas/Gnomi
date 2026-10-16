@@ -1,11 +1,12 @@
 import { webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
+import { buildComparisons, competitorIds } from './compare.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { buyerResults } from './buyers.ts';
 import { stepEvidence } from './friction.ts';
-import { analyseFrictions, type Context } from './themes.ts';
+import { analyseFrictions, sentimentBySegment, wentWell, type Context } from './themes.ts';
 import type {
   Audience,
   EventOf,
@@ -109,9 +110,12 @@ export function buildReport(events: GnomiEvent[]): Report {
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
   const { pois } = withPois(config.project);
+  // A competitor's site gets its own themes and comparisons; outcomes, frictions, feelings and sentiment describe the team's product.
+  const competitors = competitorIds(pois);
+  const ours = competitors.size ? events.filter((e) => !competitors.has(e.poi_id ?? '')) : events;
 
   const byPersona = new Map<string, GnomiEvent[]>();
-  for (const e of events) {
+  for (const e of ours) {
     const key = e.persona_id ?? '';
     const list = byPersona.get(key);
     if (list) list.push(e);
@@ -144,7 +148,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Step numbers repeat across personas, so a friction finds its step by persona and step number together.
   const stepByKey = new Map<string, EventPayloads['persona.step']>();
   for (const e of ofType(events, 'persona.step')) stepByKey.set(stepKey(e.persona_id ?? '', e.payload.step_no), e.payload);
-  const frictions: ReportFriction[] = ofType(events, 'persona.friction_reported').map((e) => {
+  const frictions: ReportFriction[] = ofType(ours, 'persona.friction_reported').map((e) => {
     const persona_id = e.persona_id ?? '';
     const persona = personaById.get(persona_id);
     const step = stepByKey.get(stepKey(persona_id, e.payload.step_no));
@@ -183,6 +187,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     segments,
   };
   const analysis = analyseFrictions(events, ctx);
+  const comparisons = buildComparisons(events, competitors, ctx);
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');
   const buyers = buyerResults(events, pois, ctx);
@@ -193,7 +198,7 @@ export function buildReport(events: GnomiEvent[]): Report {
 
   const calls = ofType(events, 'llm.call');
   const latestFeeling = new Map<string, number>();
-  for (const event of ofType(events, 'persona.step')) {
+  for (const event of ofType(ours, 'persona.step')) {
     // Invalid output steps carry a synthetic zero; it is not the persona reporting a neutral feeling.
     if (event.persona_id && event.payload.result.error !== 'invalid_output') latestFeeling.set(event.persona_id, event.payload.feeling);
   }
@@ -220,12 +225,16 @@ export function buildReport(events: GnomiEvent[]): Report {
 
   const perHost = new Map<string, number>();
   for (const e of ofType(events, 'containment.blocked_request')) {
-    perHost.set(e.payload.host, (perHost.get(e.payload.host) ?? 0) + 1);
+    const key = JSON.stringify([e.payload.host, e.payload.reason ?? null]);
+    perHost.set(key, (perHost.get(key) ?? 0) + 1);
   }
-  // Ties sort A to Z by host, so the same log always gives the same appendix.
+  // Ties sort A to Z by host, then reason, so the same log always gives the same appendix.
   const blocked_requests = [...perHost]
-    .map(([host, count]) => ({ host, count }))
-    .sort((a, b) => b.count - a.count || (a.host < b.host ? -1 : 1));
+    .sort(([a, m], [b, n]) => n - m || (a < b ? -1 : 1))
+    .map(([key, count]) => {
+      const [host, reason] = JSON.parse(key) as [string, 'observe_only' | 'robots' | null];
+      return reason ? { host, count, reason } : { host, count };
+    });
   // Each web POI's start page host comes first and is always allowed.
   const hosts = webPois(pois).flatMap((poi) => [hostOf(poi.start_url), ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
@@ -235,7 +244,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     status,
     stop_reason,
     goal: config.project.goal,
-    pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null })),
+    pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null, ...(poi.type === 'web' && poi.mode === 'observe_only' ? { competitor: true as const } : {}) })),
     personas,
     ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema) } : {}),
     segments,
@@ -243,8 +252,9 @@ export function buildReport(events: GnomiEvent[]): Report {
     steps: ofType(events, 'persona.step').length,
     frictions,
     themes: analysis.themes,
-    sentiment: analysis.sentiment,
-    went_well: analysis.went_well,
+    sentiment: competitors.size ? sentimentBySegment(ours, ctx) : analysis.sentiment,
+    went_well: competitors.size ? wentWell(ours) : analysis.went_well,
+    ...(comparisons.length ? { comparisons } : {}),
     ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),
     cost_usd: total((e) => e.payload.cost_usd),

@@ -62,7 +62,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const step_budget = deps.budget;
   const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
     record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
-  const system = systemPrompt(persona, config.project, segment, step_budget);
+  const system = systemPrompt(persona, config.project, segment, step_budget, poi);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
   const history: Step[] = []; // every recorded step, for the signal detectors
@@ -82,7 +82,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     for (;;) {
       if (signal.aborted) return 'stopped';
       const flags = await page.inspect();
-      if (flags.live_key) {
+      // A live key means production, which a competitor's site is: an observe-only POI writes nothing there.
+      if (flags.live_key && poi.mode === 'full') {
         deps.tripwire('live_payment_key', `A live payment key (${flags.live_key}…) is on ${url}, so this looks like production.`);
         return 'stopped';
       }

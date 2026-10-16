@@ -61,6 +61,13 @@ test('the reset hook must be http(s) on an allowed, non-production host', () => 
   assert.match(checkTarget(poi({ reset_hook_url: 'https://api.acme.com/reset', allowed_hosts: ['api.acme.com'] })) ?? '', refused);
 });
 
+test('an observe-only POI may be a production site, but never a listed production domain and never with a reset hook', () => {
+  const rival = poi({ mode: 'observe_only', name: 'Rival', start_url: 'https://rival.com/pricing' });
+  assert.equal(checkTarget(rival), null, 'a competitor needs no not-production confirmation');
+  assert.match(checkTarget({ ...rival, production_domains: ['rival.com'] }) ?? '', /lists as production/);
+  assert.match(checkTarget({ ...rival, reset_hook_url: 'https://rival.com/reset' }) ?? '', /"Rival" is observed only, so Gnomi never calls a reset hook on it/);
+});
+
 test('allowedHosts puts the start host first, lower-cased and de-duplicated', () => {
   assert.deepEqual(allowedHosts(poi({ allowed_hosts: ['CDN.acme.io', 'staging.acme.io', ' ', 'api.acme.io '] })), ['staging.acme.io', 'cdn.acme.io', 'api.acme.io']);
 });

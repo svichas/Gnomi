@@ -83,6 +83,26 @@ try {
   await page.getByText('Project saved.', { exact: true }).waitFor();
   console.log('ok    a design takes two frames from disk, names and reorders them, and saves');
 
+  // A web app switched to a competitor's site: labelled in the list, no login recorder, saved with the project; then back.
+  const ours = page.getByRole('button', { name: 'Our product', exact: true });
+  const rival = page.getByRole('button', { name: 'Competitor, observe only', exact: true });
+  assert.equal(await ours.getAttribute('aria-pressed'), 'true');
+  await page.getByText('Recorded logins for web apps').waitFor();
+  await rival.click();
+  await page.getByText('Competitor, observed only', { exact: true }).waitFor();
+  await page.getByText(/never uses a recorded login/).waitFor();
+  assert.equal(await page.getByText('Recorded logins for web apps').count(), 0, 'no login recorder for a competitor');
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await page.getByText('Project saved.', { exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  assert.equal(await rival.getAttribute('aria-pressed'), 'true', 'the mode is saved with the project');
+  await ours.click();
+  await page.getByText('Recorded logins for web apps').waitFor();
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await page.getByText('Project saved.', { exact: true }).waitFor();
+  console.log('ok    a web app switches to a competitor, observed only, without a login recorder, and back');
+
   await page.getByLabel('Project name', { exact: true }).fill('Unsaved name');
   await home();
   await card('Untitled project').getByRole('button', { name: 'Open Untitled project', exact: true }).click();
