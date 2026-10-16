@@ -19,7 +19,7 @@ How a project holds several points of interest (POIs) and how a new POI type plu
 - **Step numbers run on across a persona's POIs.** The second POI's first step is `stepsBefore + 1`. This keeps `(persona, step_no)` unique for the report, screenshots (`runs/<run>/shots/<persona>-<step_no>.jpg`) and signals. The prompt still shows "Step 1 of N" for each POI.
 - **Budgets** come from the runner: `poiBudget(persona, poi)` is the runner's `budget(patienceBudget, poi)`, at least 1.
 - **Social rounds** slice a persona's steps across its POIs: the slice is `ceil(sum of its POI budgets / rounds)`, and `deps.slice.next()` is due before every global step number `k·slice + 1`.
-- Report themes are grouped and ranked per `poi_id` (the judge and author run once per POI). The report lists `pois`; the report view, the HTML and Markdown exports, the inspector, the feed and the review screen name every POI.
+- Report themes are grouped and ranked per `poi_id` (after a `report.started` event listing them, every POI's judge call runs at once, then its author calls in parallel batches of three themes, merged into one `report.suggestions`). The report lists `pois`; the report view, the HTML and Markdown exports, the inspector, the feed and the review screen name every POI.
 
 ## Engine registry: `engine/src/poi/`
 

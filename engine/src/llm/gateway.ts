@@ -25,7 +25,8 @@ const DEEPSEEK_URL = 'https://api.deepseek.com';
 const chatCompletions = (provider: ProviderId) => provider === 'deepseek' || provider === 'openai_compatible';
 
 // How hard each role thinks (tech.md §10.1): routine steps run low or the thinking tokens dominate the output bill (§10.2).
-const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'low', judge: 'medium', author: 'high' };
+// The judge merges and names groups a deterministic pass already made; reasoning made it the slowest step of a report.
+const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'low', judge: 'low', author: 'high' };
 // GPT-5.6, GPT-6 Sol and GPT-6 Luna accept reasoning effort 'none'; GPT-6 Astra and 6.1 Sol start at 'low' (@ai-sdk/openai docs).
 const CAN_SKIP_REASONING = /^gpt-(5\.6|6-(sol|luna))/;
 

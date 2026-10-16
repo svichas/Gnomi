@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE } from '../llm/scripted.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
-import type { Recorder, Responder } from '../seams.ts';
+import type { LlmGateway, Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { GnomiEvent, LlmRole, NewEvent, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
@@ -54,7 +54,7 @@ const suggested = { suggestions: [{ theme_id: 'g1', change: 'Make Save save the 
 
 test('the judge names themes and the author suggests changes; both answers are logged and folded into the report', async () => {
   const { types, requests, report } = await analyse({ judge: () => judged, author: () => suggested });
-  assert.deepEqual(types, ['llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(types, ['report.started', 'llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
   assert.deepEqual(JSON.parse(requests[0].user).groups.map((g: { id: string }) => g.id), ['g1', 'g2']);
   assert.deepEqual(JSON.parse(requests[1].user).themes.map((t: { id: string }) => t.id), ['g1', 'g2'], 'the author sees the themes the judge left');
   assert.deepEqual(report.themes?.map((t) => [t.id, t.title, t.named_by, t.suggestion?.change ?? null]), [
@@ -67,14 +67,14 @@ test('the judge names themes and the author suggests changes; both answers are l
 
 test('a malformed judge answer is retried once, then the themes stay deterministic and the author still runs', async () => {
   const { types, report } = await analyse({ judge: () => ({ themes: 'nope' }), author: () => suggested });
-  assert.deepEqual(types, ['llm.call', 'llm.call', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(types, ['report.started', 'llm.call', 'llm.call', 'llm.call', 'report.suggestions']);
   assert.deepEqual(report.themes?.map((t) => [t.title, t.named_by]), [['Reported friction on /jobs/new', 'rules'], ['Reported friction on /', 'rules']]);
   assert.match(report.methods.limitations?.[0] ?? '', /^The judge model did not name the themes/);
 });
 
-test('without a model (no key, no responder) nothing is logged and the report falls back to rules', async () => {
+test('without a model (no key, no responder) only the start is logged and the report falls back to rules', async () => {
   const { types, report } = await analyse({});
-  assert.deepEqual(types, []);
+  assert.deepEqual(types, ['report.started']);
   assert.equal(report.themes?.length, 2);
   assert.ok(report.themes?.every((t) => t.named_by === 'rules' && t.suggestion === null));
   assert.equal(report.methods.limitations?.length, 2);
@@ -82,7 +82,7 @@ test('without a model (no key, no responder) nothing is logged and the report fa
 
 test('the scripted demo judge and author give every group a labelled theme and suggestion, so key-free runs show themes', async () => {
   const { types, report } = await analyse({ judge: DEMO_JUDGE, author: DEMO_AUTHOR });
-  assert.deepEqual(types, ['llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
+  assert.deepEqual(types, ['report.started', 'llm.call', 'report.themes', 'llm.call', 'report.suggestions']);
   assert.deepEqual(report.themes?.map((t) => [t.title, t.named_by]), [
     ['Scripted demo theme 1: no model named it', 'judge'],
     ['Scripted demo theme 2: no model named it', 'judge'],
@@ -90,3 +90,47 @@ test('the scripted demo judge and author give every group a labelled theme and s
   assert.ok(report.themes?.every((t) => t.suggestion?.change.startsWith('Scripted demo suggestion')));
   assert.deepEqual(report.methods.limitations, []);
 });
+
+test('every POI is judged at once, and the author writes in parallel batches of three; a failed batch loses only its own themes', async () => {
+  const two: RunConfig = { ...config, project: { ...config.project, pois: [config.project.pois[0], { ...config.project.pois[0], id: 'poi-b', name: 'Other' }] } };
+  const events: GnomiEvent[] = [];
+  const record: Recorder = (event: NewEvent) => {
+    const stored = { ...event, seq: events.length + 1, ts: events.length } as GnomiEvent;
+    events.push(stored);
+    return stored;
+  };
+  record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config: two } });
+  record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
+  for (const [i, page] of ['jobs', 'candidates', 'settings', 'reviews'].entries())
+    record({ ...who, type: 'persona.friction_reported', payload: { step_no: i + 1, severity: 2, what: `Trouble on ${page}`, expected: 'It works', where: where(`http://gym.test/${page}`) } });
+  record({ ...who, poi_id: 'poi-b', type: 'persona.friction_reported', payload: { step_no: 9, severity: 2, what: 'Pricing is unclear', expected: 'Clear tiers', where: where('http://other.test/pricing') } });
+
+  let inFlight = 0;
+  let peakJudges = 0;
+  const batches: string[][] = [];
+  const llm: LlmGateway = {
+    async call(req) {
+      const judging = req.purpose === 'report_themes';
+      inFlight += judging ? 1 : 0;
+      peakJudges = Math.max(peakJudges, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (judging) {
+        inFlight--;
+        return { object: { themes: [] }, cost_usd: 0 } as never; // the judge leaves every group as its own theme
+      }
+      const ids = JSON.parse(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('')).themes.map((t: { id: string }) => t.id);
+      batches.push(ids);
+      if (batches.length === 2) throw new Error('provider error'); // one batch fails
+      return { object: { suggestions: ids.map((theme_id: string) => ({ theme_id, change: `Fix ${theme_id}.`, solution: 'Make it work.' })) }, cost_usd: 0 } as never;
+    },
+  };
+  await runReportModels({ config: two, llm, record, events: () => events });
+
+  assert.deepEqual(events.find((e) => e.type === 'report.started')?.payload, { pois: ['poi', 'poi-b'] });
+  assert.equal(peakJudges, 2, 'both POIs were judged at the same time');
+  assert.deepEqual(batches.map((b) => b.length).sort(), [1, 1, 3], 'four themes on the first POI in batches of three and one, one on the other');
+  const kept = events.flatMap((e) => (e.type === 'report.suggestions' ? e.payload.suggestions.map((s) => s.theme_id) : []));
+  assert.equal(kept.length, 5 - batches[1].length, 'only the failed batch has no suggestions');
+  assert.ok(!kept.some((id) => batches[1].includes(id)));
+});
+

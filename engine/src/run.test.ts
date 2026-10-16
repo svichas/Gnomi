@@ -309,6 +309,7 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
     'persona.goal_done',
     'llm.call',
     'persona.survey',
+    'report.started',
     'llm.call',
     'report.themes',
     'llm.call',
