@@ -152,7 +152,7 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .review-ready { display: flex; gap: 16px; align-items: flex-start; padding: 24px; border: 1px solid var(--gnomi-sage); border-radius: 12px; background: var(--gnomi-selected); }
 .review-ready h2 { font-size: 18px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 4px; }
 .review-ready p { color: var(--gnomi-text-muted); font-size: 13px; max-width: 60ch; }
-.review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+.review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
 .review-wide { grid-column: 1 / -1; }
 .review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .review-card-head h2 { font-size: 16px; font-weight: 500; }
@@ -268,6 +268,10 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
   .action-bar { bottom: 16px; width: calc(100% - 72px); }
   .action-bar .button { flex: 1; }
   .empty-state { padding: 40px 8px; }
+}
+@media (max-width: 480px) {
+  /* Four steps do not fit a phone-width row: the others keep their number, and their name for screen readers. */
+  .step-nav button:not([aria-current]) { font-size: 0; gap: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
