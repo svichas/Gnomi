@@ -25,18 +25,18 @@ How a project holds several points of interest (POIs) and how a new POI type plu
 ```ts
 interface PoiRunner<P extends Poi> {
   budget(patienceBudget: number, poi: P): number;          // steps for one persona on this POI
-  preflight(poi: P, project: ProjectConfig): string | null; // a sentence that blocks the run, or null
+  preflight(poi: P, project: ProjectConfig, hasAsset: (id: string) => boolean): string | null; // a sentence that blocks the run, or null
   episode(poi: P, deps: EpisodeDeps): Promise<EpisodeEnd>;  // one persona's episode
 }
 ```
 
-`RUNNERS` in `index.ts` maps each type to its runner; `preflight(project)` runs every POI's check after "is there a POI" and "does every segment with a share have one". The host calls it before a run and the CLI before its one.
+`RUNNERS` in `index.ts` maps each type to its runner; `preflight(project, hasAsset?)` runs every POI's check after "is there a POI" and "does every segment with a share have one". The host calls it before a run with `hasAsset` checking the project's `assets/` folder; the CLI calls it without (its project is one web app), and then a missing asset only surfaces when the run reads it.
 
 | Type | File | Today |
 | --- | --- | --- |
 | `web` | `web.ts` | The existing browsing loop (`agent/loop.ts`), unchanged; budget is the patience budget; preflight is the production guard (`checkTarget`). |
 | `text` | `text.ts` | Stub: preflight refuses with "not available yet". Replace this file. |
-| `design` | `design.ts` | Stub: preflight refuses with "not available yet". Replace this file; refuse a navigator without vision here. |
+| `design` | `design.ts` | The expectation loop below; budget is the number of frames, capped by the patience budget; preflight refuses an empty design, a missing frame and a navigator that cannot see images. |
 
 An episode runner must:
 
@@ -50,6 +50,17 @@ An episode runner must:
 
 `EpisodeDeps.openPage(poi)` opens a contained browser page for a web POI; other runners ignore it. Assets are read with `readAsset(deps.blobs, id)`.
 
+## Static design: `engine/src/poi/design.ts`
+
+- **One step per frame, in order.** Each call (`purpose: 'design'`, the navigator role) shows the current frame and, after the first, the frame before it with what the persona said there. The answer (`designSchema` in `design-prompt.ts`) says whether this frame `matched` the persona's expectation (null on the first), what it `sees`, what it `would_do`, what it `expects_next`, `continue` or `abandon`, a `friction`, an `opinion`, a `thought` and a `feeling`.
+- **A mismatch is a friction on the frame where the expectation failed:** `persona.friction_reported` with `frame`, `where.url` `asset:<id>`, and the model's friction, or, when it said `matched: false` without one, what it saw against what it said it expected. The step's thought is the quote.
+- **Endings.** `abandon` ends with `persona.abandoned`; the last frame ends with `persona.goal_done` ("Looked through all N screens"); a sequence longer than the patience budget ends with `signal.budget_exceeded`. Two invalid answers are a failed step (`invalid_output`), as on the web; the next frame then has no expectation to compare with.
+- **Steps.** `action` is `read` (`done` or `abandon` at the end), `target` is `{ role: 'frame', name: <step name or "Screen N"> }`, `frame` is the index, and `screenshot` is the frame's asset path `assets/<id>`, so the report view, the HTML export (main's thumbnails) and the inspector show the frame as the evidence image without code of their own (a WebP frame may be left out of the HTML export: main's thumbnails use `nativeImage`, which only promises PNG and JPEG). The report view and the Markdown export print the frame number on frictions and evidence.
+- **Vision cost.** Only the current and previous frame are sent. A PNG frame is downscaled to at most 1,024 px on its long side (`frames.ts`, a small PNG decoder and encoder on `node:zlib`), once per asset id and shared by every persona. JPEG and WebP frames, and PNGs the decoder does not read (interlaced, under 8 bits per channel), are sent at their own size. The design runner always sends frames, whatever the screenshots setting.
+- **Preflight.** Refused: no frames; a frame whose asset is not in `assets/`; a DeepSeek navigator (text only); the local OpenAI-compatible endpoint, because Gnomi cannot tell whether its model reads images. Anthropic, OpenAI and Google navigators run.
+- **Scripted.** `DEMO_DESIGNER` in `llm/scripted.ts` (also through `DEMO_NAVIGATOR` for `purpose: 'design'`) passes every frame and logs a labelled sample mismatch on the second. `poi/design.test.ts` runs Gym v3's checkout frames with a scripted shopper that reads each frame through a lookup of its HTML: D26 gives one mismatch on frame 4, the control none.
+- **App.** `DesignPoiForm.tsx` adds frames with a file picker or by dropping files (`window.gnomi.pathForFile`, then `import_asset { path }`), shows thumbnails through `get_blob`, and edits an optional step name, the order and removal per frame. A design with no frames does not save.
+
 ## Assets: `engine/src/assets.ts`
 
 - Files live in the project's `assets/` folder under a content id: 16 hex characters of the SHA-256 and the extension, for example `3f9a…c2.md`. Ids are always safe file names; `assetPath` refuses anything else.
@@ -60,9 +71,10 @@ An episode runner must:
 
 - `index.ts` holds `POI_KINDS`: per type a `PoiKind` with `label`, `blank(id)`, `draft(poi)`, `toPoi(draft)` (the POI or a sentence saying what is missing) and `title(draft)`. Drafts are what the Project screen edits; `form.ts` turns them into `ProjectConfig.pois`.
 - `PoiList.tsx` is the ordered list (add, rename, reorder, remove, choose segments) and maps each type to its form component, which gets `PoiFormProps`: `{ draft, onChange, sessions }`.
-- `web.ts` and `WebPoiForm.tsx` are today's web fields. `text.ts` + `TextPoiForm.tsx` and `design.ts` + `DesignPoiForm.tsx` are placeholders: the text and design pieces replace those two files each.
+- `web.ts` and `WebPoiForm.tsx` are today's web fields; `design.ts` and `DesignPoiForm.tsx` the design's frames (above). `text.ts` + `TextPoiForm.tsx` are placeholders the text piece replaces.
+- Files on disk reach `import_asset { path }` through the preload's `window.gnomi.pathForFile(file)` (Electron's `webUtils.getPathForFile`), for files from an `<input type="file">` or a drop.
 
 ## Not done here
 
-- Enforcing observe-only, the buyer survey, a vision check for designs, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).
+- Enforcing observe-only, the buyer survey, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).
 - The survey prompt and the persona outcome are the web ones: a persona's outcome in the report is across all its POIs (any finished POI counts as done), and sentiment by segment pools the surveys of every POI.

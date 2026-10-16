@@ -140,7 +140,7 @@ export interface PageDriver {
   close(): Promise<void>;
 }
 
-export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: Uint8Array; mediaType: 'image/jpeg' };
+export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: Uint8Array; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' };
 
 /** One provider attempt, including failed/invalid answers. Transcripts are credential-redacted. */
 export interface LlmAttempt {

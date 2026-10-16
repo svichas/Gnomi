@@ -50,7 +50,7 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
   return (
     <li className="rounded-lg border border-amber-300 bg-amber-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no} - severity {friction.severity} of 4
+        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no}{friction.frame !== undefined && ` - frame ${friction.frame + 1}`} - severity {friction.severity} of 4
       </p>
       <p className="mt-1 font-medium text-stone-900">{friction.what}</p>
       <p className="mt-1 text-sm text-stone-700">
@@ -59,7 +59,7 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
       {friction.quote && (
         <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
       )}
-      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
+      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>
   );
