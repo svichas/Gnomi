@@ -53,6 +53,9 @@ export interface ReportModelDeps {
   events: () => GnomiEvent[]; // the run's log as it is now
 }
 
+// One call each per POI, so a slow reasoning model is worth waiting for: DeepSeek's judge needed over 60 s for 48 groups.
+const REPORT_TIMEOUT_MS = 180_000;
+
 /** After the episodes end and before the run's end event: one judge call, then one author call, per POI with frictions. */
 export async function runReportModels({ config, llm, record, events }: ReportModelDeps): Promise<void> {
   const { run_id, project } = config;
@@ -72,7 +75,7 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
         persona_id: null,
         round: 1,
         purpose: 'report_themes',
-        timeout_ms: 60_000,
+        timeout_ms: REPORT_TIMEOUT_MS,
         system: social ? JUDGE_SYSTEM + JUDGE_POSTS : JUDGE_SYSTEM,
         user: [{ type: 'text', text: JSON.stringify(social ? { product, groups, posts } : { product, groups }) }],
         schema: social ? judgePostsSchema : judgeSchema,
@@ -94,7 +97,7 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
         persona_id: null,
         round: 1,
         purpose: 'report_suggestions',
-        timeout_ms: 60_000,
+        timeout_ms: REPORT_TIMEOUT_MS,
         system: AUTHOR_SYSTEM,
         user: [{ type: 'text', text: JSON.stringify({ product, themes }) }],
         schema: authorSchema,
