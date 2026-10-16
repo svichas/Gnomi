@@ -390,7 +390,7 @@ try {
   await stage('Audience: one segment, then proposed segments, and the shares always add up to 100', async () => {
     await tab('Audience').click();
     const audience = page.locator('#panel-audience');
-    const sliders = audience.getByRole('slider');
+    const sliders = audience.getByRole('list', { name: 'Segments', exact: true }).getByRole('slider'); // the share sliders, not the persona count
     const shares = () => sliders.evaluateAll((inputs) => inputs.map((input) => Number((input as HTMLInputElement).value)));
     await audience.getByRole('button', { name: 'Build my own' }).click();
     assert.deepEqual(await shares(), [100]);
@@ -616,7 +616,7 @@ try {
     await page.locator('#panel-settings').getByText('Works').waitFor(); // the local endpoint's last test outlives the page
     await tab('Audience').click();
     await page.locator('#panel-audience').getByRole('heading', { name: 'Personas (6)' }).waitFor();
-    assert.equal(await page.locator('#panel-audience').getByRole('slider').count(), 2);
+    assert.equal(await page.locator('#panel-audience').getByRole('list', { name: 'Segments', exact: true }).getByRole('slider').count(), 2);
     if (!ran) return; // nothing to open: the first run failed
     await tab('Run').click();
     await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
