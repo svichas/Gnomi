@@ -135,13 +135,15 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
       costPerCall?: number;
       /** Runs before the n-th model call of the run, so a step can change the world first. */
       beforeCall?: (n: number) => Promise<void>;
+      /** Answers the surveys; the demo survey by default. */
+      survey?: Responder;
       onEvent?: (e: GnomiEvent, run: RunHandle) => void;
     } = {},
   ) => {
     let handle: RunHandle | undefined;
     const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-    // Walks script the steps only; every persona answers the demo survey at the end.
-    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
+    // Walks script the steps only; every persona answers the demo survey at the end unless the test answers it.
+    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? (opts.survey ?? (() => DEMO_SURVEY))(req) : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
     let calls = 0;
     const llm: LlmGateway = {
       async call<T>(req: LlmRequest<T>) {
@@ -601,4 +603,62 @@ test('a persona runs Gym / and then Gym /locale, with a survey and themes for ea
   assert.ok(themes.some((th) => th.poi_id === 'poi-home' && th.evidence.some((e) => e.what === 'The jobs link is easy to miss')));
   assert.ok(themes.some((th) => th.poi_id === 'poi-locale' && th.evidence.some((e) => e.what === 'The page does not say what it is for')));
   assert.ok(themes.every((th) => th.evidence.every((e) => e.step_no === null || (th.poi_id === 'poi-home') === (e.step_no <= 2))), 'evidence stays with its POI');
+});
+
+test('M5: an observe-only competitor on the Gym refuses a form submit before the network, logs it, and is compared with the product', async (t) => {
+  const w = await world(t);
+  const project: ProjectConfig = {
+    ...w.project,
+    pois: [{ ...web(w.project), id: 'poi-ours', name: 'Gym ATS' }, { ...web(w.project), id: 'poi-rival', name: 'Rival ATS', mode: 'observe_only', start_url: `${w.gym.url}/jobs/new` }],
+  };
+  const text = (req: LlmRequest<unknown>) => req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const surveys: LlmRequest<unknown>[] = [];
+  const { report, events } = await w.go(walk([
+    ...toJobs,
+    (req) => {
+      assert.match(req.system, /looking at Rival ATS, a competitor of Gym ATS/);
+      assert.match(req.system, /never submits a form/);
+      return say('Their form. A title first.', { type: 'type', ref: ref(req, 'textbox', 'Job title *'), text: 'Observed Engineer' });
+    },
+    (req) => say('Engineering.', { type: 'select', ref: ref(req, 'combobox', 'Department *'), text: 'Engineering' }),
+    (req) => say('Publish it.', { type: 'click', ref: ref(req, 'button', 'Publish job') }),
+    (req) => {
+      assert.match(text(req), /click button "Publish job" → failed \(submit_blocked\)/);
+      ref(req, 'heading', 'Create job');
+      return say('Nothing can be sent here, and I have seen enough.', { type: 'done', text: 'Saw how their job form works' });
+    },
+  ]), {
+    project,
+    survey: (req) => {
+      surveys.push(req);
+      return /Also answer comparison/.test(text(req)) ? { ...DEMO_SURVEY, comparison: { prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' } } : DEMO_SURVEY;
+    },
+  });
+
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const submit = of(events, 'persona.step').find((e) => e.poi_id === 'poi-rival' && e.payload.action.type === 'click')!;
+  assert.deepEqual([submit.payload.result.ok, submit.payload.result.error], [false, 'submit_blocked']);
+  assert.deepEqual(of(events, 'containment.blocked_request').map((e) => [e.poi_id, e.payload.method, e.payload.url, e.payload.reason]), [['poi-rival', 'POST', `${w.gym.url}/jobs`, 'observe_only']]);
+  const jobs = await (await fetch(`${w.gym.url}/jobs`)).text();
+  assert.ok(jobs.includes('<h1>Jobs</h1>') && !jobs.includes('Observed Engineer'), 'the Gym has no new job');
+
+  assert.equal(surveys.length, 2);
+  assert.doesNotMatch(text(surveys[0]), /comparison/, "the product's own survey asks no comparison");
+  assert.match(text(surveys[1]), /This session was on Rival ATS[^\n]*beside Gym ATS[\s\S]*Earlier [^\n]* used Gym ATS/);
+  assert.deepEqual(of(events, 'persona.survey').map((e) => [e.poi_id, e.payload.comparison ?? null]), [
+    ['poi-ours', null],
+    ['poi-rival', { with_poi_id: 'poi-ours', prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' }],
+  ]);
+
+  assert.deepEqual(report.pois.map((p) => [p.id, p.competitor ?? false]), [['poi-ours', false], ['poi-rival', true]]);
+  assert.deepEqual(report.comparisons, [{
+    poi_id: 'poi-rival',
+    with_poi_id: 'poi-ours',
+    segments: [{ segment_id: null, name: 'Built-in persona', compared: 1, product: 1, competitor: 0, no_preference: 0 }],
+    answers: [{ seq: of(events, 'persona.survey')[1].seq, persona_id: BUILTIN_PERSONA.id, persona_name: BUILTIN_PERSONA.name, segment_id: null, prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' }],
+  }]);
+  assert.deepEqual(report.methods.blocked_requests, [{ host: 'localhost', count: 1, reason: 'observe_only' }]);
+  // The persona's outcome, steps and the sentiment describe the team's product; the competitor is reported on its own.
+  assert.deepEqual([report.personas[0].outcome, report.personas[0].outcome_text, report.personas[0].steps], ['done', 'Reached the jobs list', 2]);
+  assert.equal(report.sentiment?.[0].surveyed, 1);
 });

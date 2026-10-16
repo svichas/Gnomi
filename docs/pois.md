@@ -6,7 +6,7 @@ How a project holds several points of interest (POIs) and how a new POI type plu
 
 - `ProjectConfig.pois: Poi[]`, in the order personas use them. `Poi = WebPoi | TextPoi | DesignPoi` (`engine/src/types.ts`). Every POI has `id`, `name` and `segments`.
 - `segments: string[] | null` lists the segment ids that use the POI. `null` means the default for each segment's kind (`isEligible` in `engine/src/poi/pois.ts`): segments of kind `user` (or with no kind, as saved before M5) use every POI; segments of kind `buyer` only perceive, so they use text and design POIs, never a web app. The built-in persona of a project without an audience uses every POI.
-- `WebPoi.mode` is `full` or `observe_only`. Only the field exists so far; enforcing observe-only (no form submission, rate limit, robots.txt) belongs to the competitor piece. Logins are recorded on, and a recorded session's start page applies to, the first web POI in full mode (`loginPoi`).
+- `WebPoi.mode` is `full` (the team's own product) or `observe_only` (a competitor's site, [below](#observe-only-web-pois-competitors)). Logins are recorded on, and a recorded session's start page applies to, the first web POI in full mode (`loginPoi`). That POI is also "the team's product" a competitor is compared with.
 - `TextPoi.asset` and `DesignPoi.frames[].asset` are asset ids (below).
 - Step and friction payloads may carry `frame` (index into `DesignPoi.frames`) and `passage` (`{ start, end }` character offsets, end exclusive). The report carries them into `ReportFriction` and `ReportEvidence`, and the Markdown export and report view print them.
 - Projects, run snapshots and `run.started` events saved with one `poi` read as `pois: [poi]` with `mode: 'full'` and `segments: null` (`withPois`, applied by the SQLite store, `buildReport` and the graph).
@@ -34,7 +34,7 @@ interface PoiRunner<P extends Poi> {
 
 | Type | File | Today |
 | --- | --- | --- |
-| `web` | `web.ts` | The existing browsing loop (`agent/loop.ts`), unchanged; budget is the patience budget; preflight is the production guard (`checkTarget`). |
+| `web` | `web.ts` | The browsing loop (`agent/loop.ts`); budget is the patience budget; preflight is the production guard (`checkTarget`). Observe-only POIs run with no session. |
 | `text` | `text.ts` | Stub: preflight refuses with "not available yet". Replace this file. |
 | `design` | `design.ts` | Stub: preflight refuses with "not available yet". Replace this file; refuse a navigator without vision here. |
 
@@ -62,7 +62,19 @@ An episode runner must:
 - `PoiList.tsx` is the ordered list (add, rename, reorder, remove, choose segments) and maps each type to its form component, which gets `PoiFormProps`: `{ draft, onChange, sessions }`.
 - `web.ts` and `WebPoiForm.tsx` are today's web fields. `text.ts` + `TextPoiForm.tsx` and `design.ts` + `DesignPoiForm.tsx` are placeholders: the text and design pieces replace those two files each.
 
+## Observe-only web POIs (competitors)
+
+A web POI with `mode: 'observe_only'` is browsed without writes (tech.md §7 "Competitor site", §9.3 "Observe-only mode").
+
+- **Containment** (`browser/contain.ts`, `browser/observe.ts`): `PageOptions.observe` turns it on. On a listed host only GET and HEAD go out; every other method is aborted, and so is every WebSocket (its messages could write). Page loads (navigation requests) go out one per two seconds per browser context (`OBSERVE_INTERVAL_MS`); a page's own subresources and its scripts' reads are not paced, and neither are redirect hops, which never reach `route()`. Each refusal is a `containment.blocked_request` with `reason: 'observe_only' | 'robots'` (no reason: a host outside the allowed ones), and the methods appendix counts blocked requests per host and reason.
+- **robots.txt**: `run.ts` fetches `/robots.txt` from the POI's start origin once per run (`observeOptions`), with Node's fetch, not the browser. A 2xx is parsed (RFC 9309: the groups naming `gnomi`, else those for `*`; the longest matching rule wins, allow wins a tie; `*` and a final `$` work); a 4xx means no rules; a 5xx, a timeout or no answer keeps Gnomi off the whole origin. Only page loads on the start origin are checked; other allowed hosts are not.
+- **What the persona hears**: an action that set off a blocked write (a form post, or a script's POST from a click) fails with `submit_blocked`; a page load robots.txt disallows fails with `robots_disallowed`. The page goes back from the browser's error page, as with `host_not_allowed`. The navigator prompt (`systemPrompt(…, poi)`) says the site is a competitor being looked at and that nothing may be submitted, and explains both errors. A start page robots.txt disallows ends the run with an error that says so.
+- **No login**: no recorded session is loaded for an observe-only POI, and a login page there is a page, not an expired session. The app offers the login recorder only when the project has a web POI in full mode.
+- **Production**: an observe-only POI may be a production site (no "not production" confirmation, and a live payment key on its pages is no tripwire), but listed production domains stay blocked and it may not have a reset hook.
+- **Survey** (`poi/compare.ts`): `run.ts` passes the survey request through `comparisonFor(project, persona, poi, surveys).ask(…)`. For an observe-only POI, when the persona answered the team's product's survey earlier in the run, the survey also asks for `comparison: { prefers: 'product' | 'competitor' | 'no_preference', reason }`, and `persona.survey` records it with `with_poi_id`. List the competitor after the product: a persona that reaches the competitor first is not asked.
+- **Report**: `pois[].competitor` marks observe-only POIs; `comparisons` gives each competitor's answers counted by segment, with the reasons. When a run also has a POI of the team's own, competitor events stay out of persona outcomes, step and friction counts, the frictions list, feelings, sentiment by segment and "what went well"; the competitor's own themes are ranked in its own section, as every POI's are.
+
 ## Not done here
 
-- Enforcing observe-only, the buyer survey, a vision check for designs, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).
-- The survey prompt and the persona outcome are the web ones: a persona's outcome in the report is across all its POIs (any finished POI counts as done), and sentiment by segment pools the surveys of every POI.
+- The buyer survey, a vision check for designs, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).
+- The survey prompt and the persona outcome are the web ones: a persona's outcome in the report is across all its POIs (any finished POI counts as done), and sentiment by segment pools the surveys of every POI, except a competitor's (above).

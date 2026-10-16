@@ -168,7 +168,7 @@ interface PoiBase {
 
 export interface WebPoi extends PoiBase {
   type: 'web';
-  mode: 'full' | 'observe_only'; // observe_only: no form submission (competitor sites, tech.md §7); not enforced yet
+  mode: 'full' | 'observe_only'; // observe_only: a competitor's site, browsed without writes or a login (tech.md §7, docs/pois.md)
   start_url: string; // where the login recorder opens and where logged-out personas begin
   allowed_hosts: string[]; // hosts personas may reach besides start_url's own; every other request is blocked (tech.md §9.3)
   production_domains: string[]; // never reachable, subdomains included; a run never starts against them
@@ -366,7 +366,7 @@ export interface EventPayloads {
   'social.feed_viewed': { post_ids: string[] };
   'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };
   'social.reaction': { post_id: string; kind: 'agree' | 'disagree' };
-  'containment.blocked_request': { host: string; url: string; method: string };
+  'containment.blocked_request': { host: string; url: string; method: string; reason?: 'observe_only' | 'robots' }; // no reason: an unlisted or production host
   'containment.tripwire': { kind: 'live_payment_key' | 'production_host'; detail: string };
   'signal.budget_exceeded': { step_no: number; budget: number };
   'signal.repeated_failure': { step_no: number; action: ActionType; error: string }; // the engine ended the episode, not the persona
@@ -386,6 +386,7 @@ export interface EventPayloads {
     frictions: string[];
     would_continue: boolean;
     reason: string;
+    comparison?: { with_poi_id: string; prefers: 'product' | 'competitor' | 'no_preference'; reason: string }; // an observe-only POI against the team's product (poi/compare.ts)
   };
   'llm.call': {
     role: LlmRole;
@@ -542,6 +543,14 @@ export interface ReportSentiment {
   would_continue: number; // share of surveyed personas
 }
 
+/** How the personas who used both compared a competitor's site with the team's product (tech.md §7), by segment. */
+export interface ReportComparison {
+  poi_id: string; // the competitor, an observe-only POI
+  with_poi_id: string; // the team's product: the first web POI in full mode
+  segments: { segment_id: string | null; name: string; compared: number; product: number; competitor: number; no_preference: number }[];
+  answers: { seq: number; persona_id: string; persona_name: string; segment_id: string | null; prefers: 'product' | 'competitor' | 'no_preference'; reason: string }[];
+}
+
 /** A survey like and how many personas named it. */
 export interface ReportLike {
   text: string;
@@ -555,7 +564,7 @@ export interface Report {
   status: 'running' | 'finished' | 'stopped';
   stop_reason: string | null;
   goal: string;
-  pois: { id: string; type: PoiType; name: string; start_url: string | null }[]; // in the project's order; start_url for web POIs only
+  pois: { id: string; type: PoiType; name: string; start_url: string | null; competitor?: true }[]; // in the project's order; start_url for web POIs only; competitor: observe-only
   personas: ReportPersona[]; // in start order
   segments: ReportSegment[];
   dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values
@@ -566,6 +575,7 @@ export interface Report {
   themes?: ReportTheme[];
   sentiment?: ReportSentiment[];
   went_well?: ReportLike[];
+  comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
   cost_usd: number;
   llm_calls: number;
@@ -586,7 +596,7 @@ export interface ReportMethods {
   models: Partial<Routing>; // the roles this run called, with their models
   budgets: { cost_usd: number; wall_clock_min: number; concurrency: number };
   allowed_hosts: string[]; // start_url's host first, then the POI's allowed hosts
-  blocked_requests: { host: string; count: number }[]; // distinct blocked requests per host, most first
+  blocked_requests: { host: string; count: number; reason?: 'observe_only' | 'robots' }[]; // distinct blocked requests per host and reason, most first
   blocked: { persona_id: string; step_no: number; reason: string; detail: string; resumed: boolean }[];
   tripwires: { kind: string; detail: string }[];
   reset: { url: string; status: number | null; error: string | null } | null;

@@ -82,7 +82,8 @@ export function Project(props: {
 
       <PoiList pois={form.pois} onChange={(pois) => set('pois', pois)} segments={audience?.segments ?? []} sessions={sessions} />
 
-      <details className="disclosure">
+      {/* Logins are recorded on, and used by, your own web apps only: a competitor's site is browsed logged out. */}
+      {form.pois.some((poi) => poi.type === 'web' && poi.mode === 'full') && <details className="disclosure">
         <summary><Icon name="settings" />Logins<span>Recorded logins for web apps</span></summary>
         <div className="space-y-5 disclosure-body">
       <Logins
@@ -96,7 +97,7 @@ export function Project(props: {
         sessionsPersist={sessionsPersist}
       />
         </div>
-      </details>
+      </details>}
 
       <ActionBar>
         {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}

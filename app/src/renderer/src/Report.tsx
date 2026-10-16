@@ -1,8 +1,8 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
-import { TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
+import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
@@ -327,7 +327,7 @@ function Themes({ themes, pois, onInspect, renderScreenshot }: { themes: ReportT
           const own = themes.filter((theme) => theme.poi_id === poi.id);
           return (
             <section key={poi.id} aria-label={`Potential frictions in ${poi.name}`} className="space-y-3">
-              <h4 className="text-sm font-medium text-stone-900">{poi.name}</h4>
+              <h4 className="text-sm font-medium text-stone-900">{poiName(poi)}</h4>
               {own.length ? list(own, true) : <p className="text-sm text-stone-600">No frictions to group into themes.</p>}
             </section>
           );
@@ -385,6 +385,54 @@ function Sentiment({ rows }: { rows: ReportSentiment[] }) {
         </table>
       </div>
       <p className="text-xs text-stone-500">From each persona's end-of-episode survey, 0 is neutral. Means are per segment, without weighting.</p>
+    </section>
+  );
+}
+
+const PREFERS: Record<ReportComparison['answers'][number]['prefers'], string> = { product: 'Prefers the product', competitor: 'Prefers the competitor', no_preference: 'No preference' };
+
+/** A competitor's site against the team's product, by segment, from the survey after the competitor (engine poi/compare.ts). */
+function Comparison({ comparison, pois }: { comparison: ReportComparison; pois: ReportData['pois'] }) {
+  const name = (id: string) => pois.find((poi) => poi.id === id)?.name ?? id;
+  const [competitor, product] = [name(comparison.poi_id), name(comparison.with_poi_id)];
+  const id = `comparison-${comparison.poi_id}`;
+  return (
+    <section aria-labelledby={id} className="space-y-2">
+      <h3 id={id} className="text-sm font-semibold text-stone-900">
+        {competitor} compared with {product}
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50">
+            <tr>
+              <Th>Segment</Th>
+              <Th>Compared</Th>
+              <Th>Prefer {product}</Th>
+              <Th>Prefer {competitor}</Th>
+              <Th>No preference</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {comparison.segments.map((row) => (
+              <tr key={row.segment_id ?? row.name}>
+                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
+                  {row.name}
+                </th>
+                {[row.compared, row.product, row.competitor, row.no_preference].map((n, i) => <td key={i} className="px-3 py-2 tabular-nums">{n}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="space-y-1 text-sm">
+        {comparison.answers.map((answer) => (
+          <li key={answer.seq} className="border-b border-stone-100 pb-1">
+            <span className="font-medium text-stone-900">{answer.persona_name}</span> <span className="text-xs text-stone-500">{PREFERS[answer.prefers]}</span>
+            <p className="text-stone-700">“{answer.reason}”</p>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-stone-500">Asked in the survey after {competitor}, of personas who had used {product} earlier in the run. {competitor} was observed only: nothing was sent to it.</p>
     </section>
   );
 }
@@ -592,9 +640,10 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
         none
       ) : (
         <ul>
-          {methods.blocked_requests.map(({ host, count: n }) => (
-            <li key={host}>
+          {methods.blocked_requests.map(({ host, count: n, reason }) => (
+            <li key={`${host}/${reason ?? ''}`}>
               {host}: {count(n, 'request')}
+              {reason && ` (${BLOCK_REASON_TEXT[reason]})`}
             </li>
           ))}
         </ul>
@@ -700,7 +749,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
         <p className="text-sm text-stone-600">The goal: {report.goal}</p>
-        {report.pois.length > 1 && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map((poi) => poi.name).join(', ')}</p>}
+        {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map(poiName).join(', ')}</p>}
         {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
       {filtered && <h3 className="text-sm font-semibold text-stone-900">Full-run totals</h3>}
@@ -718,6 +767,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {report.themes && <Themes themes={report.themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
+      {report.comparisons?.map((comparison) => <Comparison key={comparison.poi_id} comparison={comparison} pois={report.pois} />)}
       {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
       <PersonaOutcomes report={details} onInspect={onInspect} />

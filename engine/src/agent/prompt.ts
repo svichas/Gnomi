@@ -8,7 +8,7 @@ import { opinionSchema } from '../opinion/index.ts';
 import { poisFor } from '../poi/pois.ts';
 import { FEED_POSTS } from '../social/feed.ts';
 import { ACTION_TYPES } from '../types.ts';
-import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, Poi, ProjectConfig, Segment } from '../types.ts';
+import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, Poi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 import type { EpisodeEnd } from './loop.ts';
 
@@ -125,8 +125,8 @@ function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment
   return [...groups].map(([group, rows]) => `${group}:\n${rows.join('\n')}`).join('\n');
 }
 
-/** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). */
-export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, stepBudget: number): string {
+/** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). An observe-only POI is a competitor's site. */
+export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, stepBudget: number, poi?: WebPoi): string {
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
@@ -158,8 +158,16 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const profile = profileBlock(persona, project, segment, obj);
+  const competitor = poi?.mode === 'observe_only' ? poi.name : null;
+  const site = competitor ?? project.name;
+  // tech.md §9.3: the prompt forbids sending anything, and containment stops whatever is sent anyway.
+  const observing = competitor
+    ? `
 
-  return `This is ${persona.name}. ${p} is using ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Each turn shows what is on ${p}'s screen right now, and the question is always the same: what does ${p} do next, and what does ${p} think and feel along the way?
+${competitor} is a competitor of ${project.name}, and ${p} is only looking at it: ${p} browses and reads, and may type into fields, but never submits a form, signs up, logs in, buys or sends anything on ${competitor}. An action that failed with submit_blocked tried to send something: it was stopped before it left the browser, and it is not a problem with ${competitor}. An action that failed with robots_disallowed tried to open a page ${competitor} asks automated visitors not to open: that page cannot be shown, and it is not a problem with ${competitor} either. Once ${p} has seen how far ${competitor} goes with the task without sending anything, done is the answer.`
+    : '';
+
+  return `This is ${persona.name}. ${p} is ${competitor ? `looking at ${competitor}, a competitor of ${project.name}, to see how it handles the same work` : `using ${project.name} to get something done at work`}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Each turn shows what is on ${p}'s screen right now, and the question is always the same: what does ${p} do next, and what does ${p} think and feel along the way?
 
 People give up on tools that waste their time. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 
@@ -172,7 +180,7 @@ ${rules.map((r) => `- ${r}`).join('\n')}
 
 ${p}'s task: "${goal}"
 How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+The product: ${project.name}${project.description ? `. ${project.description}` : ''}${observing}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud, in ${poss} own voice, in ${languageName(environment.locale)} (${environment.locale}), in at most 40 words. Keep the thought in this language even when the page uses another language.
@@ -183,7 +191,7 @@ ${actionTypes(persona)
   .join('\n')}
 - friction: when ${p} is confused, blocked, surprised or annoyed, say so: severity 1 (a small irritation) to 4 (${p} cannot go on), what happened, and what ${p} expected instead. Otherwise null.
 - opinion: when firsthand evidence changes ${poss} view of this product, give the whole current opinion as {sentiment, confidence, likes, frictions}; otherwise null. Sentiment is an integer from -2 (very negative) to 2 (very positive), confidence is ${poss} own certainty from 0 to 1, and likes/frictions are up to 5 short statements each (at most 500 characters per statement) in ${languageName(environment.locale)}. Keep lists empty when there is no evidence. Base this on what ${p} has already seen, never on the result of the action about to be taken. A momentary feeling need not change an opinion; do not invent praise, friction or certainty.
-An action that failed with host_not_allowed tried to open a page outside ${project.name}: that page cannot be shown, it is not part of the product, and it is not a problem with the product.
+An action that failed with host_not_allowed tried to open a page outside ${site}: that page cannot be shown, it is not part of the product, and it is not a problem with the product.
 State markers such as [checked], [expanded], [pressed] and [selected] appear in the screen text only when true: a checkbox without [checked] is unchecked.
 Password values are masked in the screen text and screenshots. [password: empty] means no value is entered; [password: filled] means a value is present, even though its characters are hidden. [password: hidden] means the value's presence could not be checked. Password fields accept the type action like other editable fields. For account creation, choose a synthetic test password that meets the visible requirements and use the same value for confirmation; never guess an existing account's credentials.
 

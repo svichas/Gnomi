@@ -4,7 +4,7 @@ import { devices, errors } from 'playwright-core';
 import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playwright-core';
 import type { PageDriver, PageError, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
-import type { Containment, HostRule } from './contain.ts';
+import type { ActionRefusal, Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { inspect } from './inspect.ts';
 import { pruneSnapshot, snapshotTargets, type PasswordState } from './prune.ts';
@@ -99,7 +99,8 @@ export async function settle(page: Page): Promise<void> {
   }
 }
 
-export async function newPageDriver(context: BrowserContext, allows: HostRule): Promise<PageDriver> {
+/** `refusals` drains containment's observe-only refusals (contain.ts), so an action that ran into one fails with it. */
+export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => []): Promise<PageDriver> {
   const page = await openPage(context);
   let targets = new Map<string, ActionTarget>();
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
@@ -217,7 +218,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
 
   return {
     async goto(url) {
-      await page.goto(url, { timeout: 30_000, waitUntil: 'domcontentloaded' });
+      refusals();
+      await page.goto(url, { timeout: 30_000, waitUntil: 'domcontentloaded' }).catch((e) => {
+        if (!refusals().includes('robots_disallowed')) throw e;
+        const { host, pathname } = new URL(url);
+        throw new Error(`The robots.txt of ${host} does not let automated visitors open ${pathname} (or could not be read), so Gnomi does not browse it. Choose a start page it allows.`);
+      });
       await settle(page);
     },
 
@@ -261,18 +267,22 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule): 
       let text: string | null = null;
       let error: string | null = null;
       failedNavigation = null;
+      refusals(); // what the page ran into before this action is not its doing
       try {
         text = await perform(action, ref);
       } catch (e) {
         error = e instanceof errors.TimeoutError ? 'timeout' : (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
       }
       await settle(page);
-      if (refusedByContainment()) {
+      const outside = refusedByContainment();
+      const observed = refusals()[0] ?? null; // observe-only: a write or a page robots.txt disallows, stopped before the network
+      if (outside || (observed && page.url().startsWith('chrome-error://'))) {
         // The persona should hear "that leads outside the product" and still be on the page it was on, not on a browser error page.
         await page.goBack({ timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => null);
         await settle(page);
-        error = 'host_not_allowed';
       }
+      if (outside) error = 'host_not_allowed';
+      else if (observed) error = observed;
       const dom_changed = (await domVersion(page)) !== before;
       return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, target: (ref && targets.get(ref)) || null, text };
     },

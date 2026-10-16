@@ -3,9 +3,11 @@ import { socialParts, socialSchema, socialSystemPrompt, surveyParts, surveySchem
 import { personaEnvironment } from './audience/locations.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
+import { comparisonFor } from './poi/compare.ts';
 import { poiBudget, runnerFor } from './poi/index.ts';
 import { poisFor, webPois } from './poi/pois.ts';
 import { getPersonaSchema } from './profile/schema.ts';
+import { observeOptions } from './browser/observe.ts';
 import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
@@ -150,19 +152,23 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     halt({ reason: 'tripwire', detail }, true);
   };
 
-  // Loaded on every open, so a persona resumed after a re-recording logs in with the new session.
+  const observe = observeOptions(hard.signal); // robots.txt once per run and observe-only POI
+  // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
   const openPage = (persona: Persona, role: string | null) => async (poi: WebPoi) => {
-    const saved = role ? await sessions?.load(role) : null;
+    const login = poi.mode === 'full' ? role : null;
+    const saved = login ? await sessions?.load(login) : null;
+    const observing = await observe(poi);
     hard.signal.throwIfAborted();
-    if (role && !saved) throw new Error(`The recorded "${role}" login is missing. Record it again, then start a new run.`);
+    if (login && !saved) throw new Error(`The recorded "${login}" login is missing. Record it again, then start a new run.`);
     return browsers.newPage({
       device: persona.device,
       ...personaEnvironment(persona),
       allowedHosts: allowedHosts(poi),
       blockedDomains: poi.production_domains,
       storageState: saved?.state ?? null,
-      onBlockedRequest: ({ host, url, method, navigation }) => {
-        record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'containment.blocked_request', payload: { host, url, method } });
+      observe: observing,
+      onBlockedRequest: ({ host, url, method, navigation, reason }) => {
+        record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'containment.blocked_request', payload: reason === 'host' ? { host, url, method } : { host, url, method, reason } });
         const production = productionDomain(host, poi.production_domains);
         if (navigation && production) tripwire(persona.id, poi.id)('production_host', `${persona.name} tried to open ${url}, on the production domain ${production}.`);
       },
@@ -191,7 +197,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     try {
       const own = store.events(run_id, { personaId: persona.id, types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.poi_id === poi.id);
       const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
-      const { object } = await budgetedLlm.call({
+      const compare = comparisonFor(project, persona, poi, store.events(run_id, { personaId: persona.id, types: ['persona.survey'] })); // competitor POIs only
+      const { object } = await budgetedLlm.call(compare.ask({
         role: 'navigator',
         model: settings.routing.navigator,
         run_id,
@@ -209,11 +216,11 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         schema: surveySchema,
         signal: hard.signal,
         timeout_ms: 30_000,
-      });
+      }));
       // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
       if (hard.signal.aborted) return;
       const { sentiment, confidence, likes, frictions, would_continue, reason } = object;
-      record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, would_continue, reason } });
+      record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, would_continue, reason, ...compare.answer(object) } });
     } catch (err) {
       // An invalid or timed-out survey must not prevent reporting an episode that already ended.
       if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError') && !hard.signal.aborted) throw err;
