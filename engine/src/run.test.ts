@@ -1209,9 +1209,10 @@ test('social slices count a persona’s steps across its POIs', async () => {
   assert.match(feed.request_json, /about_poi_id: \\"poi-home\\" when the post or reply is about Home, \\"poi-locale\\" when the post or reply is about Locale/);
 });
 
-test('a persona with no point of interest stops the run from starting', () => {
-  assert.throws(
-    () => begin([], { personas: [persona('buyer', { segment_id: 'seg-a' })], project: { ...twoPois, audience: audience([segment('seg-a', { kind: 'buyer' })]) } }),
-    /Persona buyer has no point of interest to use/,
-  );
+test('a persona with no point of interest stops the run before anyone starts', async () => {
+  const r = begin([], { personas: [persona('buyer', { segment_id: 'seg-a' })], project: { ...twoPois, audience: audience([segment('seg-a', { kind: 'buyer' })]) } });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'error: Persona buyer has no point of interest to use.');
+  assert.equal(of(r.events, 'persona.created').length, 0);
+  assert.deepEqual(r.finished.map((f) => f.status), ['stopped']);
 });

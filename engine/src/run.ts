@@ -77,8 +77,6 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const base = { run_id, round: 1, persona_id: null, poi_id: null }; // round moves on with social rounds
   // Each persona uses the POIs its segment is eligible for, one after another, in the project's order (tech.md §7).
   const assigned = new Map(config.personas.map((p) => [p.id, poisFor(project.pois, segmentOf(p, project))]));
-  const idle = config.personas.find((p) => assigned.get(p.id)!.length === 0);
-  if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
   // Social rounds (tech.md §6.4): R usage slices, each followed by a social phase. 0 runs one straight slice, as before M4.
   const rounds = socialRounds(settings, project.audience);
   const follows = rounds ? followGraph(config.personas, config.seed) : null;
@@ -411,6 +409,9 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         if (hooks.length === 0) throw new Error('This project has no reset hook to call.');
         for (const url of hooks) await resetStaging(url);
       }
+      // The host's preflight catches this first; a run started some other way ends here, logged, rather than half-scheduled.
+      const idle = config.personas.find((p) => assigned.get(p.id)!.length === 0);
+      if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
       for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
       await schedule();
     } catch (err) {
