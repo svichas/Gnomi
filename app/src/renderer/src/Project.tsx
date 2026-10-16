@@ -6,7 +6,7 @@ import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
 import { Summary } from './Summary.tsx';
-import { Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { ActionBar, Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { PersonaHeader } from './ProfileFields.tsx';
 
@@ -234,11 +234,11 @@ export function Project(props: {
         </div>
       </details>
 
-      <div className="flow-footer">
+      <ActionBar>
+        {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
         <button type="button" onClick={onSave} disabled={busy} className={secondaryButton}>Save project</button>
         <button type="button" onClick={continueToAudience} disabled={busy} className={primaryButton}>{busy ? 'Saving…' : 'Continue to audience'}<Icon name="arrow" size={18} /></button>
-      </div>
-      {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+      </ActionBar>
       </div>
 
       <aside className="setup-aside" aria-label="Your test at a glance">

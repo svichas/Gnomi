@@ -14,7 +14,7 @@ import { personaLabel } from './ProfileFields.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
 import { Swarm } from './Swarm.tsx';
-import { Note, ProgressBar, Screenshot, primaryButton, secondaryButton, usd, when } from './ui.tsx';
+import { ActionBar, Note, ProgressBar, Screenshot, primaryButton, secondaryButton, usd, when } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 
 const DOT: Record<PersonaState, string> = {
@@ -186,9 +186,11 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
             {row && <p className="mt-1 text-sm text-stone-600">The goal: {row.config.project.goal}</p>}
           </div>
           {!ended && (
-            <button type="button" onClick={stop} disabled={stopping} className={secondaryButton}>
-              {stopping ? 'Stopping...' : 'Stop run'}
-            </button>
+            <ActionBar>
+              <button type="button" onClick={stop} disabled={stopping} className={secondaryButton}>
+                {stopping ? 'Stopping...' : 'Stop run'}
+              </button>
+            </ActionBar>
           )}
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

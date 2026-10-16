@@ -10,7 +10,7 @@ import { PersonaList } from './Personas.tsx';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
-import { Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
+import { ActionBar, Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
 
@@ -246,10 +246,10 @@ export function AudienceTab(props: {
           onAdd={(segmentId) => void change((cost) => `Added a persona (${usd(cost)}).`, () => call('add_persona', { segment_id: segmentId }))}
         />
       )}
-      <div className="flow-footer audience-footer">
-        <button type="button" className={secondaryButton} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
-        <div><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
-      </div>
+      <ActionBar>
+        <button type="button" className={`${secondaryButton} mr-auto`} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
+        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
+      </ActionBar>
     </div>
   );
 }
