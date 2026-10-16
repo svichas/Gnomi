@@ -138,9 +138,10 @@ try {
   assert.ok(await review.isEnabled());
   await page.screenshot({ path: join(shots, 'audience-single-persona.png') });
   await review.click();
-  await page.getByRole('dialog').waitFor();
-  await page.getByRole('dialog').getByText(/^1 persona:/).waitFor();
-  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  const reviewStep = page.locator('#panel-review');
+  await reviewStep.getByText('1 simulated person', { exact: true }).waitFor();
+  assert.equal(await page.locator('.step-nav [aria-current]').innerText(), '3\nReview');
+  await reviewStep.getByRole('button', { name: 'Back to audience', exact: true }).click();
   await page.locator('#tab-settings').click();
   await page.getByLabel('Writer concurrency (1-32)', { exact: true }).fill('4');
   await page.getByRole('button', { name: 'Save settings', exact: true }).click();

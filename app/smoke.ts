@@ -93,16 +93,23 @@ async function showActivity(page: Page) {
   return activity;
 }
 
-/** Presses Start run, confirms the pre-run summary and waits until the run's page is showing. */
+/** Opens the Review step from Setup and waits until the project saved; returns its panel. */
+async function openReview(page: Page) {
+  await page.getByRole('button', { name: 'Review & start', exact: true }).click();
+  const review = page.locator('#panel-review');
+  const saved = review.getByRole('region', { name: 'What they will try' });
+  await saved.or(review.getByRole('region', { name: 'Fix before you start' })).first().waitFor();
+  assert.ok(await saved.isVisible(), `the project did not save: ${await review.innerText()}`);
+  return review;
+}
+
+/** Opens the Review step, starts the run from its bar and waits until the run's page is showing. */
 async function startRun(page: Page, runId: string) {
-  await page.getByRole('button', { name: 'Start run' }).click();
-  const summary = page.getByRole('dialog');
-  await summary.or(page.getByRole('alert')).first().waitFor();
-  assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-  await summary.getByRole('button', { name: 'Start run' }).click();
+  const review = await openReview(page);
+  await review.getByRole('button', { name: 'Start run', exact: true }).click();
   const heading = page.getByRole('region', { name: 'Run status' });
-  await heading.or(summary.getByRole('alert')).first().waitFor({ timeout: 60_000 });
-  assert.ok(await heading.isVisible(), `the run did not start: ${await summary.getByRole('alert').allInnerTexts()}`);
+  await heading.or(review.getByRole('alert')).first().waitFor({ timeout: 60_000 });
+  assert.ok(await heading.isVisible(), `the run did not start: ${await review.getByRole('alert').allInnerTexts()}`);
 }
 
 const app = await electron.launch({
@@ -119,7 +126,7 @@ try {
 
   await stage('the window shows a project journey and a separate Settings control', async () => {
     await tab('Settings').waitFor();
-    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Activity']);
+    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Review', 'Activity']);
   });
 
   await stage('the engine started and opened the project', async () => {
@@ -298,15 +305,11 @@ try {
     await page.getByLabel('Add a host').fill('cdn.example.test');
     await page.getByRole('button', { name: 'Add host' }).click();
     await page.getByLabel('Reset hook URL (optional)').fill('http://localhost:9/reset');
-    await page.getByRole('button', { name: 'Start run' }).click();
-    const summary = page.getByRole('dialog');
-    await summary.or(page.getByRole('alert')).first().waitFor();
-    assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-    assert.match(await summary.innerText(), /Allowed hosts[\s\S]*cdn\.example\.test[\s\S]*Everything else is blocked/);
-    await summary.getByLabel('Reset staging before the run').waitFor();
+    const review = await openReview(page);
+    assert.match(await review.innerText(), /Allowed hosts[\s\S]*cdn\.example\.test[\s\S]*Everything else is blocked/);
+    await review.getByLabel('Reset staging before the run').waitFor();
     await page.screenshot({ path: join(shots, 'summary.png') });
-    await summary.getByRole('button', { name: 'Cancel' }).click();
-    await summary.waitFor({ state: 'hidden' });
+    await tab('Project').click();
   });
 
   await stage("Settings: providers are added, tested and removed, routes offer only configured ones, and a role's provider fills in its usual model", async () => {
@@ -473,19 +476,15 @@ try {
 
   await stage('the pre-run summary shows who will browse and an estimate', async () => {
     await tab('Project').click();
-    await page.getByRole('button', { name: 'Start run' }).click();
-    const summary = page.getByRole('dialog');
-    await summary.or(page.getByRole('alert')).first().waitFor();
-    assert.ok(await summary.isVisible(), `the pre-run summary did not open: ${await page.getByRole('alert').allInnerTexts()}`);
-    await summary.getByText(/About \$/).waitFor();
-    const text = await summary.innerText();
-    assert.match(text, /6 personas: 3 Recruiters, 3 Hiring managers/);
+    const review = await openReview(page);
+    await review.getByText(/About \$/).waitFor();
+    const text = await review.innerText();
+    assert.match(text, /6 simulated people[\s\S]*Recruiters\s+3 personas[\s\S]*Hiring managers\s+3 personas/);
     assert.match(text, /About \$[\d.]+(–\$[\d.]+)? and \d+(–\d+)? minutes?/);
-    assert.match(text, /Recorded cost limit: \$2\.00\. Time limit: 60 minutes\. Up to 3 browsers at a time/);
+    assert.match(text, /Cost limit\s+\$2\.00[\s\S]*Time limit\s+60 minutes[\s\S]*Browsers at once\s+3/);
     assert.match(text, /billed cost can exceed the limit/);
     await page.screenshot({ path: join(shots, 'summary-estimate.png') });
-    await summary.getByRole('button', { name: 'Cancel' }).click();
-    await summary.waitFor({ state: 'hidden' });
+    await tab('Project').click();
   });
 
   let population = false;

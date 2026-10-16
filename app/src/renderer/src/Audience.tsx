@@ -14,6 +14,17 @@ import { ActionBar, Card, Field, Note, NumberInput, primaryButton, secondaryButt
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
 
+/** Where the audience stands on its way to a run; the review step shows it too, at its last stage. */
+export function AudienceSteps({ stage }: { stage: 1 | 2 | 3 }) {
+  return (
+    <ol className="audience-steps" aria-label="Prepare your audience">
+      <li data-complete={stage > 1 || undefined} aria-current={stage === 1 ? 'step' : undefined}><span>{stage > 1 ? <Icon name="check" size={16} /> : '1'}</span><div><strong>Define audience</strong><small>Choose your groups</small></div></li>
+      <li data-complete={stage > 2 || undefined} aria-current={stage === 2 ? 'step' : undefined}><span>{stage > 2 ? <Icon name="check" size={16} /> : '2'}</span><div><strong>Build personas</strong><small>Create the people</small></div></li>
+      <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
+    </ol>
+  );
+}
+
 /** The audience tab: who the product is for, in proportions the team controls (idea.md §5.1 step 3). */
 export function AudienceTab(props: {
   audience: Audience | null;
@@ -119,11 +130,7 @@ export function AudienceTab(props: {
   const several = segments.length > 1;
   return (
     <div className="space-y-5">
-      <ol className="audience-steps" aria-label="Prepare your audience">
-        <li data-complete={stage > 1 || undefined} aria-current={stage === 1 ? 'step' : undefined}><span>{stage > 1 ? <Icon name="check" size={16} /> : '1'}</span><div><strong>Define audience</strong><small>Choose your groups</small></div></li>
-        <li data-complete={stage > 2 || undefined} aria-current={stage === 2 ? 'step' : undefined}><span>{stage > 2 ? <Icon name="check" size={16} /> : '2'}</span><div><strong>Build personas</strong><small>Create the people</small></div></li>
-        <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
-      </ol>
+      <AudienceSteps stage={stage} />
       <Card title="Audience">
         {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>

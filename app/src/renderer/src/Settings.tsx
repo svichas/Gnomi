@@ -15,7 +15,7 @@ const PROVIDER_NOTES: Partial<Record<ProviderId, string>> = {
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
 };
 
-const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
+export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
   navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
   persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
   socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },

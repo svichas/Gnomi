@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { ProjectConfig } from '@gnomi/engine/types.ts';
 import { hostOf, hostToConfirm, offeredHosts, startHost } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
-import { Summary } from './Summary.tsx';
 import { ActionBar, Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { PersonaHeader } from './ProfileFields.tsx';
@@ -76,17 +75,15 @@ export function Project(props: {
   save(): Promise<ProjectConfig | string>;
   sessionsPersist: boolean;
   onSaved(): Promise<void>;
-  onStarted(runId: string): void;
   onAudience(): void;
+  onReview(): void;
   onSettings(): void;
-  reviewRequest: number;
   needsProvider: boolean;
 }) {
-  const { info, draft, onForm, save, sessionsPersist, onSaved, onStarted, onAudience, onSettings, reviewRequest, needsProvider } = props;
+  const { info, draft, onForm, save, sessionsPersist, onSaved, onAudience, onReview, onSettings, needsProvider } = props;
   const { form, audience } = draft;
   const set = <K extends keyof Form>(key: K, value: Form[K]) => onForm((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
-  const [summary, setSummary] = useState<ProjectConfig | null>(null);
   const { busy, outcome, run } = useAction();
   const sessions = info?.sessions ?? [];
   const needsPersonas = audience !== null && !info?.personas.length;
@@ -109,17 +106,7 @@ export function Project(props: {
       return typeof saved === 'string' ? { ok: false, text: saved } : { ok: true, text: 'Project saved.' };
     });
 
-  // Starting saves first, so a run never uses an older goal than the one on screen; the summary is the last stop before it begins.
-  const onStart = () =>
-    run(async () => {
-      const saved = await save();
-      if (typeof saved === 'string') return { ok: false, text: saved };
-      setSummary(saved);
-      return null;
-    });
-
   const persona = info?.persona;
-  useEffect(() => { if (reviewRequest > 0) void onStart(); }, [reviewRequest]);
 
   const continueToAudience = () => run(async () => {
     const saved = await save();
@@ -196,7 +183,7 @@ export function Project(props: {
           </Field>
           <Field
             label="Reset hook URL (optional)"
-            hint="Gnomi sends a POST here before a run, when you tick the box in the summary, so your staging data starts fresh. It must be on the start page's host or an allowed host."
+            hint="Gnomi sends a POST here before a run, when you tick the box on the Review step, so your staging data starts fresh. It must be on the start page's host or an allowed host."
           >
             <input
               type="url"
@@ -261,8 +248,8 @@ export function Project(props: {
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={needsPersonas ? onAudience : onStart} disabled={busy || recorder.recording !== null} className={`${secondaryButton} w-full`}>
-            <Icon name={needsPersonas ? 'people' : 'play'} size={16} />{needsPersonas ? 'Build personas first' : 'Start run'}
+          <button type="button" onClick={needsPersonas ? onAudience : onReview} disabled={busy || recorder.recording !== null} className={`${secondaryButton} w-full`}>
+            <Icon name={needsPersonas ? 'people' : 'play'} size={16} />{needsPersonas ? 'Build personas first' : 'Review & start'}
           </button>
           {busy && <p className="text-sm text-stone-500">Working...</p>}
         </div>
@@ -271,24 +258,6 @@ export function Project(props: {
       </div>
       </aside>
 
-      {summary && (
-        <Summary
-          config={summary}
-          builtin={persona}
-          personas={info?.personas ?? []}
-          sessions={sessions}
-          onChecked={onSaved}
-          onRerecord={(role) => {
-            setSummary(null);
-            void recorder.start(role, saveFirst);
-          }}
-          onStarted={(runId) => {
-            setSummary(null);
-            onStarted(runId);
-          }}
-          onClose={() => setSummary(null)}
-        />
-      )}
     </div>
   );
 }
