@@ -164,6 +164,21 @@ test('scripted demo runs read a text too: the demo confusion quotes its first li
   assert.deepEqual(report.buyers?.map((b) => [b.name, b.surveyed, b.price.unclear]), [['Team leads buying', 1, 1]]);
 });
 
+test('failed text model calls stop with a technical error, without inventing impatience or survey feedback', async () => {
+  const purposes: string[] = [];
+  const { report, events } = await runText({
+    text: 'A short product pitch.', personas: [users[0]], audience,
+    navigator: (req) => { purposes.push(req.purpose!); return {}; },
+  });
+  assert.equal(report.status, 'stopped');
+  assert.match(report.stop_reason ?? '', /error: .*Invalid output twice/);
+  assert.deepEqual(purposes, ['read_text', 'read_text'], 'only the bounded gateway retry runs');
+  assert.equal(of(events, 'persona.step').length, 0, 'a failed model call is not a persona action');
+  assert.equal(of(events, 'signal.budget_exceeded').length, 0, 'model failure did not exhaust persona patience');
+  assert.equal(of(events, 'persona.survey').length, 0);
+  assert.equal(report.personas[0].outcome, 'incomplete');
+});
+
 test('a long text takes one step per part: an impatient reader runs out before the end, a patient one reads on and remembers', async () => {
   const paragraph = `${'Plans and prices. '.repeat(55)}`.trim(); // about 1k characters
   const long = Array.from({ length: 110 }, (_, i) => `## Section ${i + 1}\n\n${paragraph}`).join('\n\n');

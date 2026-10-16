@@ -9,7 +9,7 @@ import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
 import { createLimiter, DEFAULT_LIMITS, realClock, type Clock, type Limit } from './limiter.ts';
 import { costUsd, type TokenUsage } from './prices.ts';
 
-/** The model gave no schema-valid answer on either attempt. Callers treat it as a failed step, not a crash. */
+/** The model gave no schema-valid answer on either attempt. */
 export class InvalidOutputError extends Error {}
 
 const NO_TOKENS: TokenUsage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
@@ -59,6 +59,7 @@ function usageReported(provider: ProviderId, usage: LanguageModelUsage | undefin
 export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
   return {
     model: req.model,
+    max_output_tokens: req.max_output_tokens,
     system: req.system,
     user: user.map((p) => (p.type === 'image' ? { type: 'image', mediaType: p.mediaType, bytes: p.data.byteLength } : p)),
   };
@@ -101,9 +102,9 @@ function providerOptions({ provider, model }: ModelChoice, role: LlmRole, overri
       return { google: { thinkingConfig: { thinkingLevel: effort === 'none' ? 'low' : effort } } };
     case 'deepseek':
       // DeepSeek defaults to HIGH thinking when omitted. Routine persona prose needs none.
-      return { deepseek: effort === 'none' || (role === 'persona_writer' && effort === 'low')
+      return { deepseek: effort === 'none' || effort === 'low'
         ? { thinking: { type: 'disabled' } }
-        : { thinking: { type: 'enabled' }, reasoningEffort: effort === 'low' ? 'low' : 'high' } };
+        : { thinking: { type: 'enabled' }, reasoningEffort: 'high' } };
     case 'openai_compatible':
       return {};
   }
@@ -179,6 +180,8 @@ export function createGateway({
       const hideKey = (text: string) => redact(text, provider === 'openai_compatible' ? undefined : credential);
       const model = languageModel(req.model, credential);
       const options = providerOptions(req.model, req.role, req.effort);
+      const effort = req.effort ?? EFFORT[req.role];
+      let maxOutputTokens = req.max_output_tokens ?? (effort === 'none' || effort === 'low' ? 4096 : 16_384);
       const output = Output.object({ schema: req.schema });
       // DeepSeek supports JSON mode, not native schemas. Keep Output.object's validation and error metadata.
       if (provider === 'deepseek') output.responseFormat = Output.json().responseFormat;
@@ -218,7 +221,7 @@ export function createGateway({
             output,
             providerOptions: options,
             // Thinking tokens count against the cap, so the roles that think more get more room.
-            maxOutputTokens: req.max_output_tokens ?? (EFFORT[req.role] === 'low' ? 4096 : 16_384),
+            maxOutputTokens,
             // The retries are ours, so that each failed attempt is logged and a 429 reaches onThrottle.
             maxRetries: 0,
             abortSignal: req.signal,
@@ -244,6 +247,9 @@ export function createGateway({
             error = hideKey(err instanceof Error ? err.message : String(err));
           }
         }
+        if (status === 'invalid_output' && finish === 'length') {
+          error = `The model reached the output token limit (${maxOutputTokens} tokens) before completing its JSON answer.`;
+        }
         const cache_read_tokens = usage?.inputTokenDetails.cacheReadTokens ?? 0;
         const cache_write_tokens = usage?.inputTokenDetails.cacheWriteTokens ?? 0;
         const tokens: TokenUsage = {
@@ -256,7 +262,7 @@ export function createGateway({
         spent += cost_usd;
         const attempt: LlmAttempt = {
           payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
-          transcript: JSON.parse(hideKey(JSON.stringify({ request: transcriptRequest({ ...req, system }, user), response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
+          transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;
         // Setup calls have no run ledger; observers still receive their attempt below.
@@ -298,7 +304,11 @@ export function createGateway({
         }
 
         if (++invalid === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);
-        user = retryParts(parts, error ?? '');
+        // Reasoning shares the output allowance. Retry a cut-off answer with room to finish, unless the caller set a hard cap.
+        if (finish === 'length' && req.max_output_tokens === undefined) maxOutputTokens = Math.min(maxOutputTokens * 2, 32_768);
+        user = finish === 'length'
+          ? [...parts, { type: 'text', text: 'The previous response was cut off. Return one complete JSON object that matches the schema; keep every field concise.' }]
+          : retryParts(parts, error ?? '');
       }
     },
   };

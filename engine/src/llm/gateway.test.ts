@@ -260,6 +260,52 @@ test('a role sets how hard the model thinks and how much room it has', async () 
   assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
 });
 
+test('explicit DeepSeek effort overrides control thinking and reserve room for reasoning', async () => {
+  const sent = stubFetch(...Array.from({ length: 3 }, () => () => chatCompletion(OK)));
+  const { gateway } = setup();
+  const model: ModelChoice = { provider: 'deepseek', model: 'deepseek-flash' };
+  await gateway.call(request({ model, effort: 'high' }));
+  await gateway.call(request({ model, effort: 'medium' }));
+  await gateway.call(request({ model, role: 'author', effort: 'none' }));
+  assert.deepEqual(sent.bodies.map((b) => [b.thinking.type, b.reasoning_effort, b.max_tokens]), [
+    ['enabled', 'high', 16_384], ['enabled', 'high', 16_384], ['disabled', undefined, 4096],
+  ]);
+});
+
+/** The observed failure: the entire completion allowance was spent before a complete JSON answer. */
+function truncatedCompletion(text: string, tokens = 4096) {
+  return Response.json({
+    id: 'c-length', object: 'chat.completion', created: 1, model: 'deepseek-flash',
+    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'length' }],
+    usage: { prompt_tokens: 1_000, completion_tokens: tokens, total_tokens: 1_000 + tokens, completion_tokens_details: { reasoning_tokens: text ? tokens - 100 : tokens } },
+  });
+}
+
+for (const text of ['', '{"thought":"Cut off']) {
+  test(`a ${text ? 'partial JSON' : 'reasoning-only'} response retries with more output room and keeps paid usage`, async () => {
+    const sent = stubFetch(() => truncatedCompletion(text), () => chatCompletion(OK));
+    const { gateway, calls } = setup();
+    const result = await gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-flash' } }));
+    assert.deepEqual(result.object, JSON.parse(OK));
+    assert.ok(sent.bodies.every((b) => b.thinking.type === 'disabled'));
+    assert.deepEqual(sent.bodies.map((b) => b.max_tokens), [4096, 8192]);
+    assert.deepEqual(calls.map((c) => c.event.payload.status), ['invalid_output', 'ok']);
+    assert.equal(calls[0].event.payload.output_tokens, 4096);
+    assert.equal(calls[0].event.payload.reasoning_tokens, text ? 3996 : 4096);
+    assert.match(calls[0].event.payload.error ?? '', /output token limit.*4096/i);
+    assert.deepEqual(calls.map((c) => JSON.parse(c.transcript).request.max_output_tokens), [4096, 8192]);
+    assert.equal(result.cost_usd, calls.reduce((sum, c) => sum + c.event.payload.cost_usd, 0));
+  });
+}
+
+test('length retries respect an explicit output limit and stop after the second attempt', async () => {
+  const sent = stubFetch(() => truncatedCompletion('', 1200), () => truncatedCompletion('', 1200));
+  const { gateway, calls } = setup();
+  await assert.rejects(gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-flash' }, max_output_tokens: 1200 })), /Invalid output twice: .*output token limit.*1200/i);
+  assert.deepEqual(sent.bodies.map((b) => b.max_tokens), [1200, 1200]);
+  assert.equal(calls.length, 2);
+});
+
 test('a missing key fails before any request with provider-neutral guidance', async () => {
   const sent = stubFetch();
   const { gateway, calls } = setup({ keys: {}, localBaseUrl: null });

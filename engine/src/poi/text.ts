@@ -2,7 +2,6 @@ import { personaEnvironment } from '../audience/locations.ts';
 import { fnv1a } from '../audience/sample.ts';
 import { readAsset } from '../assets.ts';
 import type { EpisodeDeps, EpisodeEnd } from '../agent/loop.ts';
-import { InvalidOutputError } from '../llm/gateway.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import type { Action, EventPayloads, EventType, NewEvent, Opinion, TextPoi } from '../types.ts';
 import type { PoiRunner } from './index.ts';
@@ -82,25 +81,25 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     if (!deps.beginStep()) return 'stopped';
     const started = Date.now();
     const part = parts[index];
-    let output: ReadOutput | null = null;
+    let output: ReadOutput;
     try {
       const user = readParts({ persona, text, part, index, parts: parts.length, memory, opinion });
       const { object } = await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: READ_TEXT, system, user, schema: readSchema(index < parts.length - 1), signal });
       output = object;
     } catch (err) {
-      // A second invalid output is a failed step, read again at the next one; any other model error ends the run (tech.md §10.6).
-      if (!(err instanceof InvalidOutputError) && !signal.aborted) throw err;
+      if (signal.aborted) return 'stopped';
+      // The gateway already retried. A model failure must not turn into a read, exhausted patience or a survey answer.
+      throw err;
     } finally {
       deps.endStep();
     }
     // A provider may return successfully after cancellation. Its usage stays logged, but the answer must not act.
     if (signal.aborted) return 'stopped';
 
-    const action: Action = { type: !output || output.action.type === 'read_on' ? 'read' : output.action.type, ref: null, text: output?.action.text ?? null };
-    const result = { ok: !!output, error: output ? null : 'invalid_output', url_before: where, url_after: where, dom_changed: false };
+    const action: Action = { type: output.action.type === 'read_on' ? 'read' : output.action.type, ref: null, text: output.action.text };
+    const result = { ok: true, error: null, url_before: where, url_after: where, dom_changed: false };
     const snapshot_hash = fnv1a(text.slice(part.start, part.end)).toString(16);
-    const step = emit('persona.step', { step_no, action, target: null, result, thought: output?.thought ?? '', feeling: output?.feeling ?? 0, snapshot_hash, screenshot: null, duration_ms: Date.now() - started, passage: part });
-    if (!output) continue;
+    const step = emit('persona.step', { step_no, action, target: null, result, thought: output.thought, feeling: output.feeling, snapshot_hash, screenshot: null, duration_ms: Date.now() - started, passage: part });
     if (!sameOpinion(opinion, output.opinion)) {
       emit('persona.opinion_changed', { poi_id: poi.id, before: opinion, after: structuredClone(output.opinion), cause: { step_ids: [step.seq], post_ids: [] } });
       opinion = structuredClone(output.opinion);
