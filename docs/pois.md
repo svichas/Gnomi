@@ -8,12 +8,13 @@ How a project holds several points of interest (POIs) and how a new POI type plu
 - `segments: string[] | null` lists the segment ids that use the POI. `null` means the default for each segment's kind (`isEligible` in `engine/src/poi/pois.ts`): segments of kind `user` (or with no kind, as saved before M5) use every POI; segments of kind `buyer` only perceive, so they use text and design POIs, never a web app. The built-in persona of a project without an audience uses every POI.
 - `WebPoi.mode` is `full` or `observe_only`. Only the field exists so far; enforcing observe-only (no form submission, rate limit, robots.txt) belongs to the competitor piece. Logins are recorded on, and a recorded session's start page applies to, the first web POI in full mode (`loginPoi`).
 - `TextPoi.asset` and `DesignPoi.frames[].asset` are asset ids (below).
-- Step and friction payloads may carry `frame` (index into `DesignPoi.frames`) and `passage` (`{ start, end }` character offsets, end exclusive). The report carries them into `ReportFriction` and `ReportEvidence`, and the Markdown export and report view print them.
+- Step and friction payloads may carry `frame` (index into `DesignPoi.frames`) and `passage` (`{ start, end, text? }` character offsets, end exclusive). A friction's passage carries `text`, the quoted span as the engine verified it; a text step's passage is the part it read, without `text`. The report carries them into `ReportFriction` and `ReportEvidence`, and the Markdown and HTML exports and the report view print them, with the quote when there is one.
+- `Segment.kind` is `user` (or absent) or `buyer`; the audience editor sets it with a Users / Buyers control on each segment.
 - Projects, run snapshots and `run.started` events saved with one `poi` read as `pois: [poi]` with `mode: 'full'` and `segments: null` (`withPois`, applied by the SQLite store, `buildReport` and the graph).
 
 ## Scheduling
 
-`startRun` (`engine/src/run.ts`) gives each persona `poisFor(project.pois, segment)` and runs them one after another in that order. For each POI it calls the type's runner, then asks the persona's survey about that POI (`persona.survey` with its `poi_id`). A run-wide stop ends the sequence; any other ending moves on to the next POI. A persona with no POI stops the run before it starts; the host's preflight says so earlier.
+`startRun` (`engine/src/run.ts`) gives each persona `poisFor(project.pois, segment)` and runs them one after another in that order. For each POI it calls the type's runner, then asks the persona's survey about that POI (`persona.survey` with its `poi_id`). Personas of a `buyer` segment answer the buying survey instead (Text, below). A run-wide stop ends the sequence; any other ending moves on to the next POI. A persona with no POI stops the run before it starts; the host's preflight says so earlier.
 
 - **Step numbers run on across a persona's POIs.** The second POI's first step is `stepsBefore + 1`. This keeps `(persona, step_no)` unique for the report, screenshots (`runs/<run>/shots/<persona>-<step_no>.jpg`) and signals. The prompt still shows "Step 1 of N" for each POI.
 - **Budgets** come from the runner: `poiBudget(persona, poi)` is the runner's `budget(patienceBudget, poi)`, at least 1.
@@ -35,7 +36,7 @@ interface PoiRunner<P extends Poi> {
 | Type | File | Today |
 | --- | --- | --- |
 | `web` | `web.ts` | The existing browsing loop (`agent/loop.ts`), unchanged; budget is the patience budget; preflight is the production guard (`checkTarget`). |
-| `text` | `text.ts` | Stub: preflight refuses with "not available yet". Replace this file. |
+| `text` | `text.ts` | Read and rate, below; budget is one part per 15 steps of patience budget; preflight refuses a text without its `.md` or `.txt` asset. |
 | `design` | `design.ts` | The expectation loop below; budget is the number of frames, capped by the patience budget; preflight refuses an empty design, a missing frame and a navigator that cannot see images. |
 
 An episode runner must:
@@ -67,14 +68,26 @@ An episode runner must:
 - Types: `.md` and `.txt` (UTF-8, at most 2 MB), `.png`, `.jpg`/`.jpeg` and `.webp` (checked by file signature, at most 20 MB). Nothing is fetched from the network; PDF and Word are out of scope for now.
 - Host protocol: `import_asset` with `{ path }` (a local file the user chose) or `{ text, name? }` (pasted text) returns `{ id, name, mime, bytes }`. `get_blob` with `assets/<id>` returns the file, for previews.
 
+## Text: `engine/src/poi/text.ts`
+
+- **One step per part of the text.** A text is cut at paragraph breaks into parts of at most 48,000 characters (~12k tokens), so most copy is one part and one call. Each call (`purpose: 'read_text'`, the navigator role, prompt and `readSchema` in `text-prompt.ts`) shows the part with the character offset it starts at, plus what the persona took from earlier parts. The answer thinks aloud, rates (the `opinion`), lists up to five `confusions` as `{ quote, start, end, what, expected, severity }`, and says `read_on` (only while parts remain), `done` with what the persona would do next, or `abandon` with why it stops.
+- **Every quote is checked against the text read so far.** Offsets that hold the quote stay; otherwise the quote's occurrence nearest to them is used, matched exactly and then ignoring case and runs of white space; a quote the text does not hold keeps its friction without a quoted passage. Each confusion is a `persona.friction_reported` with `passage: { start, end, text }`, `where.url` `asset:<id>`; the step's `passage` is the part it read, its `action` `read`, `done` or `abandon`, and its thought the quote.
+- **Endings and budget.** `done` ends with `persona.goal_done` (the summary is what the persona would do next), `abandon` with `persona.abandoned`. The budget is one part per 15 steps of patience budget (patience 1 → 1, 5 → 4); a reader out of budget before the end gets `signal.budget_exceeded`. Two invalid answers are a failed step (`invalid_output`) and the same part is read again.
+- **Preflight** refuses a POI whose asset is not a `.md` or `.txt` id and, given a `hasAsset` check, one whose file is not in `assets/`; a missing or blank file at run time ends the run with an error.
+- **Buyers.** Personas of a `buyer` segment answer the buying survey after each POI (`askBuyer` in `engine/src/agent/buyer.ts`, `purpose: 'buyer_survey'`): would they buy or recommend buying, how the price looks (`low`, `fair`, `high`, `unclear`), what would stop them and what was unclear. It is recorded as `persona.survey` with `buyer` filled in, its objections as `frictions` and would-buy as `would_continue`, so sentiment by segment and the themes count buyers too. The hook in `run.ts` is one branch before the usage survey.
+- **Report.** A text's confusions group into themes by the passage they quote (the candidate's element is `passage "…"`), so a text POI's ranked themes are its confusions, with the persona's thought as the quote and the passage as evidence. `Report.buyers` (`report/buyers.ts`) has, per POI and buyer segment, the surveyed count, mean sentiment, the share who would buy or recommend, the price answers, and objections and unclear points grouped by their words. The report view (`BuyerSurvey.tsx`, so also the HTML export) and the Markdown export show it as "Buying survey", and print a friction's quoted passage.
+- **Scripted.** `DEMO_NAVIGATOR` answers `read_text` with `DEMO_READ` (the part's first line as a labelled sample confusion at its real offsets) and `buyer_survey` with `DEMO_BUYER_SURVEY`. `poi/text.test.ts` runs Gym v3's pricing copy (D28) with a buyer and a user segment.
+- **App.** `TextPoiForm.tsx` takes pasted text or a `.md`/`.txt` file (read in the page, checked for UTF-8 and 2 MB, sent as `import_asset { text, name }`) and previews the saved text, with "Replace the text". The audience editor's Users / Buyers control sets `Segment.kind`. `npm run smoke:text -w @gnomi/app` pastes the pricing copy, marks a segment as buyers and runs it with the scripted models.
+
 ## App registry: `app/src/renderer/src/poi/`
 
 - `index.ts` holds `POI_KINDS`: per type a `PoiKind` with `label`, `blank(id)`, `draft(poi)`, `toPoi(draft)` (the POI or a sentence saying what is missing) and `title(draft)`. Drafts are what the Project screen edits; `form.ts` turns them into `ProjectConfig.pois`.
 - `PoiList.tsx` is the ordered list (add, rename, reorder, remove, choose segments) and maps each type to its form component, which gets `PoiFormProps`: `{ draft, onChange, sessions }`.
-- `web.ts` and `WebPoiForm.tsx` are today's web fields; `design.ts` and `DesignPoiForm.tsx` the design's frames (above). `text.ts` + `TextPoiForm.tsx` are placeholders the text piece replaces.
+- `web.ts` and `WebPoiForm.tsx` are today's web fields; `text.ts` + `TextPoiForm.tsx` the text's and `design.ts` + `DesignPoiForm.tsx` the design's frames (both above).
 - Files on disk reach `import_asset { path }` through the preload's `window.gnomi.pathForFile(file)` (Electron's `webUtils.getPathForFile`), for files from an `<input type="file">` or a drop.
 
 ## Not done here
 
-- Enforcing observe-only, the buyer survey, and a segment-kind control in the audience editor (segments have `kind`, but nothing in the app sets it yet).
-- The survey prompt and the persona outcome are the web ones: a persona's outcome in the report is across all its POIs (any finished POI counts as done), and sentiment by segment pools the surveys of every POI.
+- Enforcing observe-only.
+- The usage survey prompt (users, on any POI) and the persona outcome are the web ones: a persona's outcome in the report is across all its POIs (any finished POI counts as done; a text counts once read to the end), and sentiment by segment pools the surveys of every POI. The buying survey section is per POI.
+- PDF and Word text imports (paste, `.md` and `.txt` only).

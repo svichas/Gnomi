@@ -40,6 +40,39 @@ const DEMO_STEPS = [
 
 export const DEMO_SCRIPT: Script = DEMO_STEPS;
 
+/** The buying survey answer of every demo buyer. */
+export const DEMO_BUYER_SURVEY = {
+  objections: ['Sample objection from the scripted demo buyer; no model read this'],
+  unclear: ['Sample question from the scripted demo buyer; no model read this'],
+  likes: [],
+  price: 'unclear',
+  sentiment: 0,
+  confidence: 0.5,
+  would_buy: false,
+  reason: 'Scripted demo buying survey: no model was called.',
+};
+
+/**
+ * A demo read of one part of a text POI (poi/text-prompt.ts): the part's first line comes back as a sample confusion at its real
+ * offsets, so the passage points into the text; the last part ends the read.
+ */
+export const DEMO_READ: Responder = (req) => {
+  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const part = /<text start="(\d+)">\n([\s\S]*)\n<\/text>/.exec(text);
+  const offset = Number(part?.[1] ?? 0);
+  const quote = (part?.[2] ?? '').split('\n').find((line) => line.trim())?.trim().slice(0, 200) ?? '';
+  const start = offset + (part?.[2].indexOf(quote) ?? 0);
+  const end = /This is the end of the text\./.test(text);
+  const sample = 'Sample confusion from the scripted demo persona; no model read this text';
+  return {
+    thought: 'Scripted demo, no model is reading. Skimming the text.',
+    feeling: 0,
+    confusions: quote ? [{ quote, start, end: start + quote.length, what: sample, expected: 'A run with a model API key, which reports real confusions', severity: 1 }] : [],
+    opinion: { sentiment: 0, confidence: 0.5, likes: [], frictions: [sample] },
+    action: end ? { type: 'done', text: 'Scripted demo: no model decided what to do next' } : { type: 'read_on', text: null },
+  };
+};
+
 /** The end-of-episode survey answer of every demo persona. */
 export const DEMO_SURVEY = {
   frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
@@ -82,6 +115,8 @@ export const DEMO_DESIGNER: Responder = (req) => {
 export const DEMO_NAVIGATOR: Responder = (() => {
   const calls = new Map<string, number>();
   return (req) => {
+    if (req.purpose === 'buyer_survey') return DEMO_BUYER_SURVEY;
+    if (req.purpose === 'read_text') return DEMO_READ(req);
     if (req.purpose === 'survey') return DEMO_SURVEY;
     if (req.purpose === 'design') return DEMO_DESIGNER(req);
     const key = `${req.run_id}/${req.persona_id}`;
