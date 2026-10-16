@@ -28,6 +28,27 @@ function passwordState(el: Element, selector: string): 'empty' | 'filled' | null
   return control?.matches(selector) ? ((control as HTMLInputElement).value ? 'filled' : 'empty') : null;
 }
 
+// Runs in the page: opacity 0 hides content from people but not from the accessibility tree (a closed custom drop-down
+// would read as open), so it is made visibility: hidden for the snapshot, which Playwright does honour, then put back.
+// A form field is left alone: a native checkbox or <select> under a custom skin is often transparent on purpose.
+function hideTransparent(hide: boolean) {
+  const FIELD = 'input:not([type="hidden" i]), select, textarea';
+  if (!hide) {
+    for (const el of document.querySelectorAll<HTMLElement>('[data-gnomi-visibility]')) {
+      const [value, priority] = JSON.parse(el.dataset.gnomiVisibility!);
+      el.style.setProperty('visibility', value, priority);
+      if (!el.getAttribute('style')) el.removeAttribute('style');
+      delete el.dataset.gnomiVisibility;
+    }
+    return;
+  }
+  for (const el of document.querySelectorAll<HTMLElement>('body *')) {
+    if (getComputedStyle(el).opacity !== '0' || el.matches(FIELD) || el.querySelector(FIELD)) continue;
+    el.dataset.gnomiVisibility = JSON.stringify([el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
+    el.style.setProperty('visibility', 'hidden', 'important');
+  }
+}
+
 // Runs in every frame before page scripts: counts DOM mutations so act() can tell whether anything changed.
 // Playwright ships both this and passwordState to the page with toString(), so they must stay self-contained.
 // shortcut: every mutation counts, so a page that animates always reads as changed and burns the full settle cap, upgrade by ignoring style-only churn if real apps do this.
@@ -172,7 +193,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         const select = await locate(ref);
         if (action.text === null) throw new Error('select needs text');
         await select.selectOption({ label: action.text }, { timeout }).catch((e) => {
-          throw e instanceof errors.TimeoutError ? new Error('option_not_found') : e;
+          if (e instanceof errors.TimeoutError) throw new Error('option_not_found');
+          throw /not a <select>/.test(String(e)) ? new Error('not_a_select') : e;
         });
         return null;
       }
@@ -229,7 +251,9 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
 
     async snapshot(): Promise<PageSnapshot> {
       await rememberPasswords();
-      const raw = await page.ariaSnapshot({ mode: 'ai', boxes: true, timeout: 10_000 });
+      const transparent = (hide: boolean) => Promise.all(page.frames().map((frame) => frame.evaluate(hideTransparent, hide).catch(() => {})));
+      await transparent(true);
+      const raw = await page.ariaSnapshot({ mode: 'ai', boxes: true, timeout: 10_000 }).finally(() => transparent(false));
       targets = snapshotTargets(raw);
       // Fail closed: a textbox whose type cannot be read is treated as a password.
       const textboxes = [...targets].filter(([, target]) => target.role === 'textbox').map(([ref]) => ref);

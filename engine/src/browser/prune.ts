@@ -30,6 +30,12 @@ interface Line {
   kids: Line[];
 }
 
+interface Printed {
+  text: string;
+  dist: number; // px from the viewport, 0 when on screen
+  parent: number; // index of the enclosing line, -1 at the top
+}
+
 interface Options {
   secrets: ReadonlyMap<string, PasswordState>;
   viewportHeight: number;
@@ -95,37 +101,67 @@ function visit(lines: Line[], opts: Options): Line[] {
   return out;
 }
 
-function print(lines: Line[], depth: number, out: string[]): void {
+// A line without a box (a text or /url child, a "… more" marker) sits where the line printed before it does.
+function print(lines: Line[], depth: number, parent: number, viewportHeight: number, out: Printed[]): void {
   for (const line of lines) {
     const tail = line.value !== undefined ? `: ${line.value}` : line.kids.length ? ':' : '';
-    out.push(`${'  '.repeat(depth)}- ${line.head}${tail}`);
-    print(line.kids, depth + 1, out);
+    const box = BOX.exec(line.head);
+    const dist = box ? Math.max(-(+box[2] + +box[4]), +box[2] - viewportHeight, 0) : (out.at(-1)?.dist ?? 0);
+    out.push({ text: `${'  '.repeat(depth)}- ${line.head}${tail}`, dist, parent });
+    print(line.kids, depth + 1, out.length - 1, viewportHeight, out);
   }
+}
+
+/** The lines within `limit` px of the viewport plus the lines enclosing them, each dropped run marked. */
+function render(lines: Printed[], limit: number): string {
+  const kept = new Set<number>();
+  lines.forEach(({ dist }, i) => {
+    if (dist > limit) return;
+    for (let j = i; j >= 0 && !kept.has(j); j = lines[j].parent) kept.add(j);
+  });
+  const out: string[] = [];
+  lines.forEach(({ text }, i) => {
+    if (kept.has(i)) out.push(text);
+    else if (i === 0 || kept.has(i - 1)) out.push(TRUNCATED);
+  });
+  return out.join('\n');
 }
 
 export function pruneSnapshot(
   raw: string,
   { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), viewportHeight = 800 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; viewportHeight?: number } = {},
 ): string {
-  const out: string[] = [];
-  print(visit(parse(raw), { secrets: passwordFields, viewportHeight }), 0, out);
-  const text = out.join('\n');
+  const lines: Printed[] = [];
+  print(visit(parse(raw), { secrets: passwordFields, viewportHeight }), 0, -1, viewportHeight, lines);
+  const text = lines.map((l) => l.text).join('\n');
   if (text.length <= maxChars) return text;
-  // shortcut: drops from the end, not by distance from the viewport (tech.md §6.2), upgrade when a long page cuts off what the persona scrolled to.
-  const cut = text.lastIndexOf('\n', maxChars - TRUNCATED.length - 1);
-  return `${text.slice(0, Math.max(cut, 0))}\n${TRUNCATED}`;
+  // Over the cap: drop what lies furthest from the viewport first (tech.md §6.2), so what the persona scrolled to stays.
+  const limits = [...new Set(lines.map((l) => l.dist))].sort((a, b) => a - b);
+  let best = '';
+  for (let lo = 0, hi = limits.length - 1; lo <= hi; ) {
+    const mid = (lo + hi) >> 1;
+    const capped = render(lines, limits[mid]);
+    if (capped.length <= maxChars) [best, lo] = [capped, mid + 1];
+    else hi = mid - 1;
+  }
+  if (best) return best;
+  // Even the screen alone is over the cap: cut it from the end.
+  const screen = render(lines, limits[0]);
+  const cut = screen.lastIndexOf('\n', maxChars - TRUNCATED.length - 1);
+  return `${screen.slice(0, Math.max(cut, 0))}\n${TRUNCATED}`;
 }
 
-/** Role, accessible name and box of every ref in a raw snapshot: the evidence for what an action touched. */
+/** Role, accessible name (else its inline text, never a field's value) and box of every ref in a raw snapshot: the evidence for what an action touched. */
 export function snapshotTargets(raw: string): Map<string, ActionTarget> {
   const targets = new Map<string, ActionTarget>();
   const walk = (lines: Line[]) => {
-    for (const { role, head, kids } of lines) {
+    for (const { role, head, value, kids } of lines) {
       const ref = REF.exec(head)?.[1];
       const box = BOX.exec(head);
       if (ref) {
         const name = NAME.exec(head)?.[2];
-        targets.set(ref, { role, name: name === undefined ? '' : JSON.parse(`"${name}"`), box: box ? [+box[1], +box[2], +box[3], +box[4]] : null });
+        const text = FIELDS.has(role) ? '' : clip(value ?? '');
+        targets.set(ref, { role, name: name === undefined ? text : JSON.parse(`"${name}"`), box: box ? [+box[1], +box[2], +box[3], +box[4]] : null });
       }
       walk(kids);
     }
