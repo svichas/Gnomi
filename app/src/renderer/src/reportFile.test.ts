@@ -23,7 +23,7 @@ function fixture(count: number, frictionsEach: number): Report {
     quote: 'Is this posting or saving?', screenshot: j === 0 && i === 1 ? null : `runs/r-0001/shots/${persona.id}-${j}.jpg`,
   })));
   return {
-    run_id: 'r-0001', status: 'finished', stop_reason: null, goal: 'Post a job for a "backend" <engineer>', poi: { name: 'Gym', start_url: 'http://localhost:3001/' },
+    run_id: 'r-0001', status: 'finished', stop_reason: null, goal: 'Post a job for a "backend" <engineer>', pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' }],
     personas,
     segments: [{ id: 'seg-a', name: 'Recruiters', share: 100, personas: count, outcomes: { done: 0, abandoned: count, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 }, completion: 0, with_friction: 1, frictions: frictions.length }],
     weighted: { completion: 0, with_friction: 1 }, steps: count * 40, frictions,

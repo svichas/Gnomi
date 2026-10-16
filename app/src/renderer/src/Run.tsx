@@ -253,7 +253,7 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
       {/* The swarm mounts only while shown: its canvas needs a size, and it rebuilds from the log in milliseconds. */}
       {active && view === 'swarm' && (
         <div role="tabpanel" id="run-panel-swarm" aria-labelledby="run-tab-swarm">
-          <Swarm events={events} segments={segments} names={names} poi={frozenConfig?.project.poi} onOpen={openPersona} />
+          <Swarm events={events} segments={segments} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} />
         </div>
       )}
       <div role="tabpanel" id="run-panel-activity" aria-labelledby="run-tab-activity" hidden={view !== 'activity'} className="space-y-5">
@@ -279,7 +279,7 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
           runId={runId}
           persona={inspected}
           schema={setup.schema}
-          poi={frozenConfig?.project.poi}
+          pois={frozenConfig?.project.pois}
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}

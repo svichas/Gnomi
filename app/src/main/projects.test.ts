@@ -11,7 +11,7 @@ import { ProjectLibrary } from './projects.ts';
 
 const config: ProjectConfig = {
   name: 'Gym', description: 'Hiring software', goal: 'Post a job', role: 'recruiter', audience: null, settings: DEFAULT_SETTINGS,
-  poi: { id: 'web', type: 'web', name: 'Gym', start_url: 'http://localhost:3001', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+  pois: [{ id: 'web', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: 'http://localhost:3001', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
 };
 
 function setup(t: TestContext) {
@@ -27,7 +27,7 @@ function populated(library: ProjectLibrary) {
   const store = openProject(dir);
   store.saveProject(config);
   store.replacePersonas([BUILTIN_PERSONA]);
-  store.putSession({ role: 'recruiter', start_url: config.poi.start_url, hosts: [], recorded_at: 1, verified_at: 1, expires_at: null });
+  store.putSession({ role: 'recruiter', start_url: 'http://localhost:3001', hosts: [], recorded_at: 1, verified_at: 1, expires_at: null });
   store.putPersonaDraft('pending-persona-inputs', { background: 'A completed draft from the source project.' });
   store.recordSetupCall({ task_id: 'source-generation', persona_id: BUILTIN_PERSONA.id, purpose: 'expand_persona' }, {
     payload: { role: 'persona_writer', provider: 'scripted', model: 'demo', input_tokens: 100, output_tokens: 30, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.02, latency_ms: 400, status: 'ok', error: null },

@@ -9,12 +9,13 @@ import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx'
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
-  runId: string; persona: Persona; schema?: PersonaSchema; poi?: { id: string; name: string }; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  runId: string; persona: Persona; schema?: PersonaSchema; pois?: { id: string; name: string }[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
   social: SocialMemory | null; // null: the run had no social rounds
   names: Map<string, string>;
   onClose(): void;
 }) {
-  const { runId, persona, schema, poi, segment, focusSeq, ended, social, names, onClose } = props;
+  const { runId, persona, schema, pois, segment, focusSeq, ended, social, names, onClose } = props;
+  const poiName = (id: string) => pois?.find((poi) => poi.id === id)?.name ?? id;
   const name = personaLabel(persona, schema);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { dialog.current?.showModal(); }, []);
@@ -79,7 +80,7 @@ export function Inspector(props: {
           <h3 className="text-sm font-semibold text-stone-900">Current opinions</h3>
           {opinions.length === 0 && <p className="text-sm text-stone-500">No opinion recorded yet. Older runs may only have step feelings.</p>}
           {opinions.map((entry) => <div key={entry.poi_id} className="space-y-3 rounded-lg border border-stone-200 px-4 py-3 text-sm">
-            <h4 className="font-medium text-stone-900">{poi?.id === entry.poi_id ? poi.name : entry.poi_id}</h4>
+            <h4 className="font-medium text-stone-900">{poiName(entry.poi_id)}</h4>
             <dl className="grid grid-cols-2 gap-3">
               <div><dt className="text-xs text-stone-500">Sentiment</dt><dd>{entry.opinion.sentiment > 0 ? '+' : ''}{entry.opinion.sentiment} of −2 to +2</dd></div>
               <div><dt className="text-xs text-stone-500">Self-reported confidence</dt><dd>{Math.round(entry.opinion.confidence * 100)}%</dd></div>
@@ -103,7 +104,7 @@ export function Inspector(props: {
           <h3 className="text-sm font-semibold text-stone-900">End-of-episode survey</h3>
           {surveys.length === 0 && <p className="text-sm text-stone-500">No survey yet. A persona answers one when its episode ends; older runs have none.</p>}
           {surveys.map(({ seq, payload: survey }) => <div key={seq} className="space-y-3 rounded-lg border border-stone-200 px-4 py-3 text-sm">
-            <h4 className="font-medium text-stone-900">{poi?.id === survey.poi_id ? poi.name : survey.poi_id}</h4>
+            <h4 className="font-medium text-stone-900">{poiName(survey.poi_id)}</h4>
             <dl className="grid grid-cols-3 gap-3">
               <div><dt className="text-xs text-stone-500">Would keep using it</dt><dd>{survey.would_continue ? 'Yes' : 'No'}</dd></div>
               <div><dt className="text-xs text-stone-500">Sentiment</dt><dd>{survey.sentiment > 0 ? '+' : ''}{survey.sentiment} of −2 to +2</dd></div>
