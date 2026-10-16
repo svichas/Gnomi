@@ -5,7 +5,7 @@ import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } fro
 import { configuredProviders, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';
-import { ActionBar, Card, Check, Field, inputClass, Note, NumberInput, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
+import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
@@ -51,17 +51,15 @@ function ProviderRow(props: { provider: ProviderId; detail: string; test: KeyTes
         </div>
         <div className="w-44">{testing.busy ? <p className="text-xs text-stone-500">Testing...</p> : <TestResult test={test} />}</div>
         <div className="flex gap-2">
-          <button
-            type="button"
+          <Button
             onClick={() => testing.run(async () => { const problem = await onTest(); return problem ? { ok: false, text: problem } : null; })}
             disabled={disabled || testing.busy}
-            className={secondaryButton}
           >
             Test<span className="sr-only"> {label}</span>
-          </button>
-          <button type="button" onClick={onRemove} disabled={disabled || testing.busy} className={secondaryButton}>
+          </Button>
+          <Button onClick={onRemove} disabled={disabled || testing.busy}>
             Remove<span className="sr-only"> {label}</span>
-          </button>
+          </Button>
         </div>
       </div>
       {test && !test.ok && test.error && <p className="text-xs text-red-800">{test.error}</p>}
@@ -107,9 +105,9 @@ function AddProvider({ choices, disabled, onAdd }: { choices: ProviderId[]; disa
             className={inputClass}
           />
         </Field>
-        <button type="submit" disabled={disabled || !value.trim()} className={primaryButton}>
+        <Button type="submit" disabled={disabled || !value.trim()} variant="primary">
           Add provider
-        </button>
+        </Button>
       </div>
       {note && <p className="text-xs text-stone-500">{note}</p>}
     </form>
@@ -323,9 +321,9 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       <ActionBar>
         {saving.outcome && <Note tone={saving.outcome.ok ? 'ok' : 'error'}>{saving.outcome.text}</Note>}
         {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
-        <button type="button" onClick={onSave} disabled={saving.busy} className={primaryButton}>
+        <Button onClick={onSave} disabled={saving.busy} variant="primary">
           Save settings
-        </button>
+        </Button>
       </ActionBar>
     </div>
   );

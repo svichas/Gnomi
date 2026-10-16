@@ -1,6 +1,6 @@
 import { COUNTRY_PROFILES, countryName } from '@gnomi/engine/audience/locations.ts';
 import { countryShares, removeCountry, setCountryShare } from './audience.ts';
-import { Field, inputClass, NumberInput, secondaryButton } from './ui.tsx';
+import { Button, Field, inputClass, NumberInput } from './ui.tsx';
 
 export function CountryMix({ countries, onChange }: { countries?: Record<string, number>; onChange(countries: Record<string, number> | undefined): void }) {
   const shares = countryShares(countries ?? {});
@@ -25,7 +25,7 @@ export function CountryMix({ countries, onChange }: { countries?: Record<string,
               <NumberInput label={`Share in ${countryName(code)} (%)`} value={share} min={entries.length === 1 ? 100 : 0} max={100} onChange={(value) => onChange(setCountryShare(shares, code, value))} />
             </div>
             <span className="text-sm text-stone-500">%</span>
-            <button type="button" className={secondaryButton} aria-label={`Remove country ${countryName(code)}`} onClick={() => onChange(removeCountry(shares, code))}>Remove</button>
+            <Button aria-label={`Remove country ${countryName(code)}`} onClick={() => onChange(removeCountry(shares, code))}>Remove</Button>
           </div>
         );
       })}

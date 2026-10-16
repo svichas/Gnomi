@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { SessionInfo } from '@gnomi/engine/types.ts';
 import { call } from './engine.ts';
-import { primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { Button, useAction } from './ui.tsx';
 
 /**
  * The record, then save flow of tech.md §9.1, shared by the Project screen and a blocked persona's banner.
@@ -52,12 +52,12 @@ export function RecordingPanel({ recorder }: { recorder: Recorder }) {
         start on and press Save login.
       </p>
       <div className="flex gap-3">
-        <button type="button" onClick={recorder.save} disabled={recorder.busy} className={primaryButton}>
+        <Button onClick={recorder.save} disabled={recorder.busy} variant="primary">
           Save login
-        </button>
-        <button type="button" onClick={recorder.cancel} disabled={recorder.busy} className={secondaryButton}>
+        </Button>
+        <Button onClick={recorder.cancel} disabled={recorder.busy}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -108,7 +108,7 @@ try {
   console.log('ok    template download/import restores typed rules; invalid core templates leave the draft intact');
   await editor.getByLabel('Load profile template', { exact: true }).setInputFiles(templatePath);
 
-  await audience.getByRole('button', { name: 'Generate personas', exact: true }).click();
+  await audience.getByRole('button', { name: 'Generate personas', exact: true }).first().click();
   const people = audience.getByRole('heading', { name: 'Personas (6)', exact: true }).locator('..');
   await people.waitFor();
   await audience.getByRole('status').filter({ hasText: '6 personas are ready' }).waitFor();
@@ -123,6 +123,7 @@ try {
   assert.equal(await people.getByRole('listitem', { name: /^Persona p-.* persona$/ }).count(), 6);
   assert.equal(await audience.getByText(/need regeneration after profile changes/).count(), 0);
   await attribute('Name').getByLabel('Show Name on cards', { exact: true }).check();
+  await cards.first().locator('summary').click();
   await cards.first().getByRole('button', { name: /^Edit / }).click();
   await cards.first().getByLabel(/^Background \(/).fill('An old biography that must disappear when the profile changes.');
   await attribute('Pronouns').getByLabel('Include Pronouns', { exact: true }).uncheck();
@@ -130,7 +131,7 @@ try {
   assert.equal(await cards.first().getByRole('textbox').count(), 0);
   assert.equal(await cards.first().getByRole('button', { name: /^Save edits to / }).count(), 0);
   assert.equal(await cards.locator('dt').filter({ hasText: /^(Biography|Voice|Job title)$/ }).count(), 0);
-  await audience.getByRole('button', { name: 'Generate personas', exact: true }).click();
+  await audience.locator('.action-bar').getByRole('button', { name: 'Generate personas', exact: true }).click(); // stale personas: the step bar offers it too
   await audience.getByRole('status').filter({ hasText: '6 personas are ready' }).waitFor();
   await audience.getByText('6 personas need regeneration after profile changes.', { exact: false }).waitFor({ state: 'detached' });
   assert.equal(await cards.first().getByRole('textbox').count(), 0);

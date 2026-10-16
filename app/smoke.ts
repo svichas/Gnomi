@@ -437,10 +437,10 @@ try {
         if (bar) seen.push(`${bar.getAttribute('aria-valuenow')}/${bar.getAttribute('aria-valuemax')}`);
       }).observe(document.body, { subtree: true, childList: true, attributes: true });
     });
-    await audience.getByRole('button', { name: 'Generate personas' }).click();
+    await audience.getByRole('button', { name: 'Generate personas' }).first().click();
     await audience.getByText(/6 personas are ready/).waitFor({ timeout: 120_000 });
     const seen = await page.evaluate(() => (window as unknown as { progressSeen: string[] }).progressSeen);
-    assert.ok(seen.some((progress) => /^\d+\/6$/.test(progress)), `the progress bar never showed a total of 6: ${seen}`);
+    assert.ok(seen.some((progress) => /^\d+\/12$/.test(progress)), `the progress bar never showed a total of 12 (a sketch and a write for each of 6): ${seen}`);
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
     await audience.getByText('Recruiters (3)').waitFor();
     await audience.getByText('Hiring managers (3)').waitFor();
@@ -448,7 +448,7 @@ try {
     const cards = personaSection.getByRole('listitem', { name: / persona$/, includeHidden: true });
     assert.equal(await cards.count(), 6);
     await audience.getByText('Hiring managers (3)', { exact: true }).click();
-    for (const text of await cards.allInnerTexts()) {
+    for (const text of await cards.allTextContents()) { // collapsed cards still hold the full profile
       for (const value of ['Berlin', 'Germany', 'Europe/Berlin', 'de-DE, en']) assert.ok(text.includes(value), `missing ${value}`);
     }
     assert.equal(await cards.filter({ has: page.locator('dd').filter({ hasText: /^Example GmbH$/ }) }).count(), 3);
@@ -456,10 +456,12 @@ try {
     await audience.getByRole('heading', { name: 'Personas (6)' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, 'personas.png') });
 
+    await cards.first().locator('summary').click();
     await audience.getByRole('button', { name: /^Edit / }).first().click();
     await audience.getByLabel(/^Name \(/).fill('Renamed Person');
     await audience.getByRole('button', { name: /^Save edits to / }).click();
     await audience.getByText('Saved Renamed Person.').waitFor();
+    await cards.nth(1).locator('summary').click();
     await audience.getByRole('button', { name: /^Regenerate / }).nth(1).click(); // another persona than the one just renamed
     await audience.getByText(/Wrote a new persona/).waitFor();
 
@@ -470,6 +472,7 @@ try {
     await audience.getByRole('heading', { name: 'Personas (7)' }).waitFor();
     assert.equal(await hint.count(), 6, 'the added persona has no hint');
     const recruiters = audience.locator('details').filter({ has: page.getByText(/^Recruiters \(\d+\)$/, { exact: true }) });
+    await recruiters.locator('li').last().locator('summary').click();
     await recruiters.locator('li').last().getByRole('button', { name: /^Remove / }).click();
     await audience.getByRole('heading', { name: 'Personas (6)' }).waitFor();
     await recruiters.locator('li').nth(1).getByRole('button', { name: /^Remove / }).click(); // not the renamed one

@@ -4,7 +4,7 @@ import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
-import { Screenshot } from './ui.tsx';
+import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
@@ -62,9 +62,9 @@ export function Inspector(props: {
     <aside aria-label="Persona inspector" className="flex h-full w-full flex-col bg-white">
       <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-4">
         <PersonaHeader persona={persona} schema={schema} detail={segment?.name} heading="h2" />
-        <button type="button" onClick={close} className="rounded-lg border border-stone-300 px-3 py-1 text-sm text-stone-800 hover:bg-stone-100">
+        <Button onClick={close} small>
           Close
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">

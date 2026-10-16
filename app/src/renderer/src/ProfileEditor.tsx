@@ -3,7 +3,7 @@ import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
 import type { PersonaSchema, ProfileAttribute, ProfileGroup, Segment } from '@gnomi/engine/types.ts';
 import { ATTRIBUTE_TYPES, choiceValues, customAttribute, parseProfileTemplate, profileProblem, PROFILE_GROUPS, serializeProfileTemplate, setAttributeChoices } from './profile.ts';
 import { ProfileAttributeEditor } from './ProfileAttributeEditor.tsx';
-import { Card, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { Button, Card, Field, inputClass, Note, secondaryButton, useAction } from './ui.tsx';
 
 const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
 
@@ -39,9 +39,9 @@ export function ProfileEditor({ schema, segments, disabled, onSchema }: { schema
     <fieldset disabled={disabled} className="space-y-4 disabled:opacity-60">
       <p className="text-sm text-stone-600">Choose the traits that shape your personas. Required traits stay in their prompts; you can hide them from cards. Changed traits take effect when you generate personas.</p>
       <div className="flex flex-wrap gap-3">
-        <button type="button" onClick={() => void saveTemplate()} disabled={template.busy || !!problem} className={secondaryButton}>Save template</button>
+        <Button onClick={() => void saveTemplate()} disabled={template.busy || !!problem}>Save template</Button>
         <label className={`${secondaryButton} cursor-pointer focus-within:ring-2 focus-within:ring-indigo-600`}>Load template<input type="file" accept=".json,application/json" aria-label="Load profile template" className="sr-only" disabled={template.busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadTemplate(file); event.target.value = ''; }} /></label>
-        <button type="button" onClick={() => onSchema(getPersonaSchema())} className={secondaryButton}>Restore default attributes</button>
+        <Button onClick={() => onSchema(getPersonaSchema())}>Restore default attributes</Button>
       </div>
       {template.outcome && <Note tone={template.outcome.ok ? 'ok' : 'error'}>{template.outcome.text}</Note>}
       {problem && <Note tone="error">{problem}</Note>}
@@ -68,8 +68,8 @@ export function ProfileEditor({ schema, segments, disabled, onSchema }: { schema
         </div>
         <Field label="Attribute description" hint="What does this trait mean for how they use the product?"><textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} className={inputClass} /></Field>
         {type === 'choice' && <Field label="Attribute choices" hint="One choice per line."><textarea rows={3} value={choices} onChange={(event) => setChoices(event.target.value)} className={inputClass} /></Field>}
-        <div className="flex gap-3"><button type="submit" disabled={!name.trim() || !description.trim() || type === 'choice' && choiceValues(choices).length === 0} className={primaryButton}>Add attribute</button><button type="button" onClick={() => setAdding(false)} className={secondaryButton}>Cancel</button></div>
-      </form> : <button type="button" onClick={() => setAdding(true)} className={secondaryButton}>Add custom attribute</button>}
+        <div className="flex gap-3"><Button type="submit" disabled={!name.trim() || !description.trim() || type === 'choice' && choiceValues(choices).length === 0} variant="primary">Add attribute</Button><Button onClick={() => setAdding(false)}>Cancel</Button></div>
+      </form> : <Button onClick={() => setAdding(true)}>Add custom attribute</Button>}
     </fieldset>
   </Card>;
 }

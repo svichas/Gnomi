@@ -1,11 +1,22 @@
 import { cloneElement, useEffect, useId, useRef, useState } from 'react';
-import type { ReactElement, ReactNode } from 'react';
+import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { call, errorText } from './engine.ts';
 
 export const inputClass = 'field-input w-full';
 const buttonBase = 'button disabled:cursor-not-allowed disabled:opacity-50';
 export const primaryButton = `${buttonBase} button-primary`;
 export const secondaryButton = `${buttonBase} button-secondary`;
+const VARIANTS = { primary: primaryButton, secondary: secondaryButton, quiet: 'quiet-button', link: 'text-link' };
+
+/** The app's button: one of the house looks, and a spinner while the work it started runs (it cannot be pressed again meanwhile). */
+export function Button({ variant = 'secondary', small, loading, disabled, className, children, ...rest }: ComponentProps<'button'> & { variant?: keyof typeof VARIANTS; small?: boolean; loading?: boolean }) {
+  return (
+    <button type="button" {...rest} disabled={disabled || loading} aria-busy={loading || undefined} className={[VARIANTS[variant], small && 'button-small', className].filter(Boolean).join(' ')}>
+      {loading && <span className="button-spinner" aria-hidden="true" />}
+      {children}
+    </button>
+  );
+}
 
 export function Card({ title, children }: { title: string; children: ReactNode }) {
   return (

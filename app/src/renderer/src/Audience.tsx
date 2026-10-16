@@ -12,7 +12,7 @@ import { PersonaList } from './Personas.tsx';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
-import { ActionBar, Card, Field, Note, NumberInput, primaryButton, secondaryButton, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
 
@@ -202,20 +202,20 @@ export function AudienceTab(props: {
                     <Field label="Seed">
                       <NumberInput label="Seed" value={audience.seed} onChange={(v) => onAudience({ ...audience, seed: v })} min={0} aria-describedby="audience-seed-hint" />
                     </Field>
-                    <button type="button" onClick={() => onAudience({ ...audience, seed: newSeed() })} className={secondaryButton}>
+                    <Button onClick={() => onAudience({ ...audience, seed: newSeed() })}>
                       New seed
-                    </button>
+                    </Button>
                   </div>
                   <p id="audience-seed-hint" className="audience-seed-hint">The same seed gives the same people.</p>
                 </details>
               </div>
               <div className="audience-toolbar-actions">
-                <button type="button" onClick={propose} disabled={plan.busy} className={`${secondaryButton} button-small`}>
+                <Button onClick={propose} disabled={plan.busy} loading={building === 'audience'} small>
                   <Icon name="spark" size={14} />Propose segments again
-                </button>
-                <button type="button" onClick={() => onAudience(null)} disabled={plan.busy} className={`${secondaryButton} button-small`}>
+                </Button>
+                <Button onClick={() => onAudience(null)} disabled={plan.busy} small>
                   Start over
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -247,9 +247,9 @@ export function AudienceTab(props: {
                 Generating keeps every persona whose segment, seed and traits are unchanged, and only writes the new or changed ones.
               </p>
               <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={onSave} disabled={plan.busy} className={secondaryButton}>
+                <Button onClick={onSave} disabled={plan.busy}>
                   Save audience
-                </button>
+                </Button>
                 {changed && <span className="text-sm text-amber-800">Not saved yet.</span>}
                 {plan.busy && !building && <p className="text-sm text-stone-500">Saving audience…</p>}
               </div>
@@ -272,7 +272,7 @@ export function AudienceTab(props: {
         <div className="audience-next">
           <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
           <div><p className="eyebrow">{needsPersonas ? 'Step 2 · Required before your run' : 'Your people are ready'}</p><h3>{needsPersonas ? 'Bring your audience to life.' : `${personas.length} ${personas.length === 1 ? 'perspective' : 'perspectives'}, ready to explore.`}</h3><p>{needsPersonas ? `When your segments look right, generate ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} to unlock your run.` : 'Review your people below, or adjust your audience and generate again to apply changes.'}</p></div>
-          <button type="button" onClick={generate} disabled={busy} className={needsPersonas ? primaryButton : secondaryButton}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></button>
+          <Button onClick={generate} disabled={busy} variant={needsPersonas ? 'primary' : 'secondary'}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></Button>
         </div>
       )}
       {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
@@ -294,8 +294,10 @@ export function AudienceTab(props: {
         />
       )}
       <ActionBar>
-        <button type="button" className={`${secondaryButton} mr-auto`} onClick={props.onBack}><Icon name="back" size={16} />Back to setup</button>
-        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
+        <Button className="mr-auto" onClick={props.onBack}><Icon name="back" size={16} />Back to setup</Button>
+        <div className="audience-footer"><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : stale.size ? 'Your audience changed. Generate personas again to continue.' : needsPersonas ? 'Generate personas to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p>
+          {needsPersonas && <Button variant="primary" disabled={busy} loading={building === 'personas'} onClick={generate}><Icon name="people" size={16} />Generate personas</Button>}
+          <Button variant={needsPersonas ? 'secondary' : 'primary'} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</Button></div>
       </ActionBar>
     </div>
   );

@@ -13,7 +13,7 @@ import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Note, primaryButton, secondaryButton } from './ui.tsx';
+import { Button, Note } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
 
@@ -199,7 +199,7 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <button type="button" id="tab-settings" className="quiet-button header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></button>}
+        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
       </header>
 
       <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
@@ -215,7 +215,7 @@ export function App() {
           // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
           <div key={revision} hidden={home}>
             <div className="journey-nav">
-              <button type="button" className="quiet-button back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</button>
+              <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</Button>
               <nav aria-label="Project steps" className="step-nav">
                 {TABS.map(({ id, label }, index) => <button key={id} type="button" id={`tab-${id}`} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span>{label}</button>)}
               </nav>
@@ -268,9 +268,9 @@ export function App() {
           <p className="text-sm text-stone-700">This project has unsaved changes. Save them before continuing, or discard them.</p>
           {saveProblem && <Note tone="error">{saveProblem}</Note>}
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={() => void resolveUnsaved('save')} disabled={savingChanges} className={primaryButton}>Save and continue</button>
-            <button type="button" onClick={() => void resolveUnsaved('discard')} disabled={savingChanges} className={secondaryButton}>Discard changes</button>
-            <button type="button" onClick={() => void resolveUnsaved('cancel')} disabled={savingChanges} className={secondaryButton}>Cancel</button>
+            <Button onClick={() => void resolveUnsaved('save')} disabled={savingChanges} variant="primary">Save and continue</Button>
+            <Button onClick={() => void resolveUnsaved('discard')} disabled={savingChanges}>Discard changes</Button>
+            <Button onClick={() => void resolveUnsaved('cancel')} disabled={savingChanges}>Cancel</Button>
           </div>
         </ProjectDialog>}
       </main>

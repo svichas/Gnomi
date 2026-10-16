@@ -3,7 +3,7 @@ import type { SessionInfo } from '@gnomi/engine/types.ts';
 import { call, errorText } from './engine.ts';
 import { RecordingPanel } from './Recorder.tsx';
 import type { Recorder } from './Recorder.tsx';
-import { Card, Field, inputClass, Note, primaryButton, secondaryButton, when } from './ui.tsx';
+import { Button, Card, Field, inputClass, Note, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 
 function expiry(session: SessionInfo): string {
@@ -66,9 +66,9 @@ export function Logins(props: {
                 />
               </Field>
             </div>
-            <button type="button" onClick={() => record(newRole.trim().toLowerCase())} disabled={recorder.busy || recorder.recording !== null} className={primaryButton}>
+            <Button onClick={() => record(newRole.trim().toLowerCase())} disabled={recorder.busy || recorder.recording !== null} variant="primary">
               Record login
-            </button>
+            </Button>
           </div>
           <p className="mt-1 text-xs text-stone-500">
             One word of lowercase letters, digits, - or _, such as recruiter. Recording saves the project first, then opens its start page.
@@ -93,24 +93,20 @@ export function Logins(props: {
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <button
-                        type="button"
+                      <Button
                         onClick={() => check(session.role)}
                         disabled={checked === 'checking'}
                         aria-label={`Check ${session.role} login`}
-                        className={secondaryButton}
                       >
                         {checked === 'checking' ? 'Checking...' : 'Check'}
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
                         onClick={() => record(session.role)}
                         disabled={recorder.busy || recorder.recording !== null}
                         aria-label={`Re-record ${session.role} login`}
-                        className={secondaryButton}
                       >
                         Re-record
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   {checked && checked !== 'checking' && (

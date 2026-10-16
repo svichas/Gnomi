@@ -52,7 +52,8 @@ try {
   await page.locator('#tab-audience').click();
   const panel = page.locator('#panel-audience');
   const review = panel.getByRole('button', { name: 'Review & start', exact: true });
-  const generate = panel.getByRole('button', { name: 'Generate personas', exact: true });
+  const generate = panel.locator('.audience-next').getByRole('button', { name: 'Generate personas', exact: true });
+  const barGenerate = panel.locator('.action-bar').getByRole('button', { name: 'Generate personas', exact: true });
   await panel.getByRole('button', { name: 'Suggest an audience', exact: true }).click();
   await panel.getByRole('heading', { name: 'Finding the right mix.' }).waitFor();
   await page.waitForFunction(() => window.audienceSmoke !== null && window.audienceSmoke !== undefined);
@@ -68,6 +69,7 @@ try {
   await page.evaluate(() => window.audienceSmoke!.release());
   await generate.waitFor();
   assert.ok(await review.isDisabled(), 'audience planning alone does not unlock the run');
+  assert.ok(await barGenerate.isEnabled(), 'the step bar offers the way to unlock it');
   await panel.getByLabel('Number of personas', { exact: true }).fill('50');
   await page.screenshot({ path: join(shots, 'audience-next-step.png') });
   await page.locator('#tab-project').click();
@@ -91,6 +93,7 @@ try {
   assert.equal(await meter.getAttribute('aria-valuetext'), '1 of 50 personas written');
   assert.equal(await panel.locator('.build-counter strong').innerText(), '1 / 50');
   assert.ok(await review.isDisabled());
+  assert.equal(await barGenerate.getAttribute('aria-busy'), 'true', 'the step bar shows Generate working');
   assert.ok(await panel.getByLabel('Number of personas', { exact: true }).isDisabled());
   await page.evaluate(() => window.audienceSmoke!.progress(12, 50));
   await page.waitForFunction(() => document.querySelector('.build-counter strong')?.textContent === '12 / 50');
@@ -114,6 +117,7 @@ try {
   await page.evaluate(() => window.audienceSmoke!.release());
   await panel.getByRole('status').filter({ hasText: '50 personas are ready' }).waitFor();
   assert.ok(await review.isEnabled());
+  assert.equal(await barGenerate.count(), 0, 'the step bar drops Generate once the personas are current');
   assert.equal(await panel.locator('.build-progress').count(), 0);
   await panel.getByRole('heading', { name: 'Personas (50)', exact: true }).waitFor();
   await generate.scrollIntoViewIfNeeded();

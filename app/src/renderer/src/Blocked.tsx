@@ -1,7 +1,7 @@
 import type { EventOf, Persona } from '@gnomi/engine/types.ts';
 import { call } from './engine.ts';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { Button, Note, useAction } from './ui.tsx';
 
 /** The engine words a CAPTCHA block as "A recaptcha challenge is showing. ..."; the banner only needs the name of the challenge. */
 function challengeKind(detail: string): string | null {
@@ -49,9 +49,9 @@ export function BlockedBanner(props: {
             <p className="text-sm text-red-900">
               {group.length > 1 && `${listed(names)}. `}Record the login again and {group.length === 1 ? 'the persona carries' : 'they carry'} on from where {group.length === 1 ? 'she' : 'they'} stopped.
             </p>
-            <button type="button" onClick={() => role !== null && recorder.start(role)} disabled={busy || role === null || recorder.recording !== null} className={primaryButton}>
+            <Button onClick={() => role !== null && recorder.start(role)} disabled={busy || role === null || recorder.recording !== null} variant="primary">
               Re-record {role ?? ''} login
-            </button>
+            </Button>
           </div>
         );
       })}
@@ -62,8 +62,7 @@ export function BlockedBanner(props: {
             {challengeKind(captchas[0].payload.detail) && ` (${challengeKind(captchas[0].payload.detail)})`}. Gnomi never solves these: turn the challenge off on staging or use the
             provider&rsquo;s test keys, then retry.
           </p>
-          <button
-            type="button"
+          <Button
             onClick={() =>
               retry.run(async () => {
                 await resume(captchas.map((block) => block.persona_id ?? ''));
@@ -71,18 +70,18 @@ export function BlockedBanner(props: {
               })
             }
             disabled={busy}
-            className={primaryButton}
+            variant="primary"
           >
             Retry
-          </button>
+          </Button>
         </div>
       )}
       {pauseMs !== null && <p className="text-xs text-red-900">Gnomi waits {waitText(pauseMs)} for you, then ends their runs.</p>}
       <RecordingPanel recorder={recorder} />
       <div>
-        <button type="button" onClick={onEnd} disabled={busy} className={secondaryButton}>
+        <Button onClick={onEnd} disabled={busy}>
           End run
-        </button>
+        </Button>
       </div>
       {retry.outcome && <Note tone={retry.outcome.ok ? 'ok' : 'error'}>{retry.outcome.text}</Note>}
       {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
