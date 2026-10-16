@@ -1,7 +1,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { BrowserContext } from 'playwright-core';
-import type { PageOptions } from '../seams.ts';
+import type { BlockReason, PageOptions } from '../seams.ts';
+import { OBSERVE_INTERVAL_MS, rateLimiter } from './observe.ts';
 
 export type HostRule = (hostname: string) => boolean;
 
@@ -15,6 +16,13 @@ export function hostRule(allowedHosts: string[], blockedDomains: string[]): Host
   };
 }
 
+/** How an observe-only refusal reads in the action that caused it: a write it tried, or a page robots.txt disallows. */
+export type ActionRefusal = 'submit_blocked' | 'robots_disallowed';
+
+const READS = new Set(['GET', 'HEAD']);
+// A form post or a script saving something; a beacon or ping is not something the persona did.
+const ACTION_WRITES = new Set(['document', 'xhr', 'fetch']);
+
 // Hostnames and bracketed IPv6 literals only: anything else could read as a wildcard, scheme or port in Chromium's bypass-rule syntax.
 const BYPASSABLE = /^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/;
 
@@ -24,6 +32,8 @@ export interface Containment {
   proxy: { server: string; bypass: string };
   /** Adds the route and WebSocket gates to the context; the proxy closes with it. */
   install(context: BrowserContext): Promise<void>;
+  /** Observe-only refusals the page's own requests ran into since the last call, for the page driver to tell the persona. */
+  refusals(): ActionRefusal[];
   close(): void;
 }
 
@@ -34,21 +44,26 @@ export interface Containment {
  *     Chromium sends the listed hosts straight out (the bypass list) and everything else here, loopback included
  *     (`<-loopback>` must come first: later rules win, so the listed hosts come after it). Nothing legitimate ever arrives, so
  *     the proxy forwards nothing and never touches allowed traffic; it refuses, with a 403 or a failed CONNECT, and reports.
+ * With `observe` (tech.md §9.3), route() also refuses every request on a listed host but GET and HEAD, every WebSocket (its
+ * messages could write), and page loads robots.txt disallows; it lets page loads through one per OBSERVE_INTERVAL_MS. Redirect hops
+ * never reach route(), so they are neither paced nor checked against robots.txt.
  * shortcut: no WebRTC or other non-HTTP traffic is covered, and the listed hosts are reached directly, bypassing any system proxy;
  * upgrade to chain this proxy to the system one if a team can only reach staging through it.
  */
-export async function startContainment(allowedHosts: string[], blockedDomains: string[], onBlocked: PageOptions['onBlockedRequest']): Promise<Containment> {
+export async function startContainment(allowedHosts: string[], blockedDomains: string[], onBlocked: PageOptions['onBlockedRequest'], observe?: PageOptions['observe']): Promise<Containment> {
   const allows = hostRule(allowedHosts, blockedDomains);
   const seen = new Set<string>();
   // The callback is the caller's code: it must never be able to stop a refusal or throw into Playwright's routing or the proxy.
-  const report = (url: URL, method: string, navigation: boolean) => {
+  const report = (url: URL, method: string, navigation: boolean, reason: BlockReason = 'host') => {
     const key = `${method} ${url.hostname}${url.pathname}`;
     if (seen.has(key)) return;
     seen.add(key);
     try {
-      onBlocked({ host: url.hostname, url: `${url.protocol}//${url.host}${url.pathname}`, method, navigation }); // no query string: it can carry tokens
+      onBlocked({ host: url.hostname, url: `${url.protocol}//${url.host}${url.pathname}`, method, navigation, reason }); // no query string: it can carry tokens
     } catch {}
   };
+  const pace = rateLimiter(OBSERVE_INTERVAL_MS);
+  let refused: ActionRefusal[] = [];
 
   const proxy = http.createServer((req, res) => {
     let url: URL;
@@ -83,6 +98,11 @@ export async function startContainment(allowedHosts: string[], blockedDomains: s
     allows,
     proxy: { server: `http://127.0.0.1:${port}`, bypass: ['<-loopback>', ...direct].join(',') },
     close,
+    refusals() {
+      const drained = refused;
+      refused = [];
+      return drained;
+    },
     async install(context) {
       context.once('close', close);
       // A route call rejects when the page closed under an in-flight request; there is nothing left to protect then.
@@ -90,9 +110,14 @@ export async function startContainment(allowedHosts: string[], blockedDomains: s
         () => true,
         (route, request) => {
           const url = new URL(request.url());
-          if (allows(url.hostname)) return route.continue().catch(() => {});
+          const navigation = request.isNavigationRequest();
+          const write = !READS.has(request.method());
+          const reason: BlockReason | null = !allows(url.hostname) ? 'host' : !observe ? null : write ? 'observe_only' : navigation && !observe.robots(url) ? 'robots' : null;
+          if (!reason) return (observe && navigation ? pace() : Promise.resolve()).then(() => route.continue()).catch(() => {});
           const aborted = route.abort('blockedbyclient').catch(() => {});
-          report(url, request.method(), request.isNavigationRequest());
+          report(url, request.method(), navigation, reason);
+          if (reason === 'robots') refused.push('robots_disallowed');
+          if (reason === 'observe_only' && (navigation || ACTION_WRITES.has(request.resourceType()))) refused.push('submit_blocked');
           return aborted;
         },
       );
@@ -100,9 +125,9 @@ export async function startContainment(allowedHosts: string[], blockedDomains: s
         () => true,
         (ws) => {
           const url = new URL(ws.url());
-          if (allows(url.hostname)) return ws.connectToServer();
+          if (allows(url.hostname) && !observe) return ws.connectToServer();
           const closed = ws.close().catch(() => {});
-          report(url, 'GET', false);
+          report(url, 'GET', false, allows(url.hostname) ? 'observe_only' : 'host');
           return closed;
         },
       );

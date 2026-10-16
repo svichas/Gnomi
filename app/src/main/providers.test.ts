@@ -42,6 +42,7 @@ test('keys saved before the provider list appear in it, go to the engine, and co
       { provider: 'google', masked: 'AIz…abcd', remembered: true, test: null },
     ],
     local_test: null,
+    figma: null,
   });
   assert.doesNotMatch(JSON.stringify(providers.list()), /0123456789/);
 });
@@ -60,6 +61,7 @@ test('add, test and remove move the list, the key file and the engine together; 
   assert.deepEqual(reopened.list(), {
     keys: [{ provider: 'deepseek', masked: 'sk-…cdef', remembered: true, test: { ok: false, error: 'DeepSeek rejected this key (401).', at: 1 } }],
     local_test: { ok: true, error: null, at: 2, target: 'http://localhost:11434/v1' },
+    figma: null,
   });
   assert.ok(!readFileSync(join(dir, 'provider-tests.json'), 'utf8').includes(DEEPSEEK));
 
@@ -88,4 +90,41 @@ test('a mask shows at most seven characters of a long key and none of a short on
   assert.equal(maskKey('sk-short-key'), '••••');
   assert.equal(keyedProvider('deepseek'), 'deepseek');
   for (const bad of ['mistral', 'openai_compatible', 'hasOwnProperty', 42]) assert.throws(() => keyedProvider(bad), /Unknown provider/);
+});
+
+const FIGMA = 'figd_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+
+test('the Figma token is held like a key: encrypted file, sent to the engine, masked in the list, tested, removable', async (t) => {
+  const { dir, sent, open } = setup(t);
+  const providers = await open();
+  assert.equal(providers.list().figma, null);
+  assert.deepEqual(await providers.saveFigma(`  ${FIGMA}\n`), { masked: 'fig…6789', remembered: true, test: null });
+  assert.deepEqual(sent.at(-1), ['figma_token', FIGMA], 'the engine gets the trimmed token');
+  assert.ok(!readFileSync(join(dir, 'figma.key'), 'utf8').includes(FIGMA), 'the file holds the vault’s ciphertext');
+
+  providers.recordTest('figma', { ok: false, error: 'Figma does not accept this token.', at: 5 });
+  const reopened = await open(); // after a restart: sent to the engine again, test remembered, still nothing but the mask in the list
+  assert.deepEqual(sent.at(-1), ['figma_token', FIGMA]);
+  assert.deepEqual(reopened.list().figma, { masked: 'fig…6789', remembered: true, test: { ok: false, error: 'Figma does not accept this token.', at: 5 } });
+  assert.ok(!readFileSync(join(dir, 'provider-tests.json'), 'utf8').includes(FIGMA));
+  assert.doesNotMatch(JSON.stringify(reopened.list()), /AbCdEf/);
+  assert.equal(reopened.list().keys.length, 0, 'it is not a provider, so no route can choose it');
+
+  await reopened.saveFigma('figd_another_token_that_is_long_enough');
+  assert.equal(reopened.list().figma!.test, null, 'a replaced token is untested');
+  await reopened.removeFigma();
+  assert.deepEqual(sent.at(-1), ['figma_token', null]);
+  assert.equal(existsSync(join(dir, 'figma.key')), false);
+  assert.equal((await open()).list().figma, null, 'gone after a restart too');
+});
+
+test('a Figma token must be one run of printable characters and is kept for this session only without a secure store', async (t) => {
+  const { dir, sent, open } = setup(t, false);
+  const providers = await open();
+  await assert.rejects(providers.saveFigma('   '), /Paste a token first/);
+  for (const bad of ['two words', 'line\nbreak', 'tökén', 'tab\tbed']) await assert.rejects(providers.saveFigma(bad), /does not look like a Figma token/);
+  assert.deepEqual(sent, []);
+  assert.equal((await providers.saveFigma(FIGMA)).remembered, false);
+  assert.equal(existsSync(join(dir, 'figma.key')), false);
+  assert.deepEqual(sent, [['figma_token', FIGMA]]);
 });

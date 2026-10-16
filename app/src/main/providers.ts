@@ -2,7 +2,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SecretName } from '@gnomi/engine/seams.ts';
 import type { ProviderId } from '@gnomi/engine/types.ts';
-import { KEYED_PROVIDERS, type KeyedProvider, type KeyTest, type ProviderEntry, type ProviderList } from '../providers.ts';
+import { KEYED_PROVIDERS, type FigmaEntry, type KeyedProvider, type KeyTest, type ProviderEntry, type ProviderList } from '../providers.ts';
 
 // One encrypted file per key, under the names they have had since M0, so keys saved before the list simply appear in it.
 const KEYS: Record<KeyedProvider, { file: string; secret: SecretName }> = {
@@ -11,6 +11,7 @@ const KEYS: Record<KeyedProvider, { file: string; secret: SecretName }> = {
   google: { file: 'google.key', secret: 'google_api_key' },
   deepseek: { file: 'deepseek.key', secret: 'deepseek_api_key' },
 };
+const FIGMA = { file: 'figma.key', secret: 'figma_token' } as const satisfies { file: string; secret: SecretName };
 const TESTS = 'provider-tests.json';
 
 /** Where keys are kept: files encrypted by the OS (safeStorage) in the app, stand-ins in tests. Names are relative to the folder. */
@@ -29,7 +30,9 @@ export function keyedProvider(value: unknown): KeyedProvider {
   throw new Error('Unknown provider');
 }
 
-function readTests(path: string): Partial<Record<ProviderId, KeyTest>> {
+type Tested = ProviderId | 'figma';
+
+function readTests(path: string): Partial<Record<Tested, KeyTest>> {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
   } catch {
@@ -43,7 +46,8 @@ function readTests(path: string): Partial<Record<ProviderId, KeyTest>> {
  */
 export class ProviderKeys {
   private readonly saved = new Map<KeyedProvider, { masked: string; remembered: boolean }>();
-  private readonly tests: Partial<Record<ProviderId, KeyTest>>;
+  private figma: { masked: string; remembered: boolean } | null = null;
+  private readonly tests: Partial<Record<Tested, KeyTest>>;
   private readonly dir: string;
   private readonly vault: Vault;
   private readonly send: (name: SecretName, value: string | null) => Promise<unknown>;
@@ -63,6 +67,11 @@ export class ProviderKeys {
       await this.send(KEYS[provider].secret, key);
       this.saved.set(provider, { masked: maskKey(key), remembered: true });
     }
+    const token = await this.vault.read(FIGMA.file);
+    if (token) {
+      await this.send(FIGMA.secret, token);
+      this.figma = { masked: maskKey(token), remembered: true };
+    }
   }
 
   list(): ProviderList {
@@ -70,7 +79,7 @@ export class ProviderKeys {
       const saved = this.saved.get(provider);
       return saved ? [{ provider, ...saved, test: this.tests[provider] ?? null }] : [];
     });
-    return { keys, local_test: this.tests.openai_compatible ?? null };
+    return { keys, local_test: this.tests.openai_compatible ?? null, figma: this.figma && { ...this.figma, test: this.tests.figma ?? null } };
   }
 
   /** Adds a provider, or replaces its key; the old key's test no longer applies. */
@@ -92,7 +101,27 @@ export class ProviderKeys {
     this.recordTest(provider, null);
   }
 
-  recordTest(provider: ProviderId, test: KeyTest | null) {
+  /** Adds the Figma token, or replaces it. It is held like a provider's key: encrypted on disk, sent to the engine, shown masked. */
+  async saveFigma(token: string): Promise<FigmaEntry> {
+    const value = token.trim();
+    if (!value) throw new Error('Paste a token first');
+    if (!/^[\x21-\x7e]+$/.test(value)) throw new Error('That does not look like a Figma token. Paste the token alone, without spaces or line breaks.');
+    await this.send(FIGMA.secret, value);
+    const remembered = await this.vault.canRemember();
+    if (remembered) await this.vault.write(FIGMA.file, value);
+    this.figma = { masked: maskKey(value), remembered };
+    this.recordTest('figma', null);
+    return { ...this.figma, test: null };
+  }
+
+  async removeFigma() {
+    rmSync(join(this.dir, FIGMA.file), { force: true });
+    await this.send(FIGMA.secret, null);
+    this.figma = null;
+    this.recordTest('figma', null);
+  }
+
+  recordTest(provider: Tested, test: KeyTest | null) {
     if (test) this.tests[provider] = test;
     else delete this.tests[provider];
     writeFileSync(join(this.dir, TESTS), JSON.stringify(this.tests));

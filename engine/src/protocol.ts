@@ -1,3 +1,5 @@
+import type { AssetInfo } from './assets.ts';
+import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { SecretName } from './seams.ts';
 import type {
   Audience,
@@ -37,7 +39,17 @@ export interface Api {
   save_project: { params: { project: ProjectConfig }; result: null };
   /** Checks the provider's saved key, or for 'openai_compatible' that the project's local endpoint answers. */
   test_key: { params: { provider: ProviderId }; result: { ok: boolean; error: string | null } };
-  /** Opens a visible browser on the POI's start_url for the user to log in as this role. */
+  /** Copies a local .md, .txt, .png, .jpg or .webp file, or pasted text, into the project's assets/ folder; POIs refer to it by id. */
+  import_asset: { params: { path: string } | { text: string; name?: string }; result: AssetInfo };
+  /** Asks Figma whether it accepts the saved Figma token. */
+  figma_test: { params: Record<string, never>; result: { ok: boolean; error: string | null } };
+  /** The top-level frames of a pasted Figma file or frame link (name, page, size). Needs the Figma token, no project. */
+  figma_frames: { params: { link: string }; result: FigmaFile };
+  /** Small previews of frames as data URLs, by frame id; frames that could not be rendered are missing. */
+  figma_previews: { params: { file: string; version: string | null; frames: FigmaFrameRef[] }; result: Record<string, string> };
+  /** Exports frames as PNG, downloads them and stores each in the project's assets/ folder; frames that failed are listed with why. */
+  figma_import: { params: { file: string; version: string | null; frames: (FigmaFrameRef & { name: string })[] }; result: FigmaImport };
+  /** Opens a visible browser on the first full web POI's start_url for the user to log in as this role. */
   record_session: { params: { role: string }; result: null };
   /** Saves the open recording under its role; the page the user is on becomes the role's start page. */
   save_session: { params: Record<string, never>; result: SessionInfo };
@@ -61,6 +73,7 @@ export interface Api {
   resume_personas: { params: { run_id: string; persona_ids: string[] }; result: null };
   get_events: { params: { run_id: string; after_seq: number | null; persona_id: string | null }; result: GnomiEvent[] };
   get_report: { params: { run_id: string }; result: Report };
+  /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }
 

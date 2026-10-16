@@ -5,12 +5,12 @@ import type { GnomiEvent } from '@gnomi/engine/types.ts';
 
 interface Props {
   names: Map<string, string>;
-  poi?: { id: string; name: string };
+  pois?: { id: string; name: string }[];
   onOpen(personaId: string): void;
 }
 
 function Post({ post, ...props }: Props & { post: FeedPost }) {
-  const { names, poi, onOpen } = props;
+  const { names, pois, onOpen } = props;
   const author = post.author;
   return (
     <li className="space-y-1">
@@ -23,7 +23,7 @@ function Post({ post, ...props }: Props & { post: FeedPost }) {
           <span className="text-sm font-medium text-stone-900">Unknown author</span>
         )}
         <span>Round {post.round}</span>
-        {post.about_poi_id && <span>About {poi?.id === post.about_poi_id ? poi.name : post.about_poi_id}</span>}
+        {post.about_poi_id && <span>About {pois?.find((poi) => poi.id === post.about_poi_id)?.name ?? post.about_poi_id}</span>}
         {post.injected && <span className="rounded border border-amber-300 bg-amber-50 px-1.5 text-amber-900">Injected by the test harness</span>}
       </p>
       <p className="whitespace-pre-wrap break-words text-sm text-stone-800">{post.text}</p>

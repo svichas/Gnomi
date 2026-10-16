@@ -122,3 +122,19 @@ Runner additions: `--provider deepseek`, `--personas N` (a per-segment subset of
 - **M4, 8 personas × 2 seeds with social rounds ($0.35, 9.8 min).** Scrubber replay PASS on both seeds. Influence audit: 6 edges sampled (the audit needs 50), 6 of 6 plausible (AI review), all in the injected complaint's thread. Spread reported FAIL (2/5 reach on both seeds), but at 8 personas everyone reaches everyone, so segment sizes decide it; the runner now reports spread as `NOT_RUN` below fifty personas.
 
 Still open for full acceptance: the 50-person M2 targets, M3 at 50 personas and three seeds with a human mapping, M4 spread over five seeds and a 50-edge audit, and visual-only defects with a vision-capable navigator.
+
+## M5 — more points of interest
+
+- [x] Foundation: several typed POIs per project, eligibility, runner registry, assets store, app POI list (#15).
+- [x] Gym v3: design frames and pricing copy with seeded defects and controls (#13).
+- [x] Figma prototype spike and recommendation (#14).
+- [x] Text POI and buyer segment (#19); static-design expectation loop (#16); competitor observe-only mode (#18); Figma frame import (#17).
+- [x] M5 acceptance mode, scripted rehearsal (#20).
+- [x] Integrate on `m5-more-pois`, full checks, Electron verification, roadmap status.
+- [ ] Live M5 acceptance (buyer text on D28, frame mismatch on D26 over five seeds) with a vision-capable navigator once a spend allowance exists; Figma listing against a real file once a token exists.
+
+## M5 first-batch results — 16 October 2026
+
+- Eight worktree sessions in three waves merged into `m5-more-pois`. Conflicts were only in docs/pois.md, one POI test and three smoke files (bridge method list, stage order); no product code collided.
+- `npm test`: 661 passing (515 engine, 71 Gym, 75 app). Typecheck passed. All ten app smokes passed: main, audience, projects, profiles, ui, providers, budget, completion, text and Figma (against the fixture API).
+- `--m5` scripted rehearsal: finished at $0 with every live criterion NOT_RUN. All model calls were scripted; nothing was run against a live provider or a real Figma file.

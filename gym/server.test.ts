@@ -131,13 +131,14 @@ describe("Gym ATS", () => {
 
   it("defects.yaml has a toggle for each defect", async () => {
     const yaml = await readFile(new URL("./defects.yaml", import.meta.url), "utf8");
-    const toggles = [...yaml.matchAll(/^ {2}toggle: (\S+)$/gm)].map((m) => m[1]);
+    const web = yaml.split(/^(?=- id: )/m).filter((entry) => /^ {2}poi: web\b/m.test(entry));
+    const toggles = web.map((entry) => entry.match(/^ {2}toggle: (\S+)$/m)?.[1]);
     assert.deepEqual(toggles, DEFECT_IDS);
   });
 
   it("defects.yaml catalogues all 25 defects in the evaluation-plan format, five of Gym v2's visual-only", async () => {
     const yaml = await readFile(new URL("./defects.yaml", import.meta.url), "utf8");
-    const entries = yaml.split(/^(?=- id: )/m).filter(Boolean);
+    const entries = yaml.split(/^(?=- id: )/m).filter((entry) => /^ {2}poi: web\b/m.test(entry)); // the design and text defects are checked in assets.test.ts
     const field = (entry: string, name: string) => entry.match(new RegExp(`^ {2}${name}: (.*?)(?: +#.*)?$`, "m"))?.[1] ?? "";
     assert.equal(entries.length, 25);
     for (const entry of entries) {

@@ -12,11 +12,18 @@ interface Window {
     clearKey(provider: KeyedProvider): Promise<void>;
     /** The engine's zero-cost check of a saved key, or of the project's saved local endpoint; main keeps the result. */
     testKey(provider: import('@gnomi/engine/types.ts').ProviderId): Promise<import('../../providers.ts').KeyTest>;
+    /** The Figma token goes to main and never comes back; only its mask does. Frames are then read by the engine, not the page. */
+    saveFigmaToken(token: string): Promise<import('../../providers.ts').FigmaEntry>;
+    clearFigmaToken(): Promise<void>;
+    /** The engine asks Figma whether it accepts the saved token; main keeps the result. */
+    testFigmaToken(): Promise<import('../../providers.ts').KeyTest>;
     listProjects(): Promise<import('../../projects.ts').ProjectCatalog>;
     projectAction(action: import('../../projects.ts').ProjectAction): Promise<import('../../projects.ts').ProjectActionResult>;
     /** Shrunk evidence screenshots as data URLs, by blob path; one that cannot be read is absent. */
     reportThumbnails(paths: string[]): Promise<Record<string, string>>;
     /** Asks where to save, then writes the file (printing PDF from the HTML); the path, or null when the user canceled. */
     saveReport(format: import('../../reports.ts').ReportFormat, runId: string, content: string): Promise<string | null>;
+    /** The local path of a file the user picked or dropped, for import_asset { path }. */
+    pathForFile(file: File): string;
   };
 }

@@ -1,9 +1,10 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
+import type { Outcome, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSegment, ReportSentiment, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
-import { TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
+import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
+import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { Note, usd } from './ui.tsx';
@@ -50,18 +51,29 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
   return (
     <li className="rounded-lg border border-amber-300 bg-amber-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no} - severity {friction.severity} of 4
+        <PersonaLink id={friction.persona_id} name={friction.persona_name} seq={friction.seq} onInspect={onInspect} /> - step {friction.step_no}{friction.frame !== undefined && ` - frame ${friction.frame + 1}`} - severity {friction.severity} of 4
       </p>
       <p className="mt-1 font-medium text-stone-900">{friction.what}</p>
       <p className="mt-1 text-sm text-stone-700">
         <span className="font-medium">Expected:</span> {friction.expected}
       </p>
+      <Passage passage={friction.passage} />
       {friction.quote && (
         <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
       )}
-      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
+      {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>
+  );
+}
+
+/** The passage of a text a confusion quotes (engine/src/poi/text.ts). */
+function Passage({ passage }: { passage: ReportFriction['passage'] }) {
+  if (!passage?.text) return null;
+  return (
+    <p className="mt-2 text-sm text-stone-700">
+      <span className="font-medium">In the text:</span> &ldquo;{passage.text}&rdquo;
+    </p>
   );
 }
 
@@ -244,7 +256,11 @@ function Affected({ theme }: { theme: ReportTheme }) {
 }
 
 function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportEvidence; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
-  const at = evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`;
+  const at = [
+    evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`,
+    ...(evidence.frame !== undefined ? [`frame ${evidence.frame + 1}`] : []),
+    ...(evidence.passage ? [`characters ${evidence.passage.start}–${evidence.passage.end}`] : []),
+  ].join(', ');
   const shot = evidence.screenshot && renderScreenshot(evidence.screenshot, `The page at ${at}, as ${evidence.persona_name} saw it`);
   return (
     <li className={`grid gap-3 border-t border-stone-100 pt-3 ${shot ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
@@ -257,6 +273,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
           {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
         </p>
         <p className="text-sm text-stone-900">{evidence.what}</p>
+        <Passage passage={evidence.passage} />
         {evidence.quote && <blockquote className="border-l-4 border-stone-300 pl-3 text-sm italic text-stone-700">&ldquo;{evidence.quote}&rdquo;</blockquote>}
         {evidence.url && <p className="break-all text-xs text-stone-500">{evidence.url}</p>}
       </div>
@@ -264,12 +281,13 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
   );
 }
 
-function Theme({ theme, onInspect, renderScreenshot }: { theme: ReportTheme; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Theme({ theme, nested, onInspect, renderScreenshot }: { theme: ReportTheme; nested?: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const Title = nested ? 'h5' : 'h4';
   return (
     <li className="space-y-3 rounded-lg border border-stone-200 p-4">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
         <span className="text-sm font-semibold tabular-nums text-stone-500">{theme.rank}.</span>
-        <h4 className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</h4>
+        <Title className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</Title>
         <TrustBadge trust={theme.trust} />
       </div>
       <p className="text-sm text-stone-700">{theme.description}</p>
@@ -298,7 +316,14 @@ function Theme({ theme, onInspect, renderScreenshot }: { theme: ReportTheme; onI
   );
 }
 
-function Themes({ themes, onInspect, renderScreenshot }: { themes: ReportTheme[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Themes({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const list = (shown: ReportTheme[], nested?: boolean) => (
+    <ol className="space-y-4">
+      {shown.map((theme) => (
+        <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} nested={nested} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+      ))}
+    </ol>
+  );
   return (
     <section aria-labelledby="themes-title" className="space-y-3">
       <h3 id="themes-title" className="text-sm font-semibold text-stone-900">
@@ -309,12 +334,19 @@ function Themes({ themes, onInspect, renderScreenshot }: { themes: ReportTheme[]
       </p>
       {themes.length === 0 ? (
         <p className="text-sm text-stone-600">No frictions to group into themes in this run.</p>
+      ) : pois.length > 1 ? (
+        // Themes are ranked within each point of interest, so each gets its own list.
+        pois.map((poi) => {
+          const own = themes.filter((theme) => theme.poi_id === poi.id);
+          return (
+            <section key={poi.id} aria-label={`Potential frictions in ${poi.name}`} className="space-y-3">
+              <h4 className="text-sm font-medium text-stone-900">{poiName(poi)}</h4>
+              {own.length ? list(own, true) : <p className="text-sm text-stone-600">No frictions to group into themes.</p>}
+            </section>
+          );
+        })
       ) : (
-        <ol className="space-y-4">
-          {themes.map((theme) => (
-            <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-          ))}
-        </ol>
+        list(themes)
       )}
     </section>
   );
@@ -366,6 +398,54 @@ function Sentiment({ rows }: { rows: ReportSentiment[] }) {
         </table>
       </div>
       <p className="text-xs text-stone-500">From each persona's end-of-episode survey, 0 is neutral. Means are per segment, without weighting.</p>
+    </section>
+  );
+}
+
+const PREFERS: Record<ReportComparison['answers'][number]['prefers'], string> = { product: 'Prefers the product', competitor: 'Prefers the competitor', no_preference: 'No preference' };
+
+/** A competitor's site against the team's product, by segment, from the survey after the competitor (engine poi/compare.ts). */
+function Comparison({ comparison, pois }: { comparison: ReportComparison; pois: ReportData['pois'] }) {
+  const name = (id: string) => pois.find((poi) => poi.id === id)?.name ?? id;
+  const [competitor, product] = [name(comparison.poi_id), name(comparison.with_poi_id)];
+  const id = `comparison-${comparison.poi_id}`;
+  return (
+    <section aria-labelledby={id} className="space-y-2">
+      <h3 id={id} className="text-sm font-semibold text-stone-900">
+        {competitor} compared with {product}
+      </h3>
+      <div className="overflow-x-auto rounded-lg border border-stone-200">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50">
+            <tr>
+              <Th>Segment</Th>
+              <Th>Compared</Th>
+              <Th>Prefer {product}</Th>
+              <Th>Prefer {competitor}</Th>
+              <Th>No preference</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {comparison.segments.map((row) => (
+              <tr key={row.segment_id ?? row.name}>
+                <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">
+                  {row.name}
+                </th>
+                {[row.compared, row.product, row.competitor, row.no_preference].map((n, i) => <td key={i} className="px-3 py-2 tabular-nums">{n}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="space-y-1 text-sm">
+        {comparison.answers.map((answer) => (
+          <li key={answer.seq} className="border-b border-stone-100 pb-1">
+            <span className="font-medium text-stone-900">{answer.persona_name}</span> <span className="text-xs text-stone-500">{PREFERS[answer.prefers]}</span>
+            <p className="text-stone-700">“{answer.reason}”</p>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-stone-500">Asked in the survey after {competitor}, of personas who had used {product} earlier in the run. {competitor} was observed only: nothing was sent to it.</p>
     </section>
   );
 }
@@ -573,9 +653,10 @@ function Methods({ methods, personas }: { methods: ReportMethods; personas: Repo
         none
       ) : (
         <ul>
-          {methods.blocked_requests.map(({ host, count: n }) => (
-            <li key={host}>
+          {methods.blocked_requests.map(({ host, count: n, reason }) => (
+            <li key={`${host}/${reason ?? ''}`}>
               {host}: {count(n, 'request')}
+              {reason && ` (${BLOCK_REASON_TEXT[reason]})`}
             </li>
           ))}
         </ul>
@@ -681,6 +762,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
         <p className="text-sm text-stone-600">The goal: {report.goal}</p>
+        {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map(poiName).join(', ')}</p>}
         {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
       {filtered && <h3 className="text-sm font-semibold text-stone-900">Full-run totals</h3>}
@@ -695,9 +777,11 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
-      {report.themes && <Themes themes={report.themes} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
+      {report.themes && <Themes themes={report.themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
+      {report.buyers && report.buyers.length > 0 && <BuyerSurvey rows={report.buyers} pois={report.pois} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
+      {report.comparisons?.map((comparison) => <Comparison key={comparison.poi_id} comparison={comparison} pois={report.pois} />)}
       {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
       <PersonaOutcomes report={details} onInspect={onInspect} />

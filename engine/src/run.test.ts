@@ -30,12 +30,13 @@ import type {
   RunSettings,
   Segment,
   SessionInfo,
+  WebPoi,
 } from './types.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',
   description: '',
-  poi: {
+  pois: [{
     id: 'poi-1',
     type: 'web',
     name: 'Gym ATS',
@@ -44,12 +45,15 @@ const project: ProjectConfig = {
     production_domains: ['gym.com'],
     not_production: false,
     reset_hook_url: null,
-  },
+    mode: 'full',
+    segments: null,
+  }],
   goal: 'Post a job for a backend engineer',
   role: null,
   audience: null,
   settings: DEFAULT_SETTINGS,
 };
+const web = project.pois[0] as WebPoi;
 
 test('new runs freeze independent schema, profile values, project settings and sessions', () => {
   const current = structuredClone({ ...project, persona_schema: getPersonaSchema() });
@@ -157,7 +161,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
       events.push(stored);
       return stored;
     },
-    events: (run_id, o = {}) => events.filter((e) => e.run_id === run_id && e.seq > (o.afterSeq ?? 0) && (!o.types || o.types.includes(e.type))),
+    events: (run_id, o = {}) => events.filter((e) => e.run_id === run_id && e.seq > (o.afterSeq ?? 0) && (!o.types || o.types.includes(e.type)) && (o.personaId === undefined || e.persona_id === o.personaId)),
     saveTranscript: (_run_id, seq, request) => void transcripts.push({ seq, persona_id: events[seq - 1]?.persona_id ?? null, request_json: JSON.stringify(request) }),
     transcripts: () => transcripts.map(({ seq, request_json }) => ({ seq, request_json, response_json: '{}' })),
     listSessions: () => [],
@@ -855,8 +859,8 @@ test('blocked requests are logged, and a blocked page load on a production domai
     act: (a, page) => {
       if (a.ref !== 'e1') return {};
       clicks++;
-      if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false });
-      if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true });
+      if (clicks === 1) page.onBlockedRequest({ host: 'tracker.example', url: 'https://tracker.example/t.js', method: 'GET', navigation: false, reason: 'host' });
+      if (clicks === 2) page.onBlockedRequest({ host: 'app.gym.com', url: 'https://app.gym.com/jobs', method: 'GET', navigation: true, reason: 'host' });
       return {};
     },
   });
@@ -953,7 +957,7 @@ async function hook(status: number) {
 test('the reset hook is POSTed before the personas are created', async (t) => {
   const server = await hook(204);
   t.after(server.close);
-  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi: { ...project.poi, reset_hook_url: server.url } } });
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois: [{ ...web, reset_hook_url: server.url }] } });
   const report = await r.run.done;
   assert.deepEqual(server.calls, ['POST']);
   assert.deepEqual(r.types().slice(0, 3), ['run.started', 'run.reset_called', 'persona.created']);
@@ -963,12 +967,12 @@ test('the reset hook is POSTed before the personas are created', async (t) => {
 test('a reset hook that fails stops the run before any persona starts', async (t) => {
   const server = await hook(500);
   t.after(server.close);
-  const poi = { ...project.poi, reset_hook_url: server.url };
-  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi } });
+  const pois = [{ ...web, reset_hook_url: server.url }];
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois } });
   assert.equal((await r.run.done).stop_reason, 'error: The reset hook answered 500');
   assert.equal(of(r.events, 'persona.created').length, 0);
   await server.close();
-  const offline = begin([step('done', null, 'Done')], { config: { reset: true }, project: { poi } });
+  const offline = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois } });
   assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
 });
 
@@ -1154,4 +1158,61 @@ test('social rounds off, absent from an older project, or with only the built-in
   assert.deepEqual(shape(runs[1]), shape(runs[0]));
   assert.deepEqual(shape(runs[2]), shape(runs[0]));
   assert.equal(of(runs[0].events, 'persona.step').length, 36, 'each episode runs its whole budget in one go');
+});
+
+// —— Several POIs (M5) ——
+
+const twoPois: Partial<ProjectConfig> = {
+  pois: [{ ...web, id: 'poi-home', name: 'Home' }, { ...web, id: 'poi-locale', name: 'Locale', start_url: 'http://gym.test/locale', segments: ['seg-b'] }],
+  audience: audience([segment('seg-a'), segment('seg-b')]),
+};
+
+test('each persona uses its eligible POIs in order, with step numbers running on and one survey and theme set per POI', async () => {
+  const friction = (what: string) => ({ severity: 2, what, expected: 'Something clearer' });
+  const r = begin((req, n) => (n % 2 === 0 ? step('click', 'e1', null, friction(`Stuck on ${said(req).includes('/locale') ? 'locale' : 'home'}`)) : step('done', null, 'Done')), {
+    personas: [persona('a', { segment_id: 'seg-a' }), persona('b', { segment_id: 'seg-b' })],
+    project: twoPois,
+    settings: { concurrency: 1 },
+  });
+  const report = await r.run.done;
+  assert.equal(report.status, 'finished');
+  const visits = (id: string) => of(r.events, 'persona.episode_started').filter((e) => e.persona_id === id).map((e) => [e.poi_id, e.payload.start_url]);
+  assert.deepEqual(visits('a'), [['poi-home', 'http://gym.test/']], 'seg-a is not on the locale POI');
+  assert.deepEqual(visits('b'), [['poi-home', 'http://gym.test/'], ['poi-locale', 'http://gym.test/locale']]);
+  const steps = of(r.events, 'persona.step').filter((e) => e.persona_id === 'b');
+  assert.deepEqual(steps.map((e) => [e.poi_id, e.payload.step_no]), [['poi-home', 1], ['poi-home', 2], ['poi-locale', 3], ['poi-locale', 4]]);
+  assert.equal(new Set(steps.map((e) => e.payload.screenshot)).size, 4, 'every step keeps its own screenshot');
+  assert.ok(r.pages.every((p) => p.closed) && r.pages.length === 3, 'one page per persona and POI');
+  assert.deepEqual(r.pages.map((p) => p.options.allowedHosts), [['gym.test', 'cdn.gym.test'], ['gym.test', 'cdn.gym.test'], ['gym.test', 'cdn.gym.test']]);
+  assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.payload.poi_id]), [['a', 'poi-home'], ['b', 'poi-home'], ['b', 'poi-locale']]);
+  const surveyed = of(r.events, 'persona.survey').find((e) => e.persona_id === 'b' && e.payload.poi_id === 'poi-locale')!;
+  assert.ok(of(r.events, 'persona.step').filter((e) => e.persona_id === 'b' && e.poi_id === 'poi-locale').every((e) => e.seq < surveyed.seq));
+  assert.deepEqual(report.pois.map((p) => p.id), ['poi-home', 'poi-locale']);
+  const themes = (poi_id: string) => (report.themes ?? []).filter((t) => t.poi_id === poi_id);
+  assert.ok(themes('poi-home').some((t) => t.title.includes('Trouble with link "Jobs"') && t.personas === 2));
+  assert.ok(themes('poi-locale').some((t) => t.personas === 1 && t.evidence[0].what === 'Stuck on locale'));
+  assert.deepEqual(themes('poi-locale').map((t) => t.rank), themes('poi-locale').map((_, i) => i + 1), 'ranked within the POI');
+});
+
+test('social slices count a persona’s steps across its POIs', async () => {
+  const r = begin(swarmAnswers(), {
+    personas: [persona('b', { segment_id: 'seg-b', patience: 1 })], // 12 steps per web POI, 24 in all, two rounds of 12
+    project: twoPois,
+    settings: rounds(2),
+  });
+  await r.run.done;
+  const steps = of(r.events, 'persona.step');
+  assert.deepEqual(steps.map((e) => [e.payload.step_no, e.poi_id, e.round]), steps.map((_, i) => [i + 1, i < 12 ? 'poi-home' : 'poi-locale', i < 12 ? 1 : 2]));
+  assert.deepEqual(of(r.events, 'signal.budget_exceeded').map((e) => [e.poi_id, e.payload.step_no, e.payload.budget]), [['poi-home', 12, 12], ['poi-locale', 24, 12]]);
+  assert.deepEqual(of(r.events, 'persona.survey').map((e) => e.payload.poi_id), ['poi-home', 'poi-locale']);
+  const feed = r.transcripts.find((t) => t.persona_id === 'b' && t.request_json.includes('about_poi_id'))!;
+  assert.match(feed.request_json, /about_poi_id: \\"poi-home\\" when the post or reply is about Home, \\"poi-locale\\" when the post or reply is about Locale/);
+});
+
+test('a persona with no point of interest stops the run before anyone starts', async () => {
+  const r = begin([], { personas: [persona('buyer', { segment_id: 'seg-a' })], project: { ...twoPois, audience: audience([segment('seg-a', { kind: 'buyer' })]) } });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'error: Persona buyer has no point of interest to use.');
+  assert.equal(of(r.events, 'persona.created').length, 0);
+  assert.deepEqual(r.finished.map((f) => f.status), ['stopped']);
 });

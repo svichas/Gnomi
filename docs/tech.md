@@ -637,6 +637,8 @@ These mitigations are drawn from the persona-steering and silicon-sample literat
 
 Segment eligibility: each POI lists which segments engage with it (default: all with a role for web apps; technical personas only for developer products; buyers for text). The scheduler assigns each persona the POIs its segment is eligible for, in the order the user set.
 
+**M5 implementation:** a project holds an ordered list of POIs, each with its eligible segments or `null` for the default by segment kind: users use every POI, buyers (perception only) use text and designs but not web apps. Each POI type has one runner behind a registry (step budget, preflight, episode), and POI files live in `assets/` under content ids. [pois.md](pois.md) is the contract for adding a type.
+
 ## 8. Friction detection and report generation
 
 ### 8.1 Two sources, combined
@@ -862,7 +864,7 @@ This is the same mechanism in development and in the packaged app; there is no H
 
 **Credentials never reach the model.** The human types credentials into a Playwright browser window during recording; the engine does not instrument form fields during recording, and the LLM is not running. During runs, password-type input values are stripped from snapshots, and personas have no login credentials to type. An automated test runs a Gym login through the recorder with canary strings and asserts the strings appear nowhere in the event log or transcripts.
 
-**Egress.** Exactly two kinds of outbound connection exist: the LLM gateway to the configured provider base URLs (shown in settings as the "egress list"), and the browser pool to the allowed POI hosts. The browser allowlist is enforced by route interception in every context; the renderer has no network access; there is no telemetry, update check or crash report unless the user opts in, and the update check only fetches a signed manifest.
+**Egress.** Two kinds of outbound connection exist: the LLM gateway to the configured provider base URLs (shown in settings as the "egress list"), and the browser pool to the allowed POI hosts. A third exists only while a Figma access token is saved: the engine's read-only Figma importer reaches `api.figma.com` and Figma's image storage (`*.amazonaws.com`), and both join the egress list for as long as the token is set. The browser allowlist is enforced by route interception in every context; the renderer has no network access; there is no telemetry, update check or crash report unless the user opts in, and the update check only fetches a signed manifest.
 
 **Prompt injection from the product under test.** Page text is placed inside a delimited block and the system prompt states it is data. More importantly, the blast radius is bounded by capability: the persona's only effects are browser actions on allowed hosts, posts to the run's own feed, and structured judgements. There is no file system, shell, email or arbitrary-URL tool. Posts are rendered as text in the UI, never as HTML. Report generation reads persona text as data and the exported HTML escapes it.
 

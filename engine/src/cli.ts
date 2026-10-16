@@ -12,7 +12,7 @@ import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { reportToMarkdown } from './report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
-import { checkTarget } from './safety.ts';
+import { preflight } from './poi/index.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { GnomiEvent, ProjectConfig } from './types.ts';
 
@@ -22,7 +22,7 @@ const USAGE =
 function describe(e: GnomiEvent): string {
   switch (e.type) {
     case 'run.started':
-      return `${e.payload.config.run_id}: "${e.payload.config.project.goal}" on ${e.payload.config.project.poi.start_url}`;
+      return `${e.payload.config.run_id}: "${e.payload.config.project.goal}" on ${e.payload.config.project.pois.map((poi) => (poi.type === 'web' ? poi.start_url : poi.name)).join(', ')}`;
     case 'run.concurrency_changed':
       return `${e.payload.concurrency} at once: ${e.payload.reason}`;
     case 'run.reset_called':
@@ -130,23 +130,25 @@ async function main(): Promise<void> {
   const project: ProjectConfig = {
     name: start.host,
     description: '',
-    poi: {
+    pois: [{
       id: 'poi-1',
       type: 'web',
+      mode: 'full',
+      segments: null,
       name: start.host,
       start_url: start.href,
       allowed_hosts: values.allow.split(',').map((h) => h.trim()).filter(Boolean),
       production_domains: [],
       not_production: values['not-production'],
       reset_hook_url: null,
-    },
+    }],
     goal: values.goal,
     role: null,
     audience: null,
     settings: DEFAULT_SETTINGS,
   };
-  const refusal = checkTarget(project.poi);
-  if (refusal) throw new Error(project.poi.not_production ? refusal : `${refusal}\nOn the command line, confirm with --not-production.`);
+  const refusal = preflight(project);
+  if (refusal) throw new Error(values['not-production'] ? refusal : `${refusal}\nOn the command line, confirm with --not-production.`);
 
   const dir = values.project ?? mkdtempSync(join(tmpdir(), 'gnomi-'));
   const store = openProject(dir);

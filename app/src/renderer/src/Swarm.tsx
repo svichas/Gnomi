@@ -122,7 +122,7 @@ function NodeCard({ node, segments }: { node: SwarmNode; segments: Segment[] }) 
 }
 
 /** The live swarm (roadmap M4): personas coloured by segment around a ring of POIs, filterable by edge type and round, scrubbable through rounds. */
-export function Swarm({ events, segments, names, poi, onOpen }: { events: GnomiEvent[]; segments: Segment[]; names: Map<string, string>; poi?: { id: string; name: string }; onOpen(personaId: string): void }) {
+export function Swarm({ events, segments, names, pois, onOpen }: { events: GnomiEvent[]; segments: Segment[]; names: Map<string, string>; pois?: { id: string; name: string }[]; onOpen(personaId: string): void }) {
   const [graph] = useState(() => new Graph({ multi: true, type: 'mixed' }));
   const [scrub, setScrub] = useState<number | null>(null); // null follows the run as it happens
   const [types, setTypes] = useState<Set<EdgeType>>(() => new Set(EDGE_TYPES));
@@ -280,7 +280,7 @@ export function Swarm({ events, segments, names, poi, onOpen }: { events: GnomiE
           </li>
         </ul>
       </section>
-      <Feed events={shownEvents} names={names} poi={poi} onOpen={onOpen} />
+      <Feed events={shownEvents} names={names} pois={pois} onOpen={onOpen} />
     </div>
   );
 }

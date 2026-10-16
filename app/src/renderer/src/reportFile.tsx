@@ -35,7 +35,7 @@ function Page({ report, screenshot }: { report: ReportData; screenshot: (path: s
         <img src={logoUrl} width="130" height="40" alt="Gnomi" className="mb-4" />
         <h1 className="text-lg font-semibold text-stone-900">Gnomi report</h1>
         <p className="break-words text-sm text-stone-500">
-          Run {report.run_id} on {report.poi.start_url}, started {when(report.started_at)}
+          Run {report.run_id} on {report.pois.map((poi) => poi.start_url ?? poi.name).join(', ')}, started {when(report.started_at)}
         </p>
       </header>
       <Report report={report} onInspect={() => {}} renderScreenshot={screenshot} />

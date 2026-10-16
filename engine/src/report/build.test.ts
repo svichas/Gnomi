@@ -16,6 +16,7 @@ import type {
   RunConfig,
   RunSettings,
   Segment,
+  WebPoi,
 } from '../types.ts';
 import { buildReport, HYPOTHESIS_BANNER } from './build.ts';
 
@@ -25,7 +26,7 @@ const startUrl = 'http://localhost:3001/';
 const project: ProjectConfig = {
   name: 'Gym',
   description: 'A demo ATS.',
-  poi: {
+  pois: [{
     id: 'poi-gym',
     type: 'web',
     name: 'Gym',
@@ -34,7 +35,9 @@ const project: ProjectConfig = {
     production_domains: [],
     not_production: false,
     reset_hook_url: null,
-  },
+    mode: 'full',
+    segments: null,
+  }],
   goal: 'Post a job for a backend engineer',
   role: null,
   audience: null,
@@ -147,7 +150,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     status: 'finished',
     stop_reason: null,
     goal: 'Post a job for a backend engineer',
-    poi: { name: 'Gym', start_url: startUrl },
+    pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl }],
     personas: [
       {
         id: 'p-001',
@@ -374,7 +377,7 @@ test('the methods appendix counts blocked requests per host, most first, ties A 
 test('allowed hosts start with the start page host and drop duplicates', () => {
   const withHosts: RunConfig = {
     ...config,
-    project: { ...project, poi: { ...project.poi, allowed_hosts: ['cdn.example.com', 'localhost'] } },
+    project: { ...project, pois: [{ ...(project.pois[0] as WebPoi), allowed_hosts: ['cdn.example.com', 'localhost'] }] },
   };
   const report = buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: withHosts } }]]));
   assert.deepEqual(report.methods.allowed_hosts, ['localhost', 'cdn.example.com']);
@@ -613,7 +616,7 @@ const oldConfig = {
   project: {
     name: 'Gym',
     description: 'A demo ATS.',
-    poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
     goal: 'Post a job for a backend engineer',
     role: 'recruiter',
   },

@@ -14,6 +14,13 @@ export interface KeyTest {
   target?: string;
 }
 
+/** The Figma token, as the page sees it: like a provider's key, but not a provider (it routes no model). */
+export interface FigmaEntry {
+  masked: string; // e.g. fig…f3a9
+  remembered: boolean;
+  test: KeyTest | null;
+}
+
 /** A provider with a saved key, as the page sees it. */
 export interface ProviderEntry {
   provider: KeyedProvider;
@@ -35,6 +42,25 @@ const ALL = Object.keys(PROVIDER_LABELS) as ProviderId[];
 export interface ProviderList {
   keys: ProviderEntry[];
   local_test: KeyTest | null;
+  figma: FigmaEntry | null;
+}
+
+// The hosts Gnomi's own code connects to, besides the sites under test (tech.md §13). Keep in step with engine/src/llm/gateway.ts.
+const PROVIDER_HOSTS: Record<KeyedProvider, string> = {
+  anthropic: 'api.anthropic.com',
+  openai: 'api.openai.com',
+  google: 'generativelanguage.googleapis.com',
+  deepseek: 'api.deepseek.com',
+};
+
+/** Where Gnomi sends data: each connected provider, the local endpoint, and Figma only while a Figma token is saved. */
+export function egressList(list: ProviderList, localBaseUrl: string | null): { host: string; why: string }[] {
+  const local = localBaseUrl?.trim() && URL.canParse(localBaseUrl.trim()) ? new URL(localBaseUrl.trim()).host : null;
+  return [
+    ...list.keys.map(({ provider }) => ({ host: PROVIDER_HOSTS[provider], why: `${PROVIDER_LABELS[provider]}: your prompts and screenshots` })),
+    ...(local ? [{ host: local, why: 'Local endpoint: your prompts and screenshots' }] : []),
+    ...(list.figma ? [{ host: 'api.figma.com', why: 'Figma: reading the frames you import' }, { host: '*.amazonaws.com', why: 'Figma: the images of those frames' }] : []),
+  ];
 }
 
 /** Providers a route can use: those with a saved key, and the local endpoint once the project gives it an address. */

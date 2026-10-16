@@ -140,10 +140,10 @@ test('the demo navigator plays scroll, a labelled friction, then abandon, for ea
 });
 
 test('the demo socialiser reads the real social prompt and answers validly, mostly with silence, the same way each time', () => {
-  const project = { name: 'Gym ATS', description: '', poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }, goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS } satisfies ProjectConfig;
+  const project = { name: 'Gym ATS', description: '', pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }], goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS } satisfies ProjectConfig;
   const line = (post_id: string) => ({ post_id, author: 'Ana Ruiz', text: 'Lost my draft.', agree: 0, disagree: 0, parent: null });
   const ask = (persona_id: string, ids: string[]) => {
-    const user = socialParts({ persona: BUILTIN_PERSONA, project, round: 2, rounds: 5, end: null, steps: 3, frictions: [], opinion: null, posted: [], feed: ids.map(line) });
+    const user = socialParts({ persona: BUILTIN_PERSONA, project, round: 2, rounds: 5, end: null, steps: 3, frictions: [], pois: [{ name: 'Gym ATS', opinion: null }], posted: [], feed: ids.map(line) });
     const answer = DEMO_SOCIALISER({ ...request(), role: 'socialiser', persona_id, round: 2, system: socialSystemPrompt(BUILTIN_PERSONA, project, null), user, schema: socialSchema(ids, ['poi-1']) });
     assert.ok(socialSchema(ids, ['poi-1']).safeParse(answer).success, JSON.stringify(answer));
     return answer as { action: string; post_id: string | null; about_poi_id: string | null; text: string | null; opinion_updates: unknown[] };

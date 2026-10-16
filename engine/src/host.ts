@@ -4,13 +4,21 @@
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from './audience/locations.ts';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { assetMime, assetPath, importLocalFile, importText } from './assets.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
 import { createGateway, testProviderKey } from './llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './llm/scripted.ts';
+import { figmaClient } from './figma/client.ts';
+import { fakeFigma } from './figma/fake.ts';
+import { importFrames, listFrames, previews } from './figma/frames.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { preflight } from './poi/index.ts';
+import { loginPoi, webPois } from './poi/pois.ts';
 import { validatePersonaSchema } from './profile/schema.ts';
 import { personaProfileIsCurrent } from './profile/signature.ts';
 import { buildReport } from './report/build.ts';
@@ -30,6 +38,11 @@ interface PortLike {
 
 // GNOMI_FAKE_LLM=1 runs scripted personas and a scripted persona writer with no key and no cost, for UI smoke tests and demos.
 const FAKE_LLM = process.env.GNOMI_FAKE_LLM === '1';
+
+// GNOMI_FAKE_FIGMA=1 answers Figma requests from a fixture file (engine/src/figma/fake.ts): no token, no network. Any other
+// value is that fixture's options as JSON, e.g. '{"nullRender":["1:5"]}' for a frame Figma cannot render.
+const fakeFigmaApi = process.env.GNOMI_FAKE_FIGMA ? fakeFigma(process.env.GNOMI_FAKE_FIGMA === '1' ? {} : JSON.parse(process.env.GNOMI_FAKE_FIGMA)) : undefined;
+const figma = () => figmaClient({ token: secrets.get('figma_token') ?? null, fetch: fakeFigmaApi });
 
 const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -137,16 +150,25 @@ function persona(id: string): { people: Persona[]; persona: Persona } {
   return { people, persona: found };
 }
 
+/** The POI a login is recorded on; projects without a web POI in full mode have no logins to record. */
+function recordingPoi(config: ProjectConfig) {
+  const poi = loginPoi(config.pois);
+  if (!poi) throw new Error('Add a web app as a point of interest to record a login on.');
+  return poi;
+}
+
 /** Loads the role's start page with its session under containment (tech.md §9.1) and marks it verified when it held. */
 async function verify(config: ProjectConfig, role: string) {
   const store = unlockedSessions();
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
+  // The login POI's hosts first; the session's cookies go to every web POI in full mode, so any of their hosts may be reached.
+  const pois = [recordingPoi(config), ...webPois(config.pois).filter((poi) => poi.mode === 'full')];
   const result = await (await pool()).checkSession({
     storageState: saved.state,
     startUrl: saved.info.start_url,
-    allowedHosts: allowedHosts(config.poi),
-    blockedDomains: config.poi.production_domains,
+    allowedHosts: [...new Set(pois.flatMap(allowedHosts))],
+    blockedDomains: [...new Set(pois.flatMap((poi) => poi.production_domains))],
   });
   const now = Date.now();
   if (result.ok) store.markVerified(role, now);
@@ -240,6 +262,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const result = await testProviderKey(provider, credential);
     return result.ok ? { ok: true, error: null } : { ok: false, error: result.error };
   },
+  async figma_test() {
+    try {
+      await figma().check();
+      return { ok: true, error: null };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
+  figma_frames: ({ link }) => listFrames(figma(), link),
+  figma_previews: (params) => previews(figma(), params),
+  figma_import: (params) => importFrames(figma(), current().blobs, params),
   propose_audience: () => writeSetup(() => proposeAudience(writer(project()))),
   generate_personas: () => writeSetup(async () => {
     const { config, audience } = withAudience();
@@ -278,17 +311,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience });
+    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience, pois: config.pois });
   },
   async start_run({ reset }) {
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
     if (runs.size) throw new Error('A run is already in progress'); // one run at a time
-    // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works.
-    const refusal = checkTarget(config.poi);
+    // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
+    const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
     if (refusal) throw new Error(refusal);
-    if (reset && !config.poi.reset_hook_url) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
+    if (reset && !webPois(config.pois).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
     if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
@@ -327,10 +360,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (!ROLE.test(role)) throw new Error('Name the role with 1–40 lowercase letters, digits, "-" or "_", for example "recruiter"');
     unlockedSessions(); // before opening a browser whose login could not be saved
     // Never record a production login: the session would be as sensitive as the password.
-    const refusal = checkTarget(config.poi);
+    const poi = recordingPoi(config);
+    const refusal = checkTarget(poi);
     if (refusal) throw new Error(refusal);
     if (recording) throw new Error('A login recording is already open: save or cancel it first');
-    const rec = pool().then((p) => p.record(config.poi.start_url, { headless: false }));
+    const rec = pool().then((p) => p.record(poi.start_url, { headless: false }));
     recording = { role, rec };
     try {
       await rec;
@@ -370,11 +404,13 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       ...(persona_id === null ? {} : { personaId: persona_id }),
     }),
   get_report: ({ run_id }) => buildReport(current().store.events(run_id)),
+  import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
-    // The renderer only ever needs run evidence; recorded logins under sessions/ stay out of its reach even encrypted.
-    if (!path.startsWith('runs/')) throw new Error('Only files from a run can be opened');
-    const data = await current().blobs.get(path);
-    return { mime: 'image/jpeg', base64: Buffer.from(data).toString('base64') };
+    // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.
+    const asset = path.startsWith('assets/') ? path.slice('assets/'.length) : null;
+    if (asset === null && !path.startsWith('runs/')) throw new Error('Only files from a run or a point of interest can be opened');
+    const data = await current().blobs.get(asset === null ? path : assetPath(asset));
+    return { mime: asset === null ? 'image/jpeg' : assetMime(asset), base64: Buffer.from(data).toString('base64') };
   },
 };
 
@@ -382,7 +418,7 @@ function serve(transport: Transport) {
   clients.add(transport);
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
-    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret';
+    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret' && !['figma_test', 'figma_frames', 'figma_previews'].includes(msg.method); // the rest of Figma's work reads no project
     if (projectTask) projectRequests++;
     try {
       const handler = handlers[msg.method] as (params: unknown) => unknown;

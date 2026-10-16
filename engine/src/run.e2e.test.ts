@@ -22,7 +22,9 @@ import { allowedHosts, checkTarget } from './safety.ts';
 import { createSessionStore } from './sessions.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { BrowserPool, LlmGateway, LlmRequest, Responder, SessionStore } from './seams.ts';
-import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo } from './types.ts';
+import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo, WebPoi } from './types.ts';
+
+const web = (project: ProjectConfig) => project.pois[0] as WebPoi;
 
 // The M0 no-credentials harness: strings a login would use must never reach a model transcript (roadmap M0).
 const CANARIES = ['gnomi-canary-password-7Q2x', 'canary.recruiter@gym.test', 'sk-ant-canary-00000000'];
@@ -99,7 +101,7 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
   const project: ProjectConfig = {
     name: 'Gym ATS',
     description: 'A demo applicant tracking system.',
-    poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: `${gym.url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: `${gym.url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
     goal: 'Post a job for a backend engineer',
     role: null,
     audience: null,
@@ -133,13 +135,15 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
       costPerCall?: number;
       /** Runs before the n-th model call of the run, so a step can change the world first. */
       beforeCall?: (n: number) => Promise<void>;
+      /** Answers the surveys; the demo survey by default. */
+      survey?: Responder;
       onEvent?: (e: GnomiEvent, run: RunHandle) => void;
     } = {},
   ) => {
     let handle: RunHandle | undefined;
     const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-    // Walks script the steps only; every persona answers the demo survey at the end.
-    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
+    // Walks script the steps only; every persona answers the demo survey at the end unless the test answers it.
+    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? (opts.survey ?? (() => DEMO_SURVEY))(req) : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
     let calls = 0;
     const llm: LlmGateway = {
       async call<T>(req: LlmRequest<T>) {
@@ -149,7 +153,7 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
     };
     const base = opts.project ?? project;
     const target = { ...base, settings: { ...base.settings, ...opts.settings } };
-    assert.equal(checkTarget(target.poi), null);
+    assert.equal(checkTarget(web(target)), null);
     const defaults = newRunConfig(target, { personas: opts.personas ?? [BUILTIN_PERSONA], sessions: opts.sessions ?? [], reset: opts.reset ?? false });
     const config = store.createRun({ ...defaults, pause_timeout_ms: opts.pauseMs ?? defaults.pause_timeout_ms });
     const started = Date.now();
@@ -198,7 +202,7 @@ test('a mobile persona completes signup with matching passwords instead of aband
   await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>((resolve) => site.close(() => resolve())));
   const start_url = `http://127.0.0.1:${(site.address() as AddressInfo).port}/register`;
-  const project = { ...w.project, goal: 'Create an account', poi: { ...w.project.poi, start_url } };
+  const project = { ...w.project, goal: 'Create an account', pois: [{ ...web(w.project), start_url }] };
   const { report, events } = await w.go(walk([
     (req) => say('Choose a password.', { type: 'type', ref: ref(req, 'textbox', 'Password'), text: password }),
     (req) => {
@@ -284,7 +288,7 @@ test('M1 (a): with a recorded login the persona works inside the app, and no cre
   const project = { ...w.project, role: account.role };
   const saved = await w.sessions.load(account.role);
   assert.ok(saved);
-  assert.deepEqual(await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(project.poi), blockedDomains: [] }), {
+  assert.deepEqual(await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(web(project)), blockedDomains: [] }), {
     ok: true,
     url: `${w.gym.url}/`,
     reason: null,
@@ -324,7 +328,7 @@ test('M1 (b): containment keeps an unlisted host unreached through the check and
   const project = { ...w.project, role: 'recruiter' };
   const saved = await w.sessions.load('recruiter');
   assert.ok(saved);
-  const check = await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(project.poi), blockedDomains: [] });
+  const check = await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(web(project)), blockedDomains: [] });
   assert.equal(check.ok, true);
   const contained = await w.go(walk(toJobs), { project, sessions: [info] });
   assert.equal(contained.report.personas[0].outcome, 'done');
@@ -333,7 +337,7 @@ test('M1 (b): containment keeps an unlisted host unreached through the check and
   assert.ok(blocked.length > 0 && blocked.every((e) => e.payload.host === '127.0.0.1'));
   assert.equal(contained.report.methods.blocked_requests[0].host, '127.0.0.1');
 
-  const allowed = { ...project, poi: { ...project.poi, allowed_hosts: ['127.0.0.1'] } };
+  const allowed = { ...project, pois: [{ ...web(project), allowed_hosts: ['127.0.0.1'] }] };
   const open = await w.go(walk(toJobs), { project: allowed, sessions: [info] });
   assert.ok(hits.length > 0, 'an allowed host is reached');
   assert.equal(of(open.events, 'containment.blocked_request').length, 0);
@@ -411,7 +415,7 @@ test('M1 (f): the reset hook resets staging before the persona is created', asyn
   assert.match(await (await fetch(`${w.gym.url}/jobs`)).text(), /Leftover from yesterday/);
 
   const hook = `${w.gym.url}/__reset`;
-  const project = { ...w.project, poi: { ...w.project.poi, reset_hook_url: hook } };
+  const project = { ...w.project, pois: [{ ...web(w.project), reset_hook_url: hook }] };
   const { report, events } = await w.go(walk([say('Looks fine.', { type: 'done', text: 'Looked around' })]), { project, reset: true });
   const types = events.map((e) => e.type);
   assert.ok(types.indexOf('run.reset_called') < types.indexOf('persona.created'));
@@ -569,4 +573,92 @@ test('M3: a broken link and a rejected form raise signal.error and signal.valida
   assert.equal(rejected.seq, steps[4].seq + 1);
   assert.deepEqual(of(events, 'signal.backtrack').map((e) => [e.payload.step_no, e.payload.kind]), [[2, 'revisit']], 'the back, not where the form posted to');
   assert.deepEqual(of(events, 'signal.failed_action'), [], 'every click did something');
+});
+
+// —— M5 ——
+
+test('a persona runs Gym / and then Gym /locale, with a survey and themes for each POI', async (t) => {
+  const w = await world(t);
+  const project: ProjectConfig = {
+    ...w.project,
+    pois: [{ ...web(w.project), id: 'poi-home', name: 'Gym home' }, { ...web(w.project), id: 'poi-locale', name: 'Gym locale echo', start_url: `${w.gym.url}/locale` }],
+  };
+  const friction = (what: string) => ({ severity: 2, what, expected: 'A clearer page' });
+  const { report, events } = await w.go(walk([
+    (req) => say('All the jobs are one click away.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }, friction('The jobs link is easy to miss')),
+    say('That is the list.', { type: 'done', text: 'Reached the jobs list' }),
+    (req) => {
+      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1 of \d+\./m, 'the second POI counts its own steps in the prompt');
+      return say('Which language is this?', { type: 'done', text: 'Read the locale' }, friction('The page does not say what it is for'));
+    },
+  ]), { project });
+
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.deepEqual(of(events, 'persona.episode_started').map((e) => [e.poi_id, e.payload.start_url]), [['poi-home', `${w.gym.url}/`], ['poi-locale', `${w.gym.url}/locale`]]);
+  assert.deepEqual(of(events, 'persona.step').map((e) => [e.poi_id, e.payload.step_no]), [['poi-home', 1], ['poi-home', 2], ['poi-locale', 3]]);
+  for (const shot of of(events, 'persona.step').map((e) => e.payload.screenshot!)) assert.ok(existsSync(join(w.dir, shot)), shot);
+  assert.deepEqual(of(events, 'persona.survey').map((e) => [e.poi_id, e.payload.poi_id]), [['poi-home', 'poi-home'], ['poi-locale', 'poi-locale']]);
+  assert.deepEqual(report.pois.map((p) => [p.id, p.start_url]), [['poi-home', `${w.gym.url}/`], ['poi-locale', `${w.gym.url}/locale`]]);
+  const themes = report.themes ?? [];
+  assert.ok(themes.some((th) => th.poi_id === 'poi-home' && th.evidence.some((e) => e.what === 'The jobs link is easy to miss')));
+  assert.ok(themes.some((th) => th.poi_id === 'poi-locale' && th.evidence.some((e) => e.what === 'The page does not say what it is for')));
+  assert.ok(themes.every((th) => th.evidence.every((e) => e.step_no === null || (th.poi_id === 'poi-home') === (e.step_no <= 2))), 'evidence stays with its POI');
+});
+
+test('M5: an observe-only competitor on the Gym refuses a form submit before the network, logs it, and is compared with the product', async (t) => {
+  const w = await world(t);
+  const project: ProjectConfig = {
+    ...w.project,
+    pois: [{ ...web(w.project), id: 'poi-ours', name: 'Gym ATS' }, { ...web(w.project), id: 'poi-rival', name: 'Rival ATS', mode: 'observe_only', start_url: `${w.gym.url}/jobs/new` }],
+  };
+  const text = (req: LlmRequest<unknown>) => req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const surveys: LlmRequest<unknown>[] = [];
+  const { report, events } = await w.go(walk([
+    ...toJobs,
+    (req) => {
+      assert.match(req.system, /looking at Rival ATS, a competitor of Gym ATS/);
+      assert.match(req.system, /never submits a form/);
+      return say('Their form. A title first.', { type: 'type', ref: ref(req, 'textbox', 'Job title *'), text: 'Observed Engineer' });
+    },
+    (req) => say('Engineering.', { type: 'select', ref: ref(req, 'combobox', 'Department *'), text: 'Engineering' }),
+    (req) => say('Publish it.', { type: 'click', ref: ref(req, 'button', 'Publish job') }),
+    (req) => {
+      assert.match(text(req), /click button "Publish job" → failed \(submit_blocked\)/);
+      ref(req, 'heading', 'Create job');
+      return say('Nothing can be sent here, and I have seen enough.', { type: 'done', text: 'Saw how their job form works' });
+    },
+  ]), {
+    project,
+    survey: (req) => {
+      surveys.push(req);
+      return /Also answer comparison/.test(text(req)) ? { ...DEMO_SURVEY, comparison: { prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' } } : DEMO_SURVEY;
+    },
+  });
+
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const submit = of(events, 'persona.step').find((e) => e.poi_id === 'poi-rival' && e.payload.action.type === 'click')!;
+  assert.deepEqual([submit.payload.result.ok, submit.payload.result.error], [false, 'submit_blocked']);
+  assert.deepEqual(of(events, 'containment.blocked_request').map((e) => [e.poi_id, e.payload.method, e.payload.url, e.payload.reason]), [['poi-rival', 'POST', `${w.gym.url}/jobs`, 'observe_only']]);
+  const jobs = await (await fetch(`${w.gym.url}/jobs`)).text();
+  assert.ok(jobs.includes('<h1>Jobs</h1>') && !jobs.includes('Observed Engineer'), 'the Gym has no new job');
+
+  assert.equal(surveys.length, 2);
+  assert.doesNotMatch(text(surveys[0]), /comparison/, "the product's own survey asks no comparison");
+  assert.match(text(surveys[1]), /This session was on Rival ATS[^\n]*beside Gym ATS[\s\S]*Earlier [^\n]* used Gym ATS/);
+  assert.deepEqual(of(events, 'persona.survey').map((e) => [e.poi_id, e.payload.comparison ?? null]), [
+    ['poi-ours', null],
+    ['poi-rival', { with_poi_id: 'poi-ours', prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' }],
+  ]);
+
+  assert.deepEqual(report.pois.map((p) => [p.id, p.competitor ?? false]), [['poi-ours', false], ['poi-rival', true]]);
+  assert.deepEqual(report.comparisons, [{
+    poi_id: 'poi-rival',
+    with_poi_id: 'poi-ours',
+    segments: [{ segment_id: null, name: 'Built-in persona', compared: 1, product: 1, competitor: 0, no_preference: 0 }],
+    answers: [{ seq: of(events, 'persona.survey')[1].seq, persona_id: BUILTIN_PERSONA.id, persona_name: BUILTIN_PERSONA.name, segment_id: null, prefers: 'product', reason: 'Gym ATS let me publish; I could only look at Rival ATS.' }],
+  }]);
+  assert.deepEqual(report.methods.blocked_requests, [{ host: 'localhost', count: 1, reason: 'observe_only' }]);
+  // The persona's outcome, steps and the sentiment describe the team's product; the competitor is reported on its own.
+  assert.deepEqual([report.personas[0].outcome, report.personas[0].outcome_text, report.personas[0].steps], ['done', 'Reached the jobs list', 2]);
+  assert.equal(report.sentiment?.[0].surveyed, 1);
 });

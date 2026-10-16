@@ -65,8 +65,8 @@ export interface BlobStore {
   get(path: string): Promise<Uint8Array>;
 }
 
-/** Provider keys, plus session_key: 64 hex chars (AES-256) that encrypt recorded sessions. Main keeps all of them in the OS keychain. */
-export type SecretName = 'anthropic_api_key' | 'openai_api_key' | 'google_api_key' | 'deepseek_api_key' | 'session_key';
+/** Provider keys, the Figma token, and session_key: 64 hex chars (AES-256) that encrypt recorded sessions. Main keeps all of them in the OS keychain. */
+export type SecretName = 'anthropic_api_key' | 'openai_api_key' | 'google_api_key' | 'deepseek_api_key' | 'figma_token' | 'session_key';
 
 export interface SecretsStore {
   get(name: SecretName): string | null;
@@ -98,8 +98,16 @@ export interface PageOptions {
   /** A recorded session to start from, or null to browse logged out. */
   storageState: StorageState | null;
   /** Called once per distinct method + host + path the page tried to reach and was refused; navigation = a page load, not a subresource. */
-  onBlockedRequest(request: { host: string; url: string; method: string; navigation: boolean }): void;
+  onBlockedRequest(request: { host: string; url: string; method: string; navigation: boolean; reason: BlockReason }): void;
+  /**
+   * Observe-only (tech.md §9.3): only GET and HEAD reach the network, no WebSocket opens, page loads are paced one per two seconds,
+   * and a page load `robots` refuses is blocked. Absent in full mode.
+   */
+  observe?: { robots: (url: URL) => boolean };
 }
+
+/** Why containment refused a request: an unlisted or production host, a write in observe-only mode, or a path robots.txt disallows. */
+export type BlockReason = 'host' | 'observe_only' | 'robots';
 
 export interface LoginRecording {
   /** What the human's login left behind: cookies and storage, the current page as start page, and the hosts seen. Closes the browser. */
@@ -140,7 +148,7 @@ export interface PageDriver {
   close(): Promise<void>;
 }
 
-export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: Uint8Array; mediaType: 'image/jpeg' };
+export type UserPart = { type: 'text'; text: string } | { type: 'image'; data: Uint8Array; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' };
 
 /** One provider attempt, including failed/invalid answers. Transcripts are credential-redacted. */
 export interface LlmAttempt {

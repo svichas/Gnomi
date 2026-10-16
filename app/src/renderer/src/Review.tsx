@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import { loginPoi, webPois } from '@gnomi/engine/poi/pois.ts';
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/engine/types.ts';
 import { socialRounds } from '@gnomi/engine/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
@@ -137,7 +138,7 @@ export function Review(props: {
       {ready && (
         <div className="review-ready">
           <span className="audience-next-icon"><Icon name="check" size={24} /></span>
-          <div><h2>Ready when you are.</h2><p>Your simulated users will try {saved.poi.name}. Start the run, then follow their experience as it unfolds.</p></div>
+          <div><h2>Ready when you are.</h2><p>Your simulated users will try {new Intl.ListFormat('en').format(saved.pois.map((poi) => poi.name))}. Start the run, then follow their experience as it unfolds.</p></div>
         </div>
       )}
 
@@ -145,9 +146,12 @@ export function Review(props: {
         <Section title="What they will try" edit={fix('project', 'Edit setup')}>
           <Fact label="Goal">{saved.goal}</Fact>
           {saved.description && <Fact label="The product">{saved.description}</Fact>}
-          <Fact label="Start pages">
-            {[...roles.map((role) => `${role}: ${info?.sessions.find((session) => session.role === role)?.start_url ?? saved.poi.start_url}`), ...(loggedOut(saved) ? [`logged out: ${saved.poi.start_url}`] : [])].map((page) => <span key={page} className="block break-all">{page}</span>)}
-          </Fact>
+          {saved.pois.length > 1 && <Fact label="Points of interest, in order">{saved.pois.map((poi) => <span key={poi.id} className="block">{poi.name}</span>)}</Fact>}
+          {webPois(saved.pois).length > 0 && <Fact label="Start pages">
+            {webPois(saved.pois).flatMap((poi) => poi === loginPoi(saved.pois)
+              ? [...roles.map((role) => `${role}: ${info?.sessions.find((session) => session.role === role)?.start_url ?? poi.start_url}`), ...(loggedOut(saved) ? [`logged out: ${poi.start_url}`] : [])]
+              : [`${poi.name}: ${poi.start_url}`]).map((page) => <span key={page} className="block break-all">{page}</span>)}
+          </Fact>}
         </Section>
 
         <Section title="Who will browse" edit={fix('audience', 'Edit audience')}>
@@ -202,16 +206,21 @@ export function Review(props: {
               })}
               {roles.length > 0 && loggedOut(saved) && <span className="block text-stone-600">The other personas browse logged out.</span>}
             </Fact>
-            <Fact label="Allowed hosts">{[startHost(saved.poi.start_url) ?? saved.poi.start_url, ...saved.poi.allowed_hosts].join(', ')}. Everything else is blocked.</Fact>
-            <Fact label="Production domains Gnomi must never touch">{saved.poi.production_domains.length > 0 ? saved.poi.production_domains.join(', ') : 'None listed.'}</Fact>
+            {webPois(saved.pois).map((poi, _, all) => {
+              const of = all.length > 1 ? ` (${poi.name})` : '';
+              return [
+                <Fact key={`${poi.id}-hosts`} label={`Allowed hosts${of}`}>{[startHost(poi.start_url) ?? poi.start_url, ...poi.allowed_hosts].join(', ')}. Everything else is blocked.</Fact>,
+                <Fact key={`${poi.id}-production`} label={`Production domains Gnomi must never touch${of}`}>{poi.production_domains.length > 0 ? poi.production_domains.join(', ') : 'None listed.'}</Fact>,
+              ];
+            })}
           </div>
-          {saved.poi.not_production && <p className="review-note">You confirmed that {saved.poi.name} is not a production site.</p>}
-          {saved.poi.reset_hook_url !== null && (
+          {webPois(saved.pois).filter((poi) => poi.not_production).map((poi) => <p key={poi.id} className="review-note">You confirmed that {poi.name} is not a production site.</p>)}
+          {webPois(saved.pois).some((poi) => poi.reset_hook_url !== null) && (
             <div className="space-y-1">
               <Check checked={reset} onChange={setReset}>
                 Reset staging before the run
               </Check>
-              <p className="break-all pl-6 text-xs text-stone-500">Gnomi sends a POST to {saved.poi.reset_hook_url} first.</p>
+              {webPois(saved.pois).flatMap((poi) => (poi.reset_hook_url === null ? [] : [<p key={poi.id} className="break-all pl-6 text-xs text-stone-500">Gnomi sends a POST to {poi.reset_hook_url} first.</p>]))}
             </div>
           )}
           <p className="review-note">Gnomi cannot see what staging does behind the scenes. Make sure it sends email to a test inbox and takes payments in test mode.</p>

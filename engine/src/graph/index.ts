@@ -1,3 +1,4 @@
+import { withPois } from '../poi/pois.ts';
 import { influenceEdges } from '../social/influence.ts';
 import type { EventOf, GnomiEvent } from '../types.ts';
 
@@ -94,8 +95,8 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
   const who = event.persona_id;
   switch (event.type) {
     case 'run.started': {
-      const poi = event.payload.config.project?.poi;
-      if (poi) Object.assign(poiNode(graph, changes, poi.id), { label: poi.name });
+      const project = event.payload.config.project;
+      for (const poi of project ? withPois(project).pois : []) Object.assign(poiNode(graph, changes, poi.id), { label: poi.name });
       return;
     }
     case 'run.finished':

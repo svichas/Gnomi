@@ -132,5 +132,5 @@ test('M4 mode is opt-in and a rehearsal leaves every live criterion unpassed', (
   const injected = complaint(base);
   assert.equal(new Set(M4_SEEDS).size, 5);
   assert.equal(base.personas.find((p) => p.id === injected.persona_id)?.segment_id, 'seg-1', 'a recruiter complains');
-  assert.deepEqual([injected.round, injected.poi_id], [1, base.project.poi.id]);
+  assert.deepEqual([injected.round, injected.poi_id], [1, base.project.pois[0].id]);
 });
