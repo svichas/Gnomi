@@ -1,4 +1,4 @@
-import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats } from '../types.ts';
+import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats, StepEvidence } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
@@ -30,6 +30,7 @@ export function reportToMarkdown(report: Report): string {
     ...dimensionLines(report),
     ...themeLines(report),
     ...sentimentLines(report),
+    ...buyerLines(report),
     ...wentWellLines(report),
     ...spreadLines(report),
     '',
@@ -117,7 +118,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
     ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
     ...(e.url ? [`   - Page: ${e.url}`] : []),
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
-    ...(e.passage ? [`   - Passage: characters ${e.passage.start}–${e.passage.end}`] : []),
+    ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
     `   - Event: #${e.seq}`,
   ].join('\n');
@@ -131,6 +132,30 @@ function sentimentLines(report: Report): string[] {
     '| Segment | Surveyed | Mean sentiment | Would continue |',
     '| --- | --- | --- | --- |',
     ...report.sentiment.map((s) => `| ${cell(s.name)} | ${s.surveyed} | ${s.sentiment === null ? 'no answers' : s.sentiment.toFixed(2)} | ${s.surveyed === 0 ? '-' : pct(s.would_continue)} |`),
+  ];
+}
+
+const passageLine = ({ passage }: StepEvidence) =>
+  passage ? [`   - Passage: characters ${passage.start}–${passage.end}${passage.text ? `, "${line(passage.text)}"` : ''}`] : [];
+
+function buyerLines(report: Report): string[] {
+  if (!report.buyers?.length) return [];
+  const top = (items: { text: string; personas: number }[]) => items.slice(0, 5).map((i) => `${line(i.text)} (${count(i.personas, 'persona')})`).join('; ') || 'none';
+  return [
+    '', '## Buying survey', '',
+    'Segments of buyers answered a buying survey after each point of interest. Sentiment from -2 to +2 with 0 neutral.',
+    ...report.pois.flatMap((poi) => {
+      const rows = report.buyers!.filter((b) => b.poi_id === poi.id);
+      if (rows.length === 0) return [];
+      return [
+        '', `### ${line(poi.name)}`, '',
+        '| Segment | Surveyed | Mean sentiment | Would buy or recommend | Price: low / fair / high / unclear |',
+        '| --- | --- | --- | --- | --- |',
+        ...rows.map((b) => `| ${cell(b.name)} | ${b.surveyed} | ${b.sentiment.toFixed(2)} | ${pct(b.would_buy)} | ${b.price.low} / ${b.price.fair} / ${b.price.high} / ${b.price.unclear} |`),
+        '',
+        ...rows.flatMap((b) => [`- ${cell(b.name)}, top objections: ${top(b.objections)}`, `- ${cell(b.name)}, unclear: ${top(b.unclear)}`]),
+      ];
+    }),
   ];
 }
 
@@ -197,6 +222,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
     `   - Expected: ${line(friction.expected)}`,
     `   - Quote: "${line(friction.quote)}"`,
     `   - Page: ${friction.url}`,
+    ...passageLine(friction),
     `   - Screenshot: ${friction.screenshot ?? 'none'}`,
   ].join('\n');
 }

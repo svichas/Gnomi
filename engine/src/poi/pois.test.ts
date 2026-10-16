@@ -58,7 +58,7 @@ test('a segment gets its POIs in the order the project lists them', () => {
 
 test('the registry blocks a run with a reason: text and design are not available yet, and every segment needs a POI', () => {
   assert.equal(preflight(project([web('app')])), null);
-  assert.match(preflight(project([web('app'), text])) ?? '', /^"Pricing copy" is a text, and text points of interest are not available yet/);
+  assert.equal(preflight(project([web('app'), text])), null, 'a text with its text runs');
   assert.match(preflight(project([design, web('app')])) ?? '', /^"Checkout frames" is a design, and design points of interest are not available yet/);
   assert.equal(preflight(project([])), 'Add a point of interest for the personas to try.');
   assert.match(preflight(project([web('app', { start_url: 'https://acme.com/' })])) ?? '', /does not look like a staging or test address/, 'the web runner keeps the production guard');
@@ -74,4 +74,12 @@ test('step budgets scale by POI type: web keeps the patience budget, text and de
   assert.ok(poiBudget(patient, text) < 10);
   assert.ok(poiBudget(patient, design) < 10);
   assert.deepEqual(Object.keys(RUNNERS).sort(), ['design', 'text', 'web']);
+});
+
+test('a text POI is refused without its text: no asset, an asset that is not text, or a file that is not in assets/', () => {
+  assert.equal(preflight(project([{ ...text, asset: '' }])), '"Pricing copy" has no text yet. Paste the text or choose a .md or .txt file for it.');
+  assert.match(preflight(project([{ ...text, asset: '0123456789abcdef.png' }])) ?? '', /has no text yet/, 'an image is not a text');
+  const check = RUNNERS.text.preflight as (poi: TextPoi, project: ProjectConfig, hasAsset: (id: string) => boolean) => string | null;
+  assert.equal(check(text, project([text]), () => false), 'The text of "Pricing copy" is missing from the project\'s files. Paste it or choose the file again.');
+  assert.equal(check(text, project([text]), (id) => id === text.asset), null);
 });

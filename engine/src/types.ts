@@ -320,7 +320,7 @@ export interface SignalBase {
 /** Where a step or friction happened on a POI without pages: the frame of a design, the passage of a text. */
 export interface StepEvidence {
   frame?: number; // design POIs: the frame's index in DesignPoi.frames
-  passage?: { start: number; end: number }; // text POIs: character offsets into the text, end exclusive
+  passage?: { start: number; end: number; text?: string }; // text POIs: character offsets into the text, end exclusive; a friction's carries the quoted span
 }
 
 export interface EventPayloads {
@@ -384,8 +384,9 @@ export interface EventPayloads {
     confidence: number; // 0…1, self-reported
     likes: string[];
     frictions: string[];
-    would_continue: boolean;
+    would_continue: boolean; // buyers: would buy or recommend buying
     reason: string;
+    buyer?: BuyerAnswers; // segments of kind buyer answer the buying survey (agent/buyer.ts)
   };
   'llm.call': {
     role: LlmRole;
@@ -409,6 +410,14 @@ export interface EventPayloads {
   'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
+}
+
+/** A buyer's answers beyond the shared survey fields (tech.md §7: buyers answer a buying survey). */
+export interface BuyerAnswers {
+  would_buy: boolean; // would buy it, or recommend that whoever decides buys it
+  price: 'low' | 'fair' | 'high' | 'unclear';
+  objections: string[]; // what would stop the purchase, most important first
+  unclear: string[]; // what the buyer could not work out
 }
 
 export interface JudgeTheme {
@@ -542,6 +551,19 @@ export interface ReportSentiment {
   would_continue: number; // share of surveyed personas
 }
 
+/** The buying survey of one segment about one POI (report/buyers.ts). */
+export interface ReportBuyers {
+  poi_id: string;
+  segment_id: string | null;
+  name: string; // the segment's
+  surveyed: number;
+  sentiment: number; // mean, −2…+2
+  would_buy: number; // share of surveyed personas
+  price: Record<BuyerAnswers['price'], number>; // personas per answer
+  objections: ReportLike[];
+  unclear: ReportLike[];
+}
+
 /** A survey like and how many personas named it. */
 export interface ReportLike {
   text: string;
@@ -567,6 +589,7 @@ export interface Report {
   sentiment?: ReportSentiment[];
   went_well?: ReportLike[];
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
+  buyers?: ReportBuyers[]; // M5 buying survey per POI and segment; only in runs where a buyer answered one
   cost_usd: number;
   llm_calls: number;
   unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports

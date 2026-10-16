@@ -53,7 +53,7 @@ const PRONOUNS: Record<Persona['pronouns'], { obj: string; poss: string }> = {
 // Sentences use the first name as their subject and pronouns only as object or possessive, so verbs agree for they.
 type Words = { p: string; obj: string; poss: string };
 
-const PATIENCE = [
+export const PATIENCE = [
   ({ p }: Words) => `${p} has very little patience and gives up after one or two steps that lead nowhere`,
   ({ p }: Words) => `${p} has short patience and gives up after a couple of dead ends`,
   ({ p }: Words) => `${p} has ordinary patience: retries something once or twice, then tries another way or gives up`,
@@ -87,7 +87,7 @@ const ENTRY: Record<Segment['entry'], string> = { direct: 'directly', email_link
 
 const first = (persona: Persona) => persona.name.split(' ')[0];
 
-const languageName = (tag: string) => {
+export const languageName = (tag: string) => {
   try {
     return new Intl.DisplayNames(['en'], { type: 'language' }).of(tag) ?? tag;
   } catch {
@@ -96,13 +96,13 @@ const languageName = (tag: string) => {
 };
 
 /** The first name as subject; pronouns only when the profile schema lets them into prompts. */
-function wordsFor(persona: Persona, project: ProjectConfig): Words {
+export function wordsFor(persona: Persona, project: ProjectConfig): Words {
   const pronouns = isAttributeEnabled(project.persona_schema, 'pronouns', 'prompt') ? persona.pronouns : 'they';
   return { p: first(persona), ...PRONOUNS[pronouns] };
 }
 
 /** The profile as prompts see it: only attributes the schema enables for prompts, grouped, plus the segment's context. */
-function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string): string {
+export function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string): string {
   const segmentContext = segment
     ? [
         `  account: ${ACCOUNT[segment.account_state]}`,
