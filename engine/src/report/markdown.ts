@@ -22,7 +22,7 @@ export function reportToMarkdown(report: Report): string {
     '',
     `> ${report.banner}`,
     '',
-    `- Point${report.pois.length === 1 ? '' : 's'} of interest: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
+    `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
     '',
@@ -87,7 +87,7 @@ function themeLines(report: Report): string[] {
   if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
   return [
     '', '## Themes', '',
-    'Ranked by the low end of the share of personas affected (a 95% Wilson range over the personas who used the point of interest) × median severity × trust, so a problem one persona met ranks below one many met. Evidence is strong with three or more personas and at least a quarter of those who used it, some with two or more, single with one. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
+    'Ranked by the low end of the share of personas affected (a 95% Wilson range over the personas who tried the same text, design or site) × median severity × trust, so a problem one persona met ranks below one many met. Evidence is strong with three or more personas and at least a quarter of those who used it, some with two or more, single with one. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
@@ -154,7 +154,7 @@ function buyerLines(report: Report): string[] {
   const top = (items: { text: string; personas: number }[]) => items.slice(0, 5).map((i) => `${line(i.text)} (${count(i.personas, 'persona')})`).join('; ') || 'none';
   return [
     '', '## Buying survey', '',
-    'Segments of buyers answered a buying survey after each point of interest. Sentiment from -2 to +2 with 0 neutral.',
+    'Segments of buyers answered a buying survey after each text, design or site they looked at. Sentiment from -2 to +2 with 0 neutral.',
     ...report.pois.flatMap((poi) => {
       const rows = report.buyers!.filter((b) => b.poi_id === poi.id);
       if (rows.length === 0) return [];
@@ -200,7 +200,7 @@ function spreadLines(report: Report): string[] {
   return [
     '', '## Opinion spread', '',
     "How talk travelled on the simulated feed. First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.",
-    ...(report.spread.length === 0 ? ['', 'No post was about a point of interest.'] : []),
+    ...(report.spread.length === 0 ? ['', 'No post was about a particular text, design or site.'] : []),
     ...report.spread.flatMap((poi) => [
       '', `### About ${line(poi.name)}`, '', ...spreadToMarkdown(poi, name),
       ...poi.themes.flatMap((t) => ['', `#### ${t.rank}. ${line(t.title)}`, '', ...spreadToMarkdown(t, name)]),

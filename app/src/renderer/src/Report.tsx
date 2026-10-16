@@ -754,7 +754,7 @@ function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; perso
       <p className="text-xs text-stone-500">
         First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.
       </p>
-      {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a point of interest.</p>}
+      {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a particular text, design or site.</p>}
       {spread.map((poi) => (
         <div key={poi.poi_id} className="space-y-4">
           <div className="space-y-2 rounded-lg border border-stone-200 p-4">
@@ -929,7 +929,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
           <p className="text-sm text-stone-700">
             <span className="font-medium text-stone-900">Goal:</span> {report.goal}
           </p>
-          {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map(poiName).join(', ')}</p>}
+          {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">What the personas tried, in this order: {report.pois.map(poiName).join(', ')}</p>}
           {report.status === 'stopped' && report.stop_reason && <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
         </div>
         <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">

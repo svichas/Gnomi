@@ -290,3 +290,17 @@ test('report progress follows the log: surveys, then the judge and the author fo
   assert.equal(reportProgress([started(1, 'a', 'web'), event(2, 'report.started', { pois: [] }, null)]).fraction, 0.95, 'without frictions only saving is left');
 });
 
+
+test('a text or design starts as reading or looking through it, by its name, not its stored file', () => {
+  const pois = [
+    { id: 'copy', type: 'text', name: 'Pricing copy', segments: null, asset: '0123456789abcdef.md' },
+    { id: 'frames', type: 'design', name: 'Checkout', segments: null, frames: [{ asset: '0123456789abcdef.png', name: null }] },
+  ];
+  const events = [
+    event(1, 'run.started', { config: { project: { pois } } as unknown as RunConfig }, null),
+    event(2, 'persona.episode_started', { poi_id: 'copy', device: 'desktop', start_url: 'asset:0123456789abcdef.md' }),
+    event(3, 'persona.episode_started', { poi_id: 'frames', device: 'desktop', start_url: 'asset:0123456789abcdef.png' }),
+  ];
+  const titles = toRows(events).filter((row) => row.label === 'Start').map((row) => row.title);
+  assert.deepEqual(titles, ['Started looking through Checkout', 'Started reading Pricing copy']);
+});

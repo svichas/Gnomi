@@ -1,4 +1,4 @@
-import { webPois, withPois, type SavedProject } from '../poi/pois.ts';
+import { assetPlaces, placeName, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
@@ -148,6 +148,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Step numbers repeat across personas, so a friction finds its step by persona and step number together.
   const stepByKey = new Map<string, EventPayloads['persona.step']>();
   for (const e of ofType(events, 'persona.step')) stepByKey.set(stepKey(e.persona_id ?? '', e.payload.step_no), e.payload);
+  const places = assetPlaces(pois);
   const frictions: ReportFriction[] = ofType(ours, 'persona.friction_reported').map((e) => {
     const persona_id = e.persona_id ?? '';
     const persona = personaById.get(persona_id);
@@ -161,7 +162,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       severity: e.payload.severity,
       what: e.payload.what,
       expected: e.payload.expected,
-      url: e.payload.where.url,
+      url: placeName(e.payload.where.url, places), // a text or design by its name, not its stored file
       quote: step?.thought ?? '',
       screenshot: step?.screenshot ?? null,
       ...stepEvidence(e.payload, step),

@@ -1,6 +1,8 @@
 import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/engine/types.ts';
 import { profileEntries } from '@gnomi/engine/profile/schema.ts';
 import { attributeKey } from '@gnomi/engine/report/dimensions.ts';
+import { placesOf } from '@gnomi/engine/report/friction.ts';
+import { placeName } from '@gnomi/engine/poi/pois.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -96,8 +98,9 @@ export function resetOutcome({ status, error }: { status: number | null; error: 
 }
 
 /** One line of the activity list, or null for events that are bookkeeping. */
-function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
+function describe(event: GnomiEvent, places: Map<string, string> = new Map()): Omit<Row, 'persona_id'> | null {
   const { seq } = event;
+  const place = (url: string) => placeName(url, places); // a text or design by its name, never its stored file
   switch (event.type) {
     case 'run.concurrency_changed':
       return { seq, label: 'Pace', tone: 'notice', title: `Now running ${event.payload.concurrency} personas at a time`, detail: event.payload.reason };
@@ -105,8 +108,11 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
       const reset = resetOutcome(event.payload);
       return { seq, label: 'Reset', tone: reset.ok ? 'muted' : 'bad', title: `Reset hook ${reset.text}`, detail: event.payload.url };
     }
-    case 'persona.episode_started':
-      return { seq, label: 'Start', tone: 'muted', title: `Opened ${event.payload.start_url} in a ${event.payload.device} browser` };
+    case 'persona.episode_started': {
+      const { start_url, device } = event.payload;
+      if (!start_url.startsWith('asset:')) return { seq, label: 'Start', tone: 'muted', title: `Opened ${start_url} in a ${device} browser` };
+      return { seq, label: 'Start', tone: 'muted', title: `${/\.(md|txt)$/i.test(start_url) ? 'Started reading' : 'Started looking through'} ${place(start_url)}` };
+    }
     case 'persona.step': {
       const { step_no, action, target, result, thought } = event.payload;
       const error = result.error && (STEP_ERRORS[result.error] ?? result.error);
@@ -182,13 +188,13 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
     case 'signal.failed_action': {
       const { step_no, action, error } = event.payload;
       const title = error === 'no_effect' ? `Detected: the ${action} changed nothing` : `Detected: the ${action} failed (${STEP_ERRORS[error] ?? error})`;
-      return { seq, label: `Step ${step_no}`, tone: 'notice', title, detail: event.payload.url };
+      return { seq, label: `Step ${step_no}`, tone: 'notice', title, detail: place(event.payload.url) };
     }
     case 'signal.loop':
-      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: the same page ${event.payload.visits} times in a few steps`, detail: event.payload.url };
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: the same page ${event.payload.visits} times in a few steps`, detail: place(event.payload.url) };
     case 'signal.backtrack': {
       const { step_no, kind, url } = event.payload;
-      return { seq, label: `Step ${step_no}`, tone: 'notice', title: kind === 'repeated_back' ? 'Detected: went back again and again' : 'Detected: returned to a page from moments ago', detail: url };
+      return { seq, label: `Step ${step_no}`, tone: 'notice', title: kind === 'repeated_back' ? 'Detected: went back again and again' : 'Detected: returned to a page from moments ago', detail: place(url) };
     }
     case 'signal.error': {
       const { step_no, kind, status, message } = event.payload;
@@ -199,7 +205,7 @@ function describe(event: GnomiEvent): Omit<Row, 'persona_id'> | null {
       return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: 'Detected: an error message appeared after submitting', detail: event.payload.message };
     case 'signal.small_target': {
       const [, , width, height] = event.payload.box;
-      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: event.payload.url };
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: place(event.payload.url) };
     }
     case 'llm.call':
       return event.payload.status === 'ok'
@@ -219,9 +225,10 @@ export function chronologicalRows(events: GnomiEvent[]): Row[] {
   const blocked = new Map<string, number>();
   for (const event of events) if (event.type === 'containment.blocked_request') blocked.set(event.payload.host, (blocked.get(event.payload.host) ?? 0) + 1);
   const shown = new Set<string>();
+  const places = placesOf(events);
   return events.flatMap((event): Row[] => {
     if (event.type !== 'containment.blocked_request') {
-      const row = describe(event);
+      const row = describe(event, places);
       return row ? [{ ...row, ts: event.ts, persona_id: event.persona_id }] : [];
     }
     const { host } = event.payload;

@@ -4,7 +4,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, DesignPoi, Poi, ProjectConfig, Segment, TextPoi, WebPoi } from '../types.ts';
 import { poiBudget, preflight, RUNNERS } from './index.ts';
-import { isEligible, loginPoi, poisFor, withPois } from './pois.ts';
+import { assetPlaces, isEligible, loginPoi, placeName, poisFor, withPois } from './pois.ts';
 
 const web = (id: string, over: Partial<WebPoi> = {}): WebPoi => ({
   id, type: 'web', name: id, mode: 'full', segments: null, start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, ...over,
@@ -81,4 +81,15 @@ test('a text POI is refused without its text: no asset, an asset that is not tex
   const check = RUNNERS.text.preflight as (poi: TextPoi, project: ProjectConfig, hasAsset: (id: string) => boolean) => string | null;
   assert.equal(check(text, project([text]), () => false), 'The text of "Pricing copy" is missing from the project\'s files. Paste it or choose the file again.');
   assert.equal(check(text, project([text]), (id) => id === text.asset), null);
+});
+
+test('a text or design is named by its POI, never by its stored file; a page keeps its URL', () => {
+  const flow: DesignPoi = { ...design, frames: [{ asset: 'aaaaaaaaaaaaaaaa.png', name: 'Cart' }, { asset: 'bbbbbbbbbbbbbbbb.png', name: null }] };
+  const places = assetPlaces([web('site'), text, design, flow]);
+  assert.equal(placeName('asset:0123456789abcdef.md', places), 'Pricing copy');
+  assert.equal(placeName('asset:0123456789abcdef.png', places), 'Checkout frames', 'a one-screen design is just its name');
+  assert.equal(placeName('asset:aaaaaaaaaaaaaaaa.png', places), 'Checkout frames, screen 1 "Cart"');
+  assert.equal(placeName('asset:bbbbbbbbbbbbbbbb.png', places), 'Checkout frames, screen 2');
+  assert.equal(placeName('asset:ffffffffffffffff.md', places), 'a text', 'a file no POI names is still not shown');
+  assert.equal(placeName('http://gym.test/jobs', places), 'http://gym.test/jobs');
 });

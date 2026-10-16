@@ -1,3 +1,4 @@
+import { assetPlaces, placeName, withPois, type SavedProject } from '../poi/pois.ts';
 import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, SignalKind, StepEvidence, Trust } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
@@ -55,8 +56,25 @@ export interface Group {
 // Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
 const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;
 
-/** host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. */
-export function pagePattern(url: string): string {
+const poisOf = (events: GnomiEvent[]) => {
+  const started = events.find((e) => e.type === 'run.started');
+  const project = (started?.payload.config as { project?: SavedProject } | undefined)?.project;
+  return project ? withPois(project).pois : [];
+};
+
+/** The readable names of the run's text and design files (poi/pois.ts), from its frozen project. */
+export const placesOf = (events: GnomiEvent[]): Map<string, string> => assetPlaces(poisOf(events));
+
+/** Each POI's name by its id, from the run's frozen project. */
+export const poiNamesOf = (events: GnomiEvent[]): Map<string, string> => new Map(poisOf(events).map((poi) => [poi.id, poi.name]));
+
+/**
+ * host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. A text's
+ * or design's stored file is its readable name when `places` knows it, so titles and pages never show a file id.
+ */
+export function pagePattern(url: string, places?: Map<string, string>): string {
+  const place = places?.get(url);
+  if (place) return place;
   try {
     const { host, pathname } = new URL(url);
     const path = pathname.split('/').map((part) => (ID_SEGMENT.test(part) ? ':id' : part)).join('/').replace(/\/+$/, '');
@@ -78,6 +96,7 @@ const isSignal = (e: GnomiEvent): e is SignalEvent => e.type.startsWith('signal.
 
 /** Step 1 and 2: every self-report, survey friction and signal as a candidate, merged into confirmed frictions where they meet. */
 export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candidate[] {
+  const places = placesOf(events);
   const steps = new Map<string, { seq: number; payload: EventPayloads['persona.step'] }>();
   for (const e of events) if (e.type === 'persona.step') steps.set(stepKey(e.persona_id ?? '', e.payload.step_no), { seq: e.seq, payload: e.payload });
 
@@ -90,8 +109,8 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       persona_id,
       step_no,
       step_seq: step?.seq ?? null,
-      url: page,
-      page: page === null ? null : pagePattern(page),
+      url: page === null ? null : placeName(page, places), // shown to people: a text or design by its name, not its file
+      page: page === null ? null : pagePattern(page, places),
       element: elementOf(step?.payload.target),
       kind: 'friction',
       severity: 2,
