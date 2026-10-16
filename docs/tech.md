@@ -637,6 +637,8 @@ These mitigations are drawn from the persona-steering and silicon-sample literat
 
 Segment eligibility: each POI lists which segments engage with it (default: all with a role for web apps; technical personas only for developer products; buyers for text). The scheduler assigns each persona the POIs its segment is eligible for, in the order the user set.
 
+**M5 implementation:** a project holds an ordered list of POIs, each with its eligible segments or `null` for the default by segment kind: users use every POI, buyers (perception only) use text and designs but not web apps. Each POI type has one runner behind a registry (step budget, preflight, episode), and POI files live in `assets/` under content ids. [pois.md](pois.md) is the contract for adding a type.
+
 ## 8. Friction detection and report generation
 
 ### 8.1 Two sources, combined
