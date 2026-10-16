@@ -63,7 +63,7 @@ function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segme
   );
 }
 
-function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: RunRow | undefined; onRunEnded(): void; active: boolean }) {
+function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefined; active: boolean }) {
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const frozenConfig = events.find((event) => event.type === 'run.started')?.payload.config ?? row?.config;
   const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
@@ -87,7 +87,6 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
       const batch = queue;
       queue = [];
       setEvents((have) => merge(have, batch));
-      if (batch.some(isEnd)) onRunEnded();
     };
     const off = onEvent((event) => {
       if (event.run_id !== runId) return;
@@ -295,14 +294,14 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
 
 const STATUS_WORDS = { running: 'Running', finished: 'Complete', stopped: 'Stopped', interrupted: 'Interrupted' };
 
-export function Run({ runId, runs, onSelect, onRunEnded, onSetup, active }: { runId: string | null; runs: RunRow[]; onSelect(runId: string): void; onRunEnded(): void; onSetup(): void; active: boolean }) {
+export function Run({ runId, runs, onSelect, onSetup, active }: { runId: string | null; runs: RunRow[]; onSelect(runId: string): void; onSetup(): void; active: boolean }) {
   return (
     <div className="run-page">
       {runs.length > 0 && <div className="run-history-bar"><label htmlFor="run-history"><Icon name="clock" size={18} />Run history</label><select id="run-history" value={runId ?? ''} onChange={(event) => onSelect(event.target.value)} className="run-history-select">
         {!runId && <option value="">Choose a run</option>}
         {runs.map((run) => <option key={run.run_id} value={run.run_id}>{when(run.started_at)} · {STATUS_WORDS[run.status]} · {runSetup(run.config).personas.length} people</option>)}
       </select><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
-      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} onRunEnded={onRunEnded} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
+      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );
 }

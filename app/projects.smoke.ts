@@ -239,11 +239,12 @@ try {
   await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor({ timeout: 60_000 });
   await home();
-  await card('Second app').getByRole('button', { name: 'Open Second app', exact: true }).click();
-  await page.getByRole('alert').filter({ hasText: /Stop the current run/ }).waitFor();
+  await page.getByRole('status').locator('.pill').filter({ hasText: 'Stop the run to leave this page.' }).waitFor();
+  assert.ok(await page.locator('#panel-run').isVisible(), 'the projects page stays closed during the run');
+  // The engine refuses the switch on its own too.
+  const refused = await page.evaluate((id) => window.gnomi.projectAction({ action: 'open', id }).then(() => '', String), before.projects.find((entry) => entry.name === 'Second app')!.id);
+  assert.match(refused, /Stop the current run/);
   assert.equal((await page.evaluate(() => window.gnomi.listProjects())).currentId, before.projects.find((entry) => entry.name === 'Hiring team')?.id);
-  await page.getByRole('button', { name: 'Return to open project' }).click();
-  await page.locator('#tab-run').click();
   await page.getByRole('button', { name: 'End run', exact: true }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click();
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();

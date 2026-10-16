@@ -1,6 +1,7 @@
 import { cloneElement, useEffect, useId, useRef, useState } from 'react';
 import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { call, errorText } from './engine.ts';
+import { Icon } from './Icon.tsx';
 
 export const inputClass = 'field-input w-full';
 const buttonBase = 'button disabled:cursor-not-allowed disabled:opacity-50';
@@ -94,6 +95,28 @@ export function ActionBar({ children }: { children: ReactNode }) {
     return () => watcher.disconnect();
   }, []);
   return <div ref={bar} className="action-bar">{children}</div>;
+}
+
+/**
+ * Brief notices floating at the top of the window, clear of the ActionBar: `notify` raises one, render `view` once.
+ * Each leaves after a few seconds or when dismissed; the region is live, so screen readers hear each as it arrives.
+ */
+export function usePills() {
+  const [pills, setPills] = useState<{ id: number; text: string }[]>([]);
+  const ids = useRef(0);
+  const dismiss = (id: number) => setPills((all) => all.filter((pill) => pill.id !== id));
+  const notify = (text: string) => {
+    const id = ++ids.current;
+    // The same notice again replaces its copy, so repeated clicks restart it rather than stack it.
+    setPills((all) => [...all.filter((pill) => pill.text !== text), { id, text }]);
+    window.setTimeout(() => dismiss(id), 5000);
+  };
+  const view = (
+    <div role="status" aria-atomic="false" className="pills">
+      {pills.map((pill) => <div key={pill.id} className="pill">{pill.text}<Button variant="quiet" aria-label="Dismiss" onClick={() => dismiss(pill.id)}><Icon name="close" size={16} /></Button></div>)}
+    </div>
+  );
+  return { notify, view };
 }
 
 export function ProgressBar({ value, max, label }: { value: number; max: number; label: string }) {

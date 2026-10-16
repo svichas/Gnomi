@@ -151,6 +151,36 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   console.log('ok    all three personas gave up; Preparing report shows surveys, themes and suggestions as the log advances');
 
+  // Still live while the report is prepared: each way off the Activity step raises a centered pill instead.
+  const pill = page.getByRole('status').locator('.pill').filter({ hasText: 'Stop the run to leave this page.' });
+  for (const leave of [page.locator('#tab-project'), page.locator('#tab-settings'), page.getByRole('button', { name: 'New run', exact: true })]) {
+    await leave.click();
+    await pill.waitFor();
+    assert.ok(await page.locator('#panel-run').isVisible(), 'the Activity step stays on screen');
+  }
+  assert.equal(await pill.count(), 1, 'a repeated notice restarts rather than stacks');
+  const pillBox = async (width: number) => {
+    await pill.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+    const box = (await pill.boundingBox())!;
+    assert.ok(Math.abs(box.x + box.width / 2 - width / 2) <= 1, `the pill is centered at ${width}px`);
+    assert.ok(box.x >= 16 && box.x + box.width <= width - 16, `the pill fits ${width}px`);
+  };
+  await pillBox(1280);
+  await page.screenshot({ path: join(shots, 'run-leave-pill.png') });
+  await pill.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await pill.waitFor({ state: 'detached' });
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.locator('#tab-review').click();
+  await pill.waitFor();
+  await pillBox(375);
+  await page.screenshot({ path: join(shots, 'run-leave-pill-375.png') });
+  await page.setViewportSize({ width: 320, height: 800 });
+  await pillBox(320);
+  await pill.waitFor({ state: 'detached', timeout: 7_000 });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  assert.ok(await page.locator('#panel-run').isVisible());
+  console.log('ok    a live run keeps the Activity step: steps, Settings and New run raise a centered pill that leaves by hand or on its own');
+
   await page.evaluate(() => window.completionSmoke.finish());
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor({ state: 'detached' });
   await page.waitForFunction(() => window.completionSmoke.reportRequests > 0);
@@ -158,6 +188,13 @@ try {
   await page.locator('#run-panel-report').getByRole('heading', { name: 'Report', exact: true }).waitFor();
   assert.match(await page.locator('#run-panel-report').innerText(), /Gave up|abandoned/i);
   await page.screenshot({ path: join(shots, 'all-abandoned-report.png') });
+  await page.locator('#tab-project').click();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.locator('#tab-settings').click();
+  await page.locator('#panel-settings').waitFor();
+  await page.locator('#tab-run').click();
+  assert.equal(await pill.count(), 0, 'an ended run lets the user leave');
+  console.log('ok    once the run ends the steps and Settings navigate again');
   await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
   assert.equal(await page.getByRole('tab', { name: 'Timeline', exact: true }).getAttribute('aria-selected'), 'true', 'The timeline remains available after the report opens.');
   console.log('ok    live completion selects and displays the report without a manual Report click');
