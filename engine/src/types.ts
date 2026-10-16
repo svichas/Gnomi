@@ -384,9 +384,9 @@ export interface EventPayloads {
     confidence: number; // 0…1, self-reported
     likes: string[];
     frictions: string[];
+    buyer?: BuyerAnswers; // segments of kind buyer answer the buying survey (agent/buyer.ts)
     would_continue: boolean; // buyers: would buy or recommend buying
     reason: string;
-    buyer?: BuyerAnswers; // segments of kind buyer answer the buying survey (agent/buyer.ts)
   };
   'llm.call': {
     role: LlmRole;
@@ -551,6 +551,14 @@ export interface ReportSentiment {
   would_continue: number; // share of surveyed personas
 }
 
+/** A survey like and how many personas named it. */
+export interface ReportLike {
+  text: string;
+  count: number;
+  personas: number;
+  seqs: number[];
+}
+
 /** The buying survey of one segment about one POI (report/buyers.ts). */
 export interface ReportBuyers {
   poi_id: string;
@@ -562,14 +570,6 @@ export interface ReportBuyers {
   price: Record<BuyerAnswers['price'], number>; // personas per answer
   objections: ReportLike[];
   unclear: ReportLike[];
-}
-
-/** A survey like and how many personas named it. */
-export interface ReportLike {
-  text: string;
-  count: number;
-  personas: number;
-  seqs: number[];
 }
 
 export interface Report {

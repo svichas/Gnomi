@@ -57,10 +57,10 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
       <p className="mt-1 text-sm text-stone-700">
         <span className="font-medium">Expected:</span> {friction.expected}
       </p>
+      <Passage passage={friction.passage} />
       {friction.quote && (
         <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
       )}
-      <Passage passage={friction.passage} />
       {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>

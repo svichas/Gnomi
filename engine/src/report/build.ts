@@ -1,9 +1,9 @@
 import { webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
-import { buyerResults } from './buyers.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
 import { buildSpread, homogeneity } from './spread.ts';
+import { buyerResults } from './buyers.ts';
 import { stepEvidence } from './friction.ts';
 import { analyseFrictions, type Context } from './themes.ts';
 import type {
@@ -245,8 +245,8 @@ export function buildReport(events: GnomiEvent[]): Report {
     themes: analysis.themes,
     sentiment: analysis.sentiment,
     went_well: analysis.went_well,
-    ...(buyers.length > 0 ? { buyers } : {}),
     ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
+    ...(buyers.length > 0 ? { buyers } : {}),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,

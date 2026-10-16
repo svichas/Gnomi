@@ -221,8 +221,8 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
     `${index + 1}. Step ${friction.step_no}, severity ${friction.severity}: ${line(friction.what)}`,
     `   - Expected: ${line(friction.expected)}`,
     `   - Quote: "${line(friction.quote)}"`,
-    `   - Page: ${friction.url}`,
     ...passageLine(friction),
+    `   - Page: ${friction.url}`,
     `   - Screenshot: ${friction.screenshot ?? 'none'}`,
   ].join('\n');
 }

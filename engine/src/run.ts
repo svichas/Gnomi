@@ -191,13 +191,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (end === 'blocked' || end === 'stopped' || !beginStep()) return;
     try {
       const own = store.events(run_id, { personaId: persona.id, types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.poi_id === poi.id);
-      const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
       const segment = segmentOf(persona, project);
       if (segment?.kind === 'buyer') { // buyers answer the buying survey instead (agent/buyer.ts)
         const payload = await askBuyer({ llm: budgetedLlm, config, persona, segment, poi, end, own, round: base.round, signal: hard.signal });
         if (!hard.signal.aborted) record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload });
         return;
       }
+      const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
       const { object } = await budgetedLlm.call({
         role: 'navigator',
         model: settings.routing.navigator,
