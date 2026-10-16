@@ -1,3 +1,4 @@
+import { ReportProgress } from './ReportProgress.tsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
 import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
@@ -214,10 +215,10 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
           ))}
         </p>
         {stopping && !ended && <p className="mt-3 text-sm text-stone-500">Canceling outstanding model requests. Browser actions already started may finish.</p>}
-        {preparing && !stopping && <p className="mt-3 text-sm text-stone-500" role="status">Preparing the report from their experiences. It will open automatically when ready.</p>}
         {missingUsageText(usage.unreported_usage_calls) && <p className="mt-3 text-sm text-amber-800" role="status">{missingUsageText(usage.unreported_usage_calls)}</p>}
       </section>
 
+      {preparing && !stopping && <ReportProgress events={events} />}
       {waiting.length > 0 && (
         <BlockedBanner blocks={waiting} personas={personaById} roleOf={setup.roleOf} runId={runId} pauseMs={setup.pauseMs} ending={stopping} onEnd={stop} />
       )}
