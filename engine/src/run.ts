@@ -1,6 +1,6 @@
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
@@ -228,8 +228,12 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       }));
       // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
       if (hard.signal.aborted) return;
-      const { sentiment, confidence, likes, frictions, would_continue, reason } = object;
-      record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, would_continue, reason, ...compare.answer(object) } });
+      const { sentiment, confidence, would_continue, reason } = object;
+      const items = surveyItems(object);
+      // The plain lists keep their old meaning for older readers: what was liked, and what would put the persona off.
+      const likes = items.filter((i) => i.kind === 'like').map((i) => i.what);
+      const frictions = items.filter((i) => i.kind !== 'like').map((i) => i.what);
+      record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload: { poi_id: poi.id, sentiment, confidence, likes, frictions, items, would_continue, reason, ...compare.answer(object) } });
     } catch (err) {
       // An invalid or timed-out survey must not prevent reporting an episode that already ended.
       if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError') && !hard.signal.aborted) throw err;

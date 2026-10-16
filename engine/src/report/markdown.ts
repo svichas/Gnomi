@@ -1,4 +1,4 @@
-import type { Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats, StepEvidence } from '../types.ts';
+import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats, StepEvidence } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
@@ -87,7 +87,7 @@ function themeLines(report: Report): string[] {
   if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
   return [
     '', '## Themes', '',
-    'Ranked by segment-weighted affected share × median severity × trust. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
+    'Ranked by the low end of the share of personas affected (a 95% Wilson range over the personas who used the point of interest) × median severity × trust, so a problem one persona met ranks below one many met. Evidence is strong with three or more personas and at least a quarter of those who used it, some with two or more, single with one. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
@@ -103,6 +103,8 @@ function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
     line(t.description), '',
+    ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
+    ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}`] : []),
     `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected by segment: ${affected.join('; ') || 'none'}`,
@@ -116,6 +118,8 @@ function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
       : []),
   ];
 }
+
+const shareText = (p: Prevalence) => `${p.personas} of ${p.exposed} persona${p.exposed === 1 ? '' : 's'} (${pct(p.share)}, 95% range ${pct(p.low)}–${pct(p.high)})`;
 
 function evidenceToMarkdown(e: ReportEvidence, i: number): string {
   const at = e.step_no === null ? 'survey' : `step ${e.step_no}`;
@@ -170,7 +174,7 @@ function wentWellLines(report: Report): string[] {
   if (!report.went_well?.length) return [];
   return [
     '', '## What went well', '',
-    ...report.went_well.map((like, i) => `${i + 1}. ${line(like.text)} (${like.count} mention${like.count === 1 ? '' : 's'} by ${like.personas} persona${like.personas === 1 ? '' : 's'})`),
+    ...report.went_well.map((like, i) => `${i + 1}. ${line(like.text)} (${like.prevalence ? shareText(like.prevalence) : `${like.count} mention${like.count === 1 ? '' : 's'} by ${like.personas} persona${like.personas === 1 ? '' : 's'}`})${like.description ? `: ${line(like.description)}` : ''}`),
   ];
 }
 

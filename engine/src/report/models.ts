@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { LlmGateway, Recorder } from '../seams.ts';
-import type { AuthorSuggestion, GnomiEvent, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
+import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { english } from '../llm/english.ts';
 import { buildReport } from './build.ts';
+import { likeGroups } from './friction.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
@@ -10,26 +11,45 @@ import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.t
 // records nothing and the report falls back to the deterministic themes.
 
 const text = (max: number) => english(z.string().trim().min(1).max(max));
+const theme = z.object({ title: text(120), description: text(400), group_ids: z.array(z.string()).min(1) });
 export const judgeSchema = z.object({
-  themes: z.array(z.object({ title: text(120), description: text(400), group_ids: z.array(z.string()).min(1) })),
+  themes: z.array(theme),
 });
 /** In social runs the same call tags posts with groups (step 7), so the report can follow a problem through the feed. */
 export const judgePostsSchema = judgeSchema.extend({
   posts: z.array(z.object({ post_id: z.string(), group_ids: z.array(z.string()) })),
 });
+/** When the POI's surveys named likes, the same call merges and names them too (step 9). */
+// Required for providers, as the comparison is (poi/compare.ts); an answer without it still keeps its themes.
+const likes = { likes: z.array(theme).optional() };
+export const judgeLikesSchema = judgeSchema.extend(likes).meta({ required: ['themes', 'likes'] });
+const judgePostsLikesSchema = judgePostsSchema.extend(likes).meta({ required: ['themes', 'posts', 'likes'] });
+/** The judge's schema for what it is shown: posts and likes each add their own answer. */
+export function judgeSchemaFor(posts: boolean, liked: boolean) {
+  if (liked) return posts ? judgePostsLikesSchema : judgeLikesSchema;
+  return posts ? judgePostsSchema : judgeSchema;
+}
 export const authorSchema = z.object({
   suggestions: z.array(z.object({ theme_id: z.string(), change: text(300), solution: text(800) })),
 });
 
-export const JUDGE_SYSTEM = `You review potential usability frictions that simulated users (personas) ran into while trying a product.
-A deterministic pass has already grouped the frictions by page and element. Each group has an id, its page, its element or kind, how many personas and frictions it has, their trust (confirmed: self-report backed by an objective signal; observed: signal only; reported: self-report only) and up to three example texts.
+export const JUDGE_SYSTEM = `You review what simulated users (personas) ran into while trying a product, so the team gets findings that are accurate and easy to act on.
+A deterministic pass has already grouped the findings. Each group has an id, a category, its page, its element or the part of the product it names, its kind, how many personas and findings it has, their trust (confirmed: self-report backed by an objective signal; observed: signal only; reported: self-report only), a median severity from 1 (a small irritation) to 4 (stops them) and up to three example texts.
+Categories: a friction got in the way of doing the task (could not find, understand or complete something); an objection is a reason to doubt or not adopt the product even when it works (value, price, trust, a missing capability, fit).
 
 Merge groups that describe the same underlying problem into one theme, and name every theme:
-- title: a short, specific name for the problem, in sentence case, at most 12 words. Name the problem, not a fix.
-- description: one sentence on what went wrong for the personas.
+- title: a short, specific name for the problem, in sentence case, at most 12 words, naming where it happens. Name the problem, not a fix. Not "Confusing interface" but "Plan limits are not shown before checkout".
+- description: one or two plain sentences: what the personas were trying to do, what got in the way or put them off, and where. Use only what the example texts say; no generalities.
 - group_ids: the ids of the groups in this theme.
 
-Use only the group ids you were given, and put each group in at most one theme. Do not invent frictions. These are simulated users: never claim that real users had the problem.`;
+Merge only groups that are clearly the same problem; when unsure, keep them apart. Never merge a friction group with an objection group. Use only the group ids you were given, and put each group in at most one theme. Do not invent findings. These are simulated users: never claim that real users had the problem.`;
+
+export const JUDGE_LIKES = `
+
+The personas also said what worked for them. Each like group has an id, the part of the product it names, how many personas named it and up to three example texts.
+Merge like groups that praise the same thing, and name each:
+- likes: one entry per merged like, with a title (what worked, specific and in sentence case, at most 12 words), a description (one plain sentence on what the personas valued and where) and the group_ids of the like groups it merges.
+Use only the like group ids you were given, and put each in at most one entry.`;
 
 export const JUDGE_POSTS = `
 
@@ -67,13 +87,15 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
   const product = { name: project.name, description: project.description, goal: project.goal };
 
   const all = frictionGroups(events(), project.pois[0]?.id ?? '');
-  const pois = [...new Set(all.map((g) => g.poi_id))];
+  const allLikes = likeGroups(events());
+  const pois = [...new Set([...all.map((g) => g.poi_id), ...allLikes.map((g) => g.poi_id)])];
   record({ ...base, poi_id: null, type: 'report.started', payload: { pois } });
   await Promise.all(pois.map(async (poi_id) => {
-    const { groups, posts } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id));
-    const social = posts.length > 0; // without posts the call is the M3 one
+    const { groups, posts, likes } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id), undefined, undefined, allLikes.filter((g) => g.poi_id === poi_id));
+    const social = posts.length > 0; // without posts or likes the call is the M3 one
+    const liked = !!likes?.length;
     try {
-      const { object } = await llm.call<{ themes: JudgeTheme[]; posts?: JudgePostTag[] }>({
+      const { object } = await llm.call<{ themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[] }>({
         role: 'judge',
         model: routing.judge,
         run_id,
@@ -81,11 +103,11 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
         round: 1,
         purpose: 'report_themes',
         timeout_ms: REPORT_TIMEOUT_MS,
-        system: social ? JUDGE_SYSTEM + JUDGE_POSTS : JUDGE_SYSTEM,
-        user: [{ type: 'text', text: JSON.stringify(social ? { product, groups, posts } : { product, groups }) }],
-        schema: social ? judgePostsSchema : judgeSchema,
+        system: JUDGE_SYSTEM + (social ? JUDGE_POSTS : '') + (liked ? JUDGE_LIKES : ''),
+        user: [{ type: 'text', text: JSON.stringify({ product, groups, ...(social ? { posts } : {}), ...(liked ? { likes } : {}) }) }],
+        schema: judgeSchemaFor(social, liked),
       });
-      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}) } });
+      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}), ...(liked ? { likes: object.likes } : {}) } });
     } catch {
       // No key, a provider error, two invalid answers or a stop: llm.call recorded any attempt, and the themes stay deterministic.
     }

@@ -4,7 +4,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import { z } from 'zod';
-import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveyItems, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 
 const project: ProjectConfig = {
@@ -202,17 +202,30 @@ test('disabled fields and prompt-private attributes are absent from both profile
 });
 
 test('the survey schema takes bounded answers and rejects malformed or out-of-range ones', () => {
-  const answer = { frictions: ['The save button is hidden'], likes: [], sentiment: -1, confidence: 0.6, would_continue: false, reason: 'Too much hunting for buttons.' };
+  const answer = {
+    frictions: [{ where: 'job form', what: 'The save button is hidden below the fold', severity: 3 }],
+    objections: [{ where: 'pricing page', what: 'No price for teams, so I cannot pitch it', severity: 2 }],
+    likes: [],
+    sentiment: -1, confidence: 0.6, would_continue: false, reason: 'Too much hunting for buttons.',
+  };
   assert.deepEqual(surveySchema.parse(answer), answer);
   assert.deepEqual(surveySchema.parse({ ...answer, reason: '  Padded.  ' }).reason, 'Padded.');
+  const like = { where: 'job list', what: 'Fine' };
+  const slow = { where: 'search', what: 'Slow', severity: 2 };
   for (const change of [
     { sentiment: 3 }, { sentiment: -0.5 }, { confidence: -0.1 }, { confidence: 1.5 }, { would_continue: 'yes' }, { reason: ' ' }, { reason: 'x'.repeat(501) },
-    { likes: Array(6).fill('Fine') }, { frictions: Array(6).fill('Slow') }, { frictions: ['x'.repeat(501)] }, { likes: [''] }, { thought: 'extra' },
+    { likes: Array(6).fill(like) }, { frictions: Array(6).fill(slow) }, { objections: Array(6).fill(slow) }, { frictions: [{ ...slow, what: 'x'.repeat(301) }] },
+    { likes: [{ ...like, what: '' }] }, { likes: ['Fine'] }, { frictions: ['Slow'] }, { frictions: [{ ...slow, severity: 5 }] }, { frictions: [{ where: 'search', what: 'Slow' }] },
+    { objections: [{ ...slow, where: 'x'.repeat(81) }] }, { likes: [{ ...like, severity: 2 }] }, { thought: 'extra' },
   ]) assert.equal(surveySchema.safeParse({ ...answer, ...change }).success, false, JSON.stringify(change));
   const { reason: _, ...missing } = answer;
   assert.equal(surveySchema.safeParse(missing).success, false);
   const provider = z.toJSONSchema(surveySchema, { io: 'input', target: 'draft-7' });
-  assert.deepEqual(provider.required, ['frictions', 'likes', 'sentiment', 'confidence', 'would_continue', 'reason'], 'what would make the persona stop comes first');
+  assert.deepEqual(provider.required, ['frictions', 'objections', 'likes', 'sentiment', 'confidence', 'would_continue', 'reason'], 'what got in the way and what would stop adoption come first');
+  assert.deepEqual(surveyItems(answer), [
+    { kind: 'friction', where: 'job form', what: 'The save button is hidden below the fold', severity: 3 },
+    { kind: 'objection', where: 'pricing page', what: 'No price for teams, so I cannot pitch it', severity: 2 },
+  ]);
   assert.equal(provider.additionalProperties, false);
 });
 

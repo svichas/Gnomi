@@ -1,5 +1,5 @@
-import type { AuthorSuggestion, EventOf, GnomiEvent, JudgePostTag, JudgeTheme, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
-import { buildCandidates, groupCandidates, normaliseText, pagePattern, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group } from './friction.ts';
+import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
+import { buildCandidates, categoryOf, groupCandidates, likeGroups, pagePattern, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -9,6 +9,10 @@ export const JUDGE_TOKEN_CAP = 30_000;
 export const AUTHOR_TOKEN_CAP = 20_000;
 /** Of the judge's cap, at most this much goes to post summaries in social runs (step 7); the groups get the rest. */
 export const JUDGE_POST_CAP = 10_000;
+/** Of what is left, at most this much goes to survey likes; the friction and objection groups get the rest. */
+export const JUDGE_LIKE_CAP = 5_000;
+/** Fewer personas than this on a POI and every share has a wide range, which the report says. */
+export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
@@ -30,6 +34,7 @@ export interface Context {
 
 export interface GroupSummary {
   id: string;
+  category: 'friction' | 'objection';
   page: string | null;
   element: string | null;
   kind: CandidateKind;
@@ -59,6 +64,7 @@ export function summarise(group: Group): GroupSummary {
   for (const m of group.members) trust[m.trust] += 1;
   return {
     id: group.id,
+    category: categoryOf(group.kind),
     page: group.page,
     element: group.element,
     kind: group.kind,
@@ -96,11 +102,28 @@ export interface PostSummary {
   text: string;
 }
 
+export interface LikeSummary {
+  id: string;
+  where: string | null;
+  personas: number;
+  texts: string[];
+}
+
+export function summariseLike(group: LikeGroup): LikeSummary {
+  return {
+    id: group.id,
+    where: group.where,
+    personas: new Set(group.members.map((m) => m.persona_id)).size,
+    texts: [...new Set(group.members.map((m) => clip(m.text, 200)))].slice(0, 3),
+  };
+}
+
 /**
- * What one judge call sees: post summaries up to their cap, then the groups in what is left. All posts when they fit,
- * else an even stride over seq order so every round keeps some. Without posts the groups get the whole cap, as in M3.
+ * What one judge call sees: post summaries up to their cap, then like summaries up to theirs, then the groups in what is
+ * left. All posts when they fit, else an even stride over seq order so every round keeps some. Likes go most named first.
+ * Without posts or likes the groups get the whole cap, as in M3.
  */
-export function judgeInput(groups: Group[], posts: Post[], cap = JUDGE_TOKEN_CAP, postCap = JUDGE_POST_CAP) {
+export function judgeInput(groups: Group[], posts: Post[], cap = JUDGE_TOKEN_CAP, postCap = JUDGE_POST_CAP, likes: LikeGroup[] = []) {
   const all: PostSummary[] = posts.map((p) => ({ id: p.payload.post_id, round: p.round, text: clip(p.payload.text, POST_MAX) }));
   const every = Math.max(1, Math.ceil(all.reduce((sum, p) => sum + tokens(p), 0) / postCap));
   const sent: PostSummary[] = [];
@@ -110,7 +133,14 @@ export function judgeInput(groups: Group[], posts: Post[], cap = JUDGE_TOKEN_CAP
     used += tokens(all[i]);
     sent.push(all[i]);
   }
-  return { groups: judgeGroups(groups, cap - used), posts: sent };
+  const liked: LikeSummary[] = [];
+  let likeUsed = 0;
+  for (const like of likes.map(summariseLike).sort((a, b) => b.personas - a.personas || groupNo(a.id) - groupNo(b.id))) {
+    if (likeUsed + tokens(like) > JUDGE_LIKE_CAP) continue;
+    likeUsed += tokens(like);
+    liked.push(like);
+  }
+  return { groups: judgeGroups(groups, cap - used - likeUsed), posts: sent, ...(likes.length ? { likes: liked } : {}) };
 }
 
 /** Step 7's validation: a tag keeps a post the judge was shown and the themes holding its known group ids; the rest is reported. */
@@ -137,6 +167,7 @@ const KIND_TITLE: Record<CandidateKind, string> = {
   friction: 'Reported friction',
   abandoned: 'Personas gave up',
   survey: 'Survey friction',
+  objection: 'Objection',
   failed_action: 'Actions that failed',
   loop: 'Going in circles',
   backtrack: 'Going back and forth',
@@ -149,7 +180,7 @@ const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('
 
 /** A title for a group the judge did not name: what kind of trouble, at which element, on which page. */
 export function rulesTitle(group: Group): string {
-  if (group.kind === 'survey') return clip(group.members[0].text, TITLE_MAX);
+  if (group.kind === 'survey' || group.kind === 'objection') return clip(group.members[0].text, TITLE_MAX);
   const where = group.page ? ` on ${pathOf(group.page)}` : '';
   return group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
 }
@@ -175,10 +206,13 @@ export function applyJudge(groups: Group[], judged: JudgeTheme[] | null): { draf
   for (const theme of Array.isArray(judged) ? judged : []) {
     const ids = Array.isArray(theme?.group_ids) ? theme.group_ids : [];
     const members: Group[] = [];
+    let category: 'friction' | 'objection' | null = null;
     for (const id of ids) {
       const group = byId.get(id);
       if (!group) unknown.add(String(id));
-      else if (!placed.has(id)) {
+      // An objection and a friction are different findings: a theme keeps the category of its first group, and a group of the
+      // other category stays unplaced, so it becomes its own theme.
+      else if (!placed.has(id) && (category ??= categoryOf(group.kind)) === categoryOf(group.kind)) {
         placed.add(id);
         members.push(group);
       }
@@ -259,7 +293,28 @@ export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, r
   const impact = total === 0 ? 0 : affected.reduce((sum, a, i) => sum + (ctx.segments[i].share / total) * a.rate, 0);
   const severity = median(members.map((m) => m.severity));
   const trust = maxTrust(members);
-  return { affected, impact, severity, trust, score: impact * severity * TRUST_WEIGHT[trust] };
+  const exposed = new Set([...(reach.poi.get(poi_id) ?? []), ...affectedIds]).size;
+  const share = prevalence(affectedIds.size, exposed);
+  // The lower end of the share's range, so a problem one persona of many met cannot outrank one that many met.
+  return { affected, impact, severity, trust, prevalence: share, score: share.low * severity * TRUST_WEIGHT[trust] };
+}
+
+const Z = 1.96; // 95%
+
+/**
+ * k of n personas with its 95% Wilson score interval, which stays honest for small n and for 0 or n of n (tech.md §8.2 step 5).
+ * Strong: three or more personas and at least a quarter of those who used the POI; some: two or more; single: one.
+ */
+export function prevalence(k: number, n: number): Prevalence {
+  const exposed = Math.max(n, k);
+  const level = k <= 1 ? 'single' : k >= 3 && k / exposed >= 0.25 ? 'strong' : 'some';
+  if (exposed === 0) return { personas: 0, exposed: 0, share: 0, low: 0, high: 0, level };
+  const p = k / exposed;
+  const z2 = Z * Z;
+  const centre = (p + z2 / (2 * exposed)) / (1 + z2 / exposed);
+  const half = (Z * Math.sqrt((p * (1 - p)) / exposed + z2 / (4 * exposed * exposed))) / (1 + z2 / exposed);
+  const round = (x: number) => Math.round(x * 1e4) / 1e4;
+  return { personas: k, exposed, share: round(p), low: round(Math.max(0, centre - half)), high: round(Math.min(1, centre + half)), level };
 }
 
 function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
@@ -339,23 +394,71 @@ export function sentimentBySegment(events: GnomiEvent[], ctx: Context): ReportSe
   });
 }
 
-/** Step 9: survey likes grouped by their words, most mentioned first. */
-export function wentWell(events: GnomiEvent[]): ReportLike[] {
-  const likes = new Map<string, ReportLike & { ids: Set<string> }>();
+/** The personas who used each POI at all: an episode, a step or a survey on it. */
+function exposureOf(events: GnomiEvent[], defaultPoi: string): Map<string, Set<string>> {
+  const poi = new Map<string, Set<string>>();
+  const add = (id: string, persona: string) => (poi.get(id) ?? poi.set(id, new Set()).get(id)!).add(persona);
   for (const e of events) {
-    if (e.type !== 'persona.survey') continue;
-    for (const text of e.payload.likes) {
-      const key = JSON.stringify([e.payload.poi_id, normaliseText(text)]);
-      if (!normaliseText(text)) continue;
-      const like = likes.get(key) ?? likes.set(key, { text: clip(text, TEXT_MAX), count: 0, personas: 0, seqs: [], ids: new Set() }).get(key)!;
-      like.count += 1;
-      like.ids.add(e.persona_id ?? '');
-      if (!like.seqs.includes(e.seq)) like.seqs.push(e.seq);
+    if (!e.persona_id) continue;
+    if (e.type === 'persona.step') add(e.poi_id ?? defaultPoi, e.persona_id);
+    else if (e.type === 'persona.episode_started' || e.type === 'persona.survey') add(e.payload.poi_id, e.persona_id);
+  }
+  return poi;
+}
+
+/** The judge's like themes keep only known, unclaimed like ids; every like group it did not place stays as its own. */
+function applyJudgeLikes(groups: LikeGroup[], judged: JudgeLike[] | null | undefined): { groups: LikeGroup[]; title: string | null; description: string | null }[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  const placed = new Set<string>();
+  const merged: { groups: LikeGroup[]; title: string | null; description: string | null }[] = [];
+  for (const theme of Array.isArray(judged) ? judged : []) {
+    const members = (Array.isArray(theme?.group_ids) ? theme.group_ids : []).flatMap((id) => {
+      const group = byId.get(id);
+      if (!group || placed.has(id)) return [];
+      placed.add(id);
+      return [group];
+    });
+    if (members.length === 0) continue;
+    const title = typeof theme.title === 'string' ? clip(theme.title, TITLE_MAX) : '';
+    const description = typeof theme.description === 'string' ? clip(theme.description, TEXT_MAX) : '';
+    merged.push({ groups: members.sort((a, b) => groupNo(a.id) - groupNo(b.id)), title: title || null, description: description || null });
+  }
+  for (const group of groups) if (!placed.has(group.id)) merged.push({ groups: [group], title: null, description: null });
+  return merged;
+}
+
+/**
+ * Step 9: survey likes grouped by the part of the product they name (their words, in older surveys), merged and named by the
+ * judge when it ran, most personas first. With the run's context each like also says what share of personas named it.
+ */
+export function wentWell(events: GnomiEvent[], ctx?: Context): ReportLike[] {
+  const groups = likeGroups(events);
+  const exposure = ctx ? exposureOf(events, ctx.poi_id) : null;
+  const likes: ReportLike[] = [];
+  for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
+    const judged = lastFor(events, 'report.themes', poi_id)?.payload.likes;
+    for (const draft of applyJudgeLikes(groups.filter((g) => g.poi_id === poi_id), judged)) {
+      const members = draft.groups.flatMap((g) => g.members).sort((a, b) => a.seq - b.seq);
+      const ids = new Set(members.map((m) => m.persona_id));
+      const where = [...new Set(members.flatMap((m) => (m.where ? [m.where] : [])))];
+      const quotes = [...new Map(members.map((m) => [m.persona_id, m])).values()].slice(0, EVIDENCE);
+      likes.push({
+        text: draft.title ?? clip(members[0].text, TEXT_MAX),
+        count: members.length,
+        personas: ids.size,
+        seqs: [...new Set(members.map((m) => m.seq))],
+        ...(draft.description ? { description: draft.description } : {}),
+        ...(where.length ? { where } : {}),
+        ...(ctx && exposure
+          ? {
+              quotes: quotes.map((m) => ({ persona_id: m.persona_id, persona_name: ctx.personas.get(m.persona_id)?.name ?? m.persona_id, what: clip(m.text, TEXT_MAX) })),
+              prevalence: prevalence(ids.size, new Set([...(exposure.get(poi_id) ?? []), ...ids]).size),
+            }
+          : {}),
+      });
     }
   }
-  return [...likes.values()]
-    .map(({ ids, ...like }) => ({ ...like, personas: ids.size }))
-    .sort((a, b) => b.count - a.count || b.personas - a.personas || a.seqs[0] - b.seqs[0]);
+  return likes.sort((a, b) => b.personas - a.personas || b.count - a.count || a.seqs[0] - b.seqs[0]);
 }
 
 export interface Analysis {
@@ -394,7 +497,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     const ranked = drafts
       .map((draft): ReportTheme => {
         const members = draft.groups.flatMap((g) => g.members);
-        const { affected, impact, severity, trust, score } = scoreTheme(members, poi_id, ctx, reach);
+        const { affected, impact, severity, trust, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach);
         return {
           id: draft.groups.map((g) => g.id).join('+'),
           poi_id,
@@ -402,6 +505,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           title: draft.title,
           description: draft.description,
           named_by: draft.named_by,
+          category: categoryOf(draft.groups[0].kind),
+          prevalence: share,
           trust,
           severity,
           impact,
@@ -436,9 +541,14 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     themes.push(...ranked);
   }
 
+  // Said once, after the judge's and author's notes: a small run is the likeliest reason a share looks off.
+  const few = Math.min(...[...new Set(groups.map((g) => g.poi_id))].map((id) => reach.poi.get(id)?.size ?? 0));
+  if (few > 0 && few < FEW_PERSONAS) {
+    limitations.push(`Only ${plural(few, 'persona')} used ${few === 1 ? 'a point of interest' : 'some points of interest'}, so every share has a wide range and the order of the problems is rough.`);
+  }
   const sentiment = sentimentBySegment(events, ctx);
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {
     limitations.push('No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".');
   }
-  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events), limitations };
+  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events, ctx), limitations };
 }

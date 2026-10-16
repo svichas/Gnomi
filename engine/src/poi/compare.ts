@@ -38,7 +38,7 @@ export function comparisonFor(project: ProjectConfig, persona: Persona, poi: Poi
     `This session was on ${poi.name}, a competitor's site ${p} looked at beside ${team.name}. Every answer above is about ${poi.name}.`,
     `Earlier ${p} used ${team.name} for the same task and said afterwards: "${reason}" (overall view ${signed(sentiment)} from -2 to +2).`,
     ...(likes.length ? [`What ${p} liked there: ${likes.map((l) => `"${l}"`).join('; ')}.`] : []),
-    ...(frictions.length ? [`What would make ${p} stop using it: ${frictions.map((f) => `"${f}"`).join('; ')}.`] : []),
+    ...(frictions.length ? [`What got in ${p}'s way or put ${p} off there: ${frictions.map((f) => `"${f}"`).join('; ')}.`] : []),
     `Also answer comparison, as {prefers, reason}: prefers is "product" when ${p} would rather use ${team.name} for tasks like this, "competitor" when ${p} would rather use ${poi.name}, and "no_preference" when neither is better; reason says why, as ${p} would say it, in at most 40 words.`,
   ].join('\n');
   return {

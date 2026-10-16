@@ -76,8 +76,9 @@ export const DEMO_READ: Responder = (req) => {
 
 /** The end-of-episode survey answer of every demo persona. */
 export const DEMO_SURVEY = {
-  frictions: ['Sample friction from the scripted demo persona; no model looked at this page'],
-  likes: ['Sample like from the scripted demo: clear navigation; no model assessed this page'],
+  frictions: [{ where: 'scripted demo', what: 'Sample friction from the scripted demo persona; no model looked at this page', severity: 2 }],
+  objections: [],
+  likes: [{ where: 'scripted demo', what: 'Sample like from the scripted demo: clear navigation; no model assessed this page' }],
   sentiment: -1,
   confidence: 0.5,
   would_continue: false,
@@ -154,9 +155,9 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
+/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
 export const DEMO_JUDGE: Responder = (req) => {
-  const { groups = [], posts } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[] };
+  const { groups = [], posts, likes } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[]; likes?: { id: string }[] };
   return {
     themes: groups.map((group, i) => ({
       title: `Scripted demo theme ${i + 1}: no model named it`,
@@ -164,6 +165,7 @@ export const DEMO_JUDGE: Responder = (req) => {
       group_ids: [group.id],
     })),
     ...(posts ? { posts: groups.length > 0 ? posts.map((post) => ({ post_id: post.id, group_ids: [groups[0].id] })) : [] } : {}),
+    ...(likes ? { likes: likes.map((like, i) => ({ title: `Scripted demo like ${i + 1}: no model named it`, description: `Scripted demo: no judge model ran, so this is like group ${like.id} as the engine grouped it.`, group_ids: [like.id] })) } : {}),
   };
 };
 

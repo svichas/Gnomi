@@ -14,7 +14,7 @@ const SCREENSHOT_TOKENS = 1_200;
 const OUTPUT_TOKENS = 200;
 const CACHE_HIT = 0.5; // the top of the 0 to 0.5 range; the bottom is no caching at all
 const SOCIAL_PROMPT_TOKENS = 3_000; // one socialiser call per persona and social round: profile, own state and a feed of at most ~2,500 tokens
-const SURVEY = { input_tokens: 2_000, output_tokens: 500, cache_read_tokens: 0, cache_write_tokens: 0 }; // one per persona and POI, uncached
+const SURVEY = { input_tokens: 2_300, output_tokens: 700, cache_read_tokens: 0, cache_write_tokens: 0 }; // one per persona and POI, uncached; structured items with where and severity
 // The report's model steps (tech.md §8.2), one call each per POI: input from a small run up to the judge's ~30k-token cap
 // and the author's 20k; output includes thinking at medium (judge) and high (author) effort.
 const REPORT_CALLS: { role: 'judge' | 'author'; input: [number, number]; output: [number, number] }[] = [

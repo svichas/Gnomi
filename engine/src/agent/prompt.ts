@@ -9,7 +9,7 @@ import { opinionSchema } from '../opinion/index.ts';
 import { poisFor } from '../poi/pois.ts';
 import { FEED_POSTS } from '../social/feed.ts';
 import { ACTION_TYPES } from '../types.ts';
-import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, Poi, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, Poi, ProjectConfig, Segment, SurveyItem, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 import type { EpisodeEnd } from './loop.ts';
 
@@ -327,15 +327,36 @@ export function userParts(opts: {
 /** The episode endings that get a survey: the persona's own and the engine's per-persona stops, never a run-wide one. */
 export type SurveyedEnd = Exclude<EpisodeEnd, 'blocked' | 'stopped'>;
 
-/** The end-of-episode survey (tech.md §8.2). What would make the persona stop comes before what it liked (§6.8). */
+/** One structured survey answer: where in the product, what exactly, and for problems how bad (the step's 1–4 scale). */
+const itemWhere = english(z.string().trim().min(1).max(80));
+const itemWhat = english(z.string().trim().min(1).max(300));
+const problemItem = z.object({ where: itemWhere, what: itemWhat, severity: z.number().int().min(1).max(4) }).strict();
+const likeItem = z.object({ where: itemWhere, what: itemWhat }).strict();
+
+/**
+ * The end-of-episode survey (tech.md §8.2). Problems come before what the persona liked (§6.8), and each answer is one
+ * specific item tied to a part of the product, so the report can count how many personas name the same thing.
+ */
 export const surveySchema = z.object({
-  frictions: opinionSchema.shape.frictions,
-  likes: opinionSchema.shape.likes,
+  frictions: z.array(problemItem).max(5),
+  objections: z.array(problemItem).max(5),
+  likes: z.array(likeItem).max(5),
   sentiment: opinionSchema.shape.sentiment,
   confidence: opinionSchema.shape.confidence,
   would_continue: z.boolean(),
   reason: english(z.string().trim().min(1).max(500)),
 }).strict();
+
+export type SurveyOutput = z.infer<typeof surveySchema>;
+
+/** The survey's structured answers as logged items; frictions and objections first, as asked. */
+export function surveyItems(o: Pick<SurveyOutput, 'frictions' | 'objections' | 'likes'>): SurveyItem[] {
+  return [
+    ...o.frictions.map((i) => ({ kind: 'friction' as const, where: i.where, what: i.what, severity: i.severity })),
+    ...o.objections.map((i) => ({ kind: 'objection' as const, where: i.where, what: i.what, severity: i.severity })),
+    ...o.likes.map((i) => ({ kind: 'like' as const, where: i.where, what: i.what, severity: null })),
+  ];
+}
 
 const ENDING: Record<SurveyedEnd, (p: string) => string> = {
   done: (p) => `${p} finished the task`,
@@ -361,14 +382,19 @@ ${p}'s task: "${segment?.goal_override ?? project.goal}"
 How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}
 
-Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
-- frictions: what would make ${p} stop using ${project.name}, up to 5 short statements (at most 500 characters each); empty when nothing would.
-- likes: what ${p} liked, up to 5 short statements (at most 500 characters each); empty when nothing stood out.
+Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}. Each list holds up to 5 items, one specific point per item, and is empty when there is nothing to say:
+- frictions: what got in ${poss} way while doing the task: something ${p} could not find, did not understand, that did not work or took too long.
+- objections: what would make ${p} doubt, distrust or not adopt ${project.name}, even if it worked: value, price, trust, missing capability, fit with ${poss} work.
+- likes: what worked well or convinced ${obj}.
+Every item has:
+  - where: the page, screen, section, passage or feature it is about, in a few words (for example "pricing page", "sign-up form", "section on security"). Name the same place the same way each time.
+  - what: one or two concrete sentences: what ${p} tried or looked for, what happened or was missing, and, for a problem, what ${p} expected instead. Not a verdict like "confusing" or "great UX" on its own.
+  - severity, for frictions and objections only: 1 (a small irritation) to 4 (it stops ${obj}: ${p} could not go on, or would not adopt ${project.name}).
 - sentiment: ${poss} overall view of ${project.name}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
 - confidence: how sure ${p} is of that view, from 0 to 1.
 - would_continue: whether ${p} would keep using ${project.name} for tasks like this one.
 - reason: why, as ${p} would say it, in at most 40 words.
-Answer from what ${p} saw and did in this session only. Do not invent praise, friction or certainty: when ${p} gave up or got stuck, the true answer says so.`;
+Answer from what ${p} saw and did in this session only. Do not invent praise, friction, objections or certainty: when ${p} gave up or got stuck, the true answer says so.`;
 }
 
 /** The volatile part: how the episode ended, how long it took and the frictions the persona reported on the way. */
@@ -378,7 +404,7 @@ export function surveyParts(opts: { persona: Persona; end: SurveyedEnd; detail: 
     `The session is over after ${opts.steps} step${opts.steps === 1 ? '' : 's'}: ${ENDING[opts.end](p)}${opts.detail ? ` ("${opts.detail}")` : ''}.`,
     ...(opts.frictions.length ? [`Frictions ${p} reported along the way:`, ...opts.frictions.map((f) => `- "${f}"`)] : [`${p} reported no frictions along the way.`]),
     '',
-    `What would make ${p} stop using the product, what did ${p} like, and would ${p} keep using it?`,
+    `What got in ${p}'s way, what would stop ${p} adopting the product, what did ${p} like, and would ${p} keep using it?`,
   ].join('\n');
   return [{ type: 'text', text }];
 }
