@@ -47,19 +47,33 @@ test('a failed build resumes completed model stages, even with no published popu
   let shouldFail = true;
   const f = fixture((req) => shouldFail && req.purpose === 'expand_persona' && req.persona_id?.endsWith('-05') === true);
   await assert.rejects(syncPersonas(audience, [], f.deps), /simulated provider failure/);
-  assert.ok(f.data.size > 12, 'both sketches and some biographies were checkpointed');
+  const stages = () => [...f.data.keys()].map((key) => JSON.parse(key) as string[]).map(([id, , , , purpose]) => `${purpose} ${id}`);
+  const saved = stages();
+  assert.ok(saved.some((s) => s.startsWith('write_persona')) && saved.some((s) => s.startsWith('expand_persona')), 'sketches and biographies were checkpointed');
   const before = f.calls.length;
   shouldFail = false;
   const finished = await syncPersonas(audience, [], f.deps);
   assert.equal(finished.personas.length, 12);
-  const resumed = f.calls.slice(before);
-  assert.ok(resumed.length < 12, 'completed biographies were reused');
-  assert.ok(resumed.every((req) => req.purpose === 'expand_persona'), 'no sketches regenerated');
+  const resumed = f.calls.slice(before).map((req) => `${req.purpose} ${req.persona_id}`);
+  assert.ok(resumed.filter((s) => s.startsWith('expand_persona')).length < 12, 'completed biographies were reused');
+  assert.ok(resumed.every((s) => !saved.includes(s)), 'no completed stage regenerated');
   const count = f.calls.length;
   await syncPersonas(audience, finished.personas, f.deps);
   assert.equal(f.calls.length, count, 'unchanged saved profiles still cost no calls');
   await syncPersonas(audience, [], { ...f.deps, project: { ...project, goal: 'Cancel an appointment' } });
   assert.ok(f.calls.length > count + 12, 'changed prompt inputs cannot reuse old drafts');
+});
+
+test('a persona is written before every sketch is in, and progress counts sketches', async () => {
+  const f = fixture();
+  const sketched: number[] = [];
+  let firstWritten = -1;
+  await syncPersonas(audience, [], { ...f.deps, onSketched: (n) => sketched.push(n), onProgress: (done, _total, persona) => {
+    if (done === 1) firstWritten = f.calls.filter((r) => r.purpose === 'write_persona').length;
+    if (done > 0) assert.ok(persona?.name, 'each progress step carries the persona just written');
+  } });
+  assert.deepEqual(sketched, Array.from({ length: 12 }, (_, i) => i + 1));
+  assert.ok(firstWritten > 0 && firstWritten < 12, `the first biography finished after ${firstWritten} of 12 sketches started`);
 });
 
 test('writer concurrency is validated before dispatch', async () => {

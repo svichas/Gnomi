@@ -278,7 +278,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
       <Card title="Persona generation">
         <Field label="Writer concurrency (1-32)" hint="Profiles written at once. Lower this if your provider throttles requests or your local model slows down.">
-          <NumberInput label="Writer concurrency (1-32)" value={settings.persona_concurrency ?? 12} onChange={(v) => set('persona_concurrency', v)} min={1} max={32} />
+          <NumberInput label="Writer concurrency (1-32)" value={settings.persona_concurrency ?? 32} onChange={(v) => set('persona_concurrency', v)} min={1} max={32} />
         </Field>
         <p className="mt-3 text-xs text-stone-500">Completed drafts are saved automatically. Retrying an interrupted build resumes the work already completed.</p>
       </Card>

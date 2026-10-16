@@ -320,6 +320,7 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .build-copy h3 { font-size: 24px; font-weight: 500; line-height: 1.25; letter-spacing: -.03em; margin-bottom: 12px; }
 .build-copy > p:not(.eyebrow) { color: var(--gnomi-text-muted); font-size: 14px; line-height: 1.7; max-width: 44ch; }
 .build-copy > .build-caption { font-size: 12px !important; margin-top: 16px; }
+.build-copy > .build-recent { font-size: 12px !important; color: var(--gnomi-text); }
 .build-meter { height: 6px; border-radius: 4px; background: var(--gnomi-line); overflow: hidden; margin-top: 24px; max-width: 320px; }
 .build-meter span { display: block; height: 100%; background: var(--gnomi-action); border-radius: inherit; transition: width .4s ease; }
 @keyframes build-float { 0%, 100% { transform: translateY(3px); } 50% { transform: translateY(-5px); } }
