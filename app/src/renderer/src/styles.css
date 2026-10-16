@@ -365,6 +365,18 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .audience-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .audience-toolbar .field-input { width: 128px; }
 .audience-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.audience-toolbar-main { flex: 1 1 440px; min-width: 0; }
+.persona-count { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 32px; padding: 20px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-canvas); }
+.persona-count-label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 500; }
+.audience-toolbar .persona-count .field-input { width: 120px; padding: 4px 12px; font-size: 32px; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.persona-count-range { display: block; width: 100%; margin-top: 16px; accent-color: var(--gnomi-action); }
+.persona-count-hint { margin-top: 8px; font-size: 12px; color: var(--gnomi-text-muted); }
+.persona-count-split { display: grid; gap: 8px; }
+.persona-count-split li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.persona-count-split li > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-count-split strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.persona-count-estimate { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gnomi-line); font-size: 13px; }
+.persona-count-estimate span { display: block; font-size: 12px; color: var(--gnomi-text-muted); }
 .audience-seed { margin-top: 4px; }
 .audience-seed-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding-top: 4px; }
 .audience-seed-hint { margin-top: 4px; font-size: 12px; color: var(--gnomi-text-muted); }
@@ -411,6 +423,7 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
   .audience-choices { grid-template-columns: minmax(0, 1fr); width: 100%; }
   .segment-share { order: 3; width: 100%; }
   .segment-body { grid-template-columns: minmax(0, 1fr); }
+  .persona-count { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .audience-footer { align-items: stretch; flex-direction: column; width: 100%; gap: 8px; }
   .audience-footer p { max-width: none; }
 }

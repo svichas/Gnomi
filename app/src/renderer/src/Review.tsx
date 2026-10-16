@@ -5,6 +5,7 @@ import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/engine/types.ts
 import { socialRounds } from '@gnomi/engine/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
 import { AudienceSteps } from './Audience.tsx';
+import { estimateText } from './cost.ts';
 import { call, errorText } from './engine.ts';
 import { problemFor, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
@@ -14,14 +15,6 @@ import { ActionBar, Check, Note, primaryButton, secondaryButton, useAction, usd 
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
 export type ReviewScreen = 'project' | 'audience' | 'settings';
-
-const range = (low: number, high: number, show: (n: number) => string) => (show(low) === show(high) ? show(low) : `${show(low)}–${show(high)}`);
-
-/** "about $0.40–$0.90 and 3–6 minutes", with the models it could not price. */
-export function estimateText(estimate: RunEstimate): string {
-  const minutes = range(Math.max(1, Math.round(estimate.minutes[0])), Math.max(1, Math.round(estimate.minutes[1])), String);
-  return `About ${range(estimate.cost_usd[0], estimate.cost_usd[1], (n) => `$${n.toFixed(2)}`)} and ${minutes} ${minutes === '1' ? 'minute' : 'minutes'}`;
-}
 
 function Section({ title, edit, wide, children }: { title: string; edit: ReactNode; wide?: boolean; children: ReactNode }) {
   return (
