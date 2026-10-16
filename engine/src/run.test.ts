@@ -836,7 +836,7 @@ test('a recorded session opens a contained page logged in, at the session start 
   const r = begin([step('done', null, 'Posted')], { sessionStore: sessions, sessions: [recruiter], project: { role: 'recruiter' } });
   await r.run.done;
   const { options, gotos } = r.pages[0];
-  assert.deepEqual(options.allowedHosts, ['gym.test', 'cdn.gym.test']);
+  assert.deepEqual(options.allowedHosts, ['gym.test', 'www.gym.test', 'cdn.gym.test']);
   assert.deepEqual(options.blockedDomains, ['gym.com']);
   assert.deepEqual(options.storageState, saved.state);
   assert.deepEqual(gotos, ['http://gym.test/dashboard']);
@@ -1183,7 +1183,7 @@ test('each persona uses its eligible POIs in order, with step numbers running on
   assert.deepEqual(steps.map((e) => [e.poi_id, e.payload.step_no]), [['poi-home', 1], ['poi-home', 2], ['poi-locale', 3], ['poi-locale', 4]]);
   assert.equal(new Set(steps.map((e) => e.payload.screenshot)).size, 4, 'every step keeps its own screenshot');
   assert.ok(r.pages.every((p) => p.closed) && r.pages.length === 3, 'one page per persona and POI');
-  assert.deepEqual(r.pages.map((p) => p.options.allowedHosts), [['gym.test', 'cdn.gym.test'], ['gym.test', 'cdn.gym.test'], ['gym.test', 'cdn.gym.test']]);
+  assert.deepEqual(r.pages.map((p) => p.options.allowedHosts), [['gym.test', 'www.gym.test', 'cdn.gym.test'], ['gym.test', 'www.gym.test', 'cdn.gym.test'], ['gym.test', 'www.gym.test', 'cdn.gym.test']]);
   assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.payload.poi_id]), [['a', 'poi-home'], ['b', 'poi-home'], ['b', 'poi-locale']]);
   const surveyed = of(r.events, 'persona.survey').find((e) => e.persona_id === 'b' && e.payload.poi_id === 'poi-locale')!;
   assert.ok(of(r.events, 'persona.step').filter((e) => e.persona_id === 'b' && e.poi_id === 'poi-locale').every((e) => e.seq < surveyed.seq));

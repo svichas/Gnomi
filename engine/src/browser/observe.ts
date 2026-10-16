@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { PageOptions } from '../seams.ts';
+import { wwwTwin } from '../safety.ts';
 import type { WebPoi } from '../types.ts';
 
 // Observe-only browsing (tech.md §7 "Competitor site", §9.3): the pacing and the robots.txt rules containment enforces.
@@ -80,7 +81,9 @@ export async function fetchRobots(startUrl: string, signal?: AbortSignal): Promi
   } catch {
     signal?.throwIfAborted();
   }
-  return (url) => url.origin !== start.origin || robotsAllows(rules, url.pathname + url.search); // robots.txt is per origin (§2.3)
+  // robots.txt is per origin (§2.3); the www twin shares it, since fetch() followed any redirect between the two.
+  const origins = [start.origin, ...wwwTwin(start.hostname).map((host) => start.origin.replace(start.hostname, host))];
+  return (url) => !origins.includes(url.origin) || robotsAllows(rules, url.pathname + url.search);
 }
 
 /** Per run: an observe-only POI's containment options, robots.txt fetched once per POI; undefined for a POI in full mode. */

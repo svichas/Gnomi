@@ -51,8 +51,16 @@ export function checkTarget(poi: WebPoi): string | null {
   return null;
 }
 
-/** start_url's host first, then the POI's allowed hosts, lower-cased and de-duplicated. */
+const DOMAIN = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z][a-z0-9-]*$/; // a dotted name, never an IP address or localhost
+
+/** acme.com for www.acme.com and the other way round: sites redirect between the two, so a start page on one needs the other. */
+export function wwwTwin(hostname: string): string[] {
+  const twin = hostname.startsWith('www.') ? hostname.slice(4) : `www.${hostname}`;
+  return DOMAIN.test(hostname) && DOMAIN.test(twin) ? [twin] : [];
+}
+
+/** start_url's host and its www twin first, then the POI's allowed hosts, lower-cased and de-duplicated. */
 export function allowedHosts(poi: WebPoi): string[] {
   const start = URL.parse(poi.start_url)?.hostname;
-  return [...new Set([...(start ? [start] : []), ...poi.allowed_hosts.map((h) => h.trim().toLowerCase()).filter(Boolean)])];
+  return [...new Set([...(start ? [start, ...wwwTwin(start)] : []), ...poi.allowed_hosts.map((h) => h.trim().toLowerCase()).filter(Boolean)])];
 }

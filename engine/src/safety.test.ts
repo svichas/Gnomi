@@ -69,5 +69,12 @@ test('an observe-only POI may be a production site, but never a listed productio
 });
 
 test('allowedHosts puts the start host first, lower-cased and de-duplicated', () => {
-  assert.deepEqual(allowedHosts(poi({ allowed_hosts: ['CDN.acme.io', 'staging.acme.io', ' ', 'api.acme.io '] })), ['staging.acme.io', 'cdn.acme.io', 'api.acme.io']);
+  assert.deepEqual(allowedHosts(poi({ allowed_hosts: ['CDN.acme.io', 'staging.acme.io', ' ', 'api.acme.io '] })), ['staging.acme.io', 'www.staging.acme.io', 'cdn.acme.io', 'api.acme.io']);
+});
+
+test('allowedHosts lets the start host redirect to its www twin and back, but never invents one for an address', () => {
+  assert.deepEqual(allowedHosts(poi({ start_url: 'https://workable.com/pricing' })), ['workable.com', 'www.workable.com']);
+  assert.deepEqual(allowedHosts(poi({ start_url: 'https://www.lever.co/' })), ['www.lever.co', 'lever.co']);
+  for (const url of ['http://localhost:3000/', 'http://127.0.0.1:8080/', 'http://[::1]/', 'https://www.com/'])
+    assert.deepEqual(allowedHosts(poi({ start_url: url })), [new URL(url).hostname], url);
 });
