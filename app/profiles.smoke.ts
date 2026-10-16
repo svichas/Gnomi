@@ -156,7 +156,7 @@ try {
   await page.getByLabel('Profile dimension', { exact: true }).selectOption({ label: 'Procurement region' });
   await page.getByLabel('Profile value', { exact: true }).selectOption({ label: 'EMEA' });
   await page.getByText('Showing 3 of 6 personas', { exact: false }).waitFor();
-  assert.equal(await page.getByRole('region', { name: 'What each persona did' }).getByRole('row').count(), 4);
+  assert.equal(await page.getByRole('region', { name: /How each persona did/ }).locator('details').count(), 3);
   assert.equal(await page.getByLabel('Profile dimension', { exact: true }).locator('option[value="employer"]').count(), 0);
   await page.screenshot({ path: join(shots, 'profiles-report-filter.png') });
   assert.deepEqual(errors, []);

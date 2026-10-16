@@ -101,3 +101,19 @@ test("a text POI's quoted passages and the buying survey render into the HTML an
   assert.match(markdown, /## Buying survey[\s\S]*\| Recruiters \| 1 \| -1\.00 \| 0% \| 0 \/ 0 \/ 0 \/ 1 \|\n\n- Recruiters, top objections: No SSO on <Team> \(1 persona\)\n- Recruiters, unclear: Whether Team has SSO \(1 persona\)/);
   assert.match(markdown, /- Passage: characters 412–437, "Single sign-on \(SAML SSO\)"/);
 });
+
+test('the report puts the most severe problem first and folds each persona, every fold open in the file', async () => {
+  const report = fixture(1, 2);
+  Object.assign(report.frictions[0], { severity: 1, what: 'A small irritation.' });
+  Object.assign(report.frictions[1], { severity: 4, what: 'Could not save the job.' });
+  const theme = (id: string, severity: number, score: number) => ({
+    id, poi_id: 'poi-gym', rank: 1, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, impact: 1, score,
+    personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null,
+  });
+  report.themes = [theme('a', 2, 9), theme('b', 3.5, 1)]; // the engine ranks a first; b's median rounds up to a blocker
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.indexOf('Theme b') < html.indexOf('Theme a'), 'the blocker comes before the moderate problem, whatever its score');
+  assert.ok(html.indexOf('Could not save the job.') < html.indexOf('A small irritation.'), "a persona's worst friction comes first");
+  assert.ok(html.includes('0 of 1 persona reached the goal.'), 'the verdict leads the report');
+  assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'every fold prints open');
+});

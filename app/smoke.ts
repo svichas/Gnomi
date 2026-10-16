@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import type { Page } from 'playwright-core';
+import type { Locator, Page } from 'playwright-core';
 import { feedThreads, socialMemory } from '../engine/src/graph/feed.ts';
 import { buildGraph, graphAtRound } from '../engine/src/graph/index.ts';
 import { syntheticRun } from '../engine/src/graph/synthetic.ts';
@@ -69,15 +69,27 @@ async function clickNode(page: Page, prefix: string): Promise<string> {
 /** The report names at least one friction and its screenshot actually loaded (screenshots are fetched when they scroll into view). */
 async function expectReport(page: Page) {
   const report = page.locator('section[aria-labelledby=report-title]');
-  assert.match(await report.innerText(), /Frictions found \([1-9]/);
   // The scripted judge and author name the themes and label their suggestions, so a key-free run shows ranked themes.
-  const themes = report.getByRole('region', { name: /Potential frictions, ranked \([1-9]/ });
-  assert.match(await themes.innerText(), /Scripted demo theme 1: no model named it[\s\S]*Generated suggestion/);
-  const friction = report.getByRole('region', { name: /Frictions found/ }).locator('li').first();
+  const themes = report.getByRole('region', { name: /What to fix first \([1-9]/ });
+  assert.match(await themes.innerText(), /Scripted demo theme \d+: no model named it[\s\S]*Generated suggestion/);
+  // Each persona's frictions are folded away: open the first persona with one.
+  const persona = report.getByRole('region', { name: /How each persona did/ }).locator('details').filter({ has: page.locator('ol > li') }).first();
+  await unfold(persona);
+  const friction = persona.locator('ol > li').first();
   await friction.scrollIntoViewIfNeeded();
   const image = friction.getByRole('img');
   await image.waitFor();
   await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
+}
+
+/** Opens a fold of the report, whatever state an earlier run's report left it in. */
+const unfold = (details: Locator) => details.evaluate((element) => { (element as HTMLDetailsElement).open = true; });
+
+/** The methods appendix is folded away; open it before reading it. */
+async function methodsText(page: Page) {
+  const methods = page.locator('section[aria-labelledby=methods-title]');
+  await unfold(methods.locator('details'));
+  return methods.innerText();
 }
 
 async function openReport(page: Page, options: { timeout?: number } = {}) {
@@ -196,8 +208,8 @@ try {
     await openReport(page, { timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
-    // The ranked themes at the window's size and at 720 px wide, for a look at the evidence layout.
-    const themes = page.getByRole('region', { name: /Potential frictions, ranked/ });
+    // The problems to fix at the window's size and at 720 px wide, for a look at the evidence layout.
+    const themes = page.getByRole('region', { name: /What to fix first/ });
     await themes.screenshot({ path: join(shots, 'report-themes.png') });
     const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
     await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
@@ -245,8 +257,7 @@ try {
       await page.getByLabel('Start page URL').fill(site.url);
       await startRun(page, 'r-0002');
       await openReport(page, { timeout: 180_000 });
-      const methods = page.locator('section[aria-labelledby=methods-title]');
-      assert.match(await methods.innerText(), /127\.0\.0\.1: \d+ requests?/);
+      assert.match(await methodsText(page), /127\.0\.0\.1: \d+ requests?/);
       await page.screenshot({ path: join(shots, 'report-methods.png'), fullPage: true });
       assert.deepEqual(hits, [], 'the third-party server was reached');
     } finally {
@@ -272,7 +283,7 @@ try {
       await banner.getByRole('button', { name: 'End run' }).click();
       await openReport(page, { timeout: 60_000 });
       assert.match(await page.locator('section[aria-labelledby=report-title]').innerText(), /Blocked/);
-      assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /a CAPTCHA.*did not resume/);
+      assert.match(await methodsText(page), /a CAPTCHA.*did not resume/);
     } finally {
       await site.close();
     }
@@ -292,7 +303,7 @@ try {
       assert.match(activity, /safety stop/i); // the row label is upper-cased by CSS, which innerText reflects
       assert.match(activity, /The run was halted by a safety check/);
       await openReport(page);
-      assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /Safety stops\s+Live payment key found/);
+      assert.match(await methodsText(page), /Safety stops\s+Live payment key found/);
       await page.screenshot({ path: join(shots, 'safety-stop.png'), fullPage: true });
     } finally {
       await site.close();
@@ -505,9 +516,9 @@ try {
       await openReport(page, { timeout: 300_000 });
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
       for (const name of ['Recruiters', 'Hiring managers', 'Weighted by share']) assert.match(segments, new RegExp(name));
-      assert.equal(await page.getByRole('region', { name: 'What each persona did' }).getByRole('row').count(), 7, 'a row for each of the six personas');
+      assert.equal(await page.getByRole('region', { name: /How each persona did/ }).locator('details').count(), 6, 'a card for each of the six personas');
       assert.match(await page.getByRole('region', { name: 'Run status' }).innerText(), /Personas finished\s+6 of 6/);
-      assert.match(await page.locator('section[aria-labelledby=methods-title]').innerText(), /3 browsers at a time/);
+      assert.match(await methodsText(page), /3 browsers at a time/);
       await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
       // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
       const activity = await showActivity(page);
@@ -556,9 +567,11 @@ try {
     await page.screenshot({ path: join(shots, 'inspector.png') });
     await page.keyboard.press('Escape');
     await inspector.waitFor({ state: 'detached' });
-    // The report's persona names open it too.
+    // The report's persona cards open it too.
     await openReport(page);
-    await page.getByRole('region', { name: 'What each persona did' }).getByRole('button').first().click();
+    const card = page.getByRole('region', { name: /How each persona did/ }).locator('details').first();
+    await unfold(card);
+    await card.getByRole('button', { name: /timeline$/ }).click();
     await inspector.waitFor();
     await inspector.getByRole('button', { name: 'Close' }).click();
     await inspector.waitFor({ state: 'detached' });
@@ -602,10 +615,10 @@ try {
       }
       await banner.getByRole('button', { name: 'End run' }).click();
       await openReport(page, { timeout: 120_000 });
-      const outcomes = await page.getByRole('region', { name: 'What each persona did' }).innerText();
+      const outcomes = (await page.getByRole('region', { name: /How each persona did/ }).locator('summary').allInnerTexts()).join('\n');
       assert.equal((outcomes.match(/Blocked/g) ?? []).length, 3);
       // Each stopped twice: the first time they were let go again, the second time the run ended on them.
-      const methods = await page.locator('section[aria-labelledby=methods-title]').innerText();
+      const methods = await methodsText(page);
       assert.equal((methods.match(/then resumed/g) ?? []).length, 3);
       assert.equal((methods.match(/did not resume/g) ?? []).length, 3);
       await page.screenshot({ path: join(shots, 'blocked-personas.png') });
