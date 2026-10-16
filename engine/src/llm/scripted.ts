@@ -50,11 +50,40 @@ export const DEMO_SURVEY = {
   reason: 'Scripted demo survey: no model was called.',
 };
 
+/**
+ * A design screen (poi/design-prompt.ts) with no model looking at it: every screen is passed over, and the second one is a sample
+ * mismatch so the report has frame evidence to show. Every text says plainly that no model ran.
+ */
+export const DEMO_DESIGNER: Responder = (req) => {
+  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const screen = Number(/^Screen (\d+) of/m.exec(text)?.[1] ?? 1);
+  const quiet = {
+    thought: 'Scripted demo, no model is running, so nobody looked at this screen.',
+    feeling: 0,
+    matched: screen === 1 ? null : true,
+    sees: 'Scripted demo: no model looked at this screen.',
+    would_do: 'Scripted demo: move on to the next screen.',
+    expects_next: 'Scripted demo: the next screen.',
+    action: 'continue',
+    reason: null,
+    friction: null,
+    opinion: null,
+  };
+  if (screen !== 2) return quiet;
+  return {
+    ...quiet,
+    thought: 'Scripted demo: logging a sample mismatch so the report has one to show.',
+    matched: false,
+    friction: { severity: 1, what: 'Sample mismatch from the scripted demo persona; no model looked at this screen', expected: 'A run with a model API key, which reports real mismatches' },
+  };
+};
+
 /** Every persona of every run plays the three demo steps in turn, then answers the demo survey; counted per run, so the next run starts over. */
 export const DEMO_NAVIGATOR: Responder = (() => {
   const calls = new Map<string, number>();
   return (req) => {
     if (req.purpose === 'survey') return DEMO_SURVEY;
+    if (req.purpose === 'design') return DEMO_DESIGNER(req);
     const key = `${req.run_id}/${req.persona_id}`;
     const n = calls.get(key) ?? 0;
     calls.set(key, n + 1);

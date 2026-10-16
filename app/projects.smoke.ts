@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
+import { gymAssets } from '../gym/assets.ts';
 import { startGym } from '../gym/server.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-project-home-'));
@@ -60,6 +61,27 @@ try {
   await page.getByRole('button', { name: 'Save project', exact: true }).click();
   await page.getByText('Project saved.', { exact: true }).waitFor();
   console.log('ok    create opens an isolated project and saves its configuration');
+
+  // A design POI from two frames on disk, a step name, a reorder and a save; removed again so the rest of the journey has one web app.
+  await page.getByRole('button', { name: 'Add design', exact: true }).click();
+  const designPoi = page.getByRole('list', { name: 'Points of interest', exact: true }).getByRole('listitem', { name: 'Design 2', exact: true });
+  await designPoi.getByLabel('Frame images').setInputFiles(gymAssets({ defects: 'D26' }).frames.checkout.slice(0, 2));
+  const frames = designPoi.getByRole('list', { name: 'Frames', exact: true }).getByRole('listitem');
+  await frames.nth(1).waitFor();
+  assert.equal(await frames.count(), 2);
+  await designPoi.getByLabel('Frame 1 step name').fill('Cart');
+  await designPoi.getByRole('img', { name: 'Cart', exact: true }).waitFor();
+  await designPoi.getByRole('button', { name: 'Move Frame 1 later', exact: true }).click();
+  assert.equal(await designPoi.getByLabel('Frame 1 step name').inputValue(), '');
+  assert.equal(await designPoi.getByLabel('Frame 2 step name').inputValue(), 'Cart');
+  await frames.nth(1).getByRole('img', { name: 'Cart', exact: true }).waitFor();
+  await designPoi.screenshot({ path: join(import.meta.dirname, 'test-results', 'design-frames.png') });
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await page.getByText('Project saved.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Remove Design 2', exact: true }).click();
+  await page.getByRole('button', { name: 'Save project', exact: true }).click();
+  await page.getByText('Project saved.', { exact: true }).waitFor();
+  console.log('ok    a design takes two frames from disk, names and reorders them, and saves');
 
   await page.getByLabel('Project name', { exact: true }).fill('Unsaved name');
   await home();

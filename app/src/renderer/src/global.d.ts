@@ -18,5 +18,7 @@ interface Window {
     reportThumbnails(paths: string[]): Promise<Record<string, string>>;
     /** Asks where to save, then writes the file (printing PDF from the HTML); the path, or null when the user canceled. */
     saveReport(format: import('../../reports.ts').ReportFormat, runId: string, content: string): Promise<string | null>;
+    /** The local path of a file the user picked or dropped, for import_asset { path }. */
+    pathForFile(file: File): string;
   };
 }

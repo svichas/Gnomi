@@ -59,7 +59,6 @@ test('a segment gets its POIs in the order the project lists them', () => {
 test('the registry blocks a run with a reason: text and design are not available yet, and every segment needs a POI', () => {
   assert.equal(preflight(project([web('app')])), null);
   assert.match(preflight(project([web('app'), text])) ?? '', /^"Pricing copy" is a text, and text points of interest are not available yet/);
-  assert.match(preflight(project([design, web('app')])) ?? '', /^"Checkout frames" is a design, and design points of interest are not available yet/);
   assert.equal(preflight(project([])), 'Add a point of interest for the personas to try.');
   assert.match(preflight(project([web('app', { start_url: 'https://acme.com/' })])) ?? '', /does not look like a staging or test address/, 'the web runner keeps the production guard');
   const buyers = audience([segment('seg-a'), segment('seg-buyers', { name: 'Buyers', kind: 'buyer' })]);

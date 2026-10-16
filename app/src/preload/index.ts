@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 // contextBridge cannot carry a MessagePort, so the engine port is re-posted into the page, which listens for it.
 ipcRenderer.on('gnomi-port', (event, startup: { startupError: string | null; sessionsPersist: boolean }) => {
@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld('gnomi', {
   projectAction: (action) => ipcRenderer.invoke('project-action', action),
   reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
   saveReport: (format, runId, content) => ipcRenderer.invoke('save-report', format, runId, content),
+  pathForFile: (file) => webUtils.getPathForFile(file),
 } satisfies Window['gnomi']);

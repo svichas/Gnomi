@@ -197,6 +197,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
     `   - Expected: ${line(friction.expected)}`,
     `   - Quote: "${line(friction.quote)}"`,
     `   - Page: ${friction.url}`,
+    ...(friction.frame !== undefined ? [`   - Frame: ${friction.frame + 1}`] : []),
     `   - Screenshot: ${friction.screenshot ?? 'none'}`,
   ].join('\n');
 }

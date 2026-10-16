@@ -4,6 +4,8 @@
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from './audience/locations.ts';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { assetMime, assetPath, importLocalFile, importText } from './assets.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { estimateRun } from './llm/estimate.ts';
@@ -298,7 +300,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const config = project();
     if (runs.size) throw new Error('A run is already in progress'); // one run at a time
     // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
-    const refusal = preflight(config);
+    const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
     if (refusal) throw new Error(refusal);
     if (reset && !webPois(config.pois).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
     const personas = population(config);
