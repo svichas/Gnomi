@@ -39,7 +39,7 @@ Total: about 27 weeks of calendar time with two engineers, roughly seven months 
 
 ## Implementation status — 16 October 2026
 
-M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3 and M4 are merged into `main`. **M2, M3 and M4 each still need full-scale live acceptance;** M5–M7 have not started. The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3, M4 and M5 are built. **M2–M5 each still need full-scale live acceptance;** M6 and M7 have not started. The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
 
 The first M2 gap-closure batch adds:
 
@@ -93,6 +93,18 @@ Live spread, influence plausibility and graph frame rate on a typical designer l
 - M3 (4 personas, 2 seeds and a control run): precision 0.67–0.71 against a 0.7 target, high-severity recall 0.4, top-ten overlap 0.83. The control run fails: one theme came from an unchecked checkbox a text-only navigator could not read (prompt fixed), and one from a fixture goal no Gym build supports.
 - M4 (8 personas, 2 seeds): scrubber replay passes; 6 of 6 sampled influence edges are plausible; spread cannot be judged at this size.
 - Fixed along the way: the judge and author timeout (60 s cut off DeepSeek's judge; now 180 s) and the navigator's reading of unchecked state markers.
+
+**M5's first batch is built** on `m5-more-pois` (PRs #13–#20, eight parallel worktree sessions in three waves). It adds:
+
+- Several points of interest per project, in the user's order, with segment eligibility (buyers perceive only: text and design), a runner registry per POI type, a project assets store and an app POI list ([the registry contract](pois.md)). Older single-POI projects and logs migrate on load.
+- Text POIs from pasted text, `.md` or `.txt` (PDF and Word deferred by the user): a read-and-rate runner whose confusions carry verified passages, a buyer segment kind with a buying survey, and both in the report and exports.
+- Static-design POIs: an ordered frame sequence with the expectation loop, mismatches as frictions on their frame, frame thumbnails as evidence, and a preflight that refuses a navigator that cannot read images.
+- Competitor POIs: observe-only web POIs with writes blocked before the network, one page load per two seconds per context, robots.txt honoured, no logins, and a comparison question in the survey; competitor events stay out of the team's product figures.
+- Figma frame import: a personal access token in Settings (masked, kept out of the renderer and the project), frame listing and PNG export into a design POI. Tested only against a fixture API; the Developer Terms need a legal read before commercial release.
+- Gym v3: checkout frames (D26), an ambiguous-icon flow (D27) and pricing copy with a contradiction (D28), each with a control; an M5 acceptance mode ([guide](m5-acceptance.md)).
+- The Figma prototype spike ([write-up](figma-prototype-spike.md)) recommends a reduced, navigation-only version in M7 after a legal read and a real-file check, otherwise deferral.
+
+All M5 criteria are unmeasured live: the frame-mismatch check needs a vision-capable navigator, and the Figma listing time has only been measured against the fixture.
 
 ---
 
