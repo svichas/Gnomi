@@ -125,47 +125,48 @@ export function AudienceTab(props: {
         <li aria-current={stage === 3 ? 'step' : undefined}><span>3</span><div><strong>Review & start</strong><small>Ready for their first run</small></div></li>
       </ol>
       <Card title="Audience">
-        <div ref={buildPanel}>{building && <BuildProgress kind={building} progress={progress} />}</div>
-        {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
+        {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
         {audience === null ? (
-          <div className="space-y-4">
-            <p className="text-sm text-stone-600">
-              Who is your product for? Start with a suggested audience, or describe a group yourself. You can adjust the details before creating your simulated users.
-              {schema ? ' Your saved profile attributes will be included.' : ' For a quick first look, you can also continue with the built-in persona.'}
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <button type="button" onClick={propose} disabled={plan.busy} className={primaryButton}>
-                <Icon name="people" size={18} />Suggest an audience
+          <div className="audience-start">
+            <AudienceIllustration />
+            <h3>Who should try your product?</h3>
+            <p>Start from a suggested mix of people, or describe the groups yourself. Either way, you can fine-tune every detail before creating your simulated users.</p>
+            <div className="audience-choices">
+              <button type="button" onClick={propose} aria-label="Suggest an audience" aria-describedby="audience-suggest-hint" className="audience-choice audience-choice-primary">
+                <Icon name="spark" size={22} /><strong>Suggest an audience</strong><span id="audience-suggest-hint">Gnomi proposes groups from your product and goal.</span>
               </button>
-              <button type="button" onClick={() => onAudience(blankAudience(description))} disabled={plan.busy} className={secondaryButton}>
-                Build my own
+              <button type="button" onClick={() => onAudience(blankAudience(description))} aria-label="Build my own" aria-describedby="audience-build-hint" className="audience-choice">
+                <Icon name="plus" size={22} /><strong>Build my own</strong><span id="audience-build-hint">Start with one group and shape it yourself.</span>
               </button>
             </div>
+            <p className="audience-start-note">{schema ? 'Your saved profile attributes will be included.' : 'Just taking a quick look? You can also run with the built-in persona.'}</p>
           </div>
         ) : (
           <div className="space-y-5">
-            {!building && <div className="audience-next">
-              <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
-              <div><p className="eyebrow">{needsPersonas ? 'Next step · Required before your run' : 'Your people are ready'}</p><h3>{needsPersonas ? 'Bring your audience to life.' : `${personas.length} ${personas.length === 1 ? 'perspective' : 'perspectives'}, ready to explore.`}</h3><p>{needsPersonas ? `Your audience defines who to include. Click Generate personas to build ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} before starting a run.` : 'Review your people below, or adjust your audience and generate again to apply changes.'}</p></div>
-              <button type="button" onClick={generate} className={needsPersonas ? primaryButton : secondaryButton}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></button>
-            </div>}
-            <div className="flex flex-wrap items-end gap-4">
-              <Field label="Number of personas" hint={`${PERSONA_MINIMUM} to ${PERSONA_MAXIMUM}. Use 1 for a quick check.`}>
-                <NumberInput label="Number of personas" value={audience.persona_count} onChange={(v) => onAudience({ ...audience, persona_count: v })} min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} />
-              </Field>
-              <details className="audience-seed"><summary>Reproducibility options</summary><div className="flex items-end gap-3 mt-3"><Field label="Seed" hint="The same seed gives the same people.">
-                <NumberInput label="Seed" value={audience.seed} onChange={(v) => onAudience({ ...audience, seed: v })} min={0} />
-              </Field>
-              <button type="button" onClick={() => onAudience({ ...audience, seed: newSeed() })} className={`${secondaryButton} mb-5`}>
-                New seed
-              </button>
-              </div></details>
-              <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={propose} disabled={plan.busy} className={secondaryButton}>
-                  Propose segments again
+            <div className="audience-toolbar">
+              <div>
+                <Field label="Number of personas" hint={`${PERSONA_MINIMUM} to ${PERSONA_MAXIMUM}. Use 1 for a quick check.`}>
+                  <NumberInput label="Number of personas" value={audience.persona_count} onChange={(v) => onAudience({ ...audience, persona_count: v })} min={PERSONA_MINIMUM} max={PERSONA_MAXIMUM} />
+                </Field>
+                <details className="audience-seed">
+                  <summary>Reproducibility options</summary>
+                  <div className="audience-seed-body">
+                    <Field label="Seed">
+                      <NumberInput label="Seed" value={audience.seed} onChange={(v) => onAudience({ ...audience, seed: v })} min={0} aria-describedby="audience-seed-hint" />
+                    </Field>
+                    <button type="button" onClick={() => onAudience({ ...audience, seed: newSeed() })} className={secondaryButton}>
+                      New seed
+                    </button>
+                  </div>
+                  <p id="audience-seed-hint" className="audience-seed-hint">The same seed gives the same people.</p>
+                </details>
+              </div>
+              <div className="audience-toolbar-actions">
+                <button type="button" onClick={propose} disabled={plan.busy} className={`${secondaryButton} button-small`}>
+                  <Icon name="spark" size={14} />Propose segments again
                 </button>
-                <button type="button" onClick={() => onAudience(null)} disabled={plan.busy} className={secondaryButton}>
+                <button type="button" onClick={() => onAudience(null)} disabled={plan.busy} className={`${secondaryButton} button-small`}>
                   Start over
                 </button>
               </div>
@@ -173,11 +174,14 @@ export function AudienceTab(props: {
 
             <CountryMix countries={audience.countries} onChange={(countries) => onAudience({ ...audience, countries })} />
 
-            <ul aria-label="Segments" className="space-y-4">
-              {segments.map((segment) => (
+            <div className="space-y-3">
+              <div className="segment-list-head"><h3>Segments</h3><p>Shares always add up to 100%.</p></div>
+              <ul aria-label="Segments" className="segment-list">
+              {segments.map((segment, index) => (
                 <SegmentCard
                   key={segment.id}
                   segment={segment}
+                  index={index}
                   sessions={sessions}
                   several={several}
                   onChange={(next) => onAudience({ ...audience, segments: segments.map((s) => (s.id === segment.id ? next : s)) })}
@@ -185,14 +189,15 @@ export function AudienceTab(props: {
                   onRemove={() => onAudience(removeSegment(audience, segment.id))}
                 />
               ))}
-            </ul>
-            <button type="button" onClick={() => onAudience(addSegment(audience))} className={secondaryButton}>
-              Add segment
-            </button>
+              </ul>
+              <button type="button" onClick={() => onAudience(addSegment(audience))} className="add-segment">
+                <Icon name="plus" size={16} />Add segment
+              </button>
+            </div>
 
             <div className="space-y-3 border-t border-stone-200 pt-4">
               <p className="text-sm text-stone-600">
-                Shares always add up to 100%. Generating keeps every persona whose segment, seed and traits are unchanged, and only writes the new or changed ones.
+                Generating keeps every persona whose segment, seed and traits are unchanged, and only writes the new or changed ones.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <button type="button" onClick={onSave} disabled={plan.busy} className={secondaryButton}>
@@ -216,6 +221,15 @@ export function AudienceTab(props: {
 
       {stale.size > 0 && <Note tone="info">{stale.size} {stale.size === 1 ? 'persona needs' : 'personas need'} regeneration after profile changes. Their old biographies and voices are hidden until you generate personas.</Note>}
 
+      {building === 'personas' ? <div ref={buildPanel}><BuildProgress kind="personas" progress={progress} /></div> : !building && audience && (
+        <div className="audience-next">
+          <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
+          <div><p className="eyebrow">{needsPersonas ? 'Step 2 · Required before your run' : 'Your people are ready'}</p><h3>{needsPersonas ? 'Bring your audience to life.' : `${personas.length} ${personas.length === 1 ? 'perspective' : 'perspectives'}, ready to explore.`}</h3><p>{needsPersonas ? `When your segments look right, generate ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} to unlock your run.` : 'Review your people below, or adjust your audience and generate again to apply changes.'}</p></div>
+          <button type="button" onClick={generate} disabled={busy} className={needsPersonas ? primaryButton : secondaryButton}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></button>
+        </div>
+      )}
+      {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
+
       {people.outcome && <Note tone={people.outcome.ok ? 'ok' : 'error'}>{people.outcome.text}</Note>}
       {audience !== null && personas.length > 0 && (
         <PersonaList
@@ -237,5 +251,27 @@ export function AudienceTab(props: {
         <div><p id="audience-run-hint">{busy ? 'Wait for the current task to finish before starting a run.' : needsPersonas ? 'Generate personas above to unlock your run.' : audience ? 'Your personas are ready. Review your run next.' : 'Or try a quick run with the built-in persona.'}</p><button type="button" className={primaryButton} disabled={busy || needsPersonas} aria-describedby="audience-run-hint" onClick={props.onReview}><Icon name="play" size={16} />Review & start</button></div>
       </div>
     </div>
+  );
+}
+
+/** A quiet picture of the choice ahead: a few different people, not yet written. */
+function AudienceIllustration() {
+  const people = [{ x: 36, y: 40, color: 'var(--gnomi-segment-2)' }, { x: 196, y: 40, color: 'var(--gnomi-segment-3)' }, { x: 110, y: 18, color: 'var(--gnomi-action)' }];
+  return (
+    <svg viewBox="0 0 300 150" fill="none" aria-hidden="true" className="audience-art">
+      <ellipse cx="150" cy="80" rx="128" ry="58" className="build-orbit" />
+      {people.map(({ x, y, color }, i) => (
+        <g key={i} transform={`translate(${x} ${y})`}>
+          <rect width="68" height="88" rx="12" className="build-card" />
+          <circle cx="34" cy="30" r="20" fill={color} fillOpacity=".15" />
+          <circle cx="34" cy="26" r="7" fill={color} />
+          <path d="M21 43c0-13 26-13 26 0" fill={color} />
+          <path d="M20 62h28M26 72h16" className="build-card-line" />
+        </g>
+      ))}
+      <path d="M92 22v10m-5-5h10M238 122v10m-5-5h10" className="audience-art-spark" />
+      <circle cx="30" cy="126" r="4" className="build-dot" />
+      <circle cx="272" cy="30" r="3" className="build-dot" />
+    </svg>
   );
 }

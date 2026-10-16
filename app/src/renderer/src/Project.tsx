@@ -7,7 +7,8 @@ import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
 import { Summary } from './Summary.tsx';
 import { Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
-import { Icon, PersonaAvatar } from './Icon.tsx';
+import { Icon } from './Icon.tsx';
+import { PersonaHeader } from './ProfileFields.tsx';
 
 function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string | null; onToggle(host: string, on: boolean): void; onAdd(host: string): void }) {
   const { hosts, allowed, start, onToggle, onAdd } = props;
@@ -252,7 +253,7 @@ export function Project(props: {
       ) : (
         persona && (
           <Card title="Who will try it">
-            <div className="persona-preview"><PersonaAvatar name={persona.name} id={persona.id} /><div><strong>{persona.name}</strong><p>{persona.job_title}</p></div></div>
+            <PersonaHeader persona={persona} />
             <p className="mt-3 text-sm text-stone-600">Try a quick run with this simulated user, or create your own audience.</p>
           </Card>
         )

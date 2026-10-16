@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
-import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
 import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';
 import { Screenshot } from './ui.tsx';
-import { personaLabel, ProfileFields } from './ProfileFields.tsx';
+import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
@@ -62,15 +61,7 @@ export function Inspector(props: {
     <dialog ref={dialog} aria-label="Persona details" className="inspector-dialog" onCancel={(event) => { event.preventDefault(); close(); }}>
     <aside aria-label="Persona inspector" className="flex h-full w-full flex-col bg-white">
       <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-4">
-        <div>
-          <h2 className="text-base font-semibold text-stone-900">
-            {name} {isAttributeEnabled(schema, 'pronouns', 'card') && persona.pronouns && <span className="font-normal text-stone-500">({persona.pronouns})</span>}
-          </h2>
-          <p className="text-sm text-stone-600">
-            {isAttributeEnabled(schema, 'job_title', 'card') && persona.job_title}
-            {segment && `${isAttributeEnabled(schema, 'job_title', 'card') ? ', ' : ''}${segment.name}`}
-          </p>
-        </div>
+        <PersonaHeader persona={persona} schema={schema} detail={segment?.name} heading="h2" />
         <button type="button" onClick={close} className="rounded-lg border border-stone-300 px-3 py-1 text-sm text-stone-800 hover:bg-stone-100">
           Close
         </button>
