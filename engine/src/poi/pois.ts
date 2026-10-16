@@ -47,3 +47,25 @@ export const logsIn = (pois: Poi[], segment: Segment | null): boolean => webPois
 
 /** The web POI a login is recorded on and whose start page a recorded session replaces: the first one in full mode. */
 export const loginPoi = (pois: Poi[]): WebPoi | null => webPois(pois).find((poi) => poi.mode === 'full') ?? null;
+
+/**
+ * Readable names for the stored files of text and design POIs, by their `asset:` URL: a text by its POI's name, a design's
+ * screen by its POI's name and screen number. Steps, frictions and signals on those POIs carry the stored file as their URL.
+ */
+export function assetPlaces(pois: Poi[]): Map<string, string> {
+  const places = new Map<string, string>();
+  for (const poi of pois) {
+    if (poi.type === 'text') places.set(`asset:${poi.asset}`, poi.name);
+    if (poi.type === 'design') {
+      poi.frames.forEach((frame, i) => {
+        const screen = poi.frames.length > 1 ? `, screen ${i + 1}${frame.name ? ` "${frame.name}"` : ''}` : '';
+        if (!places.has(`asset:${frame.asset}`)) places.set(`asset:${frame.asset}`, `${poi.name}${screen}`);
+      });
+    }
+  }
+  return places;
+}
+
+/** Where something happened, for people: a page's URL as it is, a text's or design's stored file as its name. */
+export const placeName = (url: string, places: Map<string, string>): string =>
+  places.get(url) ?? (url.startsWith('asset:') ? (url.match(/\.(png|jpe?g|webp)$/i) ? 'a design screen' : 'a text') : url);

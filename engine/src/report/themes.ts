@@ -1,5 +1,5 @@
 import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
-import { buildCandidates, categoryOf, groupCandidates, likeGroups, pagePattern, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { buildCandidates, categoryOf, groupCandidates, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -252,14 +252,15 @@ interface Reach {
 }
 
 function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
+  const places = placesOf(events);
   const pages = new Map<string, Set<string>>();
   const poi = new Map<string, Set<string>>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
   for (const e of events) {
     if (!e.persona_id) continue;
     if (e.type === 'persona.step') {
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_before));
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_after));
+      add(pages, e.persona_id, pagePattern(e.payload.result.url_before, places));
+      add(pages, e.persona_id, pagePattern(e.payload.result.url_after, places));
       add(poi, e.poi_id ?? defaultPoi, e.persona_id);
     } else if (e.type === 'persona.episode_started' || e.type === 'persona.survey') {
       add(poi, e.payload.poi_id, e.persona_id);
@@ -542,9 +543,12 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   }
 
   // Said once, after the judge's and author's notes: a small run is the likeliest reason a share looks off.
-  const few = Math.min(...[...new Set(groups.map((g) => g.poi_id))].map((id) => reach.poi.get(id)?.size ?? 0));
-  if (few > 0 && few < FEW_PERSONAS) {
-    limitations.push(`Only ${plural(few, 'persona')} used ${few === 1 ? 'a point of interest' : 'some points of interest'}, so every share has a wide range and the order of the problems is rough.`);
+  const names = poiNamesOf(events);
+  const small = [...new Set(groups.map((g) => g.poi_id))].map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
+  if (small.length > 0) {
+    const few = Math.min(...small.map(({ n }) => n));
+    const which = small.length === 1 ? (names.get(small[0].id) ?? 'it') : 'some of what was tested';
+    limitations.push(`Only ${plural(few, 'persona')} tried ${which}, so every share has a wide range and the order of the problems is rough.`);
   }
   const sentiment = sentimentBySegment(events, ctx);
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {

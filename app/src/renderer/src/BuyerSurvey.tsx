@@ -74,7 +74,7 @@ export function BuyerSurvey({ rows, pois }: { rows: ReportBuyers[]; pois: Report
           <Rows rows={rows.filter((row) => row.poi_id === poi.id)} />
         </section>
       ))}
-      <p className="text-xs text-stone-500">From each buyer's survey after the point of interest, 0 is neutral. Means are per segment, without weighting.</p>
+      <p className="text-xs text-stone-500">From each buyer's survey after what they looked at, 0 is neutral. Means are per segment, without weighting.</p>
     </section>
   );
 }

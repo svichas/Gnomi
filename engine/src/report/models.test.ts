@@ -50,7 +50,7 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: N
   return { events, requests, types: events.slice(4 + extra.length).map((e) => e.type), report: buildReport(events) };
 }
 
-const FEW = 'Only 1 persona used a point of interest, so every share has a wide range and the order of the problems is rough.';
+const FEW = 'Only 1 persona tried Gym, so every share has a wide range and the order of the problems is rough.';
 const judged = { themes: [{ title: 'Saving a job fails', description: 'Save does nothing.', group_ids: ['g1'] }] };
 const suggested = { suggestions: [{ theme_id: 'g1', change: 'Make Save save the job.', solution: 'Submit the form and show the saved job.' }] };
 

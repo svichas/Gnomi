@@ -156,7 +156,12 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
   assert.deepEqual(sso.affected.map((a) => [a.name, a.affected, a.reached]), [['Team leads buying', 3, 3], ['Planners', 2, 2]]);
   assert.equal(sso.evidence[0].quote, 'Team says SSO, but the FAQ says Business. Which is it?');
 
+  // The text is named as its POI everywhere a person reads it, never by its stored file.
+  const stored = of(events, 'persona.episode_started')[0].payload.start_url.slice('asset:'.length);
+  assert.ok(report.frictions.every((f) => f.url === 'Pricing page'));
+  assert.ok(themes.every((t) => t.pages.every((page) => page === 'Pricing page') && t.evidence.every((e) => e.url === null || e.url === 'Pricing page')));
   const markdown = reportToMarkdown(report);
+  assert.ok(!markdown.includes(stored) && !JSON.stringify(report.themes).includes(stored), 'no stored file name in the report');
   assert.match(markdown, /## Buying survey[\s\S]*\| Team leads buying \| 3 \| -0\.33 \| 33% \| 0 \/ 1 \/ 0 \/ 2 \|/);
   assert.match(markdown, new RegExp(`Passage: characters ${team}–${team + 25}, "Single sign-on \\(SAML SSO\\)"`));
 });

@@ -261,7 +261,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       limitations: [
         'The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.',
         'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
-        'Only 1 persona used a point of interest, so every share has a wide range and the order of the problems is rough.',
+        'Only 1 persona tried Gym, so every share has a wide range and the order of the problems is rough.',
         'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
       ],
     },
