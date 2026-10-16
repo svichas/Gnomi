@@ -86,3 +86,18 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
   assert.equal(html.split('<svg').length - 1, 2, 'one sentiment line for the POI and one for the theme');
   assert.doesNotMatch(html, /<(?:button|select|script)\b/);
 });
+
+test("a text POI's quoted passages and the buying survey render into the HTML and Markdown exports", async () => {
+  const report = fixture(1, 1);
+  report.pois = [{ id: 'pricing', type: 'text', name: 'Pricing page', start_url: null }];
+  Object.assign(report.frictions[0], { url: 'asset:0123456789abcdef.md', screenshot: null, passage: { start: 412, end: 437, text: 'Single sign-on (SAML SSO)' } });
+  const like = (text: string) => ({ text, count: 1, personas: 1, seqs: [9] });
+  report.buyers = [{ poi_id: 'pricing', segment_id: 'seg-a', name: 'Recruiters', surveyed: 1, sentiment: -1, would_buy: 0, price: { low: 0, fair: 0, high: 0, unclear: 1 }, objections: [like('No SSO on <Team>')], unclear: [like('Whether Team has SSO')] }];
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['In the text:', '“Single sign-on (SAML SSO)”', 'Buying survey', 'Would buy or recommend', 'Recruiters: what would stop them buying', 'No SSO on &lt;Team&gt;', 'Whether Team has SSO', '0 / 0 / 0 / 1']) {
+    assert.ok(html.includes(text), text);
+  }
+  const markdown = await reportFile(report, 'md', thumbnails());
+  assert.match(markdown, /## Buying survey[\s\S]*\| Recruiters \| 1 \| -1\.00 \| 0% \| 0 \/ 0 \/ 0 \/ 1 \|\n\n- Recruiters, top objections: No SSO on <Team> \(1 persona\)\n- Recruiters, unclear: Whether Team has SSO \(1 persona\)/);
+  assert.match(markdown, /- Passage: characters 412–437, "Single sign-on \(SAML SSO\)"/);
+});

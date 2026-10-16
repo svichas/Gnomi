@@ -4,6 +4,7 @@ import type { Outcome, Report as ReportData, ReportDimension, ReportEvidence, Re
 import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
 import { TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
+import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { Note, usd } from './ui.tsx';
@@ -59,9 +60,20 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
       {friction.quote && (
         <blockquote className="mt-3 border-l-4 border-amber-300 pl-3 text-sm italic text-stone-700">&ldquo;{friction.quote}&rdquo;</blockquote>
       )}
+      <Passage passage={friction.passage} />
       {friction.screenshot && <div className="mt-3">{renderScreenshot(friction.screenshot, `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`)}</div>}
       <p className="mt-2 break-all text-xs text-stone-500">{friction.url}</p>
     </li>
+  );
+}
+
+/** The passage of a text a confusion quotes (engine/src/poi/text.ts). */
+function Passage({ passage }: { passage: ReportFriction['passage'] }) {
+  if (!passage?.text) return null;
+  return (
+    <p className="mt-2 text-sm text-stone-700">
+      <span className="font-medium">In the text:</span> &ldquo;{passage.text}&rdquo;
+    </p>
   );
 }
 
@@ -261,6 +273,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
           {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
         </p>
         <p className="text-sm text-stone-900">{evidence.what}</p>
+        <Passage passage={evidence.passage} />
         {evidence.quote && <blockquote className="border-l-4 border-stone-300 pl-3 text-sm italic text-stone-700">&ldquo;{evidence.quote}&rdquo;</blockquote>}
         {evidence.url && <p className="break-all text-xs text-stone-500">{evidence.url}</p>}
       </div>
@@ -717,6 +730,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
       {report.themes && <Themes themes={report.themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
+      {report.buyers && report.buyers.length > 0 && <BuyerSurvey rows={report.buyers} pois={report.pois} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
       {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}
       <FrictionsBySegment report={details} filtered={filtered} onInspect={onInspect} renderScreenshot={renderScreenshot} />
