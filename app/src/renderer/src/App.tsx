@@ -256,7 +256,7 @@ export function App() {
               />
             </div>
             <div role="region" id="panel-audience" aria-labelledby="tab-audience" hidden={tab !== 'audience'}>
-              <AudienceTab audience={draft.audience} onAudience={setAudience} schema={draft.persona_schema} onSchema={setSchema} info={info} description={draft.form.description} projectName={draft.form.name} goal={draft.form.goal} save={save} refresh={refresh} onBack={() => setTab('project')} onReview={() => void openReview()} />
+              <AudienceTab audience={draft.audience} onAudience={setAudience} schema={draft.persona_schema} onSchema={setSchema} settings={draft.settings} onSettings={setSettings} info={info} description={draft.form.description} projectName={draft.form.name} goal={draft.form.goal} save={save} refresh={refresh} onBack={() => setTab('project')} onReview={() => void openReview()} />
             </div>
             <div role="region" id="panel-review" aria-labelledby="tab-review" hidden={tab !== 'review'}>
               {review ? (

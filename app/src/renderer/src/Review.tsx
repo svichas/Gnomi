@@ -182,7 +182,7 @@ export function Review(props: {
                 <Check checked={saved.settings.social ?? false} onChange={onSocial}>Let personas interact in a shared feed</Check>
                 <span className="block pl-6 text-xs text-stone-500">
                   {socialRounds(saved.settings, saved.audience)
-                    ? `${socialRounds(saved.settings, saved.audience)} rounds: each persona uses the product for a while, then reads posts from the people it follows and may post, reply or react. Change the number of rounds in Settings.`
+                    ? `${socialRounds(saved.settings, saved.audience)} rounds: each persona uses the product for a while, then reads posts from the people it follows and may post, reply or react. Change the number of rounds on the Audience step.`
                     : 'Off: each persona tries the product on its own.'}
                 </span>
               </>

@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: RunSettings = {
   cost_budget_usd: 5,
   wall_clock_budget_min: 60,
   screenshots: true,
-  social: false,
+  social: true,
   rounds: 5,
 };
 
