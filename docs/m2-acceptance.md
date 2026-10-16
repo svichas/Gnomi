@@ -24,6 +24,20 @@ This example authorizes a $6 recorded-spend threshold across both cases. The pop
 
 The manifest records the selected default routing, price-table snapshot, source/runtime information, fixture seed and hash. Model availability and the repository's prices must be checked against the configured provider before relying on a measured dollar result. The runner reports recorded usage-based cost, not an invoice reconciliation. Setup model cost is zero because the population is frozen; historical authoring cost is outside this measurement.
 
+## Smaller runs and other providers
+
+Three options trade coverage for spend. They work in every mode (M2, `--m3`, `--m4`):
+
+- `--provider deepseek` routes every role to DeepSeek's defaults and reads `DEEPSEEK_API_KEY` instead of `ANTHROPIC_API_KEY`. A DeepSeek navigator reads text only, so visual-only defects cannot be found.
+- `--personas N` runs the first personas of each segment of the same frozen fixture, apportioned by share with at least one per segment (4 to 50). The people do not change, only how many of them run.
+- `--seeds N` runs the first N seeds of the M3 or M4 suite.
+
+```sh
+npm run acceptance -w @gnomi/engine -- --live --provider deepseek --personas 4 --allowance-usd 0.5 --out acceptance-results/m2-small
+```
+
+Below 50 personas, the duration, cost and 12-browser targets (and M3's and M4's scale-dependent criteria, including spread, which saturates in a small population) report their figures as `NOT_RUN` with a "Reduced scale" note, because they are claims about fifty people. Execution, population and replay are still checked for the smaller population, and the review sheets work the same way.
+
 ## Read the results
 
 Start with `acceptance.json` and `manifest.json`. Each case includes `metrics.json`, `events.json`, `transcripts.json`, `report.md`, `review.md`, `review.json`, and a reopenable `project/` directory. The German case also retains snapshots in `browser-evidence.json` showing the real HTTP language header and browser locale, languages and timezone.
