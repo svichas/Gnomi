@@ -64,7 +64,7 @@ The fields of each segment:
 export function proposeUser(project: ProjectConfig, roles: string[]): string {
   return [
     `The product: ${project.name}.${project.description ? ` ${project.description}` : ''}`,
-    `What will be tested: ${project.poi.name}`,
+    `What will be tested: ${project.pois.map((poi) => poi.name).join(', ')}`,
     `The team's goal for the test: "${project.goal}"`,
     `${LOGINS_LABEL}${JSON.stringify(roles)}`,
   ].join('\n');

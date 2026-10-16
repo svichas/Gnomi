@@ -1,7 +1,9 @@
+import { webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
 import { buildSpread, homogeneity } from './spread.ts';
+import { stepEvidence } from './friction.ts';
 import { analyseFrictions, type Context } from './themes.ts';
 import type {
   Audience,
@@ -27,9 +29,9 @@ export const HYPOTHESIS_BANNER =
 
 const OUTCOMES: Outcome[] = ['done', 'abandoned', 'budget_exceeded', 'repeated_failure', 'blocked', 'incomplete'];
 
-// Runs logged before M2 froze one `persona`, a top-level budget, and no audience or settings.
+// Runs logged before M2 froze one `persona`, a top-level budget, and no audience or settings; before M5, one `poi`.
 type LoggedConfig = Omit<RunConfig, 'personas' | 'sessions' | 'project'> & {
-  project: Omit<ProjectConfig, 'audience' | 'settings'> & Partial<Pick<ProjectConfig, 'audience' | 'settings'>>;
+  project: Omit<SavedProject, 'audience' | 'settings'> & Partial<Pick<ProjectConfig, 'audience' | 'settings'>>;
   personas?: Persona[];
   persona?: Persona;
   sessions?: SessionInfo[];
@@ -105,6 +107,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const audience: Audience | null = config.project.audience ?? null;
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
+  const { pois } = withPois(config.project);
 
   const byPersona = new Map<string, GnomiEvent[]>();
   for (const e of events) {
@@ -156,6 +159,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       url: e.payload.where.url,
       quote: step?.thought ?? '',
       screenshot: step?.screenshot ?? null,
+      ...stepEvidence(e.payload, step),
     };
   });
 
@@ -173,7 +177,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     weight === 0 ? 0 : segments.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
 
   const ctx: Context = {
-    poi_id: config.project.poi.id,
+    poi_id: pois[0]?.id ?? '',
     personas: new Map(personas.map((p) => [p.id, { name: p.name, segment_id: p.segment_id }])),
     segments,
   };
@@ -220,8 +224,8 @@ export function buildReport(events: GnomiEvent[]): Report {
   const blocked_requests = [...perHost]
     .map(([host, count]) => ({ host, count }))
     .sort((a, b) => b.count - a.count || (a.host < b.host ? -1 : 1));
-  // The start page's host comes first and is always allowed; runs logged before M1 have no allowed_hosts.
-  const hosts = [hostOf(config.project.poi.start_url), ...(config.project.poi.allowed_hosts ?? [])];
+  // Each web POI's start page host comes first and is always allowed.
+  const hosts = webPois(pois).flatMap((poi) => [hostOf(poi.start_url), ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
 
   return {
@@ -229,7 +233,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     status,
     stop_reason,
     goal: config.project.goal,
-    poi: { name: config.project.poi.name, start_url: config.project.poi.start_url },
+    pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null })),
     personas,
     ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema) } : {}),
     segments,
@@ -239,7 +243,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     themes: analysis.themes,
     sentiment: analysis.sentiment,
     went_well: analysis.went_well,
-    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map([[config.project.poi.id, config.project.poi.name]])) } : {}),
+    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,

@@ -25,7 +25,7 @@ const shots = join(import.meta.dirname, 'test-results');
 mkdirSync(shots, { recursive: true });
 const project: ProjectConfig = {
   name: 'All personas abandoned', description: 'Disposable run completion regression', goal: 'Complete an unavailable task', role: null, audience: null,
-  poi: { id: 'fixture', type: 'web', name: 'Fixture', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null },
+  pois: [{ id: 'fixture', type: 'web', mode: 'full', segments: null, name: 'Fixture', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null }],
   settings: { ...structuredClone(DEFAULT_SETTINGS), social: false },
 };
 const personas = ['Alex', 'Casey', 'Robin'].map((name, index) => ({ ...BUILTIN_PERSONA, id: `p-${index + 1}`, name }));
@@ -37,7 +37,7 @@ const base = { run_id: config.run_id, round: 1, poi_id: null, persona_id: null }
 store.append({ ...base, type: 'run.started', payload: { config } });
 for (const persona of personas) {
   store.append({ ...base, persona_id: persona.id, type: 'persona.created', payload: { persona } });
-  store.append({ ...base, persona_id: persona.id, type: 'persona.episode_started', payload: { poi_id: project.poi.id, device: persona.device, start_url: project.poi.start_url } });
+  store.append({ ...base, persona_id: persona.id, type: 'persona.episode_started', payload: { poi_id: 'fixture', device: persona.device, start_url: 'http://localhost:3001/' } });
 }
 const initialEvents = store.events(config.run_id);
 for (const persona of personas) {

@@ -17,7 +17,7 @@ const shots = join(import.meta.dirname, 'test-results');
 mkdirSync(shots, { recursive: true });
 const project: ProjectConfig = {
   name: 'Budget stop fixture', description: 'Scripted cost-report verification',
-  poi: { id: 'gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null },
+  pois: [{ id: 'gym', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null }],
   goal: 'Post a job', role: null, audience: null,
   settings: { ...structuredClone(DEFAULT_SETTINGS), cost_budget_usd: 5 },
 };

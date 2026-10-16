@@ -17,7 +17,7 @@ import type { BrowserPool, LlmGateway, Recorder, Responder } from '../seams.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report } from '../types.ts';
 import { assess, BILLING_CAVEAT, createAllowance, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, validateOptions, type Criterion, type Facts, type Options, type Status } from './checks.ts';
-import { complaint, fixture, FIXTURE_VERSION, germanProbe, M3_SEEDS, M4_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
+import { complaint, fixture, FIXTURE_VERSION, germanProbe, gym, M3_SEEDS, M4_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
 const json = (file: string, value: unknown) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -391,8 +391,8 @@ export async function runM3Acceptance(options: Options, env: Record<string, stri
     const [defects, control] = [await startGym({ port: 0, defects: 'all' }), await startGym({ port: 0, defects: 'none' })];
     gyms.push(defects, control);
     const base = prepare(fixture(defects.url), options);
-    base.project.poi.name = 'Gym v2';
-    const controlBase = { ...base, project: { ...base.project, poi: { ...base.project.poi, name: 'Gym control', start_url: `${control.url}/` } } };
+    gym(base).name = 'Gym v2';
+    const controlBase = { ...base, project: { ...base.project, pois: [{ ...gym(base), name: 'Gym control', start_url: `${control.url}/` }] } };
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'm3', mode: options.mode, scope: M3_SCOPE, seeds, control_seed: SEED, provider: options.provider, personas: base.personas.length, fixture_version: FIXTURE_VERSION,

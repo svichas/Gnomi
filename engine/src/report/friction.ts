@@ -1,4 +1,4 @@
-import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, SignalKind, Trust } from '../types.ts';
+import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, SignalKind, StepEvidence, Trust } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
 
@@ -13,8 +13,15 @@ const SURVEY_SEVERITY = 2; // the survey asks for frictions, not their severity
 
 export type CandidateKind = 'friction' | 'abandoned' | 'survey' | SignalKind;
 
+/** The frame or passage of the first of these that has one: a friction's own before its step's. Empty for web POIs. */
+export function stepEvidence(...from: (StepEvidence | undefined)[]): StepEvidence {
+  const frame = from.find((e) => e?.frame !== undefined)?.frame;
+  const passage = from.find((e) => e?.passage)?.passage;
+  return { ...(frame !== undefined && { frame }), ...(passage && { passage }) };
+}
+
 /** One normalised friction: a self-report, a signal, or both merged. */
-export interface Candidate {
+export type Candidate = StepEvidence & {
   poi_id: string;
   persona_id: string;
   step_no: number | null; // null for survey answers
@@ -30,7 +37,7 @@ export interface Candidate {
   screenshot: string | null;
   seqs: number[]; // the self-report first, then its signals
   signals: SignalKind[];
-}
+};
 
 export interface Group {
   id: string; // g1, g2, … in order of the first member's event
@@ -90,6 +97,7 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       screenshot: step?.payload.screenshot ?? null,
       seqs: [e.seq],
       signals: [],
+      ...stepEvidence(step?.payload),
     };
   };
 
@@ -98,7 +106,8 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
   const surveys: Candidate[] = [];
   for (const e of events) {
     if (e.type === 'persona.friction_reported') {
-      reports.push({ ...atStep(e, e.payload.step_no, e.payload.where.url), severity: clampSeverity(e.payload.severity), text: e.payload.what });
+      const at = atStep(e, e.payload.step_no, e.payload.where.url);
+      reports.push({ ...at, ...stepEvidence(e.payload, at), severity: clampSeverity(e.payload.severity), text: e.payload.what });
     } else if (e.type === 'persona.abandoned') {
       reports.push({ ...atStep(e, e.payload.step_no, null), kind: 'abandoned', severity: ABANDON_SEVERITY, text: e.payload.reason });
     } else if (e.type === 'persona.survey') {

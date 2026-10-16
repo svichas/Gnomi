@@ -39,7 +39,7 @@ test('a German persona reaches the Gym with her locale, languages and Berlin tim
   const project: ProjectConfig = {
     name: 'Gym ATS',
     description: 'A demo applicant tracking system.',
-    poi: { id: 'poi-locale', type: 'web', name: 'Locale echo', start_url: `${gym.url}/locale`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi-locale', type: 'web', name: 'Locale echo', start_url: `${gym.url}/locale`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
     goal: 'Check which language and timezone the website sees.',
     role: null,
     audience: null,

@@ -1,8 +1,10 @@
-import { runEpisode, stepBudget, type EpisodeEnd } from './agent/loop.ts';
+import type { EpisodeEnd } from './agent/loop.ts';
 import { socialParts, socialSchema, socialSystemPrompt, surveyParts, surveySchema, surveySystemPrompt } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
+import { poiBudget, runnerFor } from './poi/index.ts';
+import { poisFor, webPois } from './poi/pois.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
@@ -12,7 +14,7 @@ import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { readBoard, selectFeed, type Board } from './social/feed.ts';
 import { followGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
-import type { EventPayloads, GnomiEvent, Opinion, Persona, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo } from './types.ts';
+import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
 export interface RunDeps {
   store: ProjectStore;
@@ -71,8 +73,10 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
 
 export function startRun(config: RunConfig, { store, blobs, browsers, llm, record, sessions }: RunDeps): RunHandle {
   const { run_id, project } = config;
-  const { poi, settings } = project;
+  const { settings } = project;
   const base = { run_id, round: 1, persona_id: null, poi_id: null }; // round moves on with social rounds
+  // Each persona uses the POIs its segment is eligible for, one after another, in the project's order (tech.md §7).
+  const assigned = new Map(config.personas.map((p) => [p.id, poisFor(project.pois, segmentOf(p, project))]));
   // Social rounds (tech.md §6.4): R usage slices, each followed by a social phase. 0 runs one straight slice, as before M4.
   const rounds = socialRounds(settings, project.audience);
   const follows = rounds ? followGraph(config.personas, config.seed) : null;
@@ -141,13 +145,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     checkRecordedBudget(); // Also protects callers supplying a custom gateway without per-attempt notifications.
   };
 
-  const tripwire = (persona_id: string) => (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => {
-    record({ ...base, persona_id, poi_id: poi.id, type: 'containment.tripwire', payload: { kind, detail } });
+  const tripwire = (persona_id: string, poi_id: string) => (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => {
+    record({ ...base, persona_id, poi_id, type: 'containment.tripwire', payload: { kind, detail } });
     halt({ reason: 'tripwire', detail }, true);
   };
 
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session.
-  const openPage = (persona: Persona, role: string | null) => async () => {
+  const openPage = (persona: Persona, role: string | null) => async (poi: WebPoi) => {
     const saved = role ? await sessions?.load(role) : null;
     hard.signal.throwIfAborted();
     if (role && !saved) throw new Error(`The recorded "${role}" login is missing. Record it again, then start a new run.`);
@@ -160,7 +164,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       onBlockedRequest: ({ host, url, method, navigation }) => {
         record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'containment.blocked_request', payload: { host, url, method } });
         const production = productionDomain(host, poi.production_domains);
-        if (navigation && production) tripwire(persona.id)('production_host', `${persona.name} tried to open ${url}, on the production domain ${production}.`);
+        if (navigation && production) tripwire(persona.id, poi.id)('production_host', `${persona.name} tried to open ${url}, on the production domain ${production}.`);
       },
     });
   };
@@ -182,10 +186,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   // One survey per persona and POI once its episode has ended (tech.md §8.2), admitted like a step so a run-wide stop or
   // the cost cap prevents it. The navigator plays the persona, so it answers the persona's survey too.
-  const survey = async (persona: Persona, end: EpisodeEnd) => {
+  const survey = async (persona: Persona, poi: Poi, end: EpisodeEnd) => {
     if (end === 'blocked' || end === 'stopped' || !beginStep()) return;
     try {
-      const own = store.events(run_id, { types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.persona_id === persona.id);
+      const own = store.events(run_id, { personaId: persona.id, types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.poi_id === poi.id);
       const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
       const { object } = await budgetedLlm.call({
         role: 'navigator',
@@ -220,16 +224,16 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   const ends = new Map<string, EpisodeEnd>(); // ended personas can join social phases while other episodes continue
 
-  const currentOpinion = (persona_id: string) =>
-    foldOpinions(store.events(run_id, { types: ['persona.opinion_changed'] })).find((o) => o.persona_id === persona_id && o.poi_id === poi.id)?.opinion ?? null;
+  const currentOpinion = (persona_id: string, poi_id: string) =>
+    foldOpinions(store.events(run_id, { types: ['persona.opinion_changed'] })).find((o) => o.persona_id === persona_id && o.poi_id === poi_id)?.opinion ?? null;
 
   // With social rounds an episode runs on across slices, page and memory intact; between slices it waits here for its turn.
   const waiting = new Map<string, (go: boolean) => void>();
   const yielded = new Map<string, () => void>();
   const tasks = new Map<string, Promise<void>>();
-  const between = (persona_id: string) => () =>
+  const between = (persona_id: string, poi_id: string) => () =>
     new Promise<{ opinion: Opinion | null } | null>((resolve) => {
-      waiting.set(persona_id, (go) => resolve(go && !drain.signal.aborted ? { opinion: currentOpinion(persona_id) } : null));
+      waiting.set(persona_id, (go) => resolve(go && !drain.signal.aborted ? { opinion: currentOpinion(persona_id, poi_id) } : null));
       yielded.get(persona_id)?.();
     });
   /** One persona's usage slice: starts its episode or wakes it, and settles when it has taken its steps or ended. */
@@ -242,29 +246,42 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return Promise.race([gave, tasks.get(persona.id)!]);
   };
 
+  /** The persona's POIs one after another, each with its own budget and survey; slices count steps across them. */
   const episode = async (persona: Persona) => {
     const role = roleOf(persona, project);
     const session = role ? (config.sessions.find((s) => s.role === role) ?? null) : null;
     if (role && !session) throw new Error(`No login for the "${role}" role was verified before the run.`);
-    const end = await runEpisode({
-      config,
-      persona,
-      segment: segmentOf(persona, project),
-      session,
-      openPage: openPage(persona, role),
-      llm: budgetedLlm,
-      blobs,
-      record,
-      signal: hard.signal,
-      beginStep,
-      endStep,
-      tripwire: tripwire(persona.id),
-      waitForResume: waitForResume(persona.id),
-      round: () => base.round,
-      slice: rounds ? { steps: Math.ceil(stepBudget(persona) / rounds), next: between(persona.id) } : undefined,
-    });
-    ends.set(persona.id, end);
-    await survey(persona, end); // when the episode ends, whichever round that is
+    const pois = assigned.get(persona.id)!;
+    const budgets = pois.map((poi) => poiBudget(persona, poi));
+    const slice = rounds ? Math.ceil(budgets.reduce((sum, n) => sum + n, 0) / rounds) : 0;
+    let stepsBefore = 0;
+    for (const [i, poi] of pois.entries()) {
+      const end = await runnerFor(poi).episode(poi, {
+        config,
+        persona,
+        segment: segmentOf(persona, project),
+        session,
+        budget: budgets[i],
+        stepsBefore,
+        openPage: openPage(persona, role),
+        llm: budgetedLlm,
+        blobs,
+        record,
+        signal: hard.signal,
+        beginStep,
+        endStep,
+        tripwire: tripwire(persona.id, poi.id),
+        waitForResume: waitForResume(persona.id),
+        round: () => base.round,
+        slice: rounds ? { steps: slice, next: between(persona.id, poi.id) } : undefined,
+      });
+      const last = end === 'stopped' || i === pois.length - 1;
+      if (last) ends.set(persona.id, end);
+      await survey(persona, poi, end); // when the episode ends, whichever round that is
+      if (last) return;
+      const lastStep = store.events(run_id, { personaId: persona.id, types: ['persona.step'] }).at(-1);
+      if (lastStep?.type === 'persona.step') stepsBefore = lastStep.payload.step_no;
+    }
   };
 
   const names = new Map(config.personas.map((p) => [p.id, p.name]));
@@ -277,6 +294,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids } });
       const own = events.filter((e) => e.persona_id === persona.id);
       const opinionOf = (poi_id: string) => opinions.find((o) => o.persona_id === persona.id && o.poi_id === poi_id)?.opinion ?? null;
+      const pois = assigned.get(persona.id)!;
       const posts = new Map(board.posts.map((p) => [p.post_id, p]));
       const name = (id: string) => names.get(id) ?? id;
       const { object } = await budgetedLlm.call({
@@ -286,7 +304,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         persona_id: persona.id,
         round,
         purpose: 'social',
-        system: socialSystemPrompt(persona, project, segmentOf(persona, project)),
+        system: socialSystemPrompt(persona, project, segmentOf(persona, project), pois),
         user: socialParts({
           persona,
           project,
@@ -295,14 +313,14 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
           end: ends.get(persona.id) ?? null,
           steps: own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output').length,
           frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
-          opinion: opinionOf(poi.id),
+          pois: pois.map((poi) => ({ name: poi.name, opinion: opinionOf(poi.id) })),
           posted: own.flatMap((e) => (e.type === 'social.post' ? [e.payload.text] : [])),
           feed: feed.map(({ post_id, author, text, agree, disagree, parent_id }) => {
             const parent = parent_id ? posts.get(parent_id) : undefined;
             return { post_id, author: name(author), text, agree, disagree, parent: parent ? { author: name(parent.author), text: parent.text } : null };
           }),
         }),
-        schema: socialSchema(post_ids, [poi.id]),
+        schema: socialSchema(post_ids, pois.map((poi) => poi.id) as [string, ...string[]]),
         signal: hard.signal,
       });
       if (hard.signal.aborted) return;
@@ -368,8 +386,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     await Promise.allSettled(tasks.values());
   };
 
-  const resetStaging = async (url: string | null) => {
-    if (!url) throw new Error('This project has no reset hook to call.');
+  const resetStaging = async (url: string) => {
     let status: number | null = null;
     let error: string | null = null;
     try {
@@ -387,7 +404,14 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     record({ ...base, type: 'run.started', payload: { config } });
     const clock = setTimeout(() => halt({ reason: 'wall_clock', detail: `the ${settings.wall_clock_budget_min}-minute limit was reached` }, false), settings.wall_clock_budget_min * 60_000);
     try {
-      if (config.reset) await resetStaging(poi.reset_hook_url);
+      if (config.reset) {
+        const hooks = [...new Set(webPois(project.pois).flatMap((poi) => poi.reset_hook_url ?? []))];
+        if (hooks.length === 0) throw new Error('This project has no reset hook to call.');
+        for (const url of hooks) await resetStaging(url);
+      }
+      // The host's preflight catches this first; a run started some other way ends here, logged, rather than half-scheduled.
+      const idle = config.personas.find((p) => assigned.get(p.id)!.length === 0);
+      if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
       for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
       await schedule();
     } catch (err) {

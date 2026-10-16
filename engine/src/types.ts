@@ -129,6 +129,7 @@ export interface Segment {
   entry: 'direct' | 'email_link' | 'shared_link';
   goal_override: string | null; // replaces the project goal for this segment
   employers?: string[]; // optional organisations to spread this segment's personas across
+  kind?: 'user' | 'buyer'; // absent: 'user'. Buyers only perceive, so by default they see text and designs, not web apps (tech.md §7)
 }
 
 export interface Audience {
@@ -158,10 +159,16 @@ export interface RunEstimate {
   unpriced: string[]; // models in the routing with no price, so the cost is a floor
 }
 
-export interface WebPoi {
+/** What every point of interest has; the type adds what its runner needs (engine/src/poi/, docs/pois.md). */
+interface PoiBase {
   id: string;
-  type: 'web';
   name: string;
+  segments: string[] | null; // the segment ids that engage with it, in any order; null: the default for each segment's kind (poi/pois.ts)
+}
+
+export interface WebPoi extends PoiBase {
+  type: 'web';
+  mode: 'full' | 'observe_only'; // observe_only: no form submission (competitor sites, tech.md §7); not enforced yet
   start_url: string; // where the login recorder opens and where logged-out personas begin
   allowed_hosts: string[]; // hosts personas may reach besides start_url's own; every other request is blocked (tech.md §9.3)
   production_domains: string[]; // never reachable, subdomains included; a run never starts against them
@@ -169,10 +176,25 @@ export interface WebPoi {
   reset_hook_url: string | null; // POSTed before a run when the user ticks it in the pre-run summary
 }
 
+/** Copy to read and rate: pasted, .md or .txt, stored in the project's assets/ folder. */
+export interface TextPoi extends PoiBase {
+  type: 'text';
+  asset: string; // an asset id (engine/src/assets.ts)
+}
+
+/** One image or an ordered sequence of frames, shown one at a time (tech.md §7). */
+export interface DesignPoi extends PoiBase {
+  type: 'design';
+  frames: { asset: string; name: string | null }[];
+}
+
+export type Poi = WebPoi | TextPoi | DesignPoi;
+export type PoiType = Poi['type'];
+
 export interface ProjectConfig {
   name: string;
   description: string; // one sentence about the product
-  poi: WebPoi;
+  pois: Poi[]; // in the order personas use them; projects and runs saved with one `poi` load as [poi] (poi/pois.ts)
   goal: string;
   role: string | null; // the login the built-in persona uses when there is no audience; segments carry their own
   audience: Audience | null; // null runs the single built-in persona, as in M0 and M1
@@ -295,6 +317,12 @@ export interface SignalBase {
   ref: string | null; // the step's target element, if any
 }
 
+/** Where a step or friction happened on a POI without pages: the frame of a design, the passage of a text. */
+export interface StepEvidence {
+  frame?: number; // design POIs: the frame's index in DesignPoi.frames
+  passage?: { start: number; end: number }; // text POIs: character offsets into the text, end exclusive
+}
+
 export interface EventPayloads {
   'run.started': { config: RunConfig };
   'run.reset_called': { url: string; status: number | null; error: string | null };
@@ -316,14 +344,14 @@ export interface EventPayloads {
     snapshot_hash: string;
     screenshot: string | null; // blob path, relative to the project folder
     duration_ms: number;
-  };
+  } & StepEvidence;
   'persona.friction_reported': {
     step_no: number;
     severity: number; // 1–4
     what: string;
     expected: string;
     where: { url: string; ref: string | null };
-  };
+  } & StepEvidence;
   'persona.opinion_changed': {
     poi_id: string;
     before: Opinion | null;
@@ -414,7 +442,7 @@ export type NewEvent = { [K in EventType]: Envelope & { type: K; payload: EventP
 export type GnomiEvent = NewEvent & { seq: number; ts: number };
 export type EventOf<K extends EventType> = Extract<GnomiEvent, { type: K }>;
 
-export interface ReportFriction {
+export type ReportFriction = {
   seq: number; // the friction event, so every finding links back to the log
   persona_id: string;
   persona_name: string;
@@ -426,7 +454,7 @@ export interface ReportFriction {
   url: string;
   quote: string; // the persona's think-aloud at that step
   screenshot: string | null;
-}
+} & StepEvidence;
 
 export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'incomplete';
 
@@ -467,7 +495,7 @@ export type Trust = 'confirmed' | 'observed' | 'reported';
 export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target';
 
 /** One member friction shown as evidence for a theme. */
-export interface ReportEvidence {
+export type ReportEvidence = {
   seq: number; // the self-report, survey or signal event
   step_seq: number | null; // the persona.step it happened at, for the inspector; null for survey answers
   persona_id: string;
@@ -481,7 +509,7 @@ export interface ReportEvidence {
   quote: string; // the persona's think-aloud at that step, or the survey's reason
   screenshot: string | null;
   signals: SignalKind[];
-}
+} & StepEvidence;
 
 /** Frictions grouped into one problem, ranked by segment-weighted affected share × severity × trust (tech.md §8.2). */
 export interface ReportTheme {
@@ -527,7 +555,7 @@ export interface Report {
   status: 'running' | 'finished' | 'stopped';
   stop_reason: string | null;
   goal: string;
-  poi: { name: string; start_url: string };
+  pois: { id: string; type: PoiType; name: string; start_url: string | null }[]; // in the project's order; start_url for web POIs only
   personas: ReportPersona[]; // in start order
   segments: ReportSegment[];
   dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values

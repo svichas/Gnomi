@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
+import { buildReport } from '../report/build.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { NewEvent, Persona, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
 import { openProject } from './sqlite.ts';
@@ -13,7 +14,7 @@ import { openProject } from './sqlite.ts';
 const project: ProjectConfig = {
   name: 'Gym',
   description: 'A demo ATS.',
-  poi: {
+  pois: [{
     id: 'poi-gym',
     type: 'web',
     name: 'Gym',
@@ -22,7 +23,9 @@ const project: ProjectConfig = {
     production_domains: ['ats.example.com'],
     not_production: false,
     reset_hook_url: null,
-  },
+    mode: 'full',
+    segments: null,
+  }],
   goal: 'Post a job for a backend engineer',
   role: 'recruiter',
   audience: null,
@@ -180,25 +183,44 @@ test('a v2 project upgrades on open with an empty population', (t) => {
   assert.equal(userVersion(dir), 4);
 });
 
-test('a project saved before M1 or M2 reads back with the defaults', (t) => {
+test('a project saved before M1, M2 or M5 reads back with the defaults and its one POI as the list', (t) => {
   const store = openProject(tempDir(t));
-  const before = {
+  const { poi, ...before } = {
     name: 'Gym',
     description: 'A demo ATS.',
     poi: { id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' },
     goal: 'Post a job for a backend engineer',
   };
-  store.saveProject(before as unknown as ProjectConfig);
+  store.saveProject({ ...before, poi } as unknown as ProjectConfig);
   const read = store.getProject();
   assert.deepEqual(read, {
     ...before,
     audience: null,
     settings: DEFAULT_SETTINGS,
     role: null,
-    poi: { ...before.poi, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ ...poi, mode: 'full', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
   });
   // Each read gets its own copy of the defaults, so a caller cannot change the shared constant.
   assert.notEqual(read?.settings, DEFAULT_SETTINGS);
+  store.close();
+});
+
+test('a run frozen before M5 lists, logs and reports with its one POI as the list', (t) => {
+  const store = openProject(tempDir(t));
+  const { pois, ...rest } = project;
+  const legacy = { ...snapshot(), project: { ...rest, poi: { ...pois[0], mode: undefined, segments: undefined } } } as unknown as Omit<RunConfig, 'run_id'>;
+  const run = store.createRun(legacy);
+  store.append({ run_id: run.run_id, round: 1, persona_id: null, poi_id: null, type: 'run.started', payload: { config: run } });
+  store.append({ run_id: run.run_id, round: 1, persona_id: null, poi_id: null, type: 'run.finished', payload: {} });
+  const expected = [{ ...pois[0], mode: 'full', segments: null }];
+  assert.deepEqual(store.listRuns()[0].config.project.pois, expected);
+  const [started] = store.events(run.run_id, { types: ['run.started'] });
+  assert.ok(started.type === 'run.started');
+  assert.deepEqual(started.payload.config.project.pois, expected);
+  assert.equal('poi' in started.payload.config.project, false);
+  const report = buildReport(store.events(run.run_id));
+  assert.deepEqual(report.pois, [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' }]);
+  assert.deepEqual(report.methods.allowed_hosts, ['localhost', 'cdn.example.com']);
   store.close();
 });
 

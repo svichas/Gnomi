@@ -16,7 +16,7 @@ export function reportToMarkdown(report: Report): string {
     '',
     `> ${report.banner}`,
     '',
-    `- Point of interest: ${report.poi.name} (${report.poi.start_url})`,
+    `- Point${report.pois.length === 1 ? '' : 's'} of interest: ${report.pois.map((poi) => (poi.start_url ? `${poi.name} (${poi.start_url})` : poi.name)).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
     '',
@@ -80,14 +80,20 @@ function themeLines(report: Report): string[] {
   return [
     '', '## Themes', '',
     'Ranked by segment-weighted affected share × median severity × trust. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.',
-    ...report.themes.flatMap((theme) => themeToMarkdown(theme)),
+    // Themes are ranked within each POI, so several POIs get a section each.
+    ...(report.pois.length > 1
+      ? report.pois.flatMap((poi) => {
+          const themes = report.themes!.filter((t) => t.poi_id === poi.id);
+          return ['', `### ${line(poi.name)}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
+        })
+      : report.themes.flatMap((theme) => themeToMarkdown(theme))),
   ];
 }
 
-function themeToMarkdown(t: ReportTheme): string[] {
+function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
   const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
   return [
-    '', `### ${t.rank}. ${line(t.title)}`, '',
+    '', `${heading} ${t.rank}. ${line(t.title)}`, '',
     line(t.description), '',
     `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
@@ -110,6 +116,8 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
     `${i + 1}. ${line(e.persona_name)} (${at}, severity ${e.severity}, ${e.trust}${signals}): ${line(e.what)}`,
     ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
     ...(e.url ? [`   - Page: ${e.url}`] : []),
+    ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
+    ...(e.passage ? [`   - Passage: characters ${e.passage.start}–${e.passage.end}`] : []),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
     `   - Event: #${e.seq}`,
   ].join('\n');

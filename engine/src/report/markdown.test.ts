@@ -11,7 +11,7 @@ const report: Report = {
   status: 'finished',
   stop_reason: null,
   goal: 'Post a job for a backend engineer',
-  poi: { name: 'Gym', start_url: 'http://localhost:3001/' },
+  pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' }],
   personas: [
     { id: 'p-1-01', name: 'Ana Ruiz', job_title: 'Recruiter', segment_id: 'seg-a', device: 'desktop', outcome: 'done', outcome_text: 'Posted the job.', steps: 2, frictions: 2 },
     { id: 'p-1-02', name: 'Ben Okoro', job_title: 'Recruiter', segment_id: 'seg-a', device: 'desktop', outcome: 'abandoned', outcome_text: 'Gave up.', steps: 1, frictions: 1 },

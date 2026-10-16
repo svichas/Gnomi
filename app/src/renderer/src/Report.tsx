@@ -244,7 +244,11 @@ function Affected({ theme }: { theme: ReportTheme }) {
 }
 
 function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportEvidence; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
-  const at = evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`;
+  const at = [
+    evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`,
+    ...(evidence.frame !== undefined ? [`frame ${evidence.frame + 1}`] : []),
+    ...(evidence.passage ? [`characters ${evidence.passage.start}–${evidence.passage.end}`] : []),
+  ].join(', ');
   const shot = evidence.screenshot && renderScreenshot(evidence.screenshot, `The page at ${at}, as ${evidence.persona_name} saw it`);
   return (
     <li className={`grid gap-3 border-t border-stone-100 pt-3 ${shot ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
@@ -264,12 +268,13 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
   );
 }
 
-function Theme({ theme, onInspect, renderScreenshot }: { theme: ReportTheme; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Theme({ theme, nested, onInspect, renderScreenshot }: { theme: ReportTheme; nested?: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const Title = nested ? 'h5' : 'h4';
   return (
     <li className="space-y-3 rounded-lg border border-stone-200 p-4">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
         <span className="text-sm font-semibold tabular-nums text-stone-500">{theme.rank}.</span>
-        <h4 className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</h4>
+        <Title className="min-w-0 flex-1 font-medium text-stone-900">{theme.title}</Title>
         <TrustBadge trust={theme.trust} />
       </div>
       <p className="text-sm text-stone-700">{theme.description}</p>
@@ -298,7 +303,14 @@ function Theme({ theme, onInspect, renderScreenshot }: { theme: ReportTheme; onI
   );
 }
 
-function Themes({ themes, onInspect, renderScreenshot }: { themes: ReportTheme[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Themes({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const list = (shown: ReportTheme[], nested?: boolean) => (
+    <ol className="space-y-4">
+      {shown.map((theme) => (
+        <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} nested={nested} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+      ))}
+    </ol>
+  );
   return (
     <section aria-labelledby="themes-title" className="space-y-3">
       <h3 id="themes-title" className="text-sm font-semibold text-stone-900">
@@ -309,12 +321,19 @@ function Themes({ themes, onInspect, renderScreenshot }: { themes: ReportTheme[]
       </p>
       {themes.length === 0 ? (
         <p className="text-sm text-stone-600">No frictions to group into themes in this run.</p>
+      ) : pois.length > 1 ? (
+        // Themes are ranked within each point of interest, so each gets its own list.
+        pois.map((poi) => {
+          const own = themes.filter((theme) => theme.poi_id === poi.id);
+          return (
+            <section key={poi.id} aria-label={`Potential frictions in ${poi.name}`} className="space-y-3">
+              <h4 className="text-sm font-medium text-stone-900">{poi.name}</h4>
+              {own.length ? list(own, true) : <p className="text-sm text-stone-600">No frictions to group into themes.</p>}
+            </section>
+          );
+        })
       ) : (
-        <ol className="space-y-4">
-          {themes.map((theme) => (
-            <Theme key={`${theme.poi_id}/${theme.id}`} theme={theme} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-          ))}
-        </ol>
+        list(themes)
       )}
     </section>
   );
@@ -681,6 +700,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas in the findings below. Summary totals and grouped results describe the full run.</p>}
       <div>
         <p className="text-sm text-stone-600">The goal: {report.goal}</p>
+        {report.pois.length > 1 && <p className="text-sm text-stone-600">Points of interest, in the order personas used them: {report.pois.map((poi) => poi.name).join(', ')}</p>}
         {report.status === 'stopped' && report.stop_reason && <p className="mt-2 text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
       </div>
       {filtered && <h3 className="text-sm font-semibold text-stone-900">Full-run totals</h3>}
@@ -695,7 +715,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
       <SegmentTable report={report} />
       {dimension && <DimensionTable dimension={dimension} selected={filter.value} />}
-      {report.themes && <Themes themes={report.themes} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
+      {report.themes && <Themes themes={report.themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.sentiment && report.sentiment.length > 0 && <Sentiment rows={report.sentiment} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
       {report.spread && <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />}

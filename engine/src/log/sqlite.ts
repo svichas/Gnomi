@@ -2,9 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { withPois, type SavedProject } from '../poi/pois.ts';
 import type { ProjectStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { EventType, GnomiEvent, Persona, ProjectConfig, RunConfig, RunStatus, SetupCall } from '../types.ts';
+import type { EventType, GnomiEvent, Persona, RunConfig, RunStatus, SetupCall } from '../types.ts';
 
 const SCHEMA_VERSION = 4;
 const draftKey = (key: string) => createHash('sha256').update(key).digest('hex');
@@ -114,8 +115,15 @@ type SessionDbRow = {
 
 type PersonaDbRow = { profile_json: string };
 
+/** A run snapshot of any version, read with the current project shape (one `poi` before M5). */
+function withRunPois<T extends { project?: SavedProject }>(config: T): T {
+  return config.project ? { ...config, project: withPois(config.project) } : config;
+}
+
 function toEvent({ payload_json, ...event }: EventRow): GnomiEvent {
-  return { ...event, payload: JSON.parse(payload_json) } as GnomiEvent;
+  const payload = JSON.parse(payload_json);
+  if (event.type === 'run.started') payload.config = withRunPois(payload.config);
+  return { ...event, payload } as GnomiEvent;
 }
 
 export function openProject(dir: string): ProjectStore {
@@ -184,20 +192,13 @@ export function openProject(dir: string): ProjectStore {
     getProject() {
       const row = selectProject.get() as { config_json: string } | undefined;
       if (!row) return null;
-      const saved = JSON.parse(row.config_json) as ProjectConfig;
-      // Configs saved before M2 have no audience or settings; before M1, no role or POI fields.
+      const saved = JSON.parse(row.config_json) as SavedProject;
+      // Configs saved before M5 have one `poi`; before M2, no audience or settings; before M1, no role or POI containment fields.
       return {
-        ...saved,
+        ...withPois(saved),
         audience: saved.audience ?? null,
         settings: saved.settings ?? structuredClone(DEFAULT_SETTINGS),
         role: saved.role ?? null,
-        poi: {
-          ...saved.poi,
-          allowed_hosts: saved.poi.allowed_hosts ?? [],
-          production_domains: saved.poi.production_domains ?? [],
-          not_production: saved.poi.not_production ?? false,
-          reset_hook_url: saved.poi.reset_hook_url ?? null,
-        },
       };
     },
     saveProject(project) {
@@ -223,7 +224,7 @@ export function openProject(dir: string): ProjectStore {
         cost_usd: row.cost_usd,
         started_at: row.started_at,
         ended_at: row.ended_at,
-        config: JSON.parse(row.snapshot_json) as RunConfig,
+        config: withRunPois(JSON.parse(row.snapshot_json)) as RunConfig,
       }));
     },
     append(event) {
