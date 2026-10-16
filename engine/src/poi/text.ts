@@ -5,7 +5,8 @@ import type { EpisodeDeps, EpisodeEnd } from '../agent/loop.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import type { Action, EventPayloads, EventType, NewEvent, Opinion, TextPoi } from '../types.ts';
 import type { PoiRunner } from './index.ts';
-import { READ_TEXT, readParts, readSchema, readSystemPrompt, type ReadMemory, type ReadOutput } from './text-prompt.ts';
+import type { HeardPost } from '../agent/prompt.ts';
+import { READ_TEXT, readParts, readSchema, readShared, readSystemPrompt, type ReadMemory, type ReadOutput } from './text-prompt.ts';
 
 /** About 12k tokens at four characters a token (tech.md §7, §10.4): a longer text is read in parts of at most this many characters. */
 export const PART_CHARS = 48_000;
@@ -70,6 +71,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
   const system = readSystemPrompt(persona, config.project, segment, poi, deps.budget);
   const memory: ReadMemory[] = [];
   let opinion: Opinion | null = null;
+  let heard: HeardPost[] = []; // the last feed, for the next part only
   let index = 0;
   const last = stepsBefore + deps.budget;
   for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
@@ -77,14 +79,17 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
       const next = await deps.slice.next();
       if (!next) return 'stopped';
       opinion = next.opinion;
+      heard = next.heard ?? [];
     }
     if (!deps.beginStep()) return 'stopped';
     const started = Date.now();
     const part = parts[index];
     let output: ReadOutput;
     try {
-      const user = readParts({ persona, text, part, index, parts: parts.length, memory, opinion });
-      const { object } = await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: READ_TEXT, system, user, schema: readSchema(index < parts.length - 1), signal });
+      const shared = readShared({ poi, text, part, index, parts: parts.length });
+      const user = readParts({ persona, text, part, index, parts: parts.length, memory, opinion, heard });
+      heard = [];
+      const { object } = await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: READ_TEXT, shared, system, user, schema: readSchema(index < parts.length - 1), signal });
       output = object;
     } catch (err) {
       if (signal.aborted) return 'stopped';

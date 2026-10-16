@@ -1,4 +1,5 @@
 import type { EpisodeEnd } from '../agent/loop.ts';
+import type { HeardPost } from '../agent/prompt.ts';
 import { assetMime, assetPath, readAsset } from '../assets.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
@@ -56,6 +57,7 @@ export const design: PoiRunner<DesignPoi> = {
     const last = Math.min(budget, poi.frames.length);
     let said: DesignOutput | null = null; // the persona's answer on the screen before
     let opinion: Opinion | null = null;
+    let heard: HeardPost[] = []; // the last feed, for the next screen only
 
     if (signal.aborted) return 'stopped';
     emit('persona.episode_started', { poi_id, device: persona.device, start_url: `asset:${poi.frames[0].asset}`, ...personaEnvironment(persona) });
@@ -65,6 +67,7 @@ export const design: PoiRunner<DesignPoi> = {
         const next = await deps.slice.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
+        heard = next.heard ?? [];
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
@@ -72,7 +75,8 @@ export const design: PoiRunner<DesignPoi> = {
       try {
         const [previous, current] = await Promise.all([index > 0 ? modelFrame(blobs, poi, index - 1) : null, modelFrame(blobs, poi, index)]);
         if (signal.aborted) return 'stopped';
-        const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion });
+        const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion, heard });
+        heard = [];
         output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', system, user, schema: designSchema, signal })).object;
       } catch (err) {
         if (signal.aborted) return 'stopped';

@@ -60,6 +60,7 @@ export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
   return {
     model: req.model,
     max_output_tokens: req.max_output_tokens,
+    ...(req.shared !== undefined && { shared: req.shared }),
     system: req.system,
     user: user.map((p) => (p.type === 'image' ? { type: 'image', mediaType: p.mediaType, bytes: p.data.byteLength } : p)),
   };
@@ -186,7 +187,11 @@ export function createGateway({
       // DeepSeek supports JSON mode, not native schemas. Keep Output.object's validation and error metadata.
       if (provider === 'deepseek') output.responseFormat = Output.json().responseFormat;
       // Local models and DeepSeek also get the schema in the prompt, which grounds their answers (tech.md §10.6).
-      const system = chatCompletions(provider) ? `${req.system}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : req.system;
+      // Chat Completions endpoints get one system message (some local chat templates refuse a second), with the shared prefix first.
+      const shared = chatCompletions(provider) ? undefined : req.shared;
+      const own = chatCompletions(provider) && req.shared ? `${req.shared}\n\n${req.system}` : req.system;
+      const system = chatCompletions(provider) ? `${own}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : own;
+      const cached = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
       // DeepSeek's chat models read text only (tech.md §10.2): a DeepSeek navigator runs without the screenshots.
       const parts = provider === 'deepseek' ? req.user.filter((p) => p.type === 'text') : req.user;
 
@@ -197,7 +202,7 @@ export function createGateway({
       for (;;) {
         req.signal?.throwIfAborted();
         const queued = clock.now();
-        await bucket(provider)?.acquire(estimateTokens(system, user), req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
+        await bucket(provider)?.acquire(estimateTokens(`${shared ?? ''}${system}`, user), req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
         req.signal?.throwIfAborted();
         const started = clock.now();
         let object: T | undefined;
@@ -210,8 +215,11 @@ export function createGateway({
         try {
           const result = await generateText({
             model,
-            // The stable prefix carries the cache breakpoint; everything volatile is in the user turn.
-            instructions: { role: 'system', content: system, providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } },
+            // The stable prefix carries the cache breakpoint; everything volatile is in the user turn. A prefix shared across
+            // personas comes first with a breakpoint of its own (OpenAI and Google cache the longest common prefix by themselves).
+            instructions: shared
+              ? [{ role: 'system', content: shared, providerOptions: cached }, { role: 'system', content: system, providerOptions: cached }]
+              : { role: 'system', content: system, providerOptions: cached },
             messages: [
               {
                 role: 'user',
@@ -262,7 +270,7 @@ export function createGateway({
         spent += cost_usd;
         const attempt: LlmAttempt = {
           payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
-          transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
+          transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, shared, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;
         // Setup calls have no run ledger; observers still receive their attempt below.

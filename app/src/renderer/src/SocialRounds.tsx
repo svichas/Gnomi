@@ -40,7 +40,7 @@ export function SocialRounds({ settings, onSettings, people }: { settings: RunSe
           </ol>
           <p className="social-rounds-note">
             {people > 1
-              ? `Each persona uses the product, then visits the feed, ${rounds} ${rounds === 1 ? 'time' : 'times'}. Most stay silent. That adds up to ${(rounds * people).toLocaleString()} short extra model calls for ${people} personas.`
+              ? `Each persona uses the product, then visits the feed, ${rounds} ${rounds === 1 ? 'time' : 'times'}. Most stay silent, and a persona with nothing new to read or tell skips its visit. That is at most ${(rounds * people).toLocaleString()} short extra model calls for ${people} personas.`
               : 'With one persona there is nobody to talk to. Add more people for the feed to matter.'}
           </p>
         </div>
