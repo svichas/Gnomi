@@ -991,7 +991,7 @@ const rounds = (n: number): Partial<RunSettings> => ({ social: true, rounds: n }
 const swarmAnswers = (social: (req: LlmRequest<unknown>) => unknown = () => QUIET, done: (req: LlmRequest<unknown>) => boolean = () => false): Respond =>
   (req) => (req.role === 'socialiser' ? social(req) : done(req) ? step('done', null, 'Done') : forever());
 
-test('social runs finish as soon as every persona gives up, including a single persona and queued personas', async () => {
+test('social runs finish once every persona has given up and told the feed, including a single persona and queued personas', async () => {
   for (const count of [1, 4]) {
     const r = begin((req) => req.role === 'socialiser' ? QUIET : step('abandon', null, 'I cannot join'), {
       personas: swarm(count), project: SWARM, settings: { ...rounds(5), concurrency: 1 },
@@ -1002,7 +1002,8 @@ test('social runs finish as soon as every persona gives up, including a single p
     assert.equal(of(r.events, 'persona.survey').length, count);
     assert.deepEqual(of(r.events, 'run.round_started').map((e) => e.round), [1]);
     assert.deepEqual(of(r.events, 'run.round_ended').map((e) => e.round), [1]);
-    assert.equal(of(r.events, 'social.feed_viewed').length, 0, 'no social work remains once everyone has stopped using the product');
+    // Each tells the feed once how it went; nobody posted, so round 2 has nothing new and is never started. Alone, nobody listens.
+    assert.deepEqual(of(r.events, 'social.feed_viewed').map((e) => e.round), count === 1 ? [] : [1, 1, 1, 1]);
     assert.ok(r.pages.every((p) => p.closed));
     assert.equal(r.types().at(-1), 'report.generated');
   }
@@ -1030,7 +1031,9 @@ test('rounds interleave usage and social phases while any episode remains, and e
     const nextStep = Math.min(...of(r.events, 'persona.step').filter((e) => e.round === round + 1).map((e) => e.seq));
     assert.ok(lastStep < Math.min(...feeds) && Math.max(...feeds) < nextStep, `round ${round}`);
   }
-  assert.deepEqual(calls.filter(([role]) => role === 'socialiser').map(([, round]) => round), [1, 1, 1, 2, 2, 2], 'one call per persona in each social phase; none after the last episode ends');
+  // p-1 finished in round 2 and read the feed after; in round 3 it has nothing new to read or tell, so only the two still browsing talk.
+  assert.deepEqual(calls.filter(([role]) => role === 'socialiser').map(([, round]) => round), [1, 1, 1, 2, 2, 2]);
+  assert.deepEqual(of(r.events, 'social.feed_viewed').filter((e) => e.round === 3).map((e) => e.persona_id), [], 'the last round is for reading: what is written there has no later round to be read in');
   assert.ok(calls.filter(([role]) => role === 'navigator').every(([, round], i, all) => i === 0 || round >= all[i - 1][1]));
 });
 
@@ -1046,12 +1049,12 @@ test('slices continue one episode: one page per persona kept open between rounds
   assert.deepEqual(of(r.events, 'signal.budget_exceeded').map((e) => e.round), [3, 3]);
 });
 
-test('the survey runs when the episode ends, and the persona keeps reading feeds while others still browse', async () => {
+test('the survey runs when the episode ends, and the persona reads feeds after that only while there is something new', async () => {
   const r = begin(swarmAnswers(() => QUIET, (req) => req.persona_id === 'p-1' && stepOf(req) === 6), { personas: swarm(3), project: SWARM, settings: rounds(4) });
   await r.run.done;
   assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.round]).sort(), [['p-0', 4], ['p-1', 2], ['p-2', 4]]);
-  assert.deepEqual(of(r.events, 'social.feed_viewed').filter((e) => e.persona_id === 'p-1').map((e) => e.round), [1, 2, 3]);
-  const ended = r.transcripts.filter((t) => t.persona_id === 'p-1' && /Round 3 of 4/.test(t.request_json));
+  assert.deepEqual(of(r.events, 'social.feed_viewed').filter((e) => e.persona_id === 'p-1').map((e) => e.round), [1, 2], 'a quiet swarm gives it nothing new in round 3');
+  const ended = r.transcripts.filter((t) => t.persona_id === 'p-1' && /Round 2 of 4/.test(t.request_json));
   assert.match(ended[0]?.request_json ?? '', /session with Gym ATS is over after 6 steps: Persona finished the task/);
 });
 
@@ -1110,6 +1113,11 @@ test('an opinion the feed changes cites its posts, an unchanged one records noth
   assert.deepEqual(influenceEdges(r.events).map((e) => [e.from, e.to, e.post_id, e.round, e.delta]), [['p-0', 'p-1', 'r1-p-0', 2, -2]]);
   const ninth = r.transcripts.find((t) => t.persona_id === 'p-1' && /Step 9 of 12/.test(t.request_json));
   assert.match(ninth?.request_json ?? '', /Current opinion.*Others lose their drafts/, 'the next slice starts from the opinion the feed left');
+  // Slices of three steps: round 2's feed, where p-1 read the post, comes before step 7.
+  const prompt = (n: number) => r.transcripts.find((t) => t.persona_id === 'p-1' && new RegExp(`Step ${n} of 12`).test(t.request_json))?.request_json ?? '';
+  assert.match(prompt(7), /Since Persona last looked, Persona read this in a feed where other people talk about it[^\n]*\\n- Persona p-0 about Gym ATS: \\"Lost my draft twice today\.\\"/, 'the next slice starts with what it read there');
+  assert.doesNotMatch(prompt(4), /Since Persona last looked/, 'an empty feed adds nothing');
+  assert.doesNotMatch(prompt(8), /Since Persona last looked/, 'only the first step after the feed hears it');
 });
 
 test('two invalid socialiser answers leave the persona silent for that phase, and the run goes on', async () => {
@@ -1123,6 +1131,7 @@ test('two invalid socialiser answers leave the persona silent for that phase, an
   const attempts = of(r.events, 'llm.call').filter((e) => e.persona_id === 'p-0' && e.payload.role === 'socialiser').map((e) => e.payload.status);
   assert.deepEqual(attempts, ['invalid_output', 'invalid_output', 'ok']);
   assert.deepEqual(of(r.events, 'social.feed_viewed').filter((e) => e.persona_id === 'p-0').map((e) => e.payload.post_ids), [[], ['r1-p-1']]);
+  assert.equal(of(r.events, 'social.feed_viewed').filter((e) => e.round === 3).length, 0, 'nothing new to read in the last round');
 });
 
 test('the cost cap reached in a social phase stops the run there: no later round or step, and every page closes', async () => {
@@ -1143,7 +1152,7 @@ test('the cost cap reached in a social phase stops the run there: no later round
 
 test('social rounds off, absent from an older project, or with only the built-in persona: the run is exactly as before M4', async () => {
   const runs = [
-    begin(swarmAnswers(), { personas: swarm(3), project: SWARM }),
+    begin(swarmAnswers(), { personas: swarm(3), project: SWARM, settings: { social: false } }), // on by default since the audience step shows it
     begin(swarmAnswers(), { personas: swarm(3), project: SWARM, settings: { social: false, rounds: 3 } }),
     begin(swarmAnswers(), { personas: swarm(3), project: SWARM, settings: { social: undefined, rounds: undefined } }),
   ];
@@ -1197,15 +1206,17 @@ test('each persona uses its eligible POIs in order, with step numbers running on
 
 test('social slices count a persona’s steps across its POIs', async () => {
   const r = begin(swarmAnswers(), {
-    personas: [persona('b', { segment_id: 'seg-b', patience: 1 })], // 12 steps per web POI, 24 in all, two rounds of 12
+    // 12 steps per web POI, 24 in all, two rounds of 12; a second persona gives the first someone to talk to.
+    personas: [persona('b', { segment_id: 'seg-b', patience: 1 }), persona('c', { segment_id: 'seg-b', patience: 1 })],
     project: twoPois,
     settings: rounds(2),
   });
   await r.run.done;
-  const steps = of(r.events, 'persona.step');
+  const mine = <T extends { persona_id: string | null }>(events: T[]) => events.filter((e) => e.persona_id === 'b');
+  const steps = mine(of(r.events, 'persona.step'));
   assert.deepEqual(steps.map((e) => [e.payload.step_no, e.poi_id, e.round]), steps.map((_, i) => [i + 1, i < 12 ? 'poi-home' : 'poi-locale', i < 12 ? 1 : 2]));
-  assert.deepEqual(of(r.events, 'signal.budget_exceeded').map((e) => [e.poi_id, e.payload.step_no, e.payload.budget]), [['poi-home', 12, 12], ['poi-locale', 24, 12]]);
-  assert.deepEqual(of(r.events, 'persona.survey').map((e) => e.payload.poi_id), ['poi-home', 'poi-locale']);
+  assert.deepEqual(mine(of(r.events, 'signal.budget_exceeded')).map((e) => [e.poi_id, e.payload.step_no, e.payload.budget]), [['poi-home', 12, 12], ['poi-locale', 24, 12]]);
+  assert.deepEqual(mine(of(r.events, 'persona.survey')).map((e) => e.payload.poi_id), ['poi-home', 'poi-locale']);
   const feed = r.transcripts.find((t) => t.persona_id === 'b' && t.request_json.includes('about_poi_id'))!;
   assert.match(feed.request_json, /about_poi_id: \\"poi-home\\" when the post or reply is about Home, \\"poi-locale\\" when the post or reply is about Locale/);
 });

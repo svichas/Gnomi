@@ -13,7 +13,8 @@ import { reportToMarkdown } from '../report/markdown.ts';
 import { createRecorder, newRunConfig, startRun } from '../run.ts';
 import type { BrowserPool, LlmRequest, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, EventOf, EventType, GnomiEvent, Persona, ProjectConfig, Segment } from '../types.ts';
+import { influenceEdges } from '../social/influence.ts';
+import type { Audience, EventOf, EventType, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment } from '../types.ts';
 import { locatePassage, PART_CHARS, textParts } from './text.ts';
 
 test('a long text is read in parts that end at a paragraph break and cover it exactly', () => {
@@ -62,7 +63,7 @@ const said = (req: LlmRequest<unknown>) => req.user.map((part) => (part.type ===
 const of = <K extends EventType>(events: GnomiEvent[], type: K) => events.filter((e): e is EventOf<K> => e.type === type);
 
 /** One scripted run of a project whose only POI is a text; the browser pool refuses, because no text POI may open a page. */
-async function runText(opts: { file?: string; text?: string; personas: Persona[]; audience: Audience | null; navigator: Responder }) {
+async function runText(opts: { file?: string; text?: string; personas: Persona[]; audience: Audience | null; navigator: Responder; socialiser?: Responder; settings?: Partial<RunSettings> }) {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-text-'));
   const store = openProject(dir);
   try {
@@ -70,12 +71,13 @@ async function runText(opts: { file?: string; text?: string; personas: Persona[]
     const asset = opts.file ? await importLocalFile(blobs, opts.file) : await importText(blobs, opts.text!);
     const text = new TextDecoder().decode(await blobs.get(`assets/${asset.id}`));
     const project: ProjectConfig = {
-      name: 'Plotline', description: 'Project planning for teams', goal: 'Choose a plan for a team of 20 that needs single sign-on', role: null, audience: opts.audience, settings: DEFAULT_SETTINGS,
+      name: 'Plotline', description: 'Project planning for teams', goal: 'Choose a plan for a team of 20 that needs single sign-on', role: null, audience: opts.audience,
+      settings: { ...DEFAULT_SETTINGS, social: false, ...opts.settings }, // social rounds have a test of their own below
       pois: [{ id: 'pricing', type: 'text', name: 'Pricing page', segments: null, asset: asset.id }],
     };
     store.saveProject(project);
     const record = createRecorder(store, () => {});
-    const llm = createScriptedGateway({ navigator: opts.navigator, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+    const llm = createScriptedGateway({ navigator: opts.navigator, judge: DEMO_JUDGE, author: DEMO_AUTHOR, ...(opts.socialiser && { socialiser: opts.socialiser }) }, record);
     const browsers = { newPage: () => Promise.reject(new Error('a text POI opened a browser page')) } as unknown as BrowserPool;
     const config = store.createRun(newRunConfig(project, { personas: opts.personas, sessions: [], reset: false }));
     const report = await startRun(config, { store, blobs, browsers, llm, record, sessions: null }).done;
@@ -101,7 +103,10 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
       return { objections: ['Not sure single sign-on comes with Team'], unclear: ['Whether SSO is in Team or only in Business'], likes: yes ? ['Clear per-person price'] : [], price: yes ? 'fair' : 'unclear', sentiment: yes ? 1 : -1, confidence: 0.6, would_buy: yes, reason: yes ? 'Team looks right if SSO is in it.' : 'The page contradicts itself on SSO.' };
     }
     assert.equal(req.purpose, 'read_text');
-    assert.match(said(req), /^Part 1 of 1\. This is the end of the text\.[\s\S]*<text start="0">\n# Plotline pricing/, 'the whole copy in one part');
+    assert.match(said(req), /^Part 1 of 1\. This is the end of the text\./);
+    assert.match(req.shared ?? '', /^A text people are reading: "Pricing page"\. Part 1 of 1\.[\s\S]*<text start="0">\n# Plotline pricing/, 'the whole copy in one part, ahead of the persona');
+    assert.doesNotMatch(req.shared ?? '', /Persona/, 'nothing about the persona in the shared part, so every reader reuses one cached copy');
+    assert.doesNotMatch(said(req), /<text/);
     assert.match(req.system, req.persona_id!.startsWith('b') ? /weighing whether to buy Plotline/ : /^(?![\s\S]*weighing whether to buy)/);
     return {
       thought: 'Team says SSO, but the FAQ says Business. Which is it?',
@@ -192,9 +197,54 @@ test('a long text takes one step per part: an impatient reader runs out before t
   };
   const { report, events } = await runText({ text: long, personas: [persona('quick', null, { patience: 1 }), persona('slow', null, { patience: 5 })], audience: null, navigator });
   assert.deepEqual(report.personas.map((p) => [p.id, p.outcome, p.steps]), [['quick', 'budget_exceeded', 1], ['slow', 'done', 3]]);
-  assert.match(reads.slow[1], /^Part 2 of 3, characters \d+–\d+ of \d+\.\n\nWhat Persona took from the earlier parts:\n1\. Persona thought: "Read part 1\."/);
+  assert.match(reads.slow[1], /^Part 2 of 3, characters \d+–\d+ of \d+\. The part is the text quoted above\.\n\nWhat Persona took from the earlier parts:\n1\. Persona thought: "Read part 1\."/);
   assert.match(reads.slow[2], /^Part 3 of 3, [^\n]*This is the end of the text\./);
   const steps = of(events, 'persona.step').filter((e) => e.persona_id === 'slow');
   assert.deepEqual(steps.map((e) => e.payload.action.type), ['read', 'read', 'done']);
   assert.deepEqual(steps.map((e) => e.payload.passage), textParts(long));
+});
+
+test('a text read in one sitting is still discussed: the swarm talks while there is something new, about the passages it quotes', async () => {
+  const pricing = readFileSync(gymAssets({ defects: 'D28' }).copy.pricing, 'utf8');
+  const team = pricing.indexOf('Single sign-on (SAML SSO)');
+  const soured = { sentiment: -2, confidence: 0.7, likes: [], frictions: ['SSO may not be in Team after all'] };
+  const shared = new Set<string>();
+  const navigator: Responder = (req) => {
+    if (req.purpose === 'survey') return DEMO_SURVEY;
+    if (req.purpose === 'buyer_survey') return { objections: [], unclear: [], likes: [], price: 'fair', sentiment: 0, confidence: 0.5, would_buy: true, reason: 'Fine.' };
+    shared.add(req.shared ?? '');
+    return {
+      thought: 'Team lists SSO.', feeling: 0,
+      confusions: req.persona_id === 'b1' ? [{ quote: 'Single sign-on (SAML SSO)', start: team, end: team + 25, what: 'SSO is listed twice', expected: 'One plan with SSO', severity: 3 }] : [],
+      opinion: { sentiment: 1, confidence: 0.5, likes: ['Clear prices'], frictions: [] },
+      action: { type: 'done', text: 'Pick Team' },
+    };
+  };
+  const prompts: LlmRequest<unknown>[] = [];
+  const quiet = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
+  const socialiser: Responder = (req) => {
+    prompts.push(req);
+    const feed = [...said(req).matchAll(/^\[post (\S+)\]/gm)].map((m) => m[1]);
+    if (req.persona_id === 'b1' && req.round === 1) return { ...quiet, action: 'post', text: 'Team says SSO, the FAQ says Business only.', about_poi_id: 'pricing' };
+    if (req.persona_id === 'u1' && feed.includes('r1-b1')) return { ...quiet, action: 'react', post_id: 'r1-b1', reaction: 'agree', opinion_updates: [{ poi_id: 'pricing', ...soured, post_ids: ['r1-b1'] }] };
+    return quiet;
+  };
+  const { report, events } = await runText({ file: gymAssets({ defects: 'D28' }).copy.pricing, personas: [...buyers, ...users], audience, navigator, socialiser, settings: { social: true, rounds: 5 } });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.equal(shared.size, 1, 'every reader sent the same shared part');
+
+  // Everyone read in round 1; the swarm then talked in round 1 and, about b1's post, in round 2; round 3 had nothing new.
+  assert.deepEqual(of(events, 'run.round_started').map((e) => e.round), [1, 2]);
+  assert.deepEqual(prompts.map((r) => r.round), [1, 1, 1, 1, 1, 2, 2, 2, 2], 'each persona once in round 1, then only the four who had a new post to read');
+  assert.ok(!prompts.some((r) => r.round === 2 && r.persona_id === 'b1'), 'nothing new for the author');
+  assert.deepEqual(influenceEdges(events).map((e) => [e.from, e.to, e.poi_id, e.delta]), [['b1', 'u1', 'pricing', -3]]);
+
+  // The prompts say how each persona met the text, which passage its confusion was about, and what each post is about.
+  const b1 = prompts.find((r) => r.persona_id === 'b1')!;
+  assert.match(b1.system, /^This is Persona b1\. Persona is weighing whether to buy Plotline at work: reading "Pricing page"\./);
+  assert.match(said(b1), /- "SSO is listed twice", about the passage "Single sign-on \(SAML SSO\)"/);
+  assert.match(said(b1), /What Persona was thinking most recently:\n- "Team lists SSO\."/);
+  const u1 = prompts.find((r) => r.persona_id === 'u1' && r.round === 2)!;
+  assert.match(u1.system, /^This is Persona u1\. Persona is trying Plotline at work: reading "Pricing page"\./);
+  assert.match(said(u1), /\[post r1-b1\] Persona b1 \(about Pricing page\): "Team says SSO, the FAQ says Business only\."/);
 });

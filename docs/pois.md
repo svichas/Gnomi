@@ -18,7 +18,8 @@ How a project holds several points of interest (POIs) and how a new POI type plu
 
 - **Step numbers run on across a persona's POIs.** The second POI's first step is `stepsBefore + 1`. This keeps `(persona, step_no)` unique for the report, screenshots (`runs/<run>/shots/<persona>-<step_no>.jpg`) and signals. The prompt still shows "Step 1 of N" for each POI.
 - **Budgets** come from the runner: `poiBudget(persona, poi)` is the runner's `budget(patienceBudget, poi)`, at least 1.
-- **Social rounds** slice a persona's steps across its POIs: the slice is `ceil(sum of its POI budgets / rounds)`, and `deps.slice.next()` is due before every global step number `k·slice + 1`.
+- **Social rounds** slice a persona's steps across its POIs: the slice is `ceil(sum of its POI budgets / rounds)`, and `deps.slice.next()` is due before every global step number `k·slice + 1`. It resolves with the opinion the social phase left and `heard`, the posts the persona read there, which a runner shows in its next step only (`heardLines` in `agent/prompt.ts`). A text read in one sitting ends in round 1; the rounds after it are discussion only, while anyone has something new to read (tech.md §6.4).
+- **Shared prefix.** A text POI's part goes in the request's `shared` field, ahead of the persona's system prompt with a cache breakpoint of its own, so every persona reading that part reuses one cached copy (Chat Completions endpoints get it at the start of their one system message).
 - Report themes are grouped and ranked per `poi_id` (after a `report.started` event listing them, every POI's judge call runs at once, then its author calls in parallel batches of three themes, merged into one `report.suggestions`). The report lists `pois`; the report view, the HTML and Markdown exports, the inspector, the feed and the review screen name every POI.
 
 ## Engine registry: `engine/src/poi/`

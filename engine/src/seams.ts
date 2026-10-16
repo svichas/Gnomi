@@ -163,6 +163,11 @@ export interface LlmRequest<T> {
   persona_id: string | null;
   round: number;
   purpose?: string; // a label for logs and scripted responders, e.g. 'propose_audience'
+  /**
+   * A prefix many personas send unchanged, such as the text of a text POI: it goes before `system` with a cache breakpoint of its
+   * own, so every persona reading it shares one cached copy instead of each paying for it in full.
+   */
+  shared?: string;
   system: string; // stable prefix, marked as a cache breakpoint
   user: UserPart[]; // volatile suffix
   schema: ZodType<T>;

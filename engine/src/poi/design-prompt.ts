@@ -1,7 +1,7 @@
 // The static-design prompt of tech.md §7: the expectation loop. Each screen asks what the persona sees, what they would do and
 // what they expect next; the next screen asks whether it matched. Same third-person persona and question form as the web steps.
 import { z } from 'zod';
-import { ACCESSIBILITY, languageName, PATIENCE, profileBlock, wordsFor } from '../agent/prompt.ts';
+import { ACCESSIBILITY, heardLines, languageName, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { english, ENGLISH } from '../llm/english.ts';
@@ -86,6 +86,7 @@ export function designParts(opts: {
   current: UserPart;
   previous: { image: UserPart; said: DesignOutput | null } | null; // said: null when that screen's answer was unusable
   opinion: Opinion | null;
+  heard?: HeardPost[]; // what the persona read in the feed just before this screen
 }): UserPart[] {
   const { persona, poi, index, previous } = opts;
   const p = persona.name.split(' ')[0];
@@ -112,6 +113,7 @@ export function designParts(opts: {
       type: 'text',
       text: [
         ...(opts.opinion ? [`Current opinion (self-reported, from earlier screens): ${JSON.stringify(opts.opinion)}`] : []),
+        ...heardLines(p, opts.heard),
         previous
           ? `Is this what ${p} expected? What does ${p} see now, what would ${p} do here, and what does ${p} expect next?`
           : `What does ${p} see, what would ${p} do here, and what does ${p} expect to happen next?`,

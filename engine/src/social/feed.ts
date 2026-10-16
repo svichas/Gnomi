@@ -24,7 +24,10 @@ export interface Board {
 export function readBoard(events: GnomiEvent[]): Board {
   const posts = new Map<string, FeedPost>();
   const seen = new Map<string, Set<string>>();
-  const saw = (persona_id: string, ids: string[]) => seen.set(persona_id, new Set([...(seen.get(persona_id) ?? []), ...ids]));
+  const saw = (persona_id: string, ids: string[]) => {
+    const set = seen.get(persona_id) ?? seen.set(persona_id, new Set()).get(persona_id)!;
+    for (const id of ids) set.add(id);
+  };
   for (const e of events) {
     if (!e.persona_id) continue;
     if (e.type === 'social.post') {
@@ -44,15 +47,19 @@ const tokens = (post: FeedPost) => Math.ceil((post.text.length + 100) / 4);
 
 /**
  * What one persona reads in a social phase (tech.md §6.6): unseen posts by the personas it follows, most reactions first (newest
- * first on ties), then two trending posts from anyone, at most 12 posts and about 2,500 tokens. Never its own posts. Pure.
+ * first on ties), then two trending posts from anyone, at most 12 posts and about 2,500 tokens. Never its own posts. Given `pois`,
+ * the persona's own points of interest, posts about them (or about nothing in particular) rank before posts about the others,
+ * so a buyer reading the pricing copy hears about the pricing before the app it will never open. Pure.
  */
-export function selectFeed(board: Board, persona_id: string, follows: string[]): FeedPost[] {
+export function selectFeed(board: Board, persona_id: string, follows: string[], pois?: ReadonlySet<string>): FeedPost[] {
   const seen = board.seen.get(persona_id) ?? new Set();
   const followed = new Set(follows);
-  const rank = (posts: FeedPost[]) => [...posts].sort((a, b) => b.agree + b.disagree - (a.agree + a.disagree) || b.seq - a.seq);
+  const relevant = (p: FeedPost) => (!pois || p.about_poi_id === null || pois.has(p.about_poi_id) ? 1 : 0);
+  const rank = (posts: FeedPost[]) => [...posts].sort((a, b) => relevant(b) - relevant(a) || b.agree + b.disagree - (a.agree + a.disagree) || b.seq - a.seq);
   const unseen = board.posts.filter((p) => p.author !== persona_id && !seen.has(p.post_id));
   const mine = rank(unseen.filter((p) => followed.has(p.author))).slice(0, FEED_POSTS - TRENDING);
-  const trending = rank(unseen.filter((p) => !mine.includes(p))).slice(0, TRENDING);
+  const picked = new Set(mine);
+  const trending = rank(unseen.filter((p) => !picked.has(p))).slice(0, TRENDING);
   const feed: FeedPost[] = [];
   let used = 0;
   for (const post of [...mine, ...trending]) {

@@ -120,6 +120,21 @@ function stubFetch(...responses: Array<() => Response | Promise<Response>>) {
 
 afterEach(() => mock.restoreAll());
 
+test('a shared prefix goes first with a cache breakpoint of its own; a chat-completions endpoint gets it in its one system message', async () => {
+  const sent = stubFetch(() => anthropicMessage(OK), () => chatCompletion(OK));
+  const { gateway, calls } = setup();
+  await gateway.call(request({ shared: '<text>The pricing copy.</text>' }));
+  assert.deepEqual(sent.bodies[0].system, [
+    { type: 'text', text: '<text>The pricing copy.</text>', cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: 'This is Priya.', cache_control: { type: 'ephemeral' } },
+  ]);
+  assert.match(calls[0].transcript, /"shared":"<text>The pricing copy\.<\/text>"/);
+  await gateway.call(request({ model: { provider: 'openai_compatible', model: 'gemma4:e4b' }, shared: '<text>The pricing copy.</text>', user: [{ type: 'text', text: 'Go on.' }] }));
+  const system = sent.bodies[1].messages.filter((m: { role: string }) => m.role === 'system');
+  assert.equal(system.length, 1);
+  assert.match(system[0].content, /^<text>The pricing copy\.<\/text>\n\nThis is Priya\.\n\nAnswer with one JSON object/);
+});
+
 test('one call: cached system prefix, screenshot, low effort, native schema, cost and raw usage from the answer', async () => {
   const sent = stubFetch(() => anthropicMessage(OK));
   const { gateway, calls } = setup();

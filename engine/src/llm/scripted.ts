@@ -57,7 +57,8 @@ export const DEMO_BUYER_SURVEY = {
  * offsets, so the passage points into the text; the last part ends the read.
  */
 export const DEMO_READ: Responder = (req) => {
-  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  // The part itself is the shared prefix (poi/text-prompt.ts readShared).
+  const text = [req.shared ?? '', ...req.user.map((p) => (p.type === 'text' ? p.text : ''))].join('\n');
   const part = /<text start="(\d+)">\n([\s\S]*)\n<\/text>/.exec(text);
   const offset = Number(part?.[1] ?? 0);
   const quote = (part?.[2] ?? '').split('\n').find((line) => line.trim())?.trim().slice(0, 200) ?? '';

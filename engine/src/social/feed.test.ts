@@ -37,3 +37,11 @@ test('the feed holds at most 12 posts and about 2,500 tokens', () => {
   const mixed = [post('a', 'big', 'x'.repeat(10_000)), post('a', 'small')];
   assert.deepEqual(ids(mixed, 'me', ['a']), ['small'], 'a post too big for the feed is left out, not the ones after it');
 });
+
+test('given the persona’s own POIs, posts about them or about nothing in particular come before posts about the others', () => {
+  const about = (author: string, post_id: string, poi: string | null) => event('social.post', author, { post_id, parent_id: null, text: `Post ${post_id}`, about_poi_id: poi });
+  const events = [about('a', 'app', 'poi-app'), about('a', 'price', 'poi-price'), about('a', 'general', null), react('c', 'app'), react('d', 'app')];
+  const board = readBoard(events);
+  assert.deepEqual(selectFeed(board, 'me', ['a'], new Set(['poi-price'])).map((p) => p.post_id), ['general', 'price', 'app'], 'still shown, just later');
+  assert.deepEqual(selectFeed(board, 'me', ['a']).map((p) => p.post_id), ['app', 'general', 'price'], 'without POIs, reactions rank as before');
+});

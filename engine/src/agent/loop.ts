@@ -5,7 +5,7 @@ import { DEFAULT_SIGNALS, detectSignals, isSubmit, type Step } from '../signals/
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
-import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
+import { stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
 
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'stopped';
 
@@ -43,10 +43,10 @@ export interface EpisodeDeps {
   round: () => number;
   /**
    * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, page and memory intact, for
-   * its next usage slice. next() resolves with the persona's opinion of this POI as the social phase left it, or null when the run
-   * ended in between. Absent: one straight run.
+   * its next usage slice. next() resolves with the persona's opinion of this POI as the social phase left it and the posts it read
+   * there (`heard`, for the next step's prompt), or null when the run ended in between. Absent: one straight run.
    */
-  slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null } | null> };
+  slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
 }
 
 /**
@@ -68,6 +68,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const history: Step[] = []; // every recorded step, for the signal detectors
   const thresholds = config.signals ?? DEFAULT_SIGNALS;
   let opinion: Opinion | null = null;
+  let heard: HeardPost[] = []; // the last feed, for the next step only
   let failKey = '';
   let failStreak = 0;
 
@@ -117,7 +118,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const shot = await page.screenshot();
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no - stepsBefore, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no - stepsBefore, stepBudget: step_budget, memory, opinion, heard, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    heard = [];
     if (signal.aborted) return null;
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), system, user, schema, signal });
@@ -143,6 +145,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         const next = await deps.slice.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
+        heard = next.heard ?? [];
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
