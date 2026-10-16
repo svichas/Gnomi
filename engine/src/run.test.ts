@@ -509,7 +509,7 @@ for (const purpose of ['survey', 'report_themes', 'report_suggestions']) {
       },
     });
     const report = await r.run.done;
-    assert.deepEqual(deadlines, [purpose === 'survey' ? 30_000 : 60_000]);
+    assert.deepEqual(deadlines, [purpose === 'survey' ? 30_000 : 180_000]);
     assert.equal(aborted, true, 'the deadline cancels the stalled provider request');
     assert.equal(report.status, 'finished');
     assert.equal(report.personas[0].outcome, 'abandoned');

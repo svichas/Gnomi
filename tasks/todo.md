@@ -65,7 +65,7 @@
 - [x] Add an opt-in acceptance runner with retained evidence and honest criterion statuses.
 - [x] Run focused regressions, full checks and Electron verification; review integrated changes.
 - [x] Record measured acceptance and remaining live-provider limitations in the roadmap.
-- [ ] Run live-provider measurements and review German thoughts/profile adherence once local credentials and a recorded-spend allowance are available. Frozen-fixture browsing does not close live persona-writer quality acceptance.
+- [ ] Run live-provider measurements and review German thoughts/profile adherence once local credentials and a recorded-spend allowance are available. Frozen-fixture browsing does not close live persona-writer quality acceptance. A reduced-scale DeepSeek run is in [the 16 October results](#low-cost-live-acceptance-on-deepseek--16-october-2026); the 50-person time, cost and concurrency targets are still unmeasured.
 
 ## Third-batch results — 15 October 2026
 
@@ -85,7 +85,7 @@
 - [x] Themes: trust, grouping, judge merge, scoring, evidence, suggestions, what went well.
 - [x] Export: HTML, JSON, PDF, Markdown.
 - [x] Integrate, full checks, Electron verification, roadmap status.
-- [ ] Live Gym v2 acceptance (recall, precision, stability, control run) once credentials and a spend allowance exist.
+- [ ] Live Gym v2 acceptance (recall, precision, stability, control run) once credentials and a spend allowance exist. Reduced-scale DeepSeek run on 16 October; full scale still open.
 
 ## M3 first-batch results — 15 October 2026
 
@@ -102,7 +102,7 @@
 - [x] Opinion spread report and homogeneity.
 - [x] M4 acceptance runner (scripted rehearsal).
 - [x] Integrate, full checks, Electron verification, roadmap status.
-- [ ] Live M4 acceptance (influence audit, spread over five seeds, graph frame rate) once credentials and a spend allowance exist.
+- [ ] Live M4 acceptance (influence audit, spread over five seeds, graph frame rate) once credentials and a spend allowance exist. Reduced-scale DeepSeek run on 16 October; full scale still open.
 
 ## M4 first-batch results — 15 October 2026
 
@@ -110,3 +110,15 @@
 - Integration fixes: the M4 rehearsal now enables social rounds and scripts the socialiser, judge and author; the swarm smoke stage now checks the real scripted swarm run (enabled scrubber, follows in the inspector) instead of assuming no rounds; a readonly fixture type in a scripted-provider test.
 - `npm test`: 518 passing (400 engine, 62 Gym, 56 app), no failures or skips. Typecheck, app build, main smoke (20 stages), project, profile and budget smokes passed. `perf:swarm`: 120 fps, p95 frame 9.3 ms, 200 personas, 10 POIs, 5,125 connections.
 - Scripted M4 rehearsal: replay PASS; spread and influence audit NOT_RUN (scripted opinions never move); frame rate measured separately. All model calls were scripted.
+
+## Low-cost live acceptance on DeepSeek — 16 October 2026
+
+First live-provider runs, kept small to limit spend: DeepSeek routing (`deepseek-flash` navigator and socialiser, `deepseek-v4-pro` judge and author; text only, no screenshots), a subset of the frozen fixture, fewer seeds. **$0.80 recorded in total** across five runs, including two aborted ones; no attempt lacked usage except the timed-out judge below. Results are in `acceptance-results/2026-10-16-deepseek/` (ignored, local). Every review below was done by Claude (AI), not a human; the verdicts are recorded in each sheet with that label.
+
+Runner additions: `--provider deepseek`, `--personas N` (a per-segment subset of the same fixture), `--seeds N`, and an `--m3` mode (Gym v2 seeds plus a control build, and a theme-mapping sheet). Criteria set for fifty people report their figures as `NOT_RUN` with a "Reduced scale" note.
+
+- **M2, 4 personas plus the German probe ($0.08, 2.3 min).** Execution, population and replay PASS; all four episodes ended (2 reached their goal, 1 hit its patience-based 12-step budget, 1 abandoned at the Candidates placeholder). German browser PASS. German thoughts: the probe and the German recruiter thought entirely in German (AI review: pass). Profile adherence: 4 of 4 consistent with their frozen traits (AI review). Time, cost and 12 browsers: not measurable at 4 personas.
+- **M3, 4 personas × 2 seeds plus control ($0.27).** First attempt stopped: the judge call took over the 60 s report timeout merging 48 groups, came back without usage, and the allowance halted the suite. Raised the judge and author timeout to 180 s; the rerun finished all three runs. AI theme mapping against the catalogue: precision 0.71 and 0.67 (target 0.7), high-severity recall 0.4 per seed (0.5 of the eight high defects a text-only model can see; found D03, D04, D13, D18, plus D12), top-ten overlap between the two seeds 0.83 (target 0.6). Evidence links PASS. **Control run FAIL:** 2 confirmed and 1 reported themes on the no-defect build. One confirmed theme was an unchecked checkbox the text-only navigator could not read (the snapshot marks only `[checked]`; the navigator prompt now says markers appear only when true). The other is the Candidates placeholder: the fixture's coordination goal ("review the candidate list") cannot be done in any Gym build, so it will keep producing a control-run theme until the goal or the Gym changes.
+- **M4, 8 personas × 2 seeds with social rounds ($0.35, 9.8 min).** Scrubber replay PASS on both seeds. Influence audit: 6 edges sampled (the audit needs 50), 6 of 6 plausible (AI review), all in the injected complaint's thread. Spread reported FAIL (2/5 reach on both seeds), but at 8 personas everyone reaches everyone, so segment sizes decide it; the runner now reports spread as `NOT_RUN` below fifty personas.
+
+Still open for full acceptance: the 50-person M2 targets, M3 at 50 personas and three seeds with a human mapping, M4 spread over five seeds and a 50-edge audit, and visual-only defects with a vision-capable navigator.

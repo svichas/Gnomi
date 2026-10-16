@@ -7,6 +7,7 @@ import type { Audience, InjectedPost, Persona, ProjectConfig, Segment } from '..
 export const FIXTURE_VERSION = 1;
 export const SEED = 20261015;
 export const M4_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // run seeds: the population stays frozen, the follow graph varies
+export const M3_SEEDS = [SEED, SEED + 1, SEED + 2]; // the roadmap's three seeds for theme stability
 export interface Fixture { project: ProjectConfig; personas: Persona[] }
 const FIRST = ['Alex', 'Robin', 'Sam', 'Jordan', 'Kai', 'Noor', 'Rowan', 'Ari', 'Quinn', 'Sasha'];
 const LAST = ['Meyer', 'Wilson', 'Fischer', 'Reed', 'Schneider'];
@@ -51,6 +52,16 @@ export function fixture(url: string): Fixture {
     };
   }));
   return { project, personas };
+}
+
+/** The first personas of each segment, apportioned by share with one at least, so a cheaper run keeps every segment and the same people. */
+export function subset(base: Fixture, total: number): Fixture {
+  if (total >= base.personas.length) return base;
+  const segments = base.project.audience!.segments;
+  if (total < segments.length) throw new Error(`--personas must be at least ${segments.length}, one per segment.`);
+  const counts = apportion(segments.map((segment) => segment.share), total, 1);
+  const personas = segments.flatMap((segment, i) => base.personas.filter((persona) => persona.segment_id === segment.id).slice(0, counts[i]));
+  return { project: { ...base.project, audience: { ...base.project.audience!, persona_count: total } }, personas };
 }
 
 export function germanProbe(base: Fixture): Fixture {

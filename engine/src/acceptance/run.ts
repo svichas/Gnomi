@@ -4,7 +4,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import { arch, cpus, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
+import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
 import { createGateway } from '../llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_SCRIPT, DEMO_SOCIALISER, DEMO_SURVEY } from '../llm/scripted.ts';
@@ -14,9 +14,10 @@ import { buildReport } from '../report/build.ts';
 import { reportToMarkdown } from '../report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '../run.ts';
 import type { BrowserPool, LlmGateway, Recorder, Responder } from '../seams.ts';
-import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId } from '../types.ts';
-import { assess, BILLING_CAVEAT, createAllowance, executionCriterion, observeAttempt, validateOptions, type Criterion, type Facts, type Options, type Status } from './checks.ts';
-import { complaint, fixture, FIXTURE_VERSION, germanProbe, M4_SEEDS, SEED, type Fixture } from './fixture.ts';
+import { PROVIDER_DEFAULTS } from '../settings.ts';
+import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report } from '../types.ts';
+import { assess, BILLING_CAVEAT, createAllowance, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, validateOptions, type Criterion, type Facts, type Options, type Status } from './checks.ts';
+import { complaint, fixture, FIXTURE_VERSION, germanProbe, M3_SEEDS, M4_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
 const json = (file: string, value: unknown) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -85,7 +86,7 @@ function reviewSheet(dir: string, id: string, data: Fixture, events: GnomiEvent[
 /** Explicit live mode is the only path that constructs a paid gateway; every call is checked and counted against the shared allowance. */
 function guardedGateway(options: Options, allowance: Allowance, env: Record<string, string | undefined>, dir: string, record: Recorder, scripted: Partial<Record<LlmRole, Responder>>, throttle: (provider: ProviderId) => void): LlmGateway {
   const actual = options.mode === 'live'
-    ? createGateway({ secrets: { get: (name) => name === 'anthropic_api_key' ? env.ANTHROPIC_API_KEY!.trim() : null }, localBaseUrl: null, record, onThrottle: throttle })
+    ? createGateway({ secrets: { get: (name) => name === `${options.provider}_api_key` ? env[KEY_ENV[options.provider]]!.trim() : null }, localBaseUrl: null, record, onThrottle: throttle })
     : createScriptedGateway(scripted, record);
   return {
     call(req) {
@@ -95,6 +96,12 @@ function guardedGateway(options: Options, allowance: Allowance, env: Record<stri
       } });
     },
   };
+}
+
+/** The frozen fixture at the requested size, routed to the chosen provider's defaults. */
+function prepare(base: Fixture, options: Options): Fixture {
+  const data = subset(base, options.personas);
+  return { ...data, project: { ...data.project, settings: { ...data.project.settings, routing: structuredClone(PROVIDER_DEFAULTS[options.provider]) } } };
 }
 
 /** Source, lockfile, price-table and runtime identity for a manifest; the price table is copied beside it. */
@@ -160,7 +167,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
     reviewSheet(dir, id, data, events, options.mode === 'live');
     const echo = browserEvidence.some((snapshot) => /Accept-Language: de-DE(?:,|;|["\n])/.test(snapshot.text) && /Browser locale: de-DE/.test(snapshot.text) && /Browser languages: de-DE, en/.test(snapshot.text) && /Browser timezone: Europe\/Berlin/.test(snapshot.text));
     const thoughts = events.filter((event) => event.type === 'persona.step' && event.payload.result.error !== 'invalid_output' && event.payload.thought.trim());
-    const criteria: Criterion[] = id === 'population50' ? assess(options.mode, facts) : [
+    const criteria: Criterion[] = id === 'population50' ? assess(options.mode, facts, data.personas.length) : [
       executionCriterion(facts, 1),
       { id: 'german_browser', status: echo ? 'PASS' : 'FAIL', live_required: false, detail: 'Actual Gym snapshot must show de-DE locale, German-first HTTP/navigator languages and Europe/Berlin timezone.' },
       { id: 'native_german_thoughts', status: options.mode !== 'live' ? 'NOT_RUN' : thoughts.length ? 'REVIEW_NEEDED' : 'FAIL', live_required: true, detail: `${thoughts.length} nonempty valid thoughts; review.md links their source evidence.` },
@@ -190,10 +197,10 @@ export async function runAcceptance(options: Options, env: Record<string, string
   try {
     gym = await startGym({ port: 0, defects: 'v1' }); // Gym v1, the M2 set; keep the real 4-second D09 delay
     const fixtureStart = performance.now();
-    const base = fixture(gym.url);
+    const base = prepare(fixture(gym.url), options);
     fixture_preparation_ms = Math.round(performance.now() - fixtureStart);
     json(join(options.out, 'manifest.json'), {
-      version: 1, mode: options.mode, scope: SCOPE, seed: SEED, fixture_version: FIXTURE_VERSION,
+      version: 1, mode: options.mode, scope: SCOPE, seed: SEED, fixture_version: FIXTURE_VERSION, provider: options.provider, personas: base.personas.length,
       fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
@@ -224,10 +231,11 @@ export async function runAcceptance(options: Options, env: Record<string, string
   return result;
 }
 
-interface SeedRun extends SeedLog { responses: Map<number, unknown>; spread: Spread | null; run_status: string | null; cost_usd: number | null }
+interface SeedRun extends SeedLog { responses: Map<number, unknown>; spread: Spread | null; run_status: string | null; cost_usd: number | null; report?: Report }
 
-async function runSeed(seed: number, data: Fixture, options: Options, pool: BrowserPool, allowance: Allowance, env: Record<string, string | undefined>): Promise<SeedRun> {
-  const dir = join(options.out, `seed-${seed}`);
+/** One seeded run with its evidence in `<out>/<name>`; social runs get the injected complaint and their spread (M4), others only the report (M3). */
+async function runSeed(name: string, seed: number, data: Fixture, options: Options, pool: BrowserPool, allowance: Allowance, env: Record<string, string | undefined>, social: boolean): Promise<SeedRun> {
+  const dir = join(options.out, name);
   mkdirSync(dir);
   const projectDir = join(dir, 'project');
   const store = openProject(projectDir);
@@ -239,11 +247,11 @@ async function runSeed(seed: number, data: Fixture, options: Options, pool: Brow
     const scripted = { navigator: scriptedNavigator(), socialiser: DEMO_SOCIALISER, judge: DEMO_JUDGE, author: DEMO_AUTHOR };
     const llm = guardedGateway(options, allowance, env, dir, record, scripted, (provider) => run?.throttle(provider));
     const project = structuredClone(data.project);
-    project.settings.social = true; // the shared fixture leaves social rounds off for M2
+    project.settings.social = social; // the shared fixture leaves social rounds off for M2
     if (options.mode === 'live') project.settings.cost_budget_usd = Math.min(project.settings.cost_budget_usd, options.allowance_usd! - allowance.spent());
     store.saveProject(project);
     store.replacePersonas(data.personas);
-    const config = store.createRun({ ...newRunConfig(project, { personas: data.personas, sessions: [], reset: false }), seed, pause_timeout_ms: 0, injected_posts: [complaint(data)] });
+    const config = store.createRun({ ...newRunConfig(project, { personas: data.personas, sessions: [], reset: false }), seed, pause_timeout_ms: 0, injected_posts: social ? [complaint(data)] : [] });
     run = startRun(config, { store, blobs: createFsBlobStore(projectDir), browsers: pool, llm, record, sessions: null });
     const report = await run.done;
     const reopened = openProject(projectDir); // every M4 check reads the log alone
@@ -253,12 +261,13 @@ async function runSeed(seed: number, data: Fixture, options: Options, pool: Brow
       events = reopened.events(config.run_id);
       transcripts = reopened.transcripts(config.run_id).map((entry) => ({ seq: entry.seq, request: JSON.parse(entry.request_json), response: JSON.parse(entry.response_json) }));
     } finally { reopened.close(); }
-    const spread = spreadOf(events);
+    const spread = social ? spreadOf(events) : null;
     json(join(dir, 'events.json'), events);
     json(join(dir, 'transcripts.json'), transcripts);
-    json(join(dir, 'spread.json'), spread);
+    if (social) json(join(dir, 'spread.json'), spread);
+    json(join(dir, 'report.json'), report);
     writeFileSync(join(dir, 'report.md'), reportToMarkdown(report));
-    return { seed, events, responses: new Map(transcripts.map((entry) => [entry.seq, entry.response])), spread, run_status: report.status, cost_usd: report.cost_usd };
+    return { seed, events, responses: new Map(transcripts.map((entry) => [entry.seq, entry.response])), spread, run_status: report.status, cost_usd: report.cost_usd, report };
   } finally {
     allowance.signal.removeEventListener('abort', cancel);
     store.close();
@@ -299,19 +308,19 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
   const started = Date.now();
   try {
     gym = await startGym({ port: 0, defects: 'v1' });
-    const base = fixture(gym.url);
+    const base = prepare(fixture(gym.url), options);
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
-      version: 1, suite: 'm4', mode: options.mode, scope: M4_SCOPE, seeds: M4_SEEDS, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
+      version: 1, suite: 'm4', mode: options.mode, scope: M4_SCOPE, seeds: M4_SEEDS.slice(0, options.seeds ?? M4_SEEDS.length), provider: options.provider, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
       fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: GYM_V1_DEFECT_IDS, candidates_delay_ms: 4000, login: false }, ...source, started_at: new Date(started).toISOString(),
     });
     pool = await launchBrowserPool();
-    for (const seed of M4_SEEDS) {
+    for (const seed of M4_SEEDS.slice(0, options.seeds ?? M4_SEEDS.length)) { // seeds not run stay missing, so spread cannot pass on fewer than four
       if (allowance.signal.aborted) break; // later seeds stay missing: no new provider calls
-      runs.push(await runSeed(seed, base, options, pool, allowance, env));
+      runs.push(await runSeed(`seed-${seed}`, seed, base, options, pool, allowance, env, true));
     }
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
@@ -322,11 +331,110 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
   const logs = M4_SEEDS.map((seed): SeedRun => runs.find((run) => run.seed === seed) ?? { seed, events: [], responses: new Map(), spread: null, run_status: null, cost_usd: null });
   const items = auditItems(logs);
   auditSheet(options.out, items, options.mode === 'live');
-  const criteria = [spreadCriterion(options.mode, logs.map((run) => run.spread)), auditCriterion(items.length), replayCriterion(logs), FRAME_RATE];
+  const spread = spreadCriterion(options.mode, logs.map((run) => run.spread));
+  // A small population saturates: with 6–12 follows each, everyone reaches everyone, so segment sizes decide the comparison.
+  const scaled = options.personas < FULL_POPULATION ? { ...spread, status: 'NOT_RUN' as const, detail: `Reduced scale (${options.personas} of ${FULL_POPULATION} personas): ${spread.detail}` } : spread;
+  const criteria = [scaled, auditCriterion(items.length), replayCriterion(logs), FRAME_RATE];
   const status: Status = error || criteria.some((check) => check.status === 'FAIL') ? 'FAIL' : options.mode === 'scripted' ? 'NOT_RUN' : 'REVIEW_NEEDED';
   const result = {
     status, mode: options.mode, scope: M4_SCOPE, criteria, error, setup_cost_usd: 0,
     seeds: logs.map(({ seed, run_status, cost_usd, spread }) => ({ seed, run_status, cost_usd, evidence: run_status ? `seed-${seed}` : null, spread: spread && { same: spread.same, cross: spread.cross, same_population: spread.same_population, cross_population: spread.cross_population } })),
+    recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
+    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
+  };
+  json(join(options.out, 'acceptance.json'), result);
+  return result;
+}
+
+const M3_SCOPE = 'Friction pipeline: the frozen population on Gym v2 (all 25 defects) over three run seeds, then the same population on the no-defect control build. Themes are mapped to catalogued defects by a reviewer.';
+const TOP = 20; // precision is measured over a report's top 20 themes
+
+/** Each run's top themes with an empty `defect` for a reviewer to map to the catalogue (or leave null for a false positive). */
+function themeSheet(out: string, runs: { name: string; report?: Report }[], live: boolean) {
+  const items = runs.flatMap(({ name, report }) => (report?.themes ?? []).filter((theme) => theme.rank <= TOP).map((theme) => ({
+    run: name, rank: theme.rank, theme_id: theme.id, title: theme.title, description: theme.description, trust: theme.trust, severity: theme.severity,
+    personas: theme.personas, pages: theme.pages, elements: theme.elements, seqs: theme.seqs.length,
+    evidence: theme.evidence.map((e) => ({ seq: e.seq, persona: e.persona_name, step_no: e.step_no, url: e.url, what: e.what, quote: e.quote })),
+    defect: null as string | null, notes: '',
+  })));
+  json(join(out, 'theme-mapping.json'), { status: live ? 'REVIEW_NEEDED' : 'NOT_RUN', catalogue: 'defects.yaml', items });
+  const lines = [
+    '# Theme mapping', '',
+    live ? 'Review required. Map each theme to the catalogued defect it describes, or leave `defect` null when it describes none.' : 'Scripted rehearsal. This checks evidence delivery only; scripted frictions do not come from the defects.', '',
+    'A theme is a true positive when it maps to a catalogued defect that is switched on (all 25 on Gym v2, none on the control build). A defect is found when a theme with trust confirmed or observed maps to it. Record the mapping in [theme-mapping.json](theme-mapping.json) against [the catalogue](defects.yaml).', '',
+    ...items.flatMap((item) => [
+      `## ${item.run}, rank ${item.rank}: ${item.title}`, '',
+      `Trust ${item.trust}, severity ${item.severity}, ${item.personas} personas, pages ${item.pages.join(', ') || 'none'}. ${item.description}`, '',
+      ...item.evidence.map((e) => `- Event ${e.seq} (${e.persona}, step ${e.step_no ?? 'survey'}, ${e.url ?? 'no url'}): ${e.what}. "${e.quote.replaceAll('\n', ' ')}"`), '',
+    ]),
+  ];
+  writeFileSync(join(out, 'theme-mapping.md'), `${lines.join('\n')}\n`);
+}
+
+/** M3 mode: seeded Gym v2 runs and a control run with the M2 guards; recall, precision and stability need the reviewed theme mapping. */
+export async function runM3Acceptance(options: Options, env: Record<string, string | undefined> = process.env) {
+  validateOptions(options, env);
+  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
+  mkdirSync(dirname(options.out), { recursive: true });
+  mkdirSync(options.out);
+  const source = provenance(options.out);
+  copyFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), join(options.out, 'defects.yaml'));
+  const allowance = createAllowance(options.allowance_usd ?? Infinity);
+  const seeds = M3_SEEDS.slice(0, options.seeds ?? M3_SEEDS.length);
+  const runs: { name: string; run?: SeedRun }[] = [...seeds.map((seed) => ({ name: `seed-${seed}` })), { name: 'control' }];
+  let error: string | null = null;
+  let pool: BrowserPool | undefined;
+  const gyms: Awaited<ReturnType<typeof startGym>>[] = [];
+  const started = Date.now();
+  try {
+    const [defects, control] = [await startGym({ port: 0, defects: 'all' }), await startGym({ port: 0, defects: 'none' })];
+    gyms.push(defects, control);
+    const base = prepare(fixture(defects.url), options);
+    base.project.poi.name = 'Gym v2';
+    const controlBase = { ...base, project: { ...base.project, poi: { ...base.project.poi, name: 'Gym control', start_url: `${control.url}/` } } };
+    json(join(options.out, 'fixture.json'), base);
+    json(join(options.out, 'manifest.json'), {
+      version: 1, suite: 'm3', mode: options.mode, scope: M3_SCOPE, seeds, control_seed: SEED, provider: options.provider, personas: base.personas.length, fixture_version: FIXTURE_VERSION,
+      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
+      recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
+      gym: { defects: DEFECT_IDS, control: [], catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
+    });
+    pool = await launchBrowserPool();
+    for (const entry of runs) {
+      if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
+      const control = entry.name === 'control';
+      entry.run = await runSeed(entry.name, control ? SEED : Number(entry.name.slice(5)), control ? controlBase : base, options, pool, allowance, env, false);
+    }
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  } finally {
+    await pool?.close().catch(() => {});
+    for (const gym of gyms) await gym.close();
+  }
+  const live = options.mode === 'live';
+  themeSheet(options.out, runs.map(({ name, run }) => ({ name, report: run?.report })), live);
+  const finished = runs.filter((entry) => entry.run?.report?.status === 'finished');
+  const control = runs.at(-1)!.run?.report;
+  const controlThemes = control?.status === 'finished' ? control.themes ?? [] : null;
+  const counts = controlThemes && { confirmed: controlThemes.filter((t) => t.trust === 'confirmed').length, reported: controlThemes.filter((t) => t.trust === 'reported').length };
+  const unlinked = finished.flatMap((entry) => (entry.run!.report!.themes ?? []).filter((theme) => !theme.seqs.length || !theme.seqs.every((seq) => entry.run!.events.some((event) => event.seq === seq))).map((theme) => `${entry.name}#${theme.id}`));
+  const full = options.personas >= 50 && seeds.length === M3_SEEDS.length;
+  const review = (id: string, detail: string): Criterion => ({ id, live_required: true, status: live && full && finished.length === runs.length ? 'REVIEW_NEEDED' : 'NOT_RUN', detail: `${full ? '' : `Reduced scale (${options.personas} of 50 personas, ${seeds.length} of ${M3_SEEDS.length} seeds). `}${detail}` });
+  const criteria: Criterion[] = [
+    review('recall_high', 'High-severity defects found (a confirmed or observed theme maps to them) ÷ high-severity defects on; needs ≥ 0.6. Computed from theme-mapping.json.'),
+    review('precision', `True-positive themes ÷ all themes in each Gym v2 report's top ${TOP}; needs ≥ 0.7. Computed from theme-mapping.json.`),
+    review('stability', 'Jaccard overlap of the mapped top-ten theme sets across the three seeds; needs ≥ 0.6.'),
+    { id: 'control_run', live_required: true, status: !live || !counts ? 'NOT_RUN' : counts.confirmed === 0 && counts.reported <= 2 ? (full ? 'PASS' : 'NOT_RUN') : 'FAIL',
+      detail: counts ? `${full ? '' : `Reduced scale (${options.personas} of 50 personas). `}Control build: ${counts.confirmed} confirmed and ${counts.reported} reported themes of ${controlThemes!.length}; needs no confirmed and at most two reported.` : 'The control run did not finish.' },
+    { id: 'evidence_links', live_required: false, status: finished.length === 0 ? 'NOT_RUN' : unlinked.length ? 'FAIL' : 'PASS', detail: unlinked.length ? `Themes without log events: ${unlinked.join(', ')}.` : `Every theme in ${finished.length} finished runs links to events in its log.` },
+    { id: 'export_size', live_required: true, status: 'NOT_RUN', detail: 'The HTML export is rendered by the app; measure it by exporting a seed\'s report from its project folder.' },
+  ];
+  const status: Status = error || criteria.some((check) => check.status === 'FAIL') ? 'FAIL' : live ? 'REVIEW_NEEDED' : 'NOT_RUN';
+  const result = {
+    status, mode: options.mode, scope: M3_SCOPE, criteria, error, setup_cost_usd: 0,
+    runs: runs.map(({ name, run }) => ({ name, run_status: run?.run_status ?? null, cost_usd: run?.cost_usd ?? null, themes: run?.report?.themes?.length ?? null, evidence: run ? name : null })),
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
     allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,

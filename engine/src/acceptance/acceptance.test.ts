@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fixture, germanProbe } from './fixture.ts';
+import { fixture, germanProbe, subset } from './fixture.ts';
 import { assess, createAllowance, executionCriterion, observeAttempt, parseOptions, validateOptions } from './checks.ts';
 import type { LlmAttempt } from '../seams.ts';
 
@@ -45,6 +45,33 @@ test('scripted measurements cannot pass live acceptance and missing usage preven
   assert.equal(stopped.find((c) => c.id === 'population')?.status, 'NOT_RUN');
   assert.equal(executionCriterion({ ...facts, population: 1, terminal: 1, run_status: 'stopped' }, 1).status, 'FAIL', 'a locale echo before a later run failure is insufficient');
   assert.equal(executionCriterion({ ...facts, population: 1, terminal: 1 }, 1).status, 'PASS');
+});
+
+test('a provider reads its own key, and the size options are bounded', () => {
+  const options = parseOptions(['--live', '--allowance-usd', '1', '--provider', 'deepseek', '--personas', '6', '--seeds', '2', '--m3']);
+  assert.deepEqual([options.provider, options.personas, options.seeds, options.m3], ['deepseek', 6, 2, true]);
+  assert.equal(parseOptions([]).personas, 50);
+  assert.doesNotThrow(() => validateOptions(options, { DEEPSEEK_API_KEY: 'fixture-key' }));
+  assert.throws(() => validateOptions(options, { ANTHROPIC_API_KEY: 'fixture-key' }), /DEEPSEEK_API_KEY/);
+  assert.throws(() => parseOptions(['--provider', 'other']), /--provider/);
+  assert.throws(() => parseOptions(['--personas', '0']), /--personas/);
+  assert.throws(() => parseOptions(['--seeds', '6']), /--seeds/);
+  assert.throws(() => parseOptions(['--m3', '--m4']), /one of/);
+});
+
+test('a smaller run keeps every segment and the same people, and leaves the fifty-person targets unmeasured', () => {
+  const base = fixture('http://localhost:4317');
+  const small = subset(base, 6);
+  assert.equal(small.personas.length, 6);
+  assert.deepEqual(new Set(small.personas.map((p) => p.segment_id)), new Set(base.project.audience!.segments.map((s) => s.id)));
+  for (const persona of small.personas) assert.deepEqual(persona, base.personas.find((p) => p.id === persona.id));
+  assert.equal(subset(base, 50), base);
+  assert.throws(() => subset(base, 3), /at least 4/);
+  const facts = { population: 6, terminal: 6, goal_completed: 2, blocked: 0, run_status: 'finished', duration_ms: 1000, cost_usd: 0.1, unknown_usage: 0, peak_contexts: 6, replay_equal: true };
+  const live = assess('live', facts, 6);
+  assert.equal(live.find((c) => c.id === 'population')?.status, 'PASS');
+  assert.equal(live.find((c) => c.id === 'execution')?.status, 'PASS');
+  for (const id of ['duration', 'recorded_cost', 'concurrency']) assert.match(live.find((c) => c.id === id)!.detail, /^Reduced scale/), assert.equal(live.find((c) => c.id === id)?.status, 'NOT_RUN');
 });
 
 const attempt = (cost_usd: number, usage_reported = true) => ({ payload: { cost_usd, usage_reported }, transcript: { request: {}, response: {} } }) as LlmAttempt;
