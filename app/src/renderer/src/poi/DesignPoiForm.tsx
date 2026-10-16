@@ -3,6 +3,7 @@ import type { DesignPoi } from '@gnomi/engine/types.ts';
 import { call, errorText } from '../engine.ts';
 import { Button, Field, inputClass, Note, Screenshot } from '../ui.tsx';
 import { FRAME_TYPES, moveFrame } from './design.ts';
+import { Icon } from '../Icon.tsx';
 import type { PoiFormProps } from './index.ts';
 
 /** The frames of a design in the order someone would see them: add images (pick or drop), name the steps, reorder, remove. */
@@ -13,7 +14,7 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
   const setFrames = (change: (frames: DesignPoi['frames']) => DesignPoi['frames']) => onChange((was) => ({ ...was, frames: change(was.frames) }));
 
   async function add(files: File[]) {
-    if (files.length === 0) return;
+    if (adding || files.length === 0) return;
     setAdding(true);
     setProblem(null);
     const added: DesignPoi['frames'] = [];
@@ -39,8 +40,7 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
       }}
     >
       <p className="text-sm text-stone-600">
-        Screens in the order someone would see them, as PNG, JPEG or WebP. Personas look at one at a time, say what they would do and what they expect next,
-        then see the next one. Drop images here or choose them.
+        Add screens in the order someone would see them. Personas tell you what they would do and what they expect to happen next.
       </p>
       {draft.frames.length > 0 && (
         <ol aria-label="Frames" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -70,7 +70,9 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
         </ol>
       )}
       <input ref={picker} type="file" accept={FRAME_TYPES} multiple hidden aria-label="Frame images" onChange={(e) => void add([...(e.target.files ?? [])])} />
-      <Button small loading={adding} onClick={() => picker.current?.click()}>Add frames</Button>
+      <button type="button" className="poi-upload" disabled={adding} aria-busy={adding || undefined} onClick={() => picker.current?.click()}>
+        <Icon name="image" size={24} /><strong>{adding ? 'Adding your screens…' : draft.frames.length ? 'Add more screens' : 'Add your first screens'}</strong><small>Drop images here, or click to browse</small><small>PNG, JPEG, or WebP · Multiple files welcome</small>
+      </button>
       {problem && <Note tone="error">{problem}</Note>}
     </div>
   );

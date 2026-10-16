@@ -80,7 +80,7 @@ export function Project(props: {
         </div>
       </Card>
 
-      <PoiList pois={form.pois} onChange={(pois) => set('pois', pois)} segments={audience?.segments ?? []} sessions={sessions} />
+      <PoiList pois={form.pois} onChange={(change) => onForm((was) => ({ ...was, pois: change(was.pois) }))} segments={audience?.segments ?? []} sessions={sessions} />
 
       {/* Logins are recorded on, and used by, your own web apps only: a competitor's site is browsed logged out. */}
       {form.pois.some((poi) => poi.type === 'web' && poi.mode === 'full') && <details className="disclosure">

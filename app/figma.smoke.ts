@@ -127,6 +127,8 @@ try {
   await dialog.waitFor({ state: 'hidden' });
   const first = page.getByRole('listitem', { name: 'Acme checkout' });
   await first.waitFor();
+  await page.waitForFunction(() => document.activeElement === document.querySelector('.poi-item[data-expanded="true"] input'));
+  assert.ok(await first.getByLabel('Design name').evaluate((el) => el === document.activeElement), 'focus moves from the closed dialog to the imported design');
   console.log('ok    50 frames listed and previewed, frames chosen and ordered, a frame that fails to export blocks nothing it should not');
 
   // 4. "Add the ones that worked" adds a second design.
