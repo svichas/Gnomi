@@ -5,7 +5,7 @@ import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
 import { PersonaHeader, ProfileFields, personaLabel } from './ProfileFields.tsx';
 import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
-import { Bars, Card, Field, inputClass, Note, primaryButton, secondaryButton } from './ui.tsx';
+import { Bars, Button, Card, Field, inputClass, Note } from './ui.tsx';
 
 const ACCESSIBILITY: Record<Persona['accessibility_needs'], string> = {
   none: 'None',
@@ -85,18 +85,17 @@ function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: b
             </Field>
           ))}
           <div className="flex gap-3">
-            <button
-              type="button"
+            <Button
               disabled={busy || stale}
               onClick={() => { if (!stale) void onEdit(draft).then((saved) => saved && setDraft(null)); }}
               aria-label={`Save edits to ${name}`}
-              className={primaryButton}
+              variant="primary"
             >
               Save edits
-            </button>
-            <button type="button" onClick={() => setDraft(null)} className={secondaryButton}>
+            </Button>
+            <Button onClick={() => setDraft(null)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -108,15 +107,15 @@ function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: b
             <div className="pt-3"><ProfileFields persona={persona} schema={schema} except={[...summary, ...NARRATIVE_FIELDS, 'name', 'pronouns']} stale={stale} /></div>
           </details>
           <div className="persona-actions">
-            <button type="button" onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} className={`${secondaryButton} button-small`}>
+            <Button onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} small>
               Edit
-            </button>
-            <button type="button" onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} className={`${secondaryButton} button-small`}>
+            </Button>
+            <Button onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} small>
               Regenerate
-            </button>
-            <button type="button" onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} className={`${secondaryButton} button-small`}>
+            </Button>
+            <Button onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} small>
               Remove
-            </button>
+            </Button>
           </div>
           {allotted && (
             <p id={`comes-back-${persona.id}`} className="text-xs text-stone-500">
@@ -177,9 +176,9 @@ export function PersonaList(props: {
                 ))}
               </ul>
               {group.id !== null && (
-                <button type="button" onClick={() => onAdd(group.id)} disabled={busy} className={secondaryButton}>
+                <Button onClick={() => onAdd(group.id)} disabled={busy}>
                   Add a persona to {group.name}
-                </button>
+                </Button>
               )}
             </div>
           </details>

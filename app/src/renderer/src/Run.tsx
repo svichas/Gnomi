@@ -14,7 +14,7 @@ import { personaLabel } from './ProfileFields.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
 import { Swarm } from './Swarm.tsx';
-import { ActionBar, Note, ProgressBar, Screenshot, primaryButton, secondaryButton, usd, when } from './ui.tsx';
+import { ActionBar, Button, Note, ProgressBar, Screenshot, usd, when } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 
 const DOT: Record<PersonaState, string> = {
@@ -187,9 +187,9 @@ function RunDetail({ runId, row, onRunEnded, active }: { runId: string; row: Run
           </div>
           {!ended && (
             <ActionBar>
-              <button type="button" onClick={stop} disabled={stopping} className={secondaryButton}>
+              <Button onClick={stop} disabled={stopping}>
                 {stopping ? 'Stopping...' : 'Stop run'}
-              </button>
+              </Button>
             </ActionBar>
           )}
         </div>
@@ -300,8 +300,8 @@ export function Run({ runId, runs, onSelect, onRunEnded, onSetup, active }: { ru
       {runs.length > 0 && <div className="run-history-bar"><label htmlFor="run-history"><Icon name="clock" size={18} />Run history</label><select id="run-history" value={runId ?? ''} onChange={(event) => onSelect(event.target.value)} className="run-history-select">
         {!runId && <option value="">Choose a run</option>}
         {runs.map((run) => <option key={run.run_id} value={run.run_id}>{when(run.started_at)} · {STATUS_WORDS[run.status]} · {runSetup(run.config).personas.length} people</option>)}
-      </select><button type="button" className="text-link" onClick={onSetup}><Icon name="plus" size={16} />New run</button></div>}
-      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} onRunEnded={onRunEnded} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><button type="button" className={primaryButton} onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></button></div>}
+      </select><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} onRunEnded={onRunEnded} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );
 }

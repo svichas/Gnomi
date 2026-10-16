@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ProjectAction, ProjectCatalog } from '../../projects.ts';
-import { Field, inputClass, Note, primaryButton, secondaryButton, useAction, when } from './ui.tsx';
+import { Button, Field, inputClass, Note, useAction, when } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
 /** Keep the invoking control before React autofocus moves focus into the dialog. */
@@ -84,14 +84,14 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
   return (
     <div className="projects-page">
       <div className="page-heading projects-heading"><p className="eyebrow">Perspective before you ship</p><h1 tabIndex={-1}>Your projects.</h1><p>A place for each product, its people, and what you learn.</p></div>
-      <div className="section-toolbar"><h2>Projects <span aria-hidden="true" className="count-label">{catalog.projects.length}</span></h2><button type="button" onClick={() => setCreating(true)} className={primaryButton}><Icon name="plus" size={18} />New project</button></div>
+      <div className="section-toolbar"><h2>Projects <span aria-hidden="true" className="count-label">{catalog.projects.length}</span></h2><Button onClick={() => setCreating(true)} variant="primary"><Icon name="plus" size={18} />New project</Button></div>
       {creating && <ProjectDialog title="Create a project" onCancel={() => { if (!action.busy) setCreating(false); }}>
         <p className="text-sm text-stone-600">Give your product a name. You can add the details next.</p>
         <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void perform({ action: 'create', name }); }}>
           <div className="min-w-56 flex-1">
             <Field label="New project name"><input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder="For example, Hiring app" className={inputClass} /></Field>
           </div>
-          <div className="flex gap-3"><button type="submit" disabled={action.busy || !name.trim()} className={primaryButton}>{action.busy ? 'Creating…' : 'Create project'}</button><button type="button" onClick={() => setCreating(false)} disabled={action.busy} className={secondaryButton}>Cancel</button></div>
+          <div className="flex gap-3"><Button type="submit" disabled={action.busy || !name.trim()} variant="primary">{action.busy ? 'Creating…' : 'Create project'}</Button><Button onClick={() => setCreating(false)} disabled={action.busy}>Cancel</Button></div>
         </form>
         {action.outcome && !action.outcome.ok && <Note tone="error">{action.outcome.text}</Note>}
       </ProjectDialog>}
@@ -113,7 +113,7 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
         ))}
       </ul>
       {catalog.projects.length === 0 && <div className="empty-state"><Icon name="folder" size={32} /><h2>Your next perspective starts here.</h2><p>Create a project for the product you want to explore.</p></div>}
-      <div className="projects-footnote"><p><Icon name="folder" size={16} />Projects are saved on this computer.</p>{catalog.currentId && <button type="button" onClick={onReturn} className="text-link">Return to open project<Icon name="arrow" size={16} /></button>}</div>
+      <div className="projects-footnote"><p><Icon name="folder" size={16} />Projects are saved on this computer.</p>{catalog.currentId && <Button onClick={onReturn} variant="link">Return to open project<Icon name="arrow" size={16} /></Button>}</div>
 
       {editing && (
         <ProjectDialog title={editing.action === 'rename' ? 'Rename project' : 'Duplicate project'} onCancel={() => setEditing(null)}>
@@ -121,8 +121,8 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
             <Field label="Project name"><input autoFocus value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} maxLength={120} className={inputClass} /></Field>
             {editing.action === 'duplicate' && <p className="text-sm text-stone-600">The copy starts with the same configuration and personas. Record its logins before running.</p>}
             <div className="flex flex-wrap gap-3">
-              <button type="submit" disabled={!editing.name.trim()} className={primaryButton}>{editing.action === 'rename' ? 'Rename project' : 'Create duplicate'}</button>
-              <button type="button" onClick={() => setEditing(null)} className={secondaryButton}>Cancel</button>
+              <Button type="submit" disabled={!editing.name.trim()} variant="primary">{editing.action === 'rename' ? 'Rename project' : 'Create duplicate'}</Button>
+              <Button onClick={() => setEditing(null)}>Cancel</Button>
             </div>
           </form>
         </ProjectDialog>
@@ -131,8 +131,8 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
         <ProjectDialog title="Delete project?" onCancel={() => setDeleting(null)}>
           <p className="text-sm text-stone-700">Move <strong>{deleting.name}</strong>, including its runs and recorded logins, to the Trash?</p>
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={() => { const id = deleting.id; setDeleting(null); void perform({ action: 'delete', id }); }} className={primaryButton}>Move to Trash</button>
-            <button type="button" autoFocus onClick={() => setDeleting(null)} className={secondaryButton}>Cancel</button>
+            <Button onClick={() => { const id = deleting.id; setDeleting(null); void perform({ action: 'delete', id }); }} variant="primary">Move to Trash</Button>
+            <Button autoFocus onClick={() => setDeleting(null)}>Cancel</Button>
           </div>
         </ProjectDialog>
       )}

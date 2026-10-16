@@ -5,7 +5,7 @@ import { hostOf, hostToConfirm, offeredHosts, startHost } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { useRecorder } from './Recorder.tsx';
-import { ActionBar, Card, Check, Field, inputClass, Note, primaryButton, secondaryButton, useAction } from './ui.tsx';
+import { ActionBar, Button, Card, Check, Field, inputClass, Note, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { PersonaHeader } from './ProfileFields.tsx';
 
@@ -58,9 +58,9 @@ function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string
               />
             </Field>
           </div>
-          <button type="button" onClick={add} className={secondaryButton}>
+          <Button onClick={add}>
             Add host
-          </button>
+          </Button>
         </div>
         {problem && <Note tone="error">{problem}</Note>}
       </div>
@@ -223,8 +223,8 @@ export function Project(props: {
 
       <ActionBar>
         {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
-        <button type="button" onClick={onSave} disabled={busy} className={secondaryButton}>Save project</button>
-        <button type="button" onClick={continueToAudience} disabled={busy} className={primaryButton}>{busy ? 'Saving…' : 'Continue to audience'}<Icon name="arrow" size={18} /></button>
+        <Button onClick={onSave} disabled={busy}>Save project</Button>
+        <Button onClick={continueToAudience} disabled={busy} variant="primary">{busy ? 'Saving…' : 'Continue to audience'}<Icon name="arrow" size={18} /></Button>
       </ActionBar>
       </div>
 
@@ -248,13 +248,13 @@ export function Project(props: {
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={needsPersonas ? onAudience : onReview} disabled={busy || recorder.recording !== null} className={`${secondaryButton} w-full`}>
+          <Button onClick={needsPersonas ? onAudience : onReview} disabled={busy || recorder.recording !== null} className="w-full">
             <Icon name={needsPersonas ? 'people' : 'play'} size={16} />{needsPersonas ? 'Build personas first' : 'Review & start'}
-          </button>
+          </Button>
           {busy && <p className="text-sm text-stone-500">Working...</p>}
         </div>
         {needsProvider && <p className="text-xs text-stone-600">Before your first run, connect the AI provider that will power your simulated users.</p>}
-        <button type="button" className="text-link" onClick={onSettings}>{needsProvider ? 'Connect an AI provider' : 'AI connection & budget settings'}<Icon name="arrow" size={14} /></button>
+        <Button variant="link" onClick={onSettings}>{needsProvider ? 'Connect an AI provider' : 'AI connection & budget settings'}<Icon name="arrow" size={14} /></Button>
       </div>
       </aside>
 

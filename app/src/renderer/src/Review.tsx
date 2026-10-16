@@ -11,7 +11,7 @@ import { problemFor, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
 import { ROLE_TEXT } from './Settings.tsx';
-import { ActionBar, Check, Note, primaryButton, secondaryButton, useAction, usd } from './ui.tsx';
+import { ActionBar, Button, Check, Note, usd, useAction } from './ui.tsx';
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
 export type ReviewScreen = 'project' | 'audience' | 'settings';
@@ -89,7 +89,7 @@ export function Review(props: {
       return null;
     });
 
-  const fix = (screen: ReviewScreen, label: string) => <button type="button" className="text-link" onClick={() => onFix(screen)}>{label}<Icon name="arrow" size={14} /></button>;
+  const fix = (screen: ReviewScreen, label: string) => <Button variant="link" onClick={() => onFix(screen)}>{label}<Icon name="arrow" size={14} /></Button>;
 
   // Blocking issues first: each says what is wrong and offers the way to fix it. Start stays off while any remain, as the engine would refuse.
   const issues: { text: string; blocking: boolean; action: ReactNode }[] = [];
@@ -104,7 +104,7 @@ export function Review(props: {
     issues.push({
       text: `The recorded ${role} login no longer works${login.reason ? `: ${login.reason}` : '.'}`,
       blocking: true,
-      action: <button type="button" onClick={() => void recorder.start(role)} disabled={recorder.busy || recorder.recording !== null} className={`${secondaryButton} button-small`}>Re-record {role} login</button>,
+      action: <Button onClick={() => void recorder.start(role)} disabled={recorder.busy || recorder.recording !== null} small>Re-record {role} login</Button>,
     });
   }
   if (estimate && 'error' in estimate) issues.push({ text: `No estimate: ${estimate.error}`, blocking: true, action: null });
@@ -219,11 +219,11 @@ export function Review(props: {
       </div>}
 
       <ActionBar>
-        <button type="button" onClick={onBack} className={`${secondaryButton} mr-auto`}><Icon name="back" size={16} />Back to audience</button>
+        <Button onClick={onBack} className="mr-auto"><Icon name="back" size={16} />Back to audience</Button>
         {outcome ? <Note tone="error">{outcome.text}</Note> : <p id="review-start-hint" className="review-status">{status}</p>}
-        <button type="button" onClick={start} disabled={busy || !ready || recorder.recording !== null} aria-describedby={outcome ? undefined : 'review-start-hint'} className={primaryButton}>
+        <Button onClick={start} disabled={busy || !ready || recorder.recording !== null} aria-describedby={outcome ? undefined : 'review-start-hint'} variant="primary">
           <Icon name="play" size={16} />{busy ? 'Starting...' : 'Start run'}
-        </button>
+        </Button>
       </ActionBar>
     </div>
   );

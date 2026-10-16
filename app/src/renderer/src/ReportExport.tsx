@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Report as ReportData } from '@gnomi/engine/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
 import type { ReportFormat } from '../../reports.ts';
-import { Note, secondaryButton, useAction } from './ui.tsx';
+import { Button, Note, useAction } from './ui.tsx';
 
 /** Saves the report as a file. The file is drawn on demand, so the screen never loads the static renderer or the inlined styles. */
 export function ExportReport({ report }: { report: ReportData }) {
@@ -30,9 +30,9 @@ export function ExportReport({ report }: { report: ReportData }) {
             </option>
           ))}
         </select>
-        <button type="button" onClick={() => void save()} disabled={busy} className={secondaryButton}>
+        <Button onClick={() => void save()} disabled={busy}>
           {busy ? 'Exporting...' : 'Export report'}
-        </button>
+        </Button>
       </div>
       {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
     </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ProfileAttribute, Segment } from '@gnomi/engine/types.ts';
 import { AttributeRule } from './AttributeRule.tsx';
 import { ATTRIBUTE_TYPES, choiceValues, defaultRule, PROFILE_GROUPS, setAttributeChoices, setSegmentRule } from './profile.ts';
-import { Check, Field, inputClass, secondaryButton } from './ui.tsx';
+import { Button, Check, Field, inputClass } from './ui.tsx';
 
 function Flag({ label, checked, disabled = false, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange(value: boolean): void }) {
   return <label className="flex items-center gap-2 text-sm text-stone-700"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="accent-indigo-600" />{label}</label>;
@@ -50,7 +50,7 @@ export function ProfileAttributeEditor({ attribute, custom, segments, onChange, 
             {!selected || override ? <AttributeRule attribute={attribute} rule={rule} label={label} onChange={(next) => selected ? onChange(setSegmentRule(attribute, selected.id, next)) : set('sampling', { ...attribute.sampling!, default: next })} />
               : <p className="text-sm text-stone-500">This segment uses the default rule.</p>}
           </div> : <p className="text-sm text-stone-500">This value comes from the audience settings or the persona writer.</p>}
-          {custom && <button type="button" onClick={onRemove} className={secondaryButton}>Remove {attribute.name}</button>}
+          {custom && <Button onClick={onRemove}>Remove {attribute.name}</Button>}
         </div>
       </details>
     </li>

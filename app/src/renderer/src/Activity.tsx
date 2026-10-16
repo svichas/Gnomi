@@ -6,7 +6,7 @@ import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensi
 import type { ProfileGroups } from '@gnomi/engine/report/dimensions.ts';
 import { CATEGORIES, isTimelineHighlight, timelineSummary } from './activity.ts';
 import type { Category, Filters, ProfileFilter, Row } from './activity.ts';
-import { Field, inputClass } from './ui.tsx';
+import { Button, Field, inputClass } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 
 /** Persona controls open the full profile; the rest of the row toggles inline activity details. */
@@ -32,7 +32,7 @@ export function ActivityItem({ row, who, onOpen }: { row: Row; who: string | nul
         {row.quote && <blockquote>“{row.quote}”</blockquote>}
         {row.detail && <p>{row.detail}</p>}
         {row.badge && <p className={row.badge.ok ? 'timeline-success' : 'timeline-error'}><Icon name={row.badge.ok ? 'check' : 'alert'} size={14} />{row.badge.ok ? 'Action completed' : row.badge.text}</p>}
-        {personaId !== null && onOpen && <button type="button" className="text-link" onClick={() => onOpen(personaId, row.seq)}>View persona & evidence<Icon name="arrow" size={14} /></button>}
+        {personaId !== null && onOpen && <Button variant="link" onClick={() => onOpen(personaId, row.seq)}>View persona & evidence<Icon name="arrow" size={14} /></Button>}
       </div>
     </div>
   );
@@ -63,7 +63,7 @@ export function ProfileFilters({ groups, filter, onChange }: { groups: ProfileGr
         </Field>
       </div>
       <p className="text-xs text-stone-500">Filters apply to report details, personas and activity. Run totals and grouped results always describe the full run.</p>
-      {filter.dimension && <button type="button" className="text-link" onClick={() => onChange({ dimension: '', value: '' })}>Clear audience filter</button>}
+      {filter.dimension && <Button variant="link" onClick={() => onChange({ dimension: '', value: '' })}>Clear audience filter</Button>}
     </section>
   );
 }
@@ -89,7 +89,7 @@ export function Activity(props: {
   const set = (change: Partial<Filters>) => onFilters({ ...filters, ...change });
   return (
     <section aria-labelledby="activity-title" className="space-y-3">
-      <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{visibleRows.length}</span></h2><p>Little moments. A clearer picture.</p></div><div className="flex items-center gap-3">{activeFilters && <button type="button" className="text-link" onClick={() => set({ persona: '', segment: '', category: '' })}>Clear filters</button>}<button type="button" className="quiet-button" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</button></div></div>
+      <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{visibleRows.length}</span></h2><p>Little moments. A clearer picture.</p></div><div className="flex items-center gap-3">{activeFilters && <Button variant="link" onClick={() => set({ persona: '', segment: '', category: '' })}>Clear filters</Button>}<Button variant="quiet" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</Button></div></div>
       <div id="activity-filters" hidden={!showFilters}>
       <div className="filter-bar grid gap-3 sm:grid-cols-3">
         <Field label="Persona">

@@ -420,6 +420,9 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .persona-more > summary { font-size: 12px; font-weight: 500; color: var(--gnomi-action); }
 .persona-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .button-small { min-height: 32px; padding: 6px 12px; font-size: 12px; }
+.button-spinner { width: 14px; height: 14px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: button-spin .7s linear infinite; }
+@keyframes button-spin { to { transform: rotate(360deg); } }
+.button-spinner + svg { display: none; } /* the spinner stands in for a leading icon */
 @media (max-width: 700px) {
   .audience-choices { grid-template-columns: minmax(0, 1fr); width: 100%; }
   .segment-share { order: 3; width: 100%; }
