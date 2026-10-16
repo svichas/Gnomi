@@ -1,5 +1,6 @@
 - id: D01
   title: Primary submit button says Save draft but still publishes the job live
+  poi: web        # web | text | design
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new]
@@ -8,6 +9,7 @@
   toggle: D01
 - id: D02
   title: Department is required but not marked, and a missing Department re-renders the form with no error
+  poi: web        # web | text | design
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new]
@@ -16,6 +18,7 @@
   toggle: D02
 - id: D03
   title: Main nav Jobs link points to /job, a 404, instead of /jobs
+  poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [dashboard, jobs, jobs/new, "jobs/:id", candidates, settings]
@@ -24,6 +27,7 @@
   toggle: D03
 - id: D04
   title: Assigning a non-user hiring manager leaves the job form and loses the draft
+  poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new, settings/users]
@@ -32,6 +36,7 @@
   toggle: D04
 - id: D05
   title: Decision buttons and feedback form sit below the tall resume on narrow screens
+  poi: web        # web | text | design
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: ["reviews/:id"]
@@ -40,6 +45,7 @@
   toggle: D05
 - id: D06
   title: Decision buttons are icon-only with no accessible name
+  poi: web        # web | text | design
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
@@ -48,6 +54,7 @@
   toggle: D06
 - id: D07
   title: Description is silently cut to 200 characters on save
+  poi: web        # web | text | design
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new, "jobs/:id"]
@@ -56,6 +63,7 @@
   toggle: D07
 - id: D08
   title: Inviting an email that already exists shows a generic error
+  poi: web        # web | text | design
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/users]
@@ -64,6 +72,7 @@
   toggle: D08
 - id: D09
   title: Candidates page takes 4 seconds to answer with no loading indication
+  poi: web        # web | text | design
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [candidates]
@@ -72,6 +81,7 @@
   toggle: D09
 - id: D10
   title: Field hints on the job form are light grey on white with poor contrast
+  poi: web        # web | text | design
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [jobs/new]
@@ -80,6 +90,7 @@
   toggle: D10
 - id: D11
   title: After sign-in the next page is ignored and the user lands on the dashboard
+  poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [login, "reviews/:id"]
@@ -88,6 +99,7 @@
   toggle: D11
 - id: D12
   title: Approval checkbox label is a double negative
+  poi: web        # web | text | design
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings/approvals]
@@ -96,6 +108,7 @@
   toggle: D12
 - id: D13
   title: Inviting a user as Hiring manager or Admin saves them as a Recruiter
+  poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/users]
@@ -104,6 +117,7 @@
   toggle: D13
 - id: D14
   title: Feedback containing an apostrophe fails with a bare server error and the text is lost
+  poi: web        # web | text | design
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: ["reviews/:id"]
@@ -112,6 +126,7 @@
   toggle: D14
 - id: D15
   title: Recording an Advance or Reject decision takes 3 seconds with no progress indication
+  poi: web        # web | text | design
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
@@ -120,6 +135,7 @@
   toggle: D15
 - id: D16
   title: Settings links to the users page as Seats
+  poi: web        # web | text | design
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings]
@@ -128,6 +144,7 @@
   toggle: D16
 - id: D17
   title: Dashboard Live jobs figure counts draft jobs too
+  poi: web        # web | text | design
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [dashboard]
@@ -136,6 +153,7 @@
   toggle: D17
 - id: D18
   title: Review queue links open the next candidate instead of the one named
+  poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [reviews]
@@ -144,6 +162,7 @@
   toggle: D18
 - id: D19
   title: A job form that comes back with an error has lost its description and employment type
+  poi: web        # web | text | design
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new]
@@ -152,6 +171,7 @@
   toggle: D19
 - id: D20
   title: Decided candidates stay in the review queue and the dashboard count
+  poi: web        # web | text | design
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [reviews, dashboard]
@@ -160,6 +180,7 @@
   toggle: D20
 - id: D21
   title: Create job is a bare plus icon that appears only on hover
+  poi: web        # web | text | design
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs]
@@ -168,6 +189,7 @@
   toggle: D21
 - id: D22
   title: Job status on the jobs list is a coloured dot with no visible text
+  poi: web        # web | text | design
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [jobs]
@@ -176,6 +198,7 @@
   toggle: D22
 - id: D23
   title: Send feedback is styled like a disabled button although it works
+  poi: web        # web | text | design
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
@@ -184,6 +207,7 @@
   toggle: D23
 - id: D24
   title: Send invitation is white on pale blue, about 1.8:1 contrast
+  poi: web        # web | text | design
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings/users]
@@ -192,9 +216,39 @@
   toggle: D24
 - id: D25
   title: A tip callout is drawn over the approvals Save button
+  poi: web        # web | text | design
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/approvals]
   affects: [admin]
   visual_only: true
   toggle: D25
+# Gym v3 (M5): design frames and copy, not the web app. The toggle selects the defect variant in gymAssets({ defects }); "none" is the control.
+# visual_only is true for every design defect: a frame is a picture, so a text-only model cannot find it. affects names a buyer or shopper segment, not a Gym ATS role.
+- id: D26
+  title: The step after Place order is a sign-in prompt, not an order confirmation
+  poi: design        # web | text | design
+  type: flow        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  frames: [checkout/4]
+  affects: [shopper]
+  visual_only: true
+  toggle: D26
+- id: D27
+  title: Invite teammate is an icon-only control with an abstract glyph, no label and no tooltip
+  poi: design        # web | text | design
+  type: affordance        # flow | label | affordance | error-handling | performance | visual | content
+  severity: medium
+  frames: [invite/2]
+  affects: [team_admin]
+  visual_only: true
+  toggle: D27
+- id: D28
+  title: The Team plan card lists single sign-on, but the comparison table and FAQ give it to Business only
+  poi: text        # web | text | design
+  type: content        # flow | label | affordance | error-handling | performance | visual | content
+  severity: high
+  pages: [pricing]
+  affects: [buyer]
+  visual_only: false
+  toggle: D28
