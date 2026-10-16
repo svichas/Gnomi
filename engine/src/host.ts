@@ -11,6 +11,8 @@ import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SO
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
+import { preflight } from './poi/index.ts';
+import { loginPoi, webPois } from './poi/pois.ts';
 import { validatePersonaSchema } from './profile/schema.ts';
 import { personaProfileIsCurrent } from './profile/signature.ts';
 import { buildReport } from './report/build.ts';
@@ -137,16 +139,25 @@ function persona(id: string): { people: Persona[]; persona: Persona } {
   return { people, persona: found };
 }
 
+/** The POI a login is recorded on; projects without a web POI in full mode have no logins to record. */
+function recordingPoi(config: ProjectConfig) {
+  const poi = loginPoi(config.pois);
+  if (!poi) throw new Error('Add a web app as a point of interest to record a login on.');
+  return poi;
+}
+
 /** Loads the role's start page with its session under containment (tech.md §9.1) and marks it verified when it held. */
 async function verify(config: ProjectConfig, role: string) {
   const store = unlockedSessions();
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
+  // The login POI's hosts first; the session's cookies go to every web POI, so any of their hosts may be reached.
+  const pois = [recordingPoi(config), ...webPois(config.pois)];
   const result = await (await pool()).checkSession({
     storageState: saved.state,
     startUrl: saved.info.start_url,
-    allowedHosts: allowedHosts(config.poi),
-    blockedDomains: config.poi.production_domains,
+    allowedHosts: [...new Set(pois.flatMap(allowedHosts))],
+    blockedDomains: [...new Set(pois.flatMap((poi) => poi.production_domains))],
   });
   const now = Date.now();
   if (result.ok) store.markVerified(role, now);
@@ -278,17 +289,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience });
+    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience, pois: config.pois });
   },
   async start_run({ reset }) {
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
     if (runs.size) throw new Error('A run is already in progress'); // one run at a time
-    // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works.
-    const refusal = checkTarget(config.poi);
+    // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
+    const refusal = preflight(config);
     if (refusal) throw new Error(refusal);
-    if (reset && !config.poi.reset_hook_url) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
+    if (reset && !webPois(config.pois).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
     if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
@@ -327,10 +338,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (!ROLE.test(role)) throw new Error('Name the role with 1–40 lowercase letters, digits, "-" or "_", for example "recruiter"');
     unlockedSessions(); // before opening a browser whose login could not be saved
     // Never record a production login: the session would be as sensitive as the password.
-    const refusal = checkTarget(config.poi);
+    const poi = recordingPoi(config);
+    const refusal = checkTarget(poi);
     if (refusal) throw new Error(refusal);
     if (recording) throw new Error('A login recording is already open: save or cancel it first');
-    const rec = pool().then((p) => p.record(config.poi.start_url, { headless: false }));
+    const rec = pool().then((p) => p.record(poi.start_url, { headless: false }));
     recording = { role, rec };
     try {
       await rec;

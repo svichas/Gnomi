@@ -29,7 +29,7 @@ function fixture(personaSchema: PersonaSchema | undefined = schema()) {
   ];
   const project: ProjectConfig = {
     name: 'Gym', description: 'A demo', goal: 'Post a job', audience: null, role: null, settings: DEFAULT_SETTINGS,
-    poi: { id: 'poi', type: 'web', name: 'Gym', start_url: 'http://localhost', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi', type: 'web', name: 'Gym', start_url: 'http://localhost', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
     ...(personaSchema ? { persona_schema: personaSchema } : {}),
   };
   const config: RunConfig = { run_id: 'r1', seed: 1, project, personas, sessions: [], reset: false, pause_timeout_ms: 0, app_version: 'test' };

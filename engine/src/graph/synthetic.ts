@@ -21,7 +21,7 @@ export function syntheticRun({ personas: size = 200, pois = 10, rounds = 5, seed
     return copy ? { ...template, id: `${template.id}-${copy}`, name: `${template.name} ${copy + 1}` } : template;
   });
   const config: RunConfig = { ...newRunConfig(base.project, { personas, sessions: [], reset: false }), run_id: 'r-synthetic' };
-  const poiIds = [base.project.poi.id, ...Array.from({ length: pois - 1 }, (_, i) => `poi-${i + 2}`)];
+  const poiIds = [base.project.pois[0].id, ...Array.from({ length: pois - 1 }, (_, i) => `poi-${i + 2}`)];
 
   const events: GnomiEvent[] = [];
   const log = <K extends EventType>(round: number, persona_id: string | null, poi_id: string | null, type: K, payload: EventPayloads[K]) =>

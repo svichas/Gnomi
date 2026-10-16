@@ -37,7 +37,7 @@ export interface Api {
   save_project: { params: { project: ProjectConfig }; result: null };
   /** Checks the provider's saved key, or for 'openai_compatible' that the project's local endpoint answers. */
   test_key: { params: { provider: ProviderId }; result: { ok: boolean; error: string | null } };
-  /** Opens a visible browser on the POI's start_url for the user to log in as this role. */
+  /** Opens a visible browser on the first full web POI's start_url for the user to log in as this role. */
   record_session: { params: { role: string }; result: null };
   /** Saves the open recording under its role; the page the user is on becomes the role's start page. */
   save_session: { params: Record<string, never>; result: SessionInfo };

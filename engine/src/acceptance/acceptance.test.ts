@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fixture, germanProbe, subset } from './fixture.ts';
+import { fixture, germanProbe, gym, subset } from './fixture.ts';
 import { assess, createAllowance, executionCriterion, observeAttempt, parseOptions, validateOptions } from './checks.ts';
 import type { LlmAttempt } from '../seams.ts';
 
@@ -15,7 +15,7 @@ test('the frozen acceptance fixture is deterministic, has fifty people and a gua
   assert.equal(probe.personas.length, 1);
   assert.equal(probe.personas[0].languages?.[0], 'de-DE');
   assert.equal(probe.personas[0].timezone, 'Europe/Berlin');
-  assert.match(probe.project.poi.start_url, /\/locale$/);
+  assert.match(gym(probe).start_url, /\/locale$/);
 });
 
 test('live execution requires a finite positive allowance and a credential before any browser starts', () => {

@@ -13,7 +13,7 @@ import { personaProfileIsCurrent } from '../profile/signature.ts';
 const project: ProjectConfig = {
   name: 'Gym ATS',
   description: 'An applicant tracking system for companies with 50–2,000 employees.',
-  poi: { id: 'poi-1', type: 'web', name: 'Gym ATS staging', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+  pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS staging', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
   goal: 'Create your first job post',
   role: 'recruiter',
   audience: null,

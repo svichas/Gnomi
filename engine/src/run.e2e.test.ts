@@ -22,7 +22,9 @@ import { allowedHosts, checkTarget } from './safety.ts';
 import { createSessionStore } from './sessions.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { BrowserPool, LlmGateway, LlmRequest, Responder, SessionStore } from './seams.ts';
-import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo } from './types.ts';
+import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo, WebPoi } from './types.ts';
+
+const web = (project: ProjectConfig) => project.pois[0] as WebPoi;
 
 // The M0 no-credentials harness: strings a login would use must never reach a model transcript (roadmap M0).
 const CANARIES = ['gnomi-canary-password-7Q2x', 'canary.recruiter@gym.test', 'sk-ant-canary-00000000'];
@@ -99,7 +101,7 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
   const project: ProjectConfig = {
     name: 'Gym ATS',
     description: 'A demo applicant tracking system.',
-    poi: { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: `${gym.url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: `${gym.url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
     goal: 'Post a job for a backend engineer',
     role: null,
     audience: null,
@@ -149,7 +151,7 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
     };
     const base = opts.project ?? project;
     const target = { ...base, settings: { ...base.settings, ...opts.settings } };
-    assert.equal(checkTarget(target.poi), null);
+    assert.equal(checkTarget(web(target)), null);
     const defaults = newRunConfig(target, { personas: opts.personas ?? [BUILTIN_PERSONA], sessions: opts.sessions ?? [], reset: opts.reset ?? false });
     const config = store.createRun({ ...defaults, pause_timeout_ms: opts.pauseMs ?? defaults.pause_timeout_ms });
     const started = Date.now();
@@ -198,7 +200,7 @@ test('a mobile persona completes signup with matching passwords instead of aband
   await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise<void>((resolve) => site.close(() => resolve())));
   const start_url = `http://127.0.0.1:${(site.address() as AddressInfo).port}/register`;
-  const project = { ...w.project, goal: 'Create an account', poi: { ...w.project.poi, start_url } };
+  const project = { ...w.project, goal: 'Create an account', pois: [{ ...web(w.project), start_url }] };
   const { report, events } = await w.go(walk([
     (req) => say('Choose a password.', { type: 'type', ref: ref(req, 'textbox', 'Password'), text: password }),
     (req) => {
@@ -284,7 +286,7 @@ test('M1 (a): with a recorded login the persona works inside the app, and no cre
   const project = { ...w.project, role: account.role };
   const saved = await w.sessions.load(account.role);
   assert.ok(saved);
-  assert.deepEqual(await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(project.poi), blockedDomains: [] }), {
+  assert.deepEqual(await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(web(project)), blockedDomains: [] }), {
     ok: true,
     url: `${w.gym.url}/`,
     reason: null,
@@ -324,7 +326,7 @@ test('M1 (b): containment keeps an unlisted host unreached through the check and
   const project = { ...w.project, role: 'recruiter' };
   const saved = await w.sessions.load('recruiter');
   assert.ok(saved);
-  const check = await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(project.poi), blockedDomains: [] });
+  const check = await browsers.checkSession({ storageState: saved.state, startUrl: info.start_url, allowedHosts: allowedHosts(web(project)), blockedDomains: [] });
   assert.equal(check.ok, true);
   const contained = await w.go(walk(toJobs), { project, sessions: [info] });
   assert.equal(contained.report.personas[0].outcome, 'done');
@@ -333,7 +335,7 @@ test('M1 (b): containment keeps an unlisted host unreached through the check and
   assert.ok(blocked.length > 0 && blocked.every((e) => e.payload.host === '127.0.0.1'));
   assert.equal(contained.report.methods.blocked_requests[0].host, '127.0.0.1');
 
-  const allowed = { ...project, poi: { ...project.poi, allowed_hosts: ['127.0.0.1'] } };
+  const allowed = { ...project, pois: [{ ...web(project), allowed_hosts: ['127.0.0.1'] }] };
   const open = await w.go(walk(toJobs), { project: allowed, sessions: [info] });
   assert.ok(hits.length > 0, 'an allowed host is reached');
   assert.equal(of(open.events, 'containment.blocked_request').length, 0);
@@ -411,7 +413,7 @@ test('M1 (f): the reset hook resets staging before the persona is created', asyn
   assert.match(await (await fetch(`${w.gym.url}/jobs`)).text(), /Leftover from yesterday/);
 
   const hook = `${w.gym.url}/__reset`;
-  const project = { ...w.project, poi: { ...w.project.poi, reset_hook_url: hook } };
+  const project = { ...w.project, pois: [{ ...web(w.project), reset_hook_url: hook }] };
   const { report, events } = await w.go(walk([say('Looks fine.', { type: 'done', text: 'Looked around' })]), { project, reset: true });
   const types = events.map((e) => e.type);
   assert.ok(types.indexOf('run.reset_called') < types.indexOf('persona.created'));
@@ -569,4 +571,34 @@ test('M3: a broken link and a rejected form raise signal.error and signal.valida
   assert.equal(rejected.seq, steps[4].seq + 1);
   assert.deepEqual(of(events, 'signal.backtrack').map((e) => [e.payload.step_no, e.payload.kind]), [[2, 'revisit']], 'the back, not where the form posted to');
   assert.deepEqual(of(events, 'signal.failed_action'), [], 'every click did something');
+});
+
+// —— M5 ——
+
+test('a persona runs Gym / and then Gym /locale, with a survey and themes for each POI', async (t) => {
+  const w = await world(t);
+  const project: ProjectConfig = {
+    ...w.project,
+    pois: [{ ...web(w.project), id: 'poi-home', name: 'Gym home' }, { ...web(w.project), id: 'poi-locale', name: 'Gym locale echo', start_url: `${w.gym.url}/locale` }],
+  };
+  const friction = (what: string) => ({ severity: 2, what, expected: 'A clearer page' });
+  const { report, events } = await w.go(walk([
+    (req) => say('All the jobs are one click away.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }, friction('The jobs link is easy to miss')),
+    say('That is the list.', { type: 'done', text: 'Reached the jobs list' }),
+    (req) => {
+      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1 of \d+\./m, 'the second POI counts its own steps in the prompt');
+      return say('Which language is this?', { type: 'done', text: 'Read the locale' }, friction('The page does not say what it is for'));
+    },
+  ]), { project });
+
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.deepEqual(of(events, 'persona.episode_started').map((e) => [e.poi_id, e.payload.start_url]), [['poi-home', `${w.gym.url}/`], ['poi-locale', `${w.gym.url}/locale`]]);
+  assert.deepEqual(of(events, 'persona.step').map((e) => [e.poi_id, e.payload.step_no]), [['poi-home', 1], ['poi-home', 2], ['poi-locale', 3]]);
+  for (const shot of of(events, 'persona.step').map((e) => e.payload.screenshot!)) assert.ok(existsSync(join(w.dir, shot)), shot);
+  assert.deepEqual(of(events, 'persona.survey').map((e) => [e.poi_id, e.payload.poi_id]), [['poi-home', 'poi-home'], ['poi-locale', 'poi-locale']]);
+  assert.deepEqual(report.pois.map((p) => [p.id, p.start_url]), [['poi-home', `${w.gym.url}/`], ['poi-locale', `${w.gym.url}/locale`]]);
+  const themes = report.themes ?? [];
+  assert.ok(themes.some((th) => th.poi_id === 'poi-home' && th.evidence.some((e) => e.what === 'The jobs link is easy to miss')));
+  assert.ok(themes.some((th) => th.poi_id === 'poi-locale' && th.evidence.some((e) => e.what === 'The page does not say what it is for')));
+  assert.ok(themes.every((th) => th.evidence.every((e) => e.step_no === null || (th.poi_id === 'poi-home') === (e.step_no <= 2))), 'evidence stays with its POI');
 });

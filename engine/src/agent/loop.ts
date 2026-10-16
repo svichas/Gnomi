@@ -3,7 +3,8 @@ import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import { DEFAULT_SIGNALS, detectSignals, isSubmit, type Step } from '../signals/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
-import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo } from '../types.ts';
+import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
+import { loginPoi } from '../poi/pois.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory, type StepOutput } from './prompt.ts';
 
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'stopped';
@@ -13,13 +14,18 @@ export function stepBudget(persona: Persona): number {
   return [12, 20, 30, 45, 60][persona.patience - 1] ?? 30;
 }
 
+/** What a POI runner (poi/index.ts) gets for one persona's episode on one POI. */
 export interface EpisodeDeps {
   config: RunConfig;
   persona: Persona;
   segment: Segment | null; // its segment, for the goal override and context; null for the built-in persona
-  session: SessionInfo | null; // its role's login, which sets the start page and makes a login page a block
-  /** A fresh page under containment with the role's current session; called again after a resume, as the login was likely re-recorded. */
-  openPage: () => Promise<PageDriver>;
+  session: SessionInfo | null; // its role's login, which makes a login page a block and, on the login POI, sets the start page
+  /** This episode's step budget: the persona's patience budget as the POI's runner scales it (tech.md §6.4). */
+  budget: number;
+  /** Steps the persona took on its earlier POIs: step numbers run on across a persona's POIs, so each names one step of the run. */
+  stepsBefore: number;
+  /** A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely re-recorded. */
+  openPage: (poi: WebPoi) => Promise<PageDriver>;
   llm: LlmGateway;
   blobs: BlobStore;
   record: Recorder;
@@ -36,23 +42,24 @@ export interface EpisodeDeps {
   /** The round the run is in, for every event and model call (tech.md §6.4). */
   round: () => number;
   /**
-   * Social rounds: after every `steps` steps the episode waits, page and memory intact, for its next usage slice. next() resolves
-   * with the persona's opinion as the social phase left it, or null when the run ended in between. Absent: one straight run.
+   * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, page and memory intact, for
+   * its next usage slice. next() resolves with the persona's opinion of this POI as the social phase left it, or null when the run
+   * ended in between. Absent: one straight run.
    */
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null } | null> };
 }
 
 /**
- * One persona's episode on the POI: snapshot → screenshot → model → execute → record → inspect, until done, abandon or an
+ * One persona's episode on a web POI: snapshot → screenshot → model → execute → record → inspect, until done, abandon or an
  * engine-enforced stop. Budgets live here, not in the prompt, because asking simulated users to give up barely
  * changes their behaviour (tech.md §2.4, §6.7).
  */
-export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
-  const { config, persona, segment, session, llm, blobs, record, signal } = deps;
+export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
+  const { config, persona, segment, session, llm, blobs, record, signal, stepsBefore } = deps;
   const { run_id } = config;
   const { settings } = config.project;
-  const poi_id = config.project.poi.id;
-  const step_budget = stepBudget(persona);
+  const poi_id = poi.id;
+  const step_budget = deps.budget;
   const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
     record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
   const system = systemPrompt(persona, config.project, segment, step_budget);
@@ -64,9 +71,10 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
   let failKey = '';
   let failStreak = 0;
 
-  const startUrl = session?.start_url ?? config.project.poi.start_url;
+  // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
+  const startUrl = session && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
   let lastGoodUrl = startUrl;
-  let page = await deps.openPage();
+  let page = await deps.openPage(poi);
 
   // The page checks of tech.md §9.1/§9.3 after every load. A blocked persona pauses until the user resumes it, then
   // continues on a fresh page at the last unblocked URL, memory intact. 'go' means carry on.
@@ -93,7 +101,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
       if (wake !== 'resumed') return wake === 'timeout' ? 'blocked' : 'stopped';
       await page.close().catch(() => {});
       if (signal.aborted) return 'stopped';
-      page = await deps.openPage();
+      page = await deps.openPage(poi);
       if (signal.aborted) return 'stopped';
       await page.goto(lastGoodUrl);
       url = lastGoodUrl;
@@ -108,7 +116,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     const shot = await page.screenshot();
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no - stepsBefore, stepBudget: step_budget, memory, opinion, page: snapshot, screenshot: settings.screenshots ? shot : null });
     if (signal.aborted) return null;
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), system, user, schema, signal });
@@ -125,10 +133,11 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
     if (signal.aborted) return 'stopped';
     await page.goto(startUrl);
     emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona) });
-    const first = await inspect(0, startUrl);
+    const first = await inspect(stepsBefore, startUrl);
     if (first !== 'go') return first;
 
-    for (let step_no = 1; step_no <= step_budget; step_no++) {
+    const last = stepsBefore + step_budget;
+    for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
       if (deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0) {
         const next = await deps.slice.next();
         if (!next) return 'stopped';
@@ -178,7 +187,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
         return 'abandoned';
       }
       // A step the model failed to answer is not something the persona did, so it stays out of the persona's memory.
-      if (output) memory.push({ step_no, action, target, result, thought, friction: friction?.what ?? null, text });
+      if (output) memory.push({ step_no: step_no - stepsBefore, action, target, result, thought, friction: friction?.what ?? null, text });
 
       const next = await inspect(step_no, result.url_after);
       if (next !== 'go') return next;
@@ -196,7 +205,7 @@ export async function runEpisode(deps: EpisodeDeps): Promise<EpisodeEnd> {
         }
       }
     }
-    emit('signal.budget_exceeded', { step_no: step_budget, budget: step_budget });
+    emit('signal.budget_exceeded', { step_no: last, budget: step_budget });
     return 'budget_exceeded';
   } finally {
     await page.close().catch(() => {});

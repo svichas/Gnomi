@@ -12,6 +12,8 @@ const poi = (over: Partial<WebPoi> = {}): WebPoi => ({
   production_domains: ['acme.com'],
   not_production: false,
   reset_hook_url: null,
+  mode: 'full',
+  segments: null,
   ...over,
 });
 

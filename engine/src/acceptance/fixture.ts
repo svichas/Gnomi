@@ -2,13 +2,15 @@ import { apportion, personaId, sampleTraits, slotSeed } from '../audience/sample
 import { sampleProfile } from '../profile/sample.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, InjectedPost, Persona, ProjectConfig, Segment } from '../types.ts';
+import type { Audience, InjectedPost, Persona, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
 export const FIXTURE_VERSION = 1;
 export const SEED = 20261015;
 export const M4_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // run seeds: the population stays frozen, the follow graph varies
 export const M3_SEEDS = [SEED, SEED + 1, SEED + 2]; // the roadmap's three seeds for theme stability
 export interface Fixture { project: ProjectConfig; personas: Persona[] }
+/** The fixture's one POI, the Gym as a web app. */
+export const gym = (base: Fixture) => base.project.pois[0] as WebPoi;
 const FIRST = ['Alex', 'Robin', 'Sam', 'Jordan', 'Kai', 'Noor', 'Rowan', 'Ari', 'Quinn', 'Sasha'];
 const LAST = ['Meyer', 'Wilson', 'Fischer', 'Reed', 'Schneider'];
 
@@ -32,7 +34,7 @@ export function fixture(url: string): Fixture {
   const schema = getPersonaSchema();
   const project: ProjectConfig = {
     name: 'Gym ATS', description: 'An applicant tracking system for companies with 50 to 2,000 employees.',
-    poi: { id: 'poi-gym', type: 'web', name: 'Gym v1', start_url: `${url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+    pois: [{ id: 'poi-gym', type: 'web', mode: 'full', segments: null, name: 'Gym v1', start_url: `${url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
     goal: 'Use the applicant tracking system for the task assigned to your role.', role: null, audience, persona_schema: schema,
     settings: { ...structuredClone(DEFAULT_SETTINGS), wall_clock_budget_min: 30 },
   };
@@ -73,7 +75,7 @@ export function germanProbe(base: Fixture): Fixture {
   };
   return { personas: [persona], project: {
     ...structuredClone(base.project), audience: null, goal: 'Read the language and timezone shown on this page, then finish.',
-    poi: { ...base.project.poi, id: 'poi-locale', name: 'Gym locale echo', start_url: new URL('/locale', base.project.poi.start_url).href },
+    pois: [{ ...gym(base), id: 'poi-locale', name: 'Gym locale echo', start_url: new URL('/locale', gym(base).start_url).href }],
     settings: { ...structuredClone(base.project.settings), concurrency: 1, wall_clock_budget_min: 5 },
   } };
 }
@@ -81,7 +83,7 @@ export function germanProbe(base: Fixture): Fixture {
 /** The M4 harness's seeded complaint (Gym D04), posted for the fixture's first recruiter before round 1's social phase. */
 export function complaint(base: Fixture): InjectedPost {
   return {
-    round: 1, persona_id: base.personas[0].id, poi_id: base.project.poi.id,
+    round: 1, persona_id: base.personas[0].id, poi_id: gym(base).id,
     text: 'Assigning a hiring manager who has no account yet threw away my whole job draft. Has anyone else lost a job post this way?',
   };
 }

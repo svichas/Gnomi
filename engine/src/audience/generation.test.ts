@@ -9,7 +9,7 @@ import type { ProjectConfig } from '../types.ts';
 
 const project: ProjectConfig = {
   name: 'Example', description: 'A scheduling tool', goal: 'Book an appointment', role: null,
-  poi: { id: 'poi', name: 'Example', type: 'web', start_url: 'http://localhost/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null },
+  pois: [{ id: 'poi', name: 'Example', type: 'web', start_url: 'http://localhost/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
   audience: null, settings: { ...DEFAULT_SETTINGS, persona_concurrency: 3 },
 };
 const audience = { ...defaultAudience(project), persona_count: 12 };

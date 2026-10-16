@@ -14,7 +14,7 @@ const config: RunConfig = {
   seed: 1,
   project: {
     name: 'Gym', description: 'A demo ATS.', goal: 'Post a job', role: null, audience: null, settings: DEFAULT_SETTINGS,
-    poi: { id: 'poi', type: 'web', name: 'Gym', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null },
+    pois: [{ id: 'poi', type: 'web', name: 'Gym', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null, mode: 'full', segments: null }],
   },
   personas: [BUILTIN_PERSONA],
   sessions: [],

@@ -63,7 +63,7 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
   const base = { run_id, round: 1, persona_id: null } as const;
   const product = { name: project.name, description: project.description, goal: project.goal };
 
-  const all = frictionGroups(events(), project.poi.id);
+  const all = frictionGroups(events(), project.pois[0]?.id ?? '');
   for (const poi_id of new Set(all.map((g) => g.poi_id))) {
     const { groups, posts } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id));
     const social = posts.length > 0; // without posts the call is the M3 one

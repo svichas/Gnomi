@@ -14,7 +14,7 @@ import { getPersonaSchema } from './profile/schema.ts';
 import { createSessionStore } from './sessions.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 import type { Api, EngineToClient, Method } from './protocol.ts';
-import type { Audience, GnomiEvent, ProjectConfig, Segment } from './types.ts';
+import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from './types.ts';
 
 type Listener = (e: { data: unknown; ports: [] }) => void;
 const listeners: Listener[] = [];
@@ -46,10 +46,10 @@ function call<M extends Method>(method: M, params: Api[M]['params']): Promise<Ap
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const key = randomBytes(32).toString('hex');
-const project = (poi: Partial<ProjectConfig['poi']> = {}, more: Partial<ProjectConfig> = {}): ProjectConfig => ({
+const project = (poi: Partial<WebPoi> = {}, more: Partial<ProjectConfig> = {}): ProjectConfig => ({
   name: 'Acme',
   description: 'An applicant tracking system.',
-  poi: { id: 'poi-1', type: 'web', name: 'Acme', start_url: 'https://staging.acme.io/', allowed_hosts: [], production_domains: ['acme.com'], not_production: false, reset_hook_url: null, ...poi },
+  pois: [{ id: 'poi-1', type: 'web', name: 'Acme', start_url: 'https://staging.acme.io/', allowed_hosts: [], production_domains: ['acme.com'], not_production: false, reset_hook_url: null, ...poi, mode: 'full', segments: null }],
   goal: 'Post a job',
   role: null,
   audience: null,

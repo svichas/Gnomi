@@ -1,5 +1,5 @@
 import type { AuthorSuggestion, EventOf, GnomiEvent, JudgePostTag, JudgeTheme, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
-import { buildCandidates, groupCandidates, normaliseText, pagePattern, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group } from './friction.ts';
+import { buildCandidates, groupCandidates, normaliseText, pagePattern, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -278,6 +278,7 @@ function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
     quote: c.quote,
     screenshot: c.screenshot,
     signals: c.signals,
+    ...stepEvidence(c),
   };
 }
 

@@ -107,7 +107,7 @@ test("a POI's sentiment by segment is the mean of each persona's latest opinion 
 test('the run snapshot names its POI node', () => {
   const { config, events } = syntheticRun({ personas: 3, pois: 2, rounds: 1 });
   const graph = buildGraph(events);
-  assert.equal(graph.nodes.get(`poi:${config.project.poi.id}`)?.label, config.project.poi.name);
+  assert.equal(graph.nodes.get(`poi:${config.project.pois[0].id}`)?.label, config.project.pois[0].name);
   assert.equal(graph.nodes.get('poi:poi-2')?.label, 'poi-2');
 });
 
