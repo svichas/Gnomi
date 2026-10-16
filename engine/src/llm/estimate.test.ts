@@ -74,7 +74,7 @@ test('social rounds add one socialiser call per persona and round, only for a ru
   const audience: Audience = { seed: 1, persona_count: 2, segments: [], company_size: [50, 2000], languages: { en: 1 }, accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 } };
   const people = [persona(3), persona(3)];
   const social = { ...DEFAULT_SETTINGS, social: true, rounds: 5 };
-  const base = estimateRun({ personas: people, settings: DEFAULT_SETTINGS, audience });
+  const base = estimateRun({ personas: people, settings: { ...social, social: false }, audience });
   // 2 personas × 5 rounds on Haiku at 3,000 in / 200 out: $0.0004 uncached; half cached 1,500 × $0.125 + 1,500 × $0.01 + 200 × $0.50 = $0.0003025.
   // They are timed like steps, two personas at a time: 10 × 2 s ÷ 2 and 10 × 6 s ÷ 2.
   const estimate = estimateRun({ personas: people, settings: social, audience });

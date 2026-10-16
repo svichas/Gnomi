@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate } from '@gnomi/engine/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/engine/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { personaProfileIsCurrent } from '@gnomi/engine/profile/signature.ts';
 import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
@@ -12,6 +12,7 @@ import { PersonaList } from './Personas.tsx';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
 import { SegmentCard } from './Segments.tsx';
+import { SocialRounds } from './SocialRounds.tsx';
 import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
@@ -63,6 +64,8 @@ export function AudienceTab(props: {
   onAudience(audience: Audience | null): void;
   schema?: PersonaSchema;
   onSchema(schema: PersonaSchema): void;
+  settings: RunSettings;
+  onSettings(settings: RunSettings): void;
   info: ProjectInfo | null;
   description: string; // the product sentence, the starting point of a one-segment audience
   projectName: string;
@@ -72,7 +75,7 @@ export function AudienceTab(props: {
   onBack(): void;
   onReview(): void;
 }) {
-  const { audience, onAudience, schema, onSchema, info, description, projectName, goal, save, refresh } = props;
+  const { audience, onAudience, schema, onSchema, settings, onSettings, info, description, projectName, goal, save, refresh } = props;
   const plan = useAction();
   const people = useAction();
   const [progress, setProgress] = useState<PersonaProgress | null>(null);
@@ -80,7 +83,9 @@ export function AudienceTab(props: {
   const buildPanel = useRef<HTMLDivElement>(null);
   const sessions = info?.sessions ?? [];
   const personas = info?.personas ?? [];
-  const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema);
+  const savedSettings = info?.project?.settings;
+  const socialChanged = !!savedSettings && ((settings.social ?? false) !== (savedSettings.social ?? false) || (settings.rounds ?? 5) !== (savedSettings.rounds ?? 5));
+  const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema) || socialChanged;
   const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
   const stale = new Set(personas.filter((persona) => {
     try { return !!profileProject && !personaProfileIsCurrent(persona, profileProject); } catch { return true; }
@@ -241,6 +246,8 @@ export function AudienceTab(props: {
                 <Icon name="plus" size={16} />Add segment
               </button>
             </div>
+
+            <SocialRounds settings={settings} onSettings={onSettings} people={audience.persona_count} />
 
             <div className="space-y-3 border-t border-stone-200 pt-4">
               <p className="text-sm text-stone-600">
