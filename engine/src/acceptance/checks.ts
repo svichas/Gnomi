@@ -8,15 +8,15 @@ export type Provider = 'anthropic' | 'deepseek';
 export const KEY_ENV: Record<Provider, string> = { anthropic: 'ANTHROPIC_API_KEY', deepseek: 'DEEPSEEK_API_KEY' };
 export const FULL_POPULATION = 50;
 // personas and seeds shrink a live run to save spend; criteria set at full scale then stay NOT_RUN
-export interface Options { mode: Mode; out: string; allowance_usd?: number; m4?: true; m3?: true; provider: Provider; personas: number; seeds?: number }
+export interface Options { mode: Mode; out: string; allowance_usd?: number; m5?: true; m4?: true; m3?: true; provider: Provider; personas: number; seeds?: number }
 export interface Criterion { id: string; status: Status; live_required: boolean; detail: string }
 export const BILLING_CAVEAT = 'The allowance stops new work at recorded spend. Already-dispatched calls may still be billed; missing provider usage makes the final bill uncertain. This is not a provider billing cap.';
 
 export function parseOptions(args: string[]): Options {
-  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, m4: { type: 'boolean' }, m3: { type: 'boolean' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' }, provider: { type: 'string' }, personas: { type: 'string' }, seeds: { type: 'string' } } });
+  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, m5: { type: 'boolean' }, m4: { type: 'boolean' }, m3: { type: 'boolean' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' }, provider: { type: 'string' }, personas: { type: 'string' }, seeds: { type: 'string' } } });
   const allowance_usd = values['allowance-usd'] === undefined ? undefined : Number(values['allowance-usd']);
   if (allowance_usd !== undefined && (!Number.isFinite(allowance_usd) || allowance_usd <= 0)) throw new Error('--allowance-usd must be a finite positive recorded-spend allowance.');
-  if (values.m3 && values.m4) throw new Error('Choose one of --m3 and --m4.');
+  if ([values.m3, values.m4, values.m5].filter(Boolean).length > 1) throw new Error('Choose one of --m3, --m4 and --m5.');
   const provider = values.provider ?? 'anthropic';
   if (!(provider in KEY_ENV)) throw new Error(`--provider must be one of ${Object.keys(KEY_ENV).join(', ')}.`);
   const whole = (name: string, value: string | undefined, max: number) => {
@@ -28,7 +28,7 @@ export function parseOptions(args: string[]): Options {
     mode: values.live ? 'live' : 'scripted', out: resolve(values.out ?? `acceptance-results/${new Date().toISOString().replaceAll(':', '-')}`), provider: provider as Provider,
     personas: values.personas === undefined ? FULL_POPULATION : whole('personas', values.personas, FULL_POPULATION),
     ...(values.seeds === undefined ? {} : { seeds: whole('seeds', values.seeds, 5) }),
-    ...(allowance_usd === undefined ? {} : { allowance_usd }), ...(values.m4 ? { m4: true as const } : {}), ...(values.m3 ? { m3: true as const } : {}),
+    ...(allowance_usd === undefined ? {} : { allowance_usd }), ...(values.m5 ? { m5: true as const } : {}), ...(values.m4 ? { m4: true as const } : {}), ...(values.m3 ? { m3: true as const } : {}),
   };
 }
 

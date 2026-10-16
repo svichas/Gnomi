@@ -18,7 +18,7 @@ gymAssets({ defects: "none" }); // the control build; "all" (default) switches o
 // => { frames: { checkout: string[], invite: string[] }, copy: { pricing: string } }, absolute paths, frames in order
 ```
 
-Files are `assets/frames/<sequence>/<control|Dxx>/NN.png` (1280 px wide) and `assets/copy/<sample>/<control|Dxx>.md`. Web defects (D01 to D25) are accepted by `gymAssets` and ignored.
+Files are `assets/frames/<sequence>/<control|Dxx>/NN.png` (1280 px wide) and `assets/copy/<sample>/<control|Dxx>.md`. Web defects (D01 to D25) are accepted by `gymAssets` and ignored. The M5 acceptance mode ([guide](../docs/m5-acceptance.md)) runs D26 and D28 against these controls.
 
 ## Regenerating
 
