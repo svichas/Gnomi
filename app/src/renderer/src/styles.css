@@ -314,3 +314,69 @@
 .segmented-control { display: inline-flex; padding: 3px; border: 1px solid var(--gnomi-line); border-radius: 8px; }
 .segmented-control button { border-radius: 5px; padding: 5px 10px; font-size: 12px; color: var(--gnomi-text-muted); }
 .segmented-control button[aria-pressed='true'] { background: var(--gnomi-selected); color: var(--gnomi-text); }
+.audience-start { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0; text-align: center; }
+.audience-art { width: min(280px, 100%); height: auto; margin-bottom: 8px; }
+.audience-art-spark { stroke: var(--gnomi-action); stroke-width: 2; stroke-linecap: round; }
+.audience-start h3 { font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
+.audience-start > p { max-width: 52ch; color: var(--gnomi-text-muted); line-height: 1.65; }
+.audience-start > .audience-start-note { font-size: 12px; }
+.audience-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 240px)); gap: 12px; margin-top: 12px; }
+.audience-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px; text-align: left; border: 1px solid var(--gnomi-control-border); border-radius: 12px; background: var(--gnomi-surface); color: var(--gnomi-text); transition: background-color var(--gnomi-duration); }
+.audience-choice:hover:not(:disabled) { background: var(--gnomi-canvas); }
+.audience-choice:disabled { opacity: .5; }
+.audience-choice svg { margin-bottom: 8px; color: var(--gnomi-action); }
+.audience-choice strong { font-size: 14px; font-weight: 500; }
+.audience-choice span { font-size: 12px; line-height: 1.5; color: var(--gnomi-text-muted); }
+.audience-choice-primary { background: var(--gnomi-action); border-color: var(--gnomi-action); color: var(--gnomi-on-action); }
+.audience-choice-primary:hover:not(:disabled) { background: var(--gnomi-action-hover); }
+.audience-choice-primary svg, .audience-choice-primary span { color: inherit; }
+.audience-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.audience-toolbar .field-input { width: 128px; }
+.audience-toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.audience-seed { margin-top: 4px; }
+.audience-seed-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding-top: 4px; }
+.audience-seed-hint { margin-top: 4px; font-size: 12px; color: var(--gnomi-text-muted); }
+.segment-list-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; }
+.segment-list-head h3 { font-size: 14px; font-weight: 500; }
+.segment-list-head p { font-size: 12px; color: var(--gnomi-text-muted); }
+.segment-list { display: grid; gap: 8px; }
+.segment-card { display: grid; gap: 12px; padding: 12px 16px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); }
+.segment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.segment-dot { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; background: var(--segment-color); }
+.segment-name { flex: 1; min-width: 140px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--gnomi-text); font-size: 15px; font-weight: 500; }
+.segment-name:hover { border-color: var(--gnomi-line); }
+.segment-name:focus { border-color: var(--gnomi-control-border); outline: 2px solid var(--gnomi-focus); outline-offset: 1px; }
+.segment-name::placeholder { color: var(--gnomi-text-muted); font-weight: 400; }
+.segment-share { display: flex; align-items: center; gap: 8px; width: 200px; }
+.segment-share input { flex: 1; min-width: 0; accent-color: var(--segment-color); }
+.segment-share span { width: 40px; text-align: right; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.icon-button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: var(--gnomi-text-muted); }
+.icon-button:hover:not(:disabled) { background: var(--gnomi-selected); color: var(--gnomi-text); }
+.icon-button:disabled { opacity: .35; }
+.segment-body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.segment-card .field-input { padding: 8px 10px; font-size: 13px; }
+.add-segment { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 10px; border: 1px dashed var(--gnomi-control-border); border-radius: 12px; color: var(--gnomi-action); font-size: 13px; font-weight: 500; }
+.add-segment:hover:not(:disabled) { background: var(--gnomi-selected); }
+.persona-header { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.persona-header .persona-avatar { width: 44px; height: 44px; font-size: 14px; }
+.persona-name { font-size: 15px; font-weight: 500; line-height: 1.3; color: var(--gnomi-text); }
+.persona-name span { font-size: 13px; font-weight: 400; color: var(--gnomi-text-muted); }
+.persona-role { margin-top: 2px; font-size: 12px; color: var(--gnomi-text-muted); }
+.persona-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); font-size: 13px; }
+.persona-facts { padding: 12px; border-radius: 8px; background: var(--gnomi-canvas); }
+.persona-facts dl { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px 16px; }
+/* Short facts flow in even columns; ProfileFields' wide spans are for prose. */
+.persona-facts dl > div { grid-column: auto; }
+.persona-facts dd { font-size: 13px; }
+.persona-facts:empty, .persona-story:empty { display: none; }
+.persona-story dl { grid-template-columns: minmax(0, 1fr); }
+.persona-story dd { line-height: 1.6; }
+.persona-more { border-top: 1px solid var(--gnomi-line); padding-top: 10px; }
+.persona-more > summary { font-size: 12px; font-weight: 500; color: var(--gnomi-action); }
+.persona-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.button-small { min-height: 32px; padding: 6px 12px; font-size: 12px; }
+@media (max-width: 700px) {
+  .audience-choices { grid-template-columns: minmax(0, 1fr); width: 100%; }
+  .segment-share { order: 3; width: 100%; }
+  .segment-body { grid-template-columns: minmax(0, 1fr); }
+}

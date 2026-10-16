@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { useId } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { Segment, SessionInfo, UsageFrequency } from '@gnomi/engine/types.ts';
-import { Field, inputClass, NumberInput, secondaryButton } from './ui.tsx';
+import { Icon } from './Icon.tsx';
+import { Field, inputClass, NumberInput } from './ui.tsx';
 
 const FREQUENCY: Record<UsageFrequency, string> = { daily: 'Every day', weekly: 'Every week', monthly: 'Every month', rarely: 'Rarely', never: 'Never before' };
 const ENTRY: Record<Segment['entry'], string> = { direct: 'Opens the site directly', email_link: 'From a link in an email', shared_link: 'From a shared link' };
@@ -37,52 +39,49 @@ function Range(props: { label: string; value: [number, number]; onChange(value: 
 /** One segment of the audience (idea.md §8.1): who they are, what they do, and their share of the population. */
 export function SegmentCard(props: {
   segment: Segment;
+  index: number; // picks the segment's colour
   sessions: SessionInfo[];
   several: boolean; // a lone segment is everyone: it can neither be removed nor have its share changed
   onChange(segment: Segment): void;
   onShare(share: number): void;
   onRemove(): void;
 }) {
-  const { segment, sessions, several, onChange, onShare, onRemove } = props;
+  const { segment, index, sessions, several, onChange, onShare, onRemove } = props;
   const set = <K extends keyof Segment>(key: K, value: Segment[K]) => onChange({ ...segment, [key]: value });
   const roles = sessions.map((session) => session.role);
+  const nameId = useId();
   return (
-    <li className="space-y-4 rounded-lg border border-stone-200 p-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
-          <Field label="Segment name">
-            <input value={segment.name} onChange={(e) => set('name', e.target.value)} className={inputClass} />
-          </Field>
+    <li className="segment-card" style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+      <div className="segment-head">
+        <span className="segment-dot" aria-hidden="true" />
+        <label htmlFor={nameId} className="sr-only">Segment name</label>
+        <input id={nameId} value={segment.name} onChange={(e) => set('name', e.target.value)} placeholder="Name this group" className="segment-name" />
+        <div className="segment-share">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={segment.share}
+            aria-label={`Share of ${segment.name}`}
+            onChange={(e) => onShare(Number(e.target.value))}
+            disabled={!several}
+          />
+          <span aria-hidden="true">{segment.share}%</span>
         </div>
-        <button type="button" onClick={onRemove} disabled={!several} aria-label={`Remove segment ${segment.name}`} className={secondaryButton}>
-          Remove segment
+        <button type="button" onClick={onRemove} disabled={!several} aria-label={`Remove segment ${segment.name}`} title="Remove segment" className="icon-button">
+          <Icon name="close" size={16} />
         </button>
       </div>
 
-      <label className="block">
-        <span className="mb-1 flex justify-between text-sm font-medium text-stone-700">
-          <span>Share of the audience</span>
-          <span>{segment.share}%</span>
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={segment.share}
-          aria-label={`Share of ${segment.name}`}
-          onChange={(e) => onShare(Number(e.target.value))}
-          disabled={!several}
-          className="w-full accent-indigo-600"
-        />
-      </label>
-
-      <Field label="Who they are" hint="A sentence or two. The persona writer reads it.">
-        <textarea value={segment.description} onChange={(e) => set('description', e.target.value)} rows={2} className={inputClass} />
-      </Field>
-      <Field label={`Employers for ${segment.name}`} hint="Optional, one employer per line. Personas are sampled across these employers.">
-        <textarea value={(segment.employers ?? []).join('\n')} onChange={(e) => set('employers', e.target.value.split('\n'))} rows={2} className={inputClass} />
-      </Field>
+      <div className="segment-body">
+        <Field label="Who they are">
+          <textarea value={segment.description} onChange={(e) => set('description', e.target.value)} rows={2} placeholder="A sentence or two. The persona writer reads it." className={inputClass} />
+        </Field>
+        <Field label="Employers" hint="Optional, one per line.">
+          <textarea value={(segment.employers ?? []).join('\n')} onChange={(e) => set('employers', e.target.value.split('\n'))} rows={2} aria-label={`Employers for ${segment.name}`} className={inputClass} />
+        </Field>
+      </div>
 
       <details className="segment-options"><summary>Habits, devices & scenarios</summary><div className="space-y-4 mt-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

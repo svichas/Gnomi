@@ -3,7 +3,7 @@ import type { DiversityReport, Persona, PersonaSchema, Segment } from '@gnomi/en
 import { attributeValue, getPersonaSchema, isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
 import { countryName } from '@gnomi/engine/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
-import { ProfileFields, personaLabel } from './ProfileFields.tsx';
+import { PersonaHeader, ProfileFields, personaLabel } from './ProfileFields.tsx';
 import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
 import { Bars, Card, Field, inputClass, Note, primaryButton, secondaryButton } from './ui.tsx';
 
@@ -71,7 +71,8 @@ function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: b
   const summary = [...CARD_SUMMARY, ...getPersonaSchema(schema).attributes.filter((attribute) => !DEFAULT_IDS.has(attribute.id)).map((attribute) => attribute.id)];
   const written = WRITTEN.filter(([key]) => isAttributeEnabled(schema, key, 'card'));
   return (
-    <li aria-label={`${name} persona`} className="space-y-2 rounded-lg border border-stone-200 p-4 text-sm">
+    <li aria-label={`${name} persona`} className="persona-card">
+      <PersonaHeader persona={persona} schema={schema} stale={stale} />
       {draft && !stale ? (
         <div className="space-y-3">
           {written.map(([key, label]) => (
@@ -100,25 +101,20 @@ function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: b
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="font-semibold text-stone-900">
-              {name} {isAttributeEnabled(schema, 'pronouns', 'card') && <span className="font-normal text-stone-500">({persona.pronouns})</span>}
-            </p>
-          </div>
-          <ProfileFields persona={persona} schema={schema} only={summary} stale={stale} />
-          {stale ? <p className="text-sm text-amber-800">Regenerate this persona to update their biography and voice.</p> : <ProfileFields persona={persona} schema={schema} only={[...NARRATIVE_FIELDS]} />}
-          <details className="border-t border-stone-100 pt-2">
-            <summary className="cursor-pointer text-sm font-medium text-indigo-700">Full profile</summary>
+          <div className="persona-facts"><ProfileFields persona={persona} schema={schema} only={summary} except={['job_title']} stale={stale} /></div>
+          {stale ? <p className="text-sm text-amber-800">Regenerate this persona to update their biography and voice.</p> : <div className="persona-story"><ProfileFields persona={persona} schema={schema} only={[...NARRATIVE_FIELDS]} /></div>}
+          <details className="persona-more">
+            <summary>Full profile</summary>
             <div className="pt-3"><ProfileFields persona={persona} schema={schema} except={[...summary, ...NARRATIVE_FIELDS, 'name', 'pronouns']} stale={stale} /></div>
           </details>
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button type="button" onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} className={secondaryButton}>
+          <div className="persona-actions">
+            <button type="button" onClick={() => setDraft(persona)} disabled={busy || stale || !written.length} aria-label={`Edit ${name}`} className={`${secondaryButton} button-small`}>
               Edit
             </button>
-            <button type="button" onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} className={secondaryButton}>
+            <button type="button" onClick={onRegenerate} disabled={busy} aria-label={`Regenerate ${name}`} className={`${secondaryButton} button-small`}>
               Regenerate
             </button>
-            <button type="button" onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} className={secondaryButton}>
+            <button type="button" onClick={onRemove} disabled={busy} aria-label={`Remove ${name}`} aria-describedby={allotted ? `comes-back-${persona.id}` : undefined} className={`${secondaryButton} button-small`}>
               Remove
             </button>
           </div>
