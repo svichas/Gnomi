@@ -4,21 +4,22 @@ import { z } from 'zod';
 import { ACCESSIBILITY, languageName, PATIENCE, profileBlock, wordsFor } from '../agent/prompt.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
+import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
 import type { DesignPoi, Opinion, Persona, ProjectConfig, Segment } from '../types.ts';
 
 /** One answer per screen. `matched` is null on the first screen, or when the persona had no expectation of this one. */
 export const designSchema = z.object({
-  thought: z.string(),
+  thought: english(z.string()),
   feeling: z.number().int().min(-2).max(2),
   matched: z.boolean().nullable(),
-  sees: z.string(),
-  would_do: z.string(),
-  expects_next: z.string().nullable(),
+  sees: english(z.string()),
+  would_do: english(z.string()),
+  expects_next: english(z.string()).nullable(),
   action: z.enum(['continue', 'abandon']),
-  reason: z.string().nullable(),
-  friction: z.object({ severity: z.number().int().min(1).max(4), what: z.string(), expected: z.string() }).nullable(),
+  reason: english(z.string()).nullable(),
+  friction: z.object({ severity: z.number().int().min(1).max(4), what: english(z.string()), expected: english(z.string()) }).nullable(),
   opinion: opinionSchema.nullable(),
 }).strict();
 
@@ -33,7 +34,6 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
   const { p, obj, poss } = w;
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
   const { locale } = personaEnvironment(persona);
-  const language = `${languageName(locale)} (${locale})`;
   const access = ACCESSIBILITY[persona.accessibility_needs];
   const familiarity = {
     low: `This kind of product is new to ${p}: its icons and jargon mean little to ${obj}, and nothing is obvious.`,
@@ -63,7 +63,7 @@ ${p}'s task: "${segment?.goal_override ?? project.goal}"
 How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}
 
-Answer every turn with one JSON object, every text in ${poss} own voice and in ${language}:
+Answer every turn with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
 - thought: ${p} thinking aloud about this screen, in at most 40 words.
 - feeling: how ${p} feels right now, an integer from -2 (very frustrated) to 2 (very pleased); 0 is neutral.
 - matched: whether this screen is what ${p} expected to see after doing what ${p} said on the screen before; null on the first screen.

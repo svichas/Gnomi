@@ -2,11 +2,11 @@
 // whether they would buy, how the price looks, what would stop them and what was unclear. The answer is recorded as the shared
 // persona.survey, so sentiment by segment and the report themes see buyers too, with the buying answers alongside.
 import { z } from 'zod';
-import { personaEnvironment } from '../audience/locations.ts';
+import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { LlmGateway, UserPart } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Persona, Poi, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { languageName, profileBlock, wordsFor, type SurveyedEnd } from './prompt.ts';
+import { profileBlock, wordsFor, type SurveyedEnd } from './prompt.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const BUYER_SURVEY = 'buyer_survey';
@@ -20,12 +20,11 @@ export const buyerSurveySchema = z.object({
   sentiment: opinionSchema.shape.sentiment,
   confidence: opinionSchema.shape.confidence,
   would_buy: z.boolean(),
-  reason: z.string().trim().min(1).max(500),
+  reason: english(z.string().trim().min(1).max(500)),
 }).strict();
 
 export function buyerSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null): string {
   const { p, obj, poss } = wordsFor(persona, project);
-  const { locale } = personaEnvironment(persona);
   return `This is ${persona.name}. ${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides, and has just looked at what ${project.name} shows people like ${obj}. Now ${p} answers a few questions about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
 <persona>
@@ -36,7 +35,7 @@ ${p}'s task: "${segment?.goal_override ?? project.goal}"
 How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}
 
-Answer with one JSON object, every text in ${poss} own voice and in ${languageName(locale)} (${locale}):
+Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
 - objections: what would stop ${p} buying ${project.name} or recommending it, most important first, up to 5 short statements (at most 500 characters each); empty when nothing would.
 - unclear: what ${p} could not work out from what ${p} saw, such as a price, a limit or what a plan includes, up to 5 short statements; empty when everything was clear.
 - likes: what speaks for buying, up to 5 short statements; empty when nothing stood out.

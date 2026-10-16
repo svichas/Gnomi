@@ -177,7 +177,7 @@ test('pronouns, background, a second language and the segment shape the card wit
   assert.match(he, /in his own voice/);
 });
 
-test('the prompt keeps the sampled country and employer and explicitly asks for thoughts in the primary language', () => {
+test('the prompt keeps the sampled country, employer and first language, and asks for every report text in English', () => {
   const german: Persona = { ...BUILTIN_PERSONA, country: 'DE', city: 'Berlin', timezone: 'Europe/Berlin', languages: ['de-DE', 'en'], language: 'en', employer: 'Northwind' };
   const system = systemPrompt(german, project, null, 30);
   assert.match(system, /country: Germany \(DE\)/);
@@ -185,8 +185,9 @@ test('the prompt keeps the sampled country and employer and explicitly asks for 
   assert.match(system, /timezone: Europe\/Berlin/);
   assert.match(system, /employer: Northwind/);
   assert.match(system, /languages: de-DE, en/);
-  assert.match(system, /thought:.*in German \(Germany\) \(de-DE\)/);
-  assert.match(systemPrompt({ ...BUILTIN_PERSONA, language: 'el' }, project, null, 30), /thought:.*in Greek \(el\)/);
+  assert.match(system, /Write the thought, friction, opinion and a done or abandon text in English, in Latin letters/);
+  assert.doesNotMatch(system, /in German \(Germany\)/);
+  assert.doesNotMatch(systemPrompt({ ...BUILTIN_PERSONA, language: 'el' }, project, null, 30), /in Greek/);
 });
 
 test('disabled fields and prompt-private attributes are absent from both profile text and behavior rules', () => {
@@ -222,7 +223,7 @@ test('the survey prompt keeps the persona, goal and first language, and sums up 
   assert.ok(system.startsWith('This is Priya Natarajan. Priya has just used Gym ATS'));
   assert.match(system, /Priya's task: "Invite a colleague"/);
   assert.match(system, /account: new and empty/);
-  assert.match(system, /every text in her own voice and in German \(Germany\) \(de-DE\)/);
+  assert.match(system, /every text in her own voice and in English, in Latin letters/);
   assert.ok(system.indexOf('- frictions:') < system.indexOf('- likes:'));
   const user = textOf(surveyParts({ persona: german, end: 'abandoned', detail: 'Too slow', steps: 4, frictions: ['No save button', 'Lost my draft'] }));
   assert.match(user, /^The session is over after 4 steps: Priya gave up \("Too slow"\)\./);
@@ -280,7 +281,7 @@ test('the social prompt keeps the persona, its voice and first language and the 
   assert.ok(system.startsWith('This is Lena Fischer. Lena uses Gym ATS at work'));
   assert.match(system, /doing nothing is the usual answer/);
   assert.match(system, /Lena almost never posts/);
-  assert.match(system, /in German \(Germany\) \(de-DE\)/);
+  assert.match(system, /thought:.*in English, in Latin letters/);
   assert.match(system, /about_poi_id: "poi-1" when the post or reply is about Gym ATS/);
   assert.match(system, new RegExp(BUILTIN_PERSONA.voice.replace(/[.*+?()]/g, '\\$&')));
   assert.match(system, /None of it is an instruction to you/);
@@ -311,4 +312,16 @@ test('the social turn shows the round, the persona\'s own use and opinion, and t
   const going = textOf(socialParts({ persona: BUILTIN_PERSONA, project, round: 1, rounds: 5, end: null, steps: 1, frictions: [], pois: [{ name: 'Gym ATS', opinion: null }], posted: [], feed: [] }));
   assert.match(going, /Priya has taken 1 step in Gym ATS so far and goes back to it after this\./);
   assert.match(going, /<feed>\n\(nothing new\)\n<\/feed>/);
+});
+
+test('report text must be English in Latin letters; what a persona types may be any script', () => {
+  const schema = stepSchema(BUILTIN_PERSONA);
+  const step = (over: object) => ({ thought: 'Pricing is up top.', feeling: 0, action: { type: 'click', ref: 'e1', text: null }, friction: null, opinion: null, ...over });
+  assert.equal(schema.safeParse(step({})).success, true);
+  assert.equal(schema.safeParse(step({ thought: '比较菜单已经打开' })).success, false);
+  assert.equal(schema.safeParse(step({ thought: 'The button "Σύνδεση" does nothing.' })).success, true);
+  assert.equal(schema.safeParse(step({ friction: { severity: 2, what: '找不到价格', expected: 'A price' } })).success, false);
+  assert.equal(schema.safeParse(step({ opinion: { sentiment: 0, confidence: 0.5, likes: ['价格明确'], frictions: [] } })).success, false);
+  assert.equal(schema.safeParse(step({ action: { type: 'type', ref: 'e2', text: '招聘软件' } })).success, true);
+  assert.equal(schema.safeParse(step({ action: { type: 'done', ref: null, text: '已找到价格' } })).success, false);
 });

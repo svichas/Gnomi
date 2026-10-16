@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { english } from '../llm/english.ts';
 import type { EventOf, GnomiEvent, Opinion } from '../types.ts';
 
 /** Explicit claims, not sentiment inferred from the think-aloud text. */
 export const opinionSchema = z.object({
   sentiment: z.number().int().min(-2).max(2),
   confidence: z.number().min(0).max(1),
-  likes: z.array(z.string().trim().min(1).max(500)).max(5),
-  frictions: z.array(z.string().trim().min(1).max(500)).max(5),
+  likes: z.array(english(z.string().trim().min(1).max(500))).max(5),
+  frictions: z.array(english(z.string().trim().min(1).max(500))).max(5),
 }).strict();
 
 export function sameOpinion(before: Opinion | null, after: Opinion): boolean {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { LlmGateway, Recorder } from '../seams.ts';
 import type { AuthorSuggestion, GnomiEvent, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
+import { english } from '../llm/english.ts';
 import { buildReport } from './build.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
@@ -8,7 +9,7 @@ import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.t
 // changes. Each answer is recorded as an event, so the report rebuilds from the log alone; a failed or missing answer
 // records nothing and the report falls back to the deterministic themes.
 
-const text = (max: number) => z.string().trim().min(1).max(max);
+const text = (max: number) => english(z.string().trim().min(1).max(max));
 export const judgeSchema = z.object({
   themes: z.array(z.object({ title: text(120), description: text(400), group_ids: z.array(z.string()).min(1) })),
 });
@@ -41,9 +42,10 @@ export const AUTHOR_SYSTEM = `You suggest design changes for potential usability
 For each theme you get its title, description, trust, the pages and elements involved and up to three pieces of evidence.
 
 For every theme, write:
-- change: one sentence that starts with a verb, the change you suggest. Be specific about the page and element.
-- solution: two or three sentences on one way to make that change.
+- change: one short sentence that starts with a verb, the change you suggest. Be specific about the page and element.
+- solution: one or two short sentences on one way to make that change.
 
+Write in plain, everyday words that anyone on the team understands at a glance: no design or research jargon.
 Use only the theme ids you were given. These are suggestions for the team to consider and validate with real people, not verdicts: do not overstate certainty.`;
 
 export interface ReportModelDeps {
