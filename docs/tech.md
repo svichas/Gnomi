@@ -843,6 +843,8 @@ This is the same mechanism in development and in the packaged app; there is no H
 
 **Build.** electron-vite builds the renderer, main and engine entry points; electron-builder produces a notarized dmg and zip for macOS (13+, Apple silicon and Intel), a signed NSIS installer for Windows 10/11 (x64 and arm64) and an AppImage and deb for Linux (x64 and arm64). `playwright-core` is unpacked from the asar archive because it spawns browser binaries. Continuous integration runs the `node:sqlite` smoke test inside the packaged utility process before anything else, since that decides the SQLite driver.
 
+**Development.** `npm run dev` enables electron-vite's main/preload watch mode. Engine and main-process source changes rebuild the bundle and restart Electron, so switching branches loads the current engine; renderer edits use Vite's hot reload.
+
 **Signing.** Apple Developer Program ($99 per year) and notarization through `@electron/notarize`; without it, auto-update does not work on macOS and `safeStorage` re-prompts for the Keychain after every update. Windows signing through Azure Artifact Signing ($9.99 per month) where the legal entity is eligible, otherwise an OV certificate with cloud HSM. Developer accounts are opened in milestone 0 because of lead times.
 
 **Updates.** electron-updater against GitHub Releases (works for private repositories with a token and for public ones without), manifests verified by signature before install, an "update available" banner rather than a forced restart. Crash reporting is off by default; the opt-in sends minidumps and the app version only.
