@@ -47,13 +47,13 @@
   ::selection { background: var(--gnomi-sage); color: var(--gnomi-ink); }
 }
 
-.app-header { min-height: 88px; display: flex; align-items: center; gap: 24px; padding: 12px 40px; background: var(--gnomi-surface); border-bottom: 1px solid var(--gnomi-line); }
+.app-header { min-height: 88px; display: flex; align-items: center; gap: 24px; padding: 12px 32px; background: var(--gnomi-surface); border-bottom: 1px solid var(--gnomi-line); }
 .brand-link { flex-shrink: 0; padding: 4px 8px; margin-left: -8px; border-radius: 8px; }
 .brand-link img { display: block; width: 130px; height: 40px; }
 .header-divider { width: 1px; height: 24px; background: var(--gnomi-line); }
 .header-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gnomi-text-muted); }
 .header-settings { margin-left: auto; }
-.app-main { max-width: 1200px; margin: auto; padding: 24px 40px 64px; }
+.app-main { max-width: 1200px; margin: auto; padding: 20px 32px 48px; }
 .projects-main { max-width: 1000px; padding-top: 64px; }
 .page-heading { margin: 32px 0; }
 .page-heading .eyebrow { font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 12px; color: var(--gnomi-action); }
@@ -126,7 +126,7 @@
 .persona-preview p { font-size: 12px; color: var(--gnomi-text-muted); }
 .persona-avatar { display: inline-flex; justify-content: center; align-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb, var(--avatar-color) 12%, white); border: 1px solid color-mix(in srgb, var(--avatar-color) 25%, white); color: var(--gnomi-ink); font-size: 11px; font-weight: 500; letter-spacing: .01em; }
 /* A step's actions float at the foot of the window (ActionBar in ui.tsx); the page and focus scrolling leave room for the bar showing, so it covers nothing at the end. */
-.action-bar { position: fixed; z-index: 20; inset-inline: 0; bottom: 24px; width: min(var(--action-bar-width, 1120px), calc(100% - 80px)); margin: 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; box-shadow: 0 8px 24px #22282314; }
+.action-bar { position: fixed; z-index: 20; inset-inline: 0; bottom: 24px; width: calc(min(var(--action-bar-width, 1136px), 100% - 64px) - 48px); /* inset from the content's edges, so it never lines up with a card behind it */ margin: 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; box-shadow: 0 8px 24px #22282314; }
 .action-bar > p { flex: 1 1 240px; }
 .app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
 html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
@@ -239,7 +239,7 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
   .timeline-toolbar .quiet-button { padding-right: 0; }
   .timeline-toolbar > div:last-child { flex-wrap: wrap; justify-content: flex-end; }
   .timeline-byline { gap: 6px; }
-  .action-bar { bottom: 16px; width: calc(100% - 40px); }
+  .action-bar { bottom: 16px; width: calc(100% - 72px); }
   .action-bar .button { flex: 1; }
   .empty-state { padding: 40px 8px; }
 }
