@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
 import { AudienceTab } from './Audience.tsx';
-import { call, connected, errorText, stopped } from './engine.ts';
+import { call, connected, errorText, onEvent, stopped } from './engine.ts';
+import { isEnd } from './activity.ts';
 import { initialDraft, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { Project } from './Project.tsx';
@@ -13,7 +14,7 @@ import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Button, Note } from './ui.tsx';
+import { Button, Note, usePills } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
 
@@ -31,6 +32,8 @@ function rememberedProject(): string | null {
 function rememberProject(id: string) {
   try { localStorage.setItem('gnomi.open-project', id); } catch { /* The main process still remembers the current project. */ }
 }
+/** The run in progress: the engine refuses to switch projects while it lasts, and the app keeps the user on its page. */
+const liveRun = (project: ProjectInfo | null) => project?.runs.find((run) => run.status === 'running');
 
 export function App() {
   const [tab, setTab] = useState<Tab>('project');
@@ -66,12 +69,15 @@ export function App() {
     setProviders(available);
     baseline.current = JSON.stringify(next);
     setCatalog(projects);
-    setRunId(project.runs.find((run) => run.status === 'running')?.run_id ?? project.runs[0]?.run_id ?? null);
+    setRunId(liveRun(project)?.run_id ?? project.runs[0]?.run_id ?? null);
     setReview(null);
     setRevision((was) => was + 1);
   }
 
   const refresh = useCallback(async () => setInfo(await call('get_project', {})), []);
+  // Any run's end, shown or not, so a run that ends while another is on screen stops holding the user on this page.
+  useEffect(() => onEvent((event) => { if (isEnd(event)) void refresh(); }), [refresh]);
+  const pills = usePills();
   const refreshProviders = useCallback(async () => {
     const available = await window.gnomi.listProviders();
     setProviders(available);
@@ -90,7 +96,7 @@ export function App() {
         const projects = await window.gnomi.listProjects();
         await loadProject(loaded, projects);
         setHome(projects.currentId !== 'development' && !loaded.project && rememberedProject() !== projects.currentId);
-        const running = loaded.runs.find((run) => run.status === 'running'); // the page was reloaded mid-run
+        const running = liveRun(loaded); // the page was reloaded mid-run
         if (running) {
           setRunId(running.run_id);
           setTab('run');
@@ -162,7 +168,17 @@ export function App() {
     try { config = await save(); } catch (err) { config = errorText(err); }
     setReview({ key: ++reviews.current, config });
   }
-  const go = (to: Tab) => (to === 'review' ? void openReview() : setTab(to));
+  // A live run holds the user on its page, which shows its progress and its Stop button; a pill says why.
+  const leaveBlocked = () => {
+    if (!liveRun(info)) return false;
+    pills.notify('Stop the run to leave this page.');
+    return true;
+  };
+  const go = (to: Tab) => {
+    if (to !== 'run' && leaveBlocked()) return;
+    if (to === 'review') void openReview();
+    else setTab(to);
+  };
   const fix = (screen: ReviewScreen) => {
     if (screen === 'settings') setReturnTab('review');
     setTab(screen);
@@ -175,6 +191,7 @@ export function App() {
 
   const currentProject = catalog?.projects.find((entry) => entry.id === catalog.currentId);
   const showHome = () => {
+    if (leaveBlocked()) return;
     setHome(true);
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
   };
@@ -199,7 +216,7 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
+        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else if (!leaveBlocked()) { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
       </header>
 
       <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
@@ -260,7 +277,7 @@ export function App() {
               ) : <p className="text-sm text-stone-500">Saving your project and checking the run…</p>}
             </div>
             <div role="region" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
-              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onRunEnded={refresh} onSetup={() => setTab('project')} />
+              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onSetup={() => go('project')} />
             </div>
           </div>
         )}
@@ -274,6 +291,7 @@ export function App() {
           </div>
         </ProjectDialog>}
       </main>
+      {pills.view}
     </div>
   );
 }
