@@ -380,6 +380,7 @@ try {
     await settings.getByLabel('Cost budget (USD)', { exact: true }).fill('2');
     await settings.getByLabel('Let personas read and post in a shared feed between stretches of use').check();
     assert.equal(await settings.getByLabel('Rounds (1-10)', { exact: true }).inputValue(), '5');
+    await settings.getByLabel('Rounds (1-10)', { exact: true }).fill('10'); // with patience 2 below, the population run's slices are two steps
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await settings.getByText('Settings saved with the project.').waitFor();
     await page.screenshot({ path: join(shots, 'settings-models.png'), fullPage: true });
@@ -423,6 +424,10 @@ try {
     await audience.getByLabel('Add country').selectOption('DE');
     await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
     await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
+    // Social phases stop once every episode has ended, and the scripted persona ends on its third step: a 20-step budget
+    // over ten rounds gives slices of two steps, so the population run reaches a social phase before anyone ends.
+    for (const options of await audience.locator('summary').filter({ hasText: 'Habits, devices & scenarios' }).all()) await options.click();
+    for (const highest of await audience.getByLabel('Patience (1-5), highest', { exact: true }).all()) await highest.fill('2');
     // The generation may be quick, so a page observer keeps what the progress bar showed.
     await page.evaluate(() => {
       const seen: string[] = [];
