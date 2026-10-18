@@ -122,34 +122,39 @@ try {
   const status = page.getByRole('region', { name: 'Run status' });
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor();
   const reportTab = page.getByRole('tab', { name: 'Report', exact: true });
-  assert.ok(await reportTab.isDisabled(), 'An active population has no finished report.');
+  assert.equal(await reportTab.count(), 0, 'The report is absent while a simulation is running.');
+  await page.getByRole('region', { name: 'Swarm graph' }).waitFor();
+  assert.ok(await page.getByRole('progressbar', { name: 'Simulation progress', exact: true }).isVisible());
+  const activity = page.getByRole('region', { name: 'Activity', exact: true });
+  await activity.getByRole('button', { name: 'Pause updates', exact: true }).click();
+  const pausedCount = await activity.locator('.count-label').innerText();
   await page.evaluate(() => window.completionSmoke.abandon());
-  await page.waitForFunction(() => document.querySelector('.run-status')?.textContent?.includes('Gave up 3'));
-  assert.match(await status.innerText(), /3 of 3/);
-  assert.match(await status.innerText(), /Preparing report/);
-  const preparing = page.getByRole('progressbar', { name: 'Preparing the report', exact: true });
-  const steps = page.locator('.report-steps li');
-  const active = () => page.locator('.report-steps li[aria-current="step"]').innerText();
-  assert.equal(await preparing.getAttribute('aria-valuenow'), '0');
-  assert.match(await active(), /Collecting their survey answers\s*0 of 3/);
+  await activity.getByRole('button', { name: /^Show \d+ new updates?$/ }).waitFor();
+  assert.equal(await activity.locator('.count-label').innerText(), pausedCount, 'Incoming events do not move a paused feed.');
+  await activity.getByRole('button', { name: /^Show \d+ new updates?$/ }).click();
+  assert.ok(Number(await activity.locator('.count-label').innerText()) > Number(pausedCount));
+  const meter = page.getByRole('progressbar', { name: 'Simulation progress', exact: true });
+  await page.waitForFunction(() => Number(document.querySelector('[aria-label="Simulation progress"]')?.getAttribute('aria-valuenow')) > 0);
+  assert.equal(await reportTab.count(), 0);
+  const completedExploration = Number(await meter.getAttribute('aria-valuenow'));
+  assert.ok(completedExploration > 0 && completedExploration < 100);
   await page.evaluate(() => window.completionSmoke.progress(2));
-  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.includes('2 of 3'));
   await page.evaluate(() => window.completionSmoke.progress(3));
-  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.startsWith('Grouping'));
-  assert.equal(await preparing.getAttribute('aria-valuenow'), '20');
-  assert.equal(await steps.first().getAttribute('data-state'), 'done');
-  await page.locator('.report-progress').scrollIntoViewIfNeeded();
-  await page.waitForTimeout(500); // the meter eases to its new width
-  await page.screenshot({ path: join(shots, 'report-progress.png') });
+  await status.getByText('Turning experiences into findings', { exact: true }).waitFor();
+  const beforeThemes = Number(await meter.getAttribute('aria-valuenow'));
+  assert.ok(beforeThemes >= completedExploration);
   await page.evaluate(() => window.completionSmoke.progress(4));
-  await page.waitForFunction(() => document.querySelector('.report-steps li[aria-current="step"]')?.textContent?.startsWith('Writing'));
-  assert.equal(await preparing.getAttribute('aria-valuenow'), '70');
-  await page.setViewportSize({ width: 375, height: 900 });
-  await page.locator('.report-progress').scrollIntoViewIfNeeded();
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'the report progress fits a phone width');
-  await page.screenshot({ path: join(shots, 'report-progress-375.png') });
+  await page.waitForFunction((before) => Number(document.querySelector('[aria-label="Simulation progress"]')?.getAttribute('aria-valuenow')) > before, beforeThemes);
+  assert.ok(Number(await meter.getAttribute('aria-valuenow')) < 100);
+  assert.equal(await reportTab.count(), 0, 'The report stays absent while its findings are being prepared.');
+  await page.screenshot({ path: join(shots, 'simulation-running.png'), fullPage: true });
+  for (const width of [1440, 1024, 768, 375, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `the simulation fits ${width}px`);
+    await page.screenshot({ path: join(shots, `simulation-running-${width}.png`), fullPage: true });
+  }
   await page.setViewportSize({ width: 1280, height: 900 });
-  console.log('ok    all three personas gave up; Preparing report shows surveys, themes and suggestions as the log advances');
+  console.log('ok    graph visible by default, report absent during run, progress advances with events, responsive at 320–1440px');
 
   // Still live while the report is prepared: each way off the Activity step raises a centered pill instead.
   const pill = page.getByRole('status').locator('.pill').filter({ hasText: 'Stop the run to leave this page.' });
@@ -162,6 +167,7 @@ try {
   const pillBox = async (width: number) => {
     await pill.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
     const box = (await pill.boundingBox())!;
+    width = await page.evaluate(() => document.documentElement.clientWidth);
     assert.ok(Math.abs(box.x + box.width / 2 - width / 2) <= 1, `the pill is centered at ${width}px`);
     assert.ok(box.x >= 16 && box.x + box.width <= width - 16, `the pill fits ${width}px`);
   };
@@ -187,6 +193,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#run-tab-report')?.getAttribute('aria-selected') === 'true', undefined, { timeout: 3_000 });
   await page.locator('#run-panel-report').getByRole('heading', { name: 'Report', exact: true }).waitFor();
   assert.match(await page.locator('#run-panel-report').innerText(), /Gave up|abandoned/i);
+  assert.equal(await meter.getAttribute('aria-valuenow'), '100');
   await page.screenshot({ path: join(shots, 'all-abandoned-report.png') });
   await page.locator('#tab-project').click();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
@@ -195,17 +202,17 @@ try {
   await page.locator('#tab-run').click();
   assert.equal(await pill.count(), 0, 'an ended run lets the user leave');
   console.log('ok    once the run ends the steps and Settings navigate again');
-  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
-  assert.equal(await page.getByRole('tab', { name: 'Timeline', exact: true }).getAttribute('aria-selected'), 'true', 'The timeline remains available after the report opens.');
+  await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
+  assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true', 'The timeline remains available after the report opens.');
   console.log('ok    live completion selects and displays the report without a manual Report click');
 
   await page.evaluate(() => { window.completionSmoke.holdReports(); window.completionSmoke.save(); });
   await page.waitForFunction(() => window.completionSmoke.reportRequests >= 2);
   await page.evaluate(() => window.completionSmoke.releaseReports());
   await page.waitForFunction(() => window.completionSmoke.reportResponses >= 2);
-  assert.equal(await page.getByRole('tab', { name: 'Timeline', exact: true }).getAttribute('aria-selected'), 'true', 'The saved report response must preserve a deliberate Timeline selection.');
+  assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true', 'The saved report response must preserve a deliberate Timeline selection.');
   await reportTab.click();
-  await page.locator('#run-panel-report').getByText('The goal: Saved completion report', { exact: true }).waitFor();
+  await page.locator('#run-panel-report').getByText('Goal: Saved completion report', { exact: true }).waitFor();
   console.log('ok    report.generated refreshes the report without switching views again');
 
   await page.evaluate(() => sessionStorage.setItem('completion-scenario', 'race'));
@@ -213,15 +220,15 @@ try {
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor();
   await page.evaluate(() => { window.completionSmoke.abandon(); window.completionSmoke.finish(); });
   await page.waitForFunction(() => window.completionSmoke.reportRequests === 1);
-  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+  await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
   await page.evaluate(() => window.completionSmoke.save());
   await page.waitForFunction(() => window.completionSmoke.reportRequests === 2);
   await page.evaluate(() => window.completionSmoke.releaseReports());
   await page.waitForFunction(() => window.completionSmoke.reportResponses === 2);
-  assert.equal(await page.getByRole('tab', { name: 'Timeline', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true');
   await reportTab.click();
-  await page.locator('#run-panel-report').getByText('The goal: Saved completion report', { exact: true }).waitFor();
-  assert.equal(await page.locator('#run-panel-report').getByText('The goal: Initial completion report', { exact: true }).count(), 0);
+  await page.locator('#run-panel-report').getByText('Goal: Saved completion report', { exact: true }).waitFor();
+  assert.equal(await page.locator('#run-panel-report').getByText('Goal: Initial completion report', { exact: true }).count(), 0);
   console.log('ok    late initial responses cannot replace the saved report or undo a manual view choice');
 
   await page.evaluate(() => sessionStorage.setItem('completion-scenario', 'historical'));

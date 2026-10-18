@@ -25,10 +25,12 @@ export interface Row {
   label: string;
   tone: Tone;
   title: string;
+  headline?: string; // plain-language summary; the full recorded values stay in title
   badge?: { ok: boolean; text: string };
   detail?: string;
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
+  source?: { type: GnomiEvent['type']; round: number | null; poi_id: string | null; step?: number };
 }
 
 /** Quotes lead ordinary activity; a failed action or safety event always keeps its outcome visible. */
@@ -128,13 +130,14 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
     }
     case 'persona.friction_reported': {
       const { step_no, severity, what, expected } = event.payload;
-      return { seq, label: `Step ${step_no}`, tone: 'friction', title: `Friction, severity ${severity} of 4: ${what}`, detail: `Expected: ${expected}` };
+      return { seq, label: `Step ${step_no}`, tone: 'friction', title: `Friction, severity ${severity} of 4: ${what}`, headline: what, detail: `Expected: ${expected}` };
     }
     case 'persona.opinion_changed': {
       const { sentiment, confidence, likes, frictions } = event.payload.after;
       const posts = event.payload.cause.post_ids;
       return {
         seq, label: 'Opinion', tone: 'notice',
+        headline: sentiment > 0 ? 'Has a positive impression' : sentiment < 0 ? 'Has a negative impression' : 'Has a neutral impression',
         title: `Sentiment ${sentiment > 0 ? '+' : ''}${sentiment}; self-reported confidence ${Math.round(confidence * 100)}%${posts.length ? `, after reading ${posts.length === 1 ? 'a post' : `${posts.length} posts`}` : ''}`,
         detail: `Likes: ${likes.join('; ') || 'none reported'}. Frictions: ${frictions.join('; ') || 'none reported'}.${posts.length ? ` Cited posts: ${posts.join(', ')}.` : ''}`,
       };
@@ -158,6 +161,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
       const { sentiment, confidence, likes, frictions, would_continue, reason } = event.payload;
       return {
         seq, label: 'Survey', tone: 'notice',
+        headline: would_continue ? 'Would keep using it' : 'Would not keep using it',
         title: `${would_continue ? 'Would' : 'Would not'} keep using it; sentiment ${sentiment > 0 ? '+' : ''}${sentiment}, self-reported confidence ${Math.round(confidence * 100)}%`,
         detail: `Frictions: ${frictions.join('; ') || 'none reported'}. Likes: ${likes.join('; ') || 'none reported'}.`,
         quote: reason,
@@ -229,7 +233,10 @@ export function chronologicalRows(events: GnomiEvent[]): Row[] {
   return events.flatMap((event): Row[] => {
     if (event.type !== 'containment.blocked_request') {
       const row = describe(event, places);
-      return row ? [{ ...row, ts: event.ts, persona_id: event.persona_id }] : [];
+      return row ? [{ ...row, ts: event.ts, persona_id: event.persona_id, source: {
+        type: event.type, round: event.round, poi_id: event.poi_id,
+        ...('step_no' in event.payload ? { step: event.payload.step_no } : {}),
+      } }] : [];
     }
     const { host } = event.payload;
     if (shown.has(host)) return [];
