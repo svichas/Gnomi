@@ -338,3 +338,15 @@ test('report text must be English in Latin letters; what a persona types may be 
   assert.equal(schema.safeParse(step({ action: { type: 'type', ref: 'e2', text: '招聘软件' } })).success, true);
   assert.equal(schema.safeParse(step({ action: { type: 'done', ref: null, text: '已找到价格' } })).success, false);
 });
+
+test('explicit comparison tasks use the current target and remove invented assignment context', () => {
+  const comparison = { version: 1 } as NonNullable<ProjectConfig['comparison']>;
+  const current = { ...project, name: 'Peer ATS', goal: 'Find the applicable plan and price basis.', comparison };
+  const person = { ...BUILTIN_PERSONA, context_of_use: 'An invitation to review candidate Alice arrived.', goal_interpretation: 'Find the applicable plan and price basis.' };
+  const poi = { ...project.pois[0], type: 'web' as const, mode: 'observe_only' as const, name: 'Peer ATS' };
+  const prompt = systemPrompt(person, current, null, 8, poi as Parameters<typeof systemPrompt>[4]);
+  assert.doesNotMatch(prompt, /competitor of Peer ATS|invitation to review candidate Alice/);
+  assert.match(prompt, /only assignment/);
+  assert.match(prompt, /Find the applicable plan and price basis/);
+  assert.match(prompt, /never submits a form/);
+});

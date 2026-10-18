@@ -2,6 +2,7 @@ import { assetPlaces, placeName, webPois, withPois, type SavedProject } from '..
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
+import { buildComparison } from './comparison.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { buyerResults } from './buyers.ts';
@@ -110,6 +111,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
   const { pois } = withPois(config.project);
+  const comparison = buildComparison(events);
   // A competitor's site gets its own themes and comparisons; outcomes, frictions, feelings and sentiment describe the team's product.
   const competitors = competitorIds(pois);
   const ours = competitors.size ? events.filter((e) => !competitors.has(e.poi_id ?? '')) : events;
@@ -194,7 +196,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const buyers = buyerResults(events, pois, ctx);
 
   const inUse = audience ? audience.segments.filter((s) => segments.some((seg) => seg.id === s.id)) : [];
-  const roleOfUse = audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
+  const roleOfUse = comparison ? comparison.study.targets.map((target) => target.session_role) : audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
   const roles = [...new Set(roleOfUse)].filter((role): role is string => role !== null);
 
   const calls = ofType(events, 'llm.call');
@@ -241,6 +243,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
 
   return {
+    ...(comparison ? { comparison } : {}),
     run_id: started.run_id,
     status,
     stop_reason,
@@ -298,7 +301,7 @@ export function buildReport(events: GnomiEvent[]): Report {
         reason: e.payload.reason,
       })),
       signal_thresholds: config.signals ?? null,
-      limitations: analysis.limitations,
+      limitations: comparison ? comparison.limitations : analysis.limitations,
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },
   };

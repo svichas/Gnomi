@@ -157,6 +157,15 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
 
 /** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
 export const DEMO_JUDGE: Responder = (req) => {
+  if (req.purpose === 'comparison_assessment' || req.purpose === 'comparison_verification') {
+    const input = requestJson(req) as { criteria?: { id: string }[] };
+    const reason = 'Scripted demo: no model assessed the comparison evidence. Run with a configured model to evaluate these criteria.';
+    if (req.purpose === 'comparison_verification') return {
+      outcome_supported: false, outcome_reason: reason,
+      criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, supported: true, reason })),
+    };
+    return { outcome: 'incomplete', reason, outcome_evidence: [], criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, assessment: 'unknown', basis: 'simulated_inference', summary: reason, evidence: [] })) };
+  }
   const { groups = [], posts, likes } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[]; likes?: { id: string }[] };
   return {
     themes: groups.map((group, i) => ({

@@ -13,6 +13,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { createSessionStore } from './sessions.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import type { Api, EngineToClient, Method } from './protocol.ts';
 import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
@@ -124,6 +125,41 @@ test('record_session refuses a role the session store cannot name, and a product
   await assert.rejects(call('record_session', { role: 'recruiter' }), /lists as production/);
   await assert.rejects(call('save_session', {}), /No login recording is open/);
   assert.equal(await call('cancel_recording', {}), null);
+});
+
+test('comparison setup rejects stale sources and binds login recording to the selected tool', async () => {
+  const first = project().pois[0];
+  const config = project({}, { pois: [first, { ...first, id: 'poi-2', name: 'Second tool' }] });
+  config.comparison = draftComparison(config);
+  config.comparison.targets[1].access_scope = 'authenticated_workflow';
+  config.comparison.targets[1].session_role = 'second-tool';
+  await call('save_project', { project: config });
+  await assert.rejects(call('record_session', { role: 'second-tool' }), /each comparison login/);
+  await assert.rejects(call('record_session', { role: 'second-tool', target_id: config.comparison.targets[0].id }), /not configured for an authenticated workflow/);
+  await assert.rejects(call('record_session', { role: 'wrong-login', target_id: config.comparison.targets[1].id }), /must match/);
+  const invalid = structuredClone(config);
+  invalid.comparison!.tasks[0].entries[0].poi_id = 'deleted-source';
+  await assert.rejects(call('save_project', { project: invalid }), /Comparison:/);
+  assert.deepEqual((await call('get_project', {})).project, config);
+});
+
+test('comparison missing logins limit affected tasks instead of refusing the report', async () => {
+  const first = project().pois[0];
+  const config = project({}, { pois: [first, { ...first, id: 'poi-2', name: 'Second tool' }] });
+  config.comparison = draftComparison(config);
+  for (const [index, target] of config.comparison.targets.entries()) {
+    target.access_scope = 'authenticated_workflow';
+    target.session_role = `missing-login-${index}`;
+  }
+  await call('save_project', { project: config });
+  const { run_id } = await call('start_run', { reset: false });
+  for (let attempt = 0; attempt < 200 && !events.some((event) => event.run_id === run_id && event.type === 'report.generated'); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const report = await call('get_report', { run_id });
+  assert.equal(report.status, 'finished');
+  assert.equal(report.comparison?.decision.status, 'insufficient_evidence');
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.blocked_environment === 1 && row.valid_attempts === 0));
 });
 
 test('resume_personas and stop_run ignore a run that is not in progress', async () => {

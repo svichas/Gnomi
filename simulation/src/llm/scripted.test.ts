@@ -7,7 +7,8 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent, ProjectConfig } from '../types.ts';
 import { InvalidOutputError } from './gateway.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './scripted.ts';
+import { createScriptedGateway, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './scripted.ts';
+import { comparisonAssessmentSchema, comparisonVerificationSchema } from '../comparison/prompts.ts';
 
 const schema = z.object({ thought: z.string(), feeling: z.number().int().min(-2).max(2) });
 const model = { provider: 'anthropic', model: 'claude-haiku-5-5' } as const;
@@ -34,6 +35,21 @@ function recorder() {
   };
   return { record, events, transcripts };
 }
+
+test('the demo comparison returns explicitly unknown evidence without invalid-output retries or a fictional success', async () => {
+  const { record, events } = recorder();
+  const gateway = createScriptedGateway({ judge: DEMO_JUDGE }, record);
+  const input = { ...request(), role: 'judge' as const, user: [{ type: 'text' as const, text: JSON.stringify({ criteria: [{ id: 'cost' }] }) }] };
+  const assessment = (await gateway.call({ ...input, purpose: 'comparison_assessment', schema: comparisonAssessmentSchema })).object;
+  assert.equal(assessment.outcome, 'incomplete');
+  assert.equal(assessment.criteria[0].assessment, 'unknown');
+  assert.deepEqual(assessment.criteria[0].evidence, []);
+  assert.match(assessment.criteria[0].summary, /no model assessed/);
+  const verification = (await gateway.call({ ...input, purpose: 'comparison_verification', schema: comparisonVerificationSchema })).object;
+  assert.equal(verification.outcome_supported, false);
+  assert.equal(events.length, 2);
+  assert.ok(events.every((event) => event.payload.status === 'ok'));
+});
 
 test('an array script answers calls in order, whatever their role, and runs out loudly', async () => {
   const { record, events } = recorder();

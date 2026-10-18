@@ -73,7 +73,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   let failStreak = 0;
 
   // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
-  const startUrl = session && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
+  const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
   let lastGoodUrl = startUrl;
   let page = await deps.openPage(poi);
 

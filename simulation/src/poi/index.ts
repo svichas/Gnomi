@@ -1,4 +1,5 @@
 import { stepBudget, type EpisodeDeps, type EpisodeEnd } from '../agent/loop.ts';
+import { effectiveComparisonPois } from '../comparison/config.ts';
 import type { Persona, Poi, PoiType, ProjectConfig } from '../types.ts';
 import { design } from './design.ts';
 import { poisFor } from './pois.ts';
@@ -29,10 +30,11 @@ export const poiBudget = (persona: Persona, poi: Poi): number => Math.max(1, Mat
  */
 export function preflight(project: ProjectConfig, hasAsset: (id: string) => boolean = () => true): string | null {
   if (project.pois.length === 0) return 'Add a point of interest for the personas to try.';
-  const idle = project.audience?.segments.find((segment) => segment.share > 0 && poisFor(project.pois, segment).length === 0);
+  const idle = !project.comparison && project.audience?.segments.find((segment) => segment.share > 0 && poisFor(project.pois, segment).length === 0);
   if (idle) return `No point of interest is open to the "${idle.name}" segment. Choose one for it, or give the segment no share.`;
-  for (const poi of project.pois) {
-    const refusal = runnerFor(poi).preflight(poi, project, hasAsset);
+  for (const poi of effectiveComparisonPois(project)) {
+    // Missing study materials are reported per task; malformed setup and unsafe full access still prevent a run.
+    const refusal = runnerFor(poi).preflight(poi, project, project.comparison ? () => true : hasAsset);
     if (refusal) return refusal;
   }
   return null;

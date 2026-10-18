@@ -64,8 +64,8 @@ export interface Api {
   figma_previews: { params: { file: string; version: string | null; frames: FigmaFrameRef[] }; result: Record<string, string> };
   /** Exports frames as PNG, downloads them and stores each in the project's assets/ folder; frames that failed are listed with why. */
   figma_import: { params: { file: string; version: string | null; frames: (FigmaFrameRef & { name: string })[] }; result: FigmaImport };
-  /** Opens a visible browser on the first full web POI's start_url for the user to log in as this role. */
-  record_session: { params: { role: string }; result: null };
+  /** Records on an explicit comparison target, or the legacy first full web POI when no target is supplied. */
+  record_session: { params: { role: string; target_id?: string }; result: null };
   /** Saves the open recording under its role; the page the user is on becomes the role's start page. */
   save_session: { params: Record<string, never>; result: SessionInfo };
   cancel_recording: { params: Record<string, never>; result: null };

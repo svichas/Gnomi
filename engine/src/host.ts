@@ -3,6 +3,8 @@
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -63,7 +65,7 @@ let projectRequests = 0; // includes awaited persona writes and run preflight, b
 let open: OpenProject | null = null;
 let browsers: Promise<BrowserPool> | null = null;
 let sessions: SessionStore | null = null; // while a project is open and main has sent the session key
-let recording: { role: string; rec: Promise<LoginRecording> } | null = null; // one login recording at a time
+let recording: { role: string; target_id?: string; rec: Promise<LoginRecording> } | null = null; // one login recording at a time
 let setupTask: { stop: AbortController; done: Promise<unknown> } | null = null;
 
 function writeSetup<T>(work: () => Promise<T>): Promise<T> {
@@ -168,7 +170,9 @@ async function verify(config: ProjectConfig, role: string) {
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
   // The login POI's hosts first; the session's cookies go to every web POI in full mode, so any of their hosts may be reached.
-  const pois = [recordingPoi(config), ...webPois(config.pois).filter((poi) => poi.mode === 'full')];
+  const pois = config.comparison
+    ? comparisonSessionPois(config, comparisonSessionTarget(config, saved.info), role)
+    : [recordingPoi(config), ...webPois(config.pois).filter((poi) => poi.mode === 'full')];
   const result = await (await pool()).checkSession({
     storageState: saved.state,
     startUrl: saved.info.start_url,
@@ -177,7 +181,9 @@ async function verify(config: ProjectConfig, role: string) {
   });
   const now = Date.now();
   if (result.ok) store.markVerified(role, now);
-  return { result, info: result.ok ? { ...saved.info, verified_at: now } : saved.info };
+  const info = result.ok ? { ...saved.info, verified_at: now } : config.comparison ? { ...saved.info, verified_at: null } : saved.info;
+  if (!result.ok && config.comparison) current().store.putSession(info);
+  return { result, info };
 }
 
 function readInfo(store: ProjectStore, unlocked: boolean): ProjectInfo {
@@ -284,6 +290,8 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (setupTask) throw new Error('Wait for persona generation to finish before saving project changes.');
     validateCountries(project.audience?.countries);
     if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
+    const comparisonProblems = validateComparison(project);
+    if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
     current().store.saveProject(project);
     return null;
   },
@@ -342,17 +350,19 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience, pois: config.pois });
+    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
   },
   async start_run({ reset }) {
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
+    const comparisonProblems = validateComparison(config);
+    if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
     // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
     const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
     if (refusal) throw new Error(refusal);
-    if (reset && !webPois(config.pois).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook. Add one in the project settings, or start without resetting.');
+    if (reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
     if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
@@ -361,11 +371,20 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
       !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
     )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
-    const navigator = config.settings.routing.navigator.provider;
-    if (!FAKE_LLM && navigator === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
-    if (!FAKE_LLM && navigator !== 'openai_compatible' && !secrets.get(KEYS[navigator].secret)) throw new Error(`Add ${KEYS[navigator].label} key in Settings: the navigator runs on it`);
+    for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
+      const provider = config.settings.routing[role].provider;
+      if (!FAKE_LLM && provider === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
+      if (!FAKE_LLM && provider !== 'openai_compatible' && !secrets.get(KEYS[provider].secret)) throw new Error(`Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
+    }
     const verified: SessionInfo[] = [];
-    for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
+    if (config.comparison) {
+      const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
+      // Missing or expired test access limits only the affected comparison episodes.
+      for (const session of (sessions?.list() ?? []).filter((session) => roles.has(session.role))) {
+        try { verified.push((await verify(config, session.role)).info); }
+        catch { verified.push({ ...session, verified_at: null }); }
+      }
+    } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
       const checked = await verify(config, role);
       if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
       verified.push(checked.info);
@@ -392,18 +411,19 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     runs.get(runKey(project_dir ? resolve(project_dir) : current().store.dir, run_id))?.stop();
     return null;
   },
-  async record_session({ role }) {
+  async record_session({ role, target_id }) {
     const config = project();
     // The session store's rule for role names, checked before the human spends time logging in.
     if (!ROLE.test(role)) throw new Error('Name the role with 1–40 lowercase letters, digits, "-" or "_", for example "recruiter"');
     unlockedSessions(); // before opening a browser whose login could not be saved
     // Never record a production login: the session would be as sensitive as the password.
-    const poi = recordingPoi(config);
+    if (config.comparison && !target_id) throw new Error('Record each comparison login from that tool’s setup.');
+    const poi = target_id ? comparisonSessionPois(config, target_id, role)[0]! : recordingPoi(config);
     const refusal = checkTarget(poi);
     if (refusal) throw new Error(refusal);
     if (recording) throw new Error('A login recording is already open: save or cancel it first');
     const rec = pool().then((p) => p.record(poi.start_url, { headless: false }));
-    recording = { role, rec };
+    recording = { role, rec, ...(target_id ? { target_id } : {}) };
     try {
       await rec;
     } catch (err) {
@@ -415,11 +435,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   async save_session() {
     const store = unlockedSessions();
     if (!recording) throw new Error('No login recording is open');
-    const { role, rec } = recording;
+    const { role, rec, target_id } = recording;
     recording = null;
     const login = await (await rec).finish();
     const now = Date.now();
-    const saved: SessionInfo = { role, start_url: login.start_url, hosts: login.hosts, recorded_at: now, verified_at: now, expires_at: login.expires_at };
+    const saved: SessionInfo = { role, start_url: login.start_url, hosts: login.hosts, recorded_at: now, verified_at: now, expires_at: login.expires_at, ...(target_id ? { target_id } : {}) };
     await store.save(saved, login.storageState);
     return saved;
   },
