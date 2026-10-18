@@ -1,3 +1,4 @@
+import { draftComparison } from './comparison/config.ts';
 // startRun, the scheduler and the step loop over in-memory fakes of the store, blobs, sessions, browser and model.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -24,6 +25,7 @@ import type {
   EventType,
   GnomiEvent,
   PageFlags,
+  PageSnapshot,
   Persona,
   ProjectConfig,
   RunConfig,
@@ -137,6 +139,7 @@ interface Options {
   act?: (a: Action, page: PageOptions) => Partial<ActionOutcome> | Promise<Partial<ActionOutcome>>;
   /** Flags for the n-th inspection of the run (0 is the first page's first load), given the page's current URL. */
   inspect?: (n: number, url: string) => Partial<PageFlags>;
+  snapshot?: (url: string) => Partial<PageSnapshot>;
   onEvent?: (e: GnomiEvent, run: RunHandle) => void;
   llm?: (record: Recorder) => LlmGateway;
   /** The answer to every survey request, kept out of the step script; a valid survey by default. */
@@ -203,7 +206,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
       pages.push(page);
       return {
         goto: async (url) => void page.gotos.push((page.url = url)),
-        snapshot: async () => ({ url: page.url, title: 'Dashboard · Gym ATS', text: '- link "Jobs" [ref=e1]', hash: 'h1' }),
+        snapshot: async () => ({ url: page.url, title: 'Dashboard · Gym ATS', text: '- link "Jobs" [ref=e1]', hash: 'h1', ...opts.snapshot?.(page.url) }),
         screenshot: async () => new Uint8Array([0xff, 0xd8, 0xff]),
         async act(action) {
           const outcome = { ok: true, url_before: page.url, url_after: page.url, dom_changed: true, error: null, target: { role: 'link', name: 'Jobs', box: null }, text: null, ...await opts.act?.(action, options) };
@@ -1269,4 +1272,160 @@ test('a persona with no point of interest stops the run before anyone starts', a
   assert.equal(report.stop_reason, 'error: Persona buyer has no point of interest to use.');
   assert.equal(of(r.events, 'persona.created').length, 0);
   assert.deepEqual(r.finished.map((f) => f.status), ['stopped']);
+});
+
+
+function publicComparison() {
+  const target: ProjectConfig = { ...project, pois: ['Alpha', 'Beta', 'Gamma', 'Delta'].map((name, i) => ({ ...web, id: `public-${i}`, name, start_url: `https://${name.toLowerCase()}.example/`, mode: 'observe_only', production_domains: [] })), audience: audience([segment('buyers', { kind: 'buyer' })]) };
+  target.comparison = draftComparison(target);
+  target.comparison.tasks[0].prerequisites = [];
+  target.comparison.criteria = [{ id: 'entry', name: 'Jobs entry', question: 'Is the jobs entry visible?', evidence_required: 'A captured visible Jobs link.', importance: 'must_have', decision_rule: 'Meets when Jobs is visible in the current target navigation.' }];
+  target.comparison.tasks[0].criterion_ids = ['entry'];
+  target.comparison.tasks[0].success_rule = 'Find the Jobs entry in visible navigation.';
+  target.comparison.tasks[0].max_steps = 2;
+  return target;
+}
+
+function comparisonAnswer(req: LlmRequest<unknown>) {
+  if (req.purpose === 'comparison_assessment') {
+    const input = JSON.parse(req.user.find((part) => part.type === 'text')!.text);
+    const source = input.sources.find((item: { kind: string }) => item.kind === 'page');
+    const citation = { event_seq: source.event_seq, source: source.source, quote: source.text };
+    return { outcome: 'completed', reason: 'The visible navigation contains Jobs.', outcome_evidence: [citation], criteria: [{ criterion_id: 'entry', assessment: 'meets', basis: 'vendor_claim', summary: 'A Jobs entry is visible.', evidence: [citation] }] };
+  }
+  if (req.purpose === 'comparison_verification') return { outcome_supported: true, outcome_reason: 'The Jobs entry is captured.', criteria: [{ criterion_id: 'entry', supported: true, reason: 'The quotation supports this criterion.' }] };
+  return step('done', null, 'Found Jobs.');
+}
+
+test('explicit all-public comparison admits buyer web tasks and produces replayable evidence across every target', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], settings: rounds(3) });
+  const report = await r.run.done;
+  assert.equal(report.comparison?.coverage.length, 4);
+  assert.ok(report.comparison?.coverage.every((row) => row.scheduled === 2 && row.outcomes.completed === 2 && row.completion_rate === 1));
+  assert.ok(report.comparison?.cells.every((cell) => cell.assessment === 'meets' && cell.assessed === 2 && cell.distinct_sources === 1));
+  assert.equal(of(r.events, 'comparison.source').length, 8);
+  assert.equal(of(r.events, 'persona.survey').length, 0, 'no implicit baseline survey is injected');
+  assert.equal(of(r.events, 'social.feed_viewed').length, 0, 'comparison social policy overrides inherited rounds');
+  assert.equal(of(r.events, 'llm.call').length, 24, 'one navigation, assessment and verification per episode; no legacy report author');
+  assert.deepEqual(buildReport(r.events).comparison, report.comparison, 'replay only folds the accepted recorded judgments');
+});
+
+test('comparison cost limits retain captured sources and export unknown cells for incomplete target coverage', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' })], cost: 0.1, settings: { cost_budget_usd: 0.25, concurrency: 1 } });
+  const report = await r.run.done;
+  assert.match(report.stop_reason ?? '', /budget/);
+  assert.ok(of(r.events, 'comparison.source').length > 0);
+  assert.equal(report.comparison?.coverage.length, 4);
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 0));
+  assert.equal(report.comparison?.decision.status, 'insufficient_evidence');
+  assert.ok(report.comparison?.cells.every((cell) => cell.assessment === 'unknown'));
+});
+
+test('comparison analysis spending does not consume a separately declared navigation allowance', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const target = publicComparison();
+  target.comparison!.execution.analysis_reserve_fraction = 0.5;
+  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: 0.25, concurrency: 1 } });
+  const report = await r.run.done;
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 2));
+  assert.equal(report.comparison?.coverage.reduce((sum, row) => sum + row.outcomes.incomplete, 0), 0);
+});
+
+test('comparison admission keeps the next matched task block unattempted when its allowance will not fit', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: 0.2, concurrency: 1 } });
+  const report = await r.run.done;
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 1 && row.outcomes.not_attempted === 1));
+  assert.equal(of(r.events, 'comparison.episode_started').filter((event) => event.persona_id === 'buyer-b').length, 0);
+  assert.match(report.stop_reason ?? '', /matched task block/);
+  assert.ok(report.comparison?.limitations.some((item) => /Not attempted.*matched task block/.test(item)));
+});
+
+test('unpriced comparison routes stay usable while disclosing that initial admission has no dollar reservation', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const routing = { ...DEFAULT_SETTINGS.routing, navigator: { provider: 'openai' as const, model: 'custom-unpriced-navigator' }, judge: { provider: 'openai' as const, model: 'custom-unpriced-judge' } };
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: 2, concurrency: 1, routing } });
+  const report = await r.run.done;
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 1));
+  assert.ok(report.comparison?.limitations.some((item) => /pricing was unavailable.*custom-unpriced-navigator/.test(item)));
+});
+
+test('invalid direct comparison input is rejected before any configured reset action', (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 200 }));
+  const target = publicComparison();
+  for (const [index, item] of target.comparison!.targets.entries()) {
+    item.access_scope = 'authenticated_workflow'; item.session_role = `target-${index}`;
+  }
+  target.pois = target.pois.map((poi) => poi.type === 'web' ? { ...poi, mode: 'full', reset_hook_url: `${poi.start_url}reset` } : poi);
+  target.comparison!.tasks[0].scenario_id = 'missing-scenario';
+  assert.throws(() => begin(comparisonAnswer, { project: target, config: { reset: true } }), /unknown scenario/);
+  assert.equal(fetch.mock.calls.length, 0);
+});
+
+test('stopping during comparison verification cancels use of its late answer and preserves evidence', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' })], onCall: (req, run) => { if (req.purpose === 'comparison_verification') run.stop(); } });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'user');
+  assert.ok(of(r.events, 'comparison.source').length > 0);
+  assert.equal(of(r.events, 'comparison.assessment').length, 0, 'cancelled judgments must not enter the projection');
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 0));
+});
+
+test('authenticated comparison uses separate target sessions and preserves each frozen task entry URL', async () => {
+  const target = publicComparison();
+  target.pois = target.pois.slice(0, 2).map((poi) => ({ ...poi, mode: 'full' } as WebPoi));
+  target.comparison!.targets = target.comparison!.targets.slice(0, 2).map((item, i) => ({ ...item, access_scope: 'authenticated_workflow', session_role: `target-${i}-recruiter` }));
+  target.comparison!.tasks[0].entries = target.comparison!.tasks[0].entries.slice(0, 2).map((entry, i) => ({ ...entry, start_url: `https://${i === 0 ? 'alpha' : 'beta'}.example/assigned-work` }));
+  const infos: SessionInfo[] = target.comparison!.targets.map((item, i) => ({ ...recruiter, role: item.session_role!, target_id: item.id, start_url: `https://${i === 0 ? 'alpha' : 'beta'}.example/private-dashboard`, hosts: [i === 0 ? 'alpha.example' : 'beta.example'] }));
+  const loaded: string[] = [];
+  const sessions: SessionStore = { list: () => infos, save: async () => {}, markVerified: () => {}, load: async (role) => { loaded.push(role); const info = infos.find((candidate) => candidate.role === role); return info ? { info, state: { isolated_target: info.target_id } } : null; } };
+  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer-a', { segment_id: 'buyers' })], sessions: infos, sessionStore: sessions });
+  const report = await r.run.done;
+  assert.equal(loaded.length, 2);
+  assert.equal(new Set(loaded).size, 2);
+  assert.ok(r.pages.every((page) => page.gotos[0].endsWith('/assigned-work')));
+  assert.equal(new Set(r.pages.map((page) => page.options.storageState?.isolated_target)).size, 2);
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 1));
+});
+
+
+test('comparison verifies success on the final allowed action from its post-action confirmation capture', async () => {
+  const target = publicComparison();
+  target.pois = target.pois.slice(0, 2).map((poi) => ({ ...poi, mode: 'full' } as WebPoi));
+  target.comparison!.targets = target.comparison!.targets.slice(0, 2).map((item, i) => ({ ...item, access_scope: 'authenticated_workflow', session_role: `target-${i}-recruiter` }));
+  const task = target.comparison!.tasks[0];
+  task.entries = task.entries.slice(0, 2);
+  task.max_steps = 1;
+  task.instruction = 'Submit the candidate evaluation.';
+  task.success_rule = 'The evaluation submission is confirmed on screen.';
+  target.comparison!.criteria = [{ id: 'entry', name: 'Submit evaluation', question: 'Can the evaluation be submitted?', evidence_required: 'An actual submission action and its visible confirmation.', importance: 'must_have', decision_rule: 'Meets when the page confirms the evaluation was submitted.' }];
+  const infos: SessionInfo[] = target.comparison!.targets.map((item, i) => ({ ...recruiter, role: item.session_role!, target_id: item.id, start_url: `https://${i === 0 ? 'alpha' : 'beta'}.example/`, hosts: [i === 0 ? 'alpha.example' : 'beta.example'] }));
+  const sessionStore: SessionStore = { list: () => infos, save: async () => {}, markVerified: () => {}, load: async (role) => { const info = infos.find((item) => item.role === role); return info ? { info, state: {} } : null; } };
+  const submitted = new Set<string>();
+  const r = begin((req) => {
+    if (req.role === 'navigator') return step('click', 'e1', null);
+    if (req.purpose === 'comparison_assessment') {
+      const input = JSON.parse(req.user.find((part) => part.type === 'text')!.text);
+      const action = input.sources.find((item: { kind: string }) => item.kind === 'action');
+      const confirmation = input.sources.find((item: { kind: string; text: string }) => item.kind === 'page' && item.text.includes('Evaluation submitted'));
+      assert.ok(confirmation, 'the judge sees the actual result despite having no remaining navigator step');
+      const evidence = [action, confirmation].map((source) => ({ event_seq: source.event_seq, source: source.source, quote: source.text }));
+      return { outcome: 'completed', reason: 'The submit action was confirmed on screen within the one-step allowance.', outcome_evidence: evidence, criteria: [{ criterion_id: 'entry', assessment: 'meets', basis: 'observed_behavior', summary: 'Evaluation submission was confirmed.', evidence }] };
+    }
+    return comparisonAnswer(req);
+  }, {
+    project: target, personas: [persona('buyer-a', { segment_id: 'buyers' })], sessions: infos, sessionStore,
+    act: (_action, options) => { submitted.add(options.allowedHosts[0]); return {}; },
+    snapshot: (url) => submitted.has(new URL(url).hostname) ? { text: 'Evaluation submitted successfully.', hash: 'confirmation' } : { text: '- button "Submit evaluation" [ref=e1]', hash: 'evaluation-form' },
+  });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'signal.budget_exceeded').length, 2, 'the legacy loop reaches its last permitted action');
+  assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 1 && row.outcomes.task_failed === 0));
+  assert.ok(report.comparison?.cells.every((cell) => cell.assessment === 'meets' && cell.bases.includes('observed_behavior')));
+  const confirmations = of(r.events, 'comparison.source').filter((event) => event.payload.text.includes('Evaluation submitted'));
+  assert.equal(confirmations.length, 2);
+  assert.ok(confirmations.every((event) => event.payload.screenshot?.endsWith('-after.jpg')));
 });

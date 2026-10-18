@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
+import { draftComparison } from '../comparison/config.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, DesignPoi, Poi, ProjectConfig, Segment, TextPoi, WebPoi } from '../types.ts';
 import { poiBudget, preflight, RUNNERS } from './index.ts';
@@ -65,6 +66,15 @@ test('the registry lets a text run and blocks a run with a reason, such as a seg
   assert.equal(preflight(project([web('app')], { audience: buyers })), 'No point of interest is open to the "Buyers" segment. Choose one for it, or give the segment no share.');
   const idle = audience([segment('seg-a'), segment('seg-buyers', { kind: 'buyer', share: 0 })]);
   assert.equal(preflight(project([web('app')], { audience: idle })), null, 'a segment without a share runs no personas');
+});
+
+test('comparison preflight admits public buyer tasks and missing materials while preserving full-access guards', () => {
+  const configured = project([web('public', { start_url: 'https://acme.com/' }), text], { audience: audience([segment('buyer', { kind: 'buyer' })]) });
+  configured.comparison = draftComparison(configured);
+  assert.equal(preflight(configured, () => false), null, 'public buyer tasks use explicit comparison eligibility; missing files are per-task limitations');
+  configured.comparison.targets[0].access_scope = 'authenticated_workflow';
+  configured.comparison.targets[0].session_role = 'acme-test';
+  assert.match(preflight(configured) ?? '', /does not look like a staging or test address/);
 });
 
 test('step budgets scale by POI type: web keeps the patience budget, text and designs take far fewer', () => {

@@ -98,6 +98,14 @@ function describe(e: GnomiEvent): string {
       return `${e.payload.poi_id}: ${e.payload.suggestions.length} suggested changes from the author`;
     case 'report.generated':
       return `${e.payload.path} (${e.payload.friction_count} frictions)`;
+    case 'comparison.episode_started':
+      return `${e.payload.target_id}, ${e.payload.task_id}: position ${e.payload.order + 1}`;
+    case 'comparison.episode_finished':
+      return `${e.payload.target_id}, ${e.payload.task_id}: ${e.payload.outcome} — ${e.payload.reason}`;
+    case 'comparison.source':
+      return `${e.payload.target_id}: captured ${e.payload.source}`;
+    case 'comparison.assessment':
+      return `${e.payload.target_id}, ${e.payload.criterion_id}: ${e.payload.assessment}${e.payload.rejection ? ` (${e.payload.rejection})` : ''}`;
   }
 }
 

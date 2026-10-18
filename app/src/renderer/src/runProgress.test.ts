@@ -4,6 +4,8 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { EventPayloads, EventType, GnomiEvent, RunConfig, Segment } from '@gnomi/simulation/types.ts';
 import { runProgress } from './runProgress.ts';
+import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
+import { isPreparingReport, personaStates, waitingBlocks, toRows } from './activity.ts';
 
 function config({ people = 2, places = 1, social = false, rounds = 3 } = {}): RunConfig {
   return {
@@ -23,6 +25,33 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 }
 
 const done = (seq: number, who = 'p-1', where = 'poi-1') => event(seq, 'persona.goal_done', { step_no: 3, summary: 'Understood the product' }, who, where);
+
+test('comparison progress waits for assessed tool/tasks, ignores legacy social settings and never requests a resume', () => {
+  const planned = config({ people: 1, places: 2, social: true });
+  const study = draftComparison(planned.project);
+  study.tasks.push({ ...structuredClone(study.tasks[0]), id: 'task-two' });
+  planned.project.comparison = study;
+  const scope = { episode_id: 'episode-one', target_id: study.targets[0].id, scenario_id: study.scenarios[0].id, task_id: study.tasks[0].id, segment_id: null, access_scope: study.targets[0].access_scope, replicate_id: study.execution.replicate_id };
+  const events = [event(1, 'run.started', { config: planned }), event(2, 'comparison.episode_started', { ...scope, poi_id: 'poi-1', order: 0, target_order: study.targets.map((target) => target.id) }, 'p-1', 'poi-1'), done(3)];
+  assert.deepEqual(runProgress(events).sessions, { done: 0, total: 4 });
+  assert.equal(runProgress(events).rounds.total, 0);
+  assert.equal(personaStates(events, planned.personas).get('p-1'), 'active');
+  assert.equal(isPreparingReport(events, personaStates(events, planned.personas)), false);
+  events.push(event(4, 'persona.blocked', { step_no: 3, reason: 'session_expired', detail: 'Login missing' }, 'p-1'));
+  assert.deepEqual(waitingBlocks(events), []);
+  events.push(event(5, 'comparison.episode_finished', { ...scope, outcome: 'blocked_environment', reason: 'Login missing', evidence_seqs: [] }, 'p-1', 'poi-1'));
+  assert.deepEqual(runProgress(events).sessions, { done: 1, total: 4 });
+  assert.equal(personaStates(events, planned.personas).get('p-1'), 'active');
+  assert.equal(toRows(events)[0].title, 'blocked environment');
+  for (const [index, pair] of study.tasks.flatMap((task) => study.targets.map((target) => ({ task, target }))).entries()) {
+    events.push(event(6 + index, 'comparison.episode_finished', { ...scope, episode_id: index ? `episode-${index}` : scope.episode_id, task_id: pair.task.id, target_id: pair.target.id, outcome: 'completed', reason: 'Assessed', evidence_seqs: [] }, 'p-1'));
+  }
+  assert.deepEqual(runProgress(events).sessions, { done: 4, total: 4 });
+  assert.equal(personaStates(events, planned.personas).get('p-1'), 'done');
+  assert.ok(runProgress(events).percent < 100);
+  events.push(event(10, 'run.finished', {}), event(11, 'report.generated', { path: 'report.json', friction_count: 0 }));
+  assert.equal(runProgress(events).percent, 100);
+});
 
 test('a known run starts at zero with its real exploration and discussion plan', () => {
   const progress = runProgress([], config({ people: 3, places: 2, social: true }));

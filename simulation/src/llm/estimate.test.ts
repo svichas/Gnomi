@@ -4,6 +4,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, RunSettings } from '../types.ts';
 import { estimateReport, estimateRun } from './estimate.ts';
+import { draftComparison } from '../comparison/config.ts';
 
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
 const persona = (patience: number): Persona => ({ ...BUILTIN_PERSONA, patience });
@@ -12,6 +13,20 @@ const persona = (patience: number): Persona => ({ ...BUILTIN_PERSONA, patience }
 //   high: judge 30,000 in + 4,000 out = $0.10; author 20,000 in + 8,000 out = $0.24
 const REPORT = { calls: 2, cost: [0.014 + 0.048, 0.1 + 0.24], minutes: [0.2, 1] } as const;
 const withNavigator = (navigator: ModelChoice, rest: Partial<RunSettings> = {}): RunSettings => ({ ...DEFAULT_SETTINGS, ...rest, routing: { ...DEFAULT_SETTINGS.routing, navigator } });
+
+test('comparison estimate follows shared tasks, includes both judges, and excludes legacy social and author calls', () => {
+  const comparison = draftComparison({ name: 'Tools', description: '', goal: 'Evaluate plans', role: null, audience: null, settings: DEFAULT_SETTINGS,
+    pois: ['a', 'b'].map((id) => ({ id, name: id, type: 'text', asset: `${id}.md`, segments: null })) });
+  comparison.tasks[0]!.max_steps = 10;
+  const settings = { ...DEFAULT_SETTINGS, social: true, routing: { ...DEFAULT_SETTINGS.routing, author: { provider: 'openai' as const, model: 'unpriced-unused-author' }, socialiser: { provider: 'openai' as const, model: 'unpriced-unused-social' } } };
+  const estimate = estimateRun({ personas: [persona(1)], settings, comparison });
+  assert.equal(estimate.calls, 14 + 4, 'two ten-step episodes at midpoint plus four judge calls');
+  assert.deepEqual(estimate.unpriced, []);
+  const pois = ['a', 'b'].map((id) => ({ id, name: id, type: 'text' as const, asset: `${id}.md`, segments: id === 'a' ? [] : null }));
+  assert.equal(estimateRun({ personas: [persona(1)], settings, comparison, pois }).calls, 7 + 2, 'an explicitly excluded source does not add navigation or judging calls');
+  comparison.scenarios[0]!.segment_ids = ['other-segment'];
+  assert.equal(estimateRun({ personas: [persona(1)], settings, comparison }).calls, 0, 'ineligible tasks do not inflate the estimate');
+});
 
 test('three personas on Haiku with screenshots match the hand-computed range', () => {
   // Step budgets 12 + 30 + 60 = 102: between 40% (40.8 steps) and all of it, so 71.4 expected calls.

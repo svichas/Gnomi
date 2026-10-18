@@ -125,7 +125,7 @@ test('reopening keeps the project, the population, runs and events', (t) => {
   const raw = new DatabaseSync(join(dir, 'project.sqlite'));
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
-  assert.equal(userVersion(dir), 4);
+  assert.equal(userVersion(dir), 5);
 });
 
 test('profile schemas and typed persona values survive reopening without rewriting legacy records', (t) => {
@@ -164,7 +164,7 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.events(run), [appended]);
   upgraded.close();
-  assert.equal(userVersion(dir), 4);
+  assert.equal(userVersion(dir), 5);
 });
 
 test('a v2 project upgrades on open with an empty population', (t) => {
@@ -181,7 +181,27 @@ test('a v2 project upgrades on open with an empty population', (t) => {
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.listSessions(), [sessionInfo('recruiter')]);
   upgraded.close();
-  assert.equal(userVersion(dir), 4);
+  assert.equal(userVersion(dir), 5);
+});
+
+test('a v4 session table gains target ownership without rebinding legacy logins', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  store.putSession(sessionInfo('recruiter', 1000));
+  store.close();
+  const v4 = new DatabaseSync(join(dir, 'project.sqlite'));
+  v4.exec('ALTER TABLE session DROP COLUMN target_id; PRAGMA user_version = 4;');
+  v4.close();
+
+  const upgraded = openProject(dir);
+  assert.deepEqual(upgraded.listSessions(), [sessionInfo('recruiter', 1000)]);
+  upgraded.putSession({ ...sessionInfo('tool-b', 2000), target_id: 'target-b' });
+  upgraded.close();
+  const reopened = openProject(dir);
+  assert.equal(reopened.listSessions().find((session) => session.role === 'tool-b')?.target_id, 'target-b');
+  assert.equal(reopened.listSessions().find((session) => session.role === 'recruiter')?.target_id, undefined);
+  reopened.close();
+  assert.equal(userVersion(dir), 5);
 });
 
 test('a project saved before M1, M2 or M5 reads back with the defaults and its one POI as the list', (t) => {
@@ -266,6 +286,19 @@ test('sessions upsert by role and list in role order', (t) => {
   store.putSession(sessionInfo('admin'));
   store.putSession(sessionInfo('recruiter', 5000));
   assert.deepEqual(store.listSessions(), [sessionInfo('admin'), sessionInfo('recruiter', 5000)]);
+  store.close();
+});
+
+test('comparison session ownership survives reopening and legacy sessions remain unbound', (t) => {
+  const dir = tempDir(t);
+  let store = openProject(dir);
+  const legacy = sessionInfo('recruiter');
+  const scoped = { ...sessionInfo('rival-admin'), target_id: 'target-rival' };
+  store.putSession(legacy);
+  store.putSession(scoped);
+  store.close();
+  store = openProject(dir);
+  assert.deepEqual(store.listSessions(), [legacy, scoped]);
   store.close();
 });
 

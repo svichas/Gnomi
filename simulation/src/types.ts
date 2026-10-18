@@ -200,6 +200,7 @@ export type Poi = WebPoi | TextPoi | DesignPoi;
 export type PoiType = Poi['type'];
 
 export interface ProjectConfig {
+  comparison?: import('./comparison/types.ts').ComparisonStudy | null;
   name: string;
   description: string; // one sentence about the product
   pois: Poi[]; // in the order personas use them; projects and runs saved with one `poi` load as [poi] (poi/pois.ts)
@@ -212,6 +213,7 @@ export interface ProjectConfig {
 
 // A recorded login (tech.md §9.1). The cookies and storage themselves stay in the engine and are encrypted on disk.
 export interface SessionInfo {
+  target_id?: string; // comparison sessions belong to one explicitly configured target
   role: string;
   start_url: string; // the page the user marked in the recorder: where personas in this role begin
   hosts: string[]; // hosts seen while recording, offered for the allowlist
@@ -332,6 +334,10 @@ export interface StepEvidence {
 }
 
 export interface EventPayloads {
+  'comparison.episode_started': import('./comparison/types.ts').ComparisonEpisodeStarted;
+  'comparison.episode_finished': import('./comparison/types.ts').ComparisonEpisodeFinished;
+  'comparison.assessment': import('./comparison/types.ts').ComparisonRecordedAssessment;
+  'comparison.source': import('./comparison/types.ts').ComparisonSource;
   'run.started': { config: RunConfig };
   'run.reset_called': { url: string; status: number | null; error: string | null };
   'run.finished': Record<string, never>;
@@ -631,6 +637,7 @@ export interface ReportBuyers {
 }
 
 export interface Report {
+  comparison?: import('./comparison/types.ts').ComparisonReport;
   run_id: string;
   status: 'running' | 'finished' | 'stopped';
   stop_reason: string | null;

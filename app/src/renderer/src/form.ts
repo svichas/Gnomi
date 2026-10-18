@@ -1,4 +1,6 @@
 import { logsIn, withPois } from '@gnomi/simulation/poi/pois.ts';
+import { validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import type { ComparisonStudy } from '@gnomi/simulation/comparison/types.ts';
 import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/simulation/settings.ts';
 import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
@@ -17,6 +19,7 @@ export interface Form {
   goal: string;
   role: string | null; // null browses logged out
   pois: PoiDraft[]; // in the order personas use them
+  comparison?: ComparisonStudy | null;
 }
 
 export function initialForm(project: ProjectConfig | null | undefined): Form {
@@ -28,6 +31,7 @@ export function initialForm(project: ProjectConfig | null | undefined): Form {
     role: project?.role ?? null,
     // A new project starts with one web app to fill in.
     pois: pois.length ? pois.map(draftOf) : [POI_KINDS.web.blank('poi-1')],
+    ...(project?.comparison !== undefined ? { comparison: structuredClone(project.comparison) } : {}),
   };
 }
 
@@ -83,13 +87,14 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
   if (problem) return problem;
   const invalidProfile = profileProblem(persona_schema);
   if (invalidProfile) return `Audience: ${invalidProfile}`;
-  return {
+  const config: ProjectConfig = {
     name,
     description: form.description.trim(),
     goal,
     role: form.role,
     pois,
     audience: audience && cleanAudience(audience),
+    ...(form.comparison !== undefined ? { comparison: structuredClone(form.comparison) } : {}),
     ...(persona_schema ? { persona_schema } : {}),
     settings: {
       ...settings,
@@ -97,10 +102,17 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
       routing: Object.fromEntries(ROLES.map((role) => [role, { ...settings.routing[role], model: settings.routing[role].model.trim() }])) as RunSettings['routing'],
     },
   };
+  if (config.comparison) {
+    config.comparison.assumptions = config.comparison.assumptions.map((s) => s.trim()).filter(Boolean);
+    config.comparison.tasks = config.comparison.tasks.map((task) => ({ ...task, prerequisites: task.prerequisites.map((s) => s.trim()).filter(Boolean) }));
+  }
+  const comparisonProblems = validateComparison(config);
+  return comparisonProblems.length ? `Comparison: ${comparisonProblems[0]}` : config;
 }
 
 /** The logins a run needs: each segment's role, or the built-in persona's role when there is no audience. */
 export function rolesInUse(config: ProjectConfig): string[] {
+  if (config.comparison) return [...new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []))];
   // Only personas that open a web app in full mode load a login; texts and designs are read without one.
   const roles = config.audience
     ? config.audience.segments.filter((segment) => segment.share > 0 && logsIn(config.pois, segment)).map((segment) => segment.role)

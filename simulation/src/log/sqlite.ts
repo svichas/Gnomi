@@ -7,7 +7,7 @@ import type { ProjectStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { EventType, GnomiEvent, Persona, RunConfig, RunStatus, SetupCall } from '../types.ts';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const draftKey = (key: string) => createHash('sha256').update(key).digest('hex');
 
 // IF NOT EXISTS makes the schema idempotent: a crash mid-way is finished by the next open; a v1 file gains new tables.
@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS session (
   hosts_json TEXT NOT NULL,
   recorded_at INTEGER NOT NULL,
   verified_at INTEGER,
-  expires_at INTEGER
+  expires_at INTEGER,
+  target_id TEXT
 );
 CREATE TABLE IF NOT EXISTS persona (
   id TEXT PRIMARY KEY,
@@ -111,6 +112,7 @@ type SessionDbRow = {
   recorded_at: number;
   verified_at: number | null;
   expires_at: number | null;
+  target_id: string | null;
 };
 
 type PersonaDbRow = { profile_json: string };
@@ -136,7 +138,17 @@ export function openProject(dir: string): ProjectStore {
     db.close();
     throw new Error(`project.sqlite is schema v${user_version}; this build reads up to v${SCHEMA_VERSION}`);
   }
-  db.exec(`${SCHEMA}PRAGMA user_version = ${SCHEMA_VERSION};`);
+  db.exec('BEGIN');
+  try {
+    db.exec(SCHEMA);
+    // Existing sessions retain no target binding; only a new recording can establish ownership.
+    if (!db.prepare('PRAGMA table_info(session)').all().some((column) => column.name === 'target_id')) db.exec('ALTER TABLE session ADD COLUMN target_id TEXT');
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    db.close();
+    throw error;
+  }
   // A run still 'running' at open was cut off by a crash; nothing else will ever finish it.
   db.exec("UPDATE run SET status = 'interrupted' WHERE status = 'running';");
 
@@ -168,13 +180,13 @@ export function openProject(dir: string): ProjectStore {
      JOIN event e ON e.id = t.event_id WHERE e.run_id = ? ORDER BY e.seq`,
   );
   const selectSessions = db.prepare(
-    'SELECT role, start_url, hosts_json, recorded_at, verified_at, expires_at FROM session ORDER BY role',
+    'SELECT role, start_url, hosts_json, recorded_at, verified_at, expires_at, target_id FROM session ORDER BY role',
   );
   const upsertSession = db.prepare(
-    `INSERT INTO session (role, start_url, hosts_json, recorded_at, verified_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO session (role, start_url, hosts_json, recorded_at, verified_at, expires_at, target_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (role) DO UPDATE SET start_url = excluded.start_url, hosts_json = excluded.hosts_json,
-       recorded_at = excluded.recorded_at, verified_at = excluded.verified_at, expires_at = excluded.expires_at`,
+       recorded_at = excluded.recorded_at, verified_at = excluded.verified_at, expires_at = excluded.expires_at, target_id = excluded.target_id`,
   );
   const selectPersonas = db.prepare('SELECT profile_json FROM persona ORDER BY position');
   const clearPersonas = db.prepare('DELETE FROM persona');
@@ -280,11 +292,12 @@ export function openProject(dir: string): ProjectStore {
         recorded_at: row.recorded_at,
         verified_at: row.verified_at,
         expires_at: row.expires_at,
+        ...(row.target_id !== null ? { target_id: row.target_id } : {}),
       }));
     },
     putSession(info) {
       const { role, start_url, hosts, recorded_at, verified_at, expires_at } = info;
-      upsertSession.run(role, start_url, JSON.stringify(hosts), recorded_at, verified_at, expires_at);
+      upsertSession.run(role, start_url, JSON.stringify(hosts), recorded_at, verified_at, expires_at, info.target_id ?? null);
     },
     listPersonas() {
       return (selectPersonas.all() as PersonaDbRow[]).map((row) => JSON.parse(row.profile_json) as Persona);

@@ -104,6 +104,12 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
   const { seq } = event;
   const place = (url: string) => placeName(url, places); // a text or design by its name, never its stored file
   switch (event.type) {
+    case 'comparison.episode_started':
+      return { seq, label: 'Comparison', tone: 'notice', title: 'Started a shared comparison task', detail: `Tool position ${event.payload.order + 1} · ${event.payload.access_scope.replaceAll('_', ' ')}` };
+    case 'comparison.episode_finished':
+      return { seq, label: 'Task outcome', tone: event.payload.outcome === 'completed' ? 'good' : 'notice', title: event.payload.outcome.replaceAll('_', ' '), detail: event.payload.reason };
+    case 'comparison.assessment':
+      return { seq, label: 'Evidence assessment', tone: 'notice', title: event.payload.rejection ? 'Evidence could not support this assessment' : event.payload.assessment.replaceAll('_', ' '), detail: event.payload.rejection ?? event.payload.summary };
     case 'run.concurrency_changed':
       return { seq, label: 'Pace', tone: 'notice', title: `Now running ${event.payload.concurrency} personas at a time`, detail: event.payload.reason };
     case 'run.reset_called': {
@@ -256,6 +262,7 @@ const ENDS_EPISODE = new Set(['persona.goal_done', 'persona.abandoned', 'signal.
 /** The persona.blocked events the user still has to act on: per persona, no resume or ending after it, and the run has not ended. */
 export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[] {
   if (events.some(isEnd)) return [];
+  if (events.some((event) => event.type === 'run.started' && event.payload.config.project.comparison)) return [];
   const waiting = new Map<string, EventOf<'persona.blocked'>>();
   for (const event of events) {
     if (event.persona_id === null) continue;
@@ -282,8 +289,22 @@ export const stateWord = (state: PersonaState, ended: boolean) => (ended && stat
 /** Where each persona stands, from the log alone. Once the run has ended, those still working or queued were cut short. */
 export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<string, PersonaState> {
   const states = new Map<string, PersonaState>(personas.map((persona) => [persona.id, 'waiting']));
+  const comparison = events.find((event) => event.type === 'run.started')?.payload.config.project.comparison;
+  const resolved = new Map<string, Set<string>>();
+  const unfinished = new Set<string>();
   for (const event of events) {
     if (event.persona_id === null || !states.has(event.persona_id)) continue;
+    if (comparison) {
+      if (event.type === 'comparison.episode_started' || event.type === 'comparison.assessment') states.set(event.persona_id, 'active');
+      if (event.type === 'comparison.episode_finished') {
+        const own = resolved.get(event.persona_id) ?? new Set<string>();
+        own.add(event.payload.episode_id);
+        resolved.set(event.persona_id, own);
+        if (event.payload.outcome === 'incomplete' || event.payload.outcome === 'not_attempted') unfinished.add(event.persona_id);
+        states.set(event.persona_id, own.size === comparison.targets.length * comparison.tasks.length ? unfinished.has(event.persona_id) ? 'unfinished' : 'done' : 'active');
+      }
+      continue;
+    }
     if (event.type === 'persona.episode_started' || event.type === 'persona.step' || event.type === 'persona.resumed') states.set(event.persona_id, 'active');
     else if (event.type === 'persona.blocked') states.set(event.persona_id, 'blocked');
     else if (event.type === 'persona.goal_done') states.set(event.persona_id, 'done');
@@ -301,6 +322,7 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
 
 /** Once everyone ends, the scheduler skips remaining social phases and collects final feedback. */
 export function isPreparingReport(events: GnomiEvent[], states: Map<string, PersonaState>): boolean {
+  if (events.some((event) => event.type === 'run.started' && event.payload.config.project.comparison)) return false;
   return !events.some(isEnd) && states.size > 0 && [...states.values()].every((state) => state === 'done' || state === 'abandoned');
 }
 
@@ -355,6 +377,9 @@ export const CATEGORIES: Record<Category, string> = {
 };
 
 const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
+  'comparison.episode_started': 'steps',
+  'comparison.episode_finished': 'outcomes',
+  'comparison.assessment': 'opinions',
   'persona.step': 'steps',
   'persona.episode_started': 'steps',
   'persona.friction_reported': 'frictions',

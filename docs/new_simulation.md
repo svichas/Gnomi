@@ -1,10 +1,22 @@
-# Proposed simulation: scientific experiments in a contained runtime
+# Simulation design: useful competitor comparisons in a contained runtime
 
 Status: **Steps 1 to 6 of §10 are implemented on branch `claude/simulation-workspace`; phase 2 (§8) and review decisions 2 and 3 (§10) remain.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b` and revised after two reviews. The branch has the `simulation/` workspace (step 1), heard-post ids and first-hand counts (step 2), ordered social phases, feed positions, seeded ties, per-role temperature and the prior-opinion influence rule (step 3), graph metrics and null networks (step 4), the evaluation harness (step 5) and the ODD description in [odd.md](odd.md) (step 6). The run store and protocol (phase 2) are not built, the first validation task and benchmark are not chosen, and no behavioural validation has been done. The baseline before the move is documented in [old_simulation.md](old_simulation.md). Sections below keep the original design wording where it still describes the design.
+
+**Comparison implementation, 2026-10-18:** the explicit comparison path in §3.1–§3.6 is implemented across setup, execution, persisted evidence, report projection and HTML/Markdown/JSON export. This revision responds to the locally supplied ATS report for run r-0001 (`docs/pitch/gnomi-report-r-0001.html`, not checked into the repository); that historical report is unchanged and must be rerun with a comparison brief to collect the new evidence. Existing architecture and scientific safeguards remain applicable.
+
+In **Setup → Compare tools**, enable shared tasks and requirements after adding at least two tools or materials. Choose **Choose a tool** or **Improve my own product**, explicitly select the owned product for the latter, and review the common tasks, criteria, scenarios, source mappings and access scopes. Authenticated workflows require a separate recorded test login for each tool. The review screen shows the frozen brief and the estimate, including two evidence-assessment passes per eligible episode. Existing projects without a comparison brief retain their legacy behavior and reports.
+
+The implementation lives in [comparison/](../simulation/src/comparison/), [report/comparison.ts](../simulation/src/report/comparison.ts), [ComparisonSetup.tsx](../app/src/renderer/src/ComparisonSetup.tsx), and [ComparisonReport.tsx](../app/src/renderer/src/ComparisonReport.tsx). Recorded assessments and deterministic replay produce scoped fit, focal advantages/gaps/parity, owner-specific next steps and coverage with explicit unknowns. Public/documentation scopes use observe-only browsing; missing access or materials limit the affected tasks. Optional final persona preference elicitation is not enabled: this version does not manufacture preference votes or a composite winner. Automated fixtures verify runtime and reporting behavior; live vendor studies and behavioral validation against human decisions remain separate work.
+
+Authenticated studies open fresh browser contexts with the target's own recorded login; they do not reset server-side test records between episodes. Prepare fixtures accordingly. An unexpected initial login screen remains an access limitation rather than an inferred authentication defect: diagnosing a login-form defect requires evidence this access path does not collect. These constraints are also shown in authenticated comparison reports.
+
+Run `npm test` and `npm run typecheck` for automated regressions. `npm run smoke:comparison -w @gnomi/app` builds and exercises the real Electron setup → saved brief → simulation → report path using disposable text assets and scripted models; it makes no paid model calls.
 
 ## 1. Objective and scope
 
 Build a simulation runtime that produces inspectable product-research experiments: what a defined synthetic population experienced, what it communicated, how its responses varied, and what evidence supports the resulting findings. Improve behavioral validity and computational efficiency through measurement. A convincing conversation, a larger audience, or a scientific library is not evidence of validity by itself.
+
+For a comparison, success means the reader can answer **which tool fits which needs, where their own tool wins or loses, why, and what to do next**. Support two purposes: a product owner comparing their tool with alternatives, and a buyer selecting among tools. Both need a common evaluation task and evidence for each alternative. Product owners need prioritized changes to their own product; buyers need a conditional shortlist and questions to resolve before choosing. A useful result may be a narrow advantage or an unresolved decision, provided it explains the evidence and next action.
 
 The intended consumer remains Gnomi's desktop app, with a headless runner for experiments and evaluation. The runtime covers product interactions, social interaction, observations, decisions, opinion state, evidence, and run-level analysis. Editable projects, imports, credentials UI, and report presentation remain application concerns.
 
@@ -16,8 +28,8 @@ Success has separate dimensions: implementation correctness, reproducible record
 
 | Owner | Responsibilities |
 | --- | --- |
-| `simulation/` | Frozen experiment/run contracts; population snapshots; runtime scheduling; product and social decisions; graph/feed/exposure state; memory and opinion policies; model budgets; run persistence; replay; deterministic metrics; optional evidence-grounded report analysis. |
-| `engine/` | Project and audience editing/authoring; Figma and asset import; login recording; translation of existing project settings into simulation requests; legacy event/report readers; presentation/export helpers. |
+| `simulation/` | Frozen experiment/comparison contracts; population snapshots; runtime scheduling; product and social decisions; graph/feed/exposure state; memory and opinion policies; model budgets; run persistence; replay; target/task evidence and deterministic comparison metrics; optional evidence-grounded report analysis. |
+| `engine/` | Project and audience editing/authoring; comparison brief authoring; Figma and asset import; login recording; translation of project settings into simulation requests; legacy event/report readers; presentation/export helpers. |
 | `app/` | Electron lifecycle, OS credential storage, user controls, visualization, and report presentation. |
 | Simulation adapters | Browser execution and containment, provider requests, storage, clocks, and transport. Adapters implement interfaces owned by the simulation package. |
 
@@ -86,6 +98,119 @@ Exploratory runs may omit a confirmatory hypothesis, but must be labeled explora
 
 For product A/B comparisons, use matched population/network realizations across the two worlds and independent mutable state. Declare any shared random streams used for variance reduction. Changes to the environment, time horizon, or social policy must be treatment variables or documented deviations. Network exposure and interference belong in the design, not just the analysis. [Aronow and Samii](https://arxiv.org/abs/1305.6156)
 
+### 3.1. What the comparison must fix
+
+Run r-0001 asked personas to find an ATS for their company across Workable, Lever, Ashby and Teamtailor. Its output largely answered a different question: what was frustrating about each website. These are observations about that saved run, not current claims about the vendors.
+
+| Failure in the saved report | Required change |
+| --- | --- |
+| The headline says 7 of 20 reached the goal, then prioritizes “Find ATS is a single-vendor marketing site, not a comparison tool,” reported by 19 personas. | Gnomi owns the cross-vendor synthesis. Visiting a vendor site to gather evidence must not require that site to offer an independent comparison directory. Separate per-tool task outcomes from the study's ability to support a decision. |
+| Occasional reviewers expected shared candidate profiles despite being sent to marketing homepages. | Freeze the task and its prerequisites before execution. Persona traits can change priorities and reactions, but cannot invent a different assignment, incoming email, account, candidate or deep link. |
+| “What to fix first” asks the reader to change competitors' websites. | Bind each recommendation to its owner. Changes to the user's tool, lessons from rivals, and buyer follow-ups have different destinations. |
+| Pairwise preferences appear late: Workable/Lever/no preference = 11/1/8; Workable/Ashby/no preference = 4/12/4; Workable/Teamtailor/no preference = 7/8/5. | Lead with common criteria across all tools. These different pairwise votes cannot establish an overall winner; distinguish a tie from missing evidence, ineligibility and rejection of both. |
+| Methods lists blocked login, app, documentation, API and CDN hosts, but says “Limitations: None.” Some broad themes contain unrelated quotes or generic console errors as confirmation. | Connect restrictions to the affected task and criterion. A blocked request or unrelated signal cannot confirm a product defect or missing capability. Validate what each evidence item actually supports. |
+
+The current [comparison helper](../simulation/src/poi/compare.ts) uses the first full-access web POI as the baseline and observe-only POIs as competitors. [Report aggregation](../simulation/src/report/build.ts) and [comparison rendering](../app/src/renderer/src/Report.tsx) consume that model. Changing report prose alone cannot repair the task, sampling and evidence problems. Replace the implicit experiment semantics first; reuse existing event and screenshot capture.
+
+### 3.2. Freeze a comparison brief
+
+When the user asks to compare tools, draft a brief from their goal and selected targets. Show the task, criteria, assumptions, access scope and estimated allowance in the existing setup flow. Ask only for missing information that materially changes the decision; otherwise use visible exploratory assumptions. Choosing an ATS without company size, hiring needs or budget should yield conditional scenarios, not an invented universal buyer. Do not silently add vendors or expand browsing permissions.
+
+| Field | Required meaning |
+| --- | --- |
+| Purpose | `improve_own_product` or `choose_tool`. The first requires an explicit focal target; the second allows all tools to be peers. Ownership is independent of target order and browser access. |
+| Targets | Stable `target_id`, display name, optional owner/focal role, and associated POI/asset IDs. Several pages, screenshots or documents can describe one tool. Distinct product variants can be separate targets. URLs and array positions are not identity. |
+| Decision context | Shared use case, company/user constraints, must-haves, current alternative and switching constraints where supplied. Each scenario has an immutable `scenario_id`; segment-specific needs are explicit scenarios, held constant across tools for that segment. |
+| Tasks | Stable `task_id`, scenario reference, neutral instruction, prerequisites, eligible segments, and observable success rule. Map each target to its own entry point and data/account fixture for the same job. |
+| Criteria | Stable `criterion_id`, question, importance, evidence required and decision rule. Separate must-have constraints from preferences. Use a small set tied to the decision, normally 4–6; freeze it before browsing. |
+| Access and scope | Per-target public-site, documentation, prototype or authenticated-workflow scope; permissions, session reference, data/reset fixture and dependencies. Record which criteria each source can answer. |
+| Execution | Independent benchmark or buyer journey (§3.3), eligible population, target order/allocation, per-task limits, social policy, stopping rule and budget split, including synthesis. |
+
+Purpose is separate from the existing audience segment `kind`. A buyer choosing tools may need to browse public sites; it must not silently bypass comparison because the current [eligibility default](../simulation/src/poi/pois.ts) skips buyer web episodes. Validate assignments against the brief. Text/design targets participate in criteria their artifacts can answer; viewing every frame is not proof of completing a live workflow.
+
+For the ATS example, a neutral public-site task is: “Find evidence for suitability, plan eligibility, pricing basis, required integrations and the next evaluation step for this company's hiring needs.” Gnomi combines the observations after all tools have been considered. A separate authenticated task might be “Find an assigned candidate and submit an evaluation”; it requires a valid account, candidate and permitted action for every tool included in that workflow comparison. Public documentation can support what a vendor claims, but cannot demonstrate completion of that workflow.
+
+Useful criteria in this example include fit for the stated hiring workflow, cost at the relevant company size, integrations, ease of completing an accessible task, and evaluation/setup effort. Security or migration requirements are included when the brief calls for them. Do not substitute “has a competitor comparison page” for product fit, or rate every tool on every imaginable feature.
+
+### 3.3. Execute comparable tasks
+
+**Independent benchmark is the default.** Give matched personas the same scenario, task, device/locale policy and effort limits for each target. Each target episode starts with independent mutable memory, browser context and target-specific session/fixture. Do not inject the focal product's survey, verdict or other targets' social posts into another target's task. Survey prompts name the current target and ask about the assigned task. Cross-target judgment happens after these observations are frozen.
+
+Allocate target order deterministically and balance positions within eligible segments as far as the sample allows; save the realized order and any imbalance. Admission should reserve a complete matched task block where possible. A deadline or provider failure may still interrupt a block: retain every attempt, expose unequal coverage, and never let the first configured tool quietly receive most of the evidence. A shared role name is not permission to reuse one vendor's login session at another vendor.
+
+**Buyer journey is an explicit alternative.** A persona may remember previously considered tools, then choose a shortlist. Record the order and carryover policy, balance order where possible, and label outcomes as choices after that sequence. Do not mix them into independent benchmark metrics. Social interaction is off by default for the comparison baseline; an explicit social treatment needs its own exposure and carryover rules. Never interpret repeated opinions as additional independent product observations.
+
+Before task execution, preflight entry points, required data, authentication and critical page dependencies. Separate navigation, read-resource and write permissions; discovering a dependency does not authorize it. Preserve containment and competitor observe-only rules. Missing/expired test credentials, a blocked API, prohibited submission or absent fixture become coverage limitations. A demonstrated login defect with valid prerequisites can instead be a task failure. Offer a permitted public-information task or collect the needed setup for a later run; never turn an access restriction into “this product cannot do X.” A bare console error is diagnostic unless linked to a visible task failure.
+
+Retain these task outcomes independently of persona sentiment:
+
+| Outcome | Meaning in analysis |
+| --- | --- |
+| `completed` | The declared success condition has supporting evidence. A persona saying “done” alone is insufficient. |
+| `task_failed` / `abandoned` | The task was valid and accessible, but failed, exhausted its predeclared task-effort limit, or the persona chose to stop. These remain in valid-attempt denominators. Record the cause; a failed task does not by itself prove a product defect. |
+| `blocked_environment` | Policy, missing test access/data or tooling prevented a valid observation. Report the specific cause and excluded comparison cells. Authentication failures with valid setup are not automatically excluded. |
+| `incomplete` | A global cost limit/deadline, cancellation or provider failure interrupted an unresolved task. Preserve partial evidence and stop reason; do not overwrite an already established outcome. |
+| `invalid_task` | A material deviation from the assigned task or invented prerequisite invalidates the episode. Exclude it from performance/preference denominators, show the deviation, and retain the trace for diagnosis. |
+| `not_applicable` / `not_attempted` | The frozen eligibility rule excludes this task/segment, or no attempt occurred. Neither is a failure or a success. |
+
+Finding plan information is a valid success for a public-site research task even when it produces a documented mismatch or “quote required.” That is distinct from completing a product workflow and from having enough information to recommend a purchase.
+
+### 3.4. Build evidence before preferences
+
+Capture positive capabilities and successful paths as well as friction. The existing [web survey](../simulation/src/agent/prompt.ts) and [run coordinator](../simulation/src/run.ts) must supply target-specific task observations, not just a friction summary and generic project goal. Keep source-level extraction separate from persona interpretation and final comparison.
+
+Every comparison observation carries run/replicate, target, scenario, task, criterion and episode identities; persona/segment where applicable; source URL or asset ID; capture time; event/step and screenshot/text reference; access scope; and the proposition it supports. A document gathered once is one source, even if twenty personas read it. Preserve contradictory observations with their contexts rather than collapsing them into a favorable summary.
+
+Use two separate labels on each criterion cell:
+
+- **Assessment:** `meets`, `partially_meets`, `does_not_meet`, `unknown`, or `not_applicable`, against the frozen rule and scenario. `does_not_meet` requires positive evidence of a mismatch. Failure to find evidence is `unknown`.
+- **Basis:** observed task behavior, vendor claim, user-supplied claim, or simulated opinion/inference. Link the underlying source and scope; an observed pricing page is evidence of what was displayed, not verification of all fees or contractual terms.
+
+“Not found on the pages visited,” “requires a quote,” “blocked by the sandbox,” and “does not support the requirement” must remain distinct. Record pricing with the relevant tier, size/seat band, currency, billing period, date, add-ons and exclusions when visible. Normalize cost only with a shared scenario and compatible terms; do not compare a small-company starting price with an enterprise quote or fill undisclosed prices from model memory. External source retrieval, if enabled, follows declared sources/permissions and records provenance; marketing assertions never become verified workflow performance.
+
+Validate evidence links before synthesis: the cited item must concern the same target, task, criterion and claim. A small-target signal cannot confirm that a vendor lacks a feature; an occasional reviewer's missing candidate cannot confirm a pricing problem. Group friction within a target first, then map supported findings to shared criteria. Deduplicate repeated complaints by persona/task and distinguish first-hand reports from social echoes (§4). Keep source strength, synthetic agreement and statistical uncertainty separate.
+
+Semantic extraction and assessment may use a model under the frozen criterion rubric. Store each assessment, supporting observation IDs, assessor model/prompt/rubric versions and any rejection; these judgments are not deterministic facts. Code validates identity, permitted evidence, coverage and arithmetic, then builds the matrix deterministically from the accepted records. Unsupported or unresolved contradictory assessments remain unknown with their reasons. Replay reuses recorded assessments rather than judging them again. The synthesis model can summarize differences and propose actions from this matrix; it cannot invent facts, change criteria or calculate denominators. Retain the matrix and limitations if synthesis fails. The first release has **no overall score**: show criterion outcomes, tradeoffs and must-have constraints. A future weighted score requires a declared formula, weights, missingness handling and sensitivity analysis before execution.
+
+Scope matrix cells by target, scenario, task, criterion, segment and access scope; show separate views where those conditions differ. A tool can meet a small team's requirement and fail an enterprise requirement without contradiction. Never average those into one fit label. Paired metrics match replicate, persona, scenario and task across targets, using the declared comparable access scope.
+
+Preference is optional supporting evidence. Apply the frozen eligibility/coverage gate before asking: record exclusions as ineligible, invalid task or insufficient coverage, without issuing a preference call. When asked about two tools, a persona may answer A, B, tie, neither suitable or insufficient evidence; passing the coverage gate does not require it to have a preference. For several tools ask for one final shortlist/preference with reasons and criterion evidence, allowing multiple acceptable tools or no decision. Record collection separately as answered, not collected, failed or invalid response; a failed request is not a persona's abstention. Do not derive an all-tool ranking by adding separate baseline-versus-competitor votes. Label preferences as simulated choices within this study, not purchase likelihood or market share.
+
+### 3.5. Report the decision first
+
+The comparison report replaces the pooled “reached the goal / problems to fix / sentiment” opening for comparison studies. It must remain useful when the reader never opens a persona transcript.
+
+| Order | Required output |
+| --- | --- |
+| 1. Decision and scope | A conditional recommendation or shortlist for the stated needs; the main differentiator, tradeoff and unresolved must-have. If evidence cannot separate tools, say so and give the next check. Show “public-site evaluation” or the actual workflow scope beside the verdict. |
+| 2. Side-by-side matrix | Criteria as rows and every target as a column, including the focal tool. Group by scenario/segment and task/access scope when these differ. Each cell has the assessment, concise supporting fact, basis, coverage and inspectable evidence links. Unknowns remain visible. |
+| 3. Where each tool fits | Advantages, disadvantages and shared gaps by relevant scenario/segment. For owners, call out focal-tool wins, losses and parity. For buyers, explain when each shortlisted tool is suitable and which requirement disqualifies a tool. |
+| 4. Actions | A short ordered list, normally up to three, each with responsible owner, affected segment/task, evidence, expected benefit as a hypothesis, and a validation step. Unsupported implementation details and invented revenue lifts are excluded. |
+| 5. Coverage and evidence | Attempts and outcomes per target/task/segment, comparable pairs, blocked or unobserved criteria, order and access differences, costs, uncertainty and study limitations. Task traces and diagnostic logs sit behind the findings. |
+
+An owner action should take the form: “Improve **this part of your tool** for **this task/segment**, because **your observed result** differs from **the competitor's observed result**; verify with **this follow-up task**.” Prefer consequential must-have gaps and repeated task failures over cosmetic complaint counts; expose the evidence behind that priority. Competitor weaknesses become positioning opportunities or diligence questions, not instructions to edit the competitor's site. Buyer actions are concrete evaluations, quote requests or requirement checks; the report does not submit those requests automatically.
+
+Show scheduled and attempted counts plus every terminal outcome from §3.3. For a task, valid attempts = completed + task_failed + abandoned; completion rate = completed / valid attempts, or unavailable if the denominator is zero. A predeclared task-effort limit counts as task_failed; a global execution interruption counts as incomplete. Show exclusions adjacent to the rate. Criterion coverage reports eligible and assessed persona/task counts separately from distinct source counts; repeated use of one source is not repeated verification. Preference shares use all valid answered responses as the denominator, including ties, neither suitable and insufficient-evidence answers; show gate exclusions and not-collected/failed/invalid responses separately. Pairwise differences use the same matched personas/tasks and show pair overlap. Preserve all unmatched outcomes too: incomplete coverage can change the apparent result, so do not present a selected subset as an unconditional winner.
+
+Steps and browser/model latency are simulator effort and execution measurements, not human time-to-value. Never pool four tools' success, sentiment or willingness-to-continue into one product score. Single-run counts are descriptive; comparison intervals use independent replicate pairs (§9). If a key must-have is unknown, a tool may be a **conditional** shortlist candidate but cannot be declared a verified fit. Restrict superiority claims to comparable access and tested criteria; public marketing versus an authenticated workflow cannot establish overall product superiority.
+
+### 3.6. What a useful result would say for the ATS example
+
+The saved r-0001 report supports a lesson about what to investigate next, not a defensible overall ATS winner. A bounded summary of its recorded observations would read:
+
+> **Decision: the study is insufficient to choose an ATS.** The personas inspected public vendor sites while key login, documentation and resource hosts were blocked. The run mixes tool selection with unsupported candidate-review tasks. Its pairwise preferences cannot resolve the four-way choice.
+>
+> **Useful next checks:** recover comparable plan and price evidence for the same company size; verify required integrations from accessible sources; then run the same hiring workflow in correctly configured accounts. Keep pricing visibility and actual product usability as separate criteria.
+
+| Target | What the saved report records | Decision consequence / next check |
+| --- | --- | --- |
+| Workable | Some personas reached pricing; the dominant complaint incorrectly demands a multi-vendor directory. | Recheck the relevant plan and total-cost terms. Exclude the directory complaint from product-fit assessment. |
+| Lever | Personas report missing public prices and an unavailable quote form. | Cost remains unresolved. Check whether permitted resources make the form observable before calling it broken; a quote is a buyer follow-up, not a product failure. |
+| Ashby | Personas distinguish a displayed Foundations price from quote-based Plus pricing for their stated size. | Confirm the applicable tier before comparing costs. Do not use the smaller-company price as the price for these companies. |
+| Teamtailor | The report has a no-public-pricing theme, but includes unrelated candidate-review evidence. | Reassess the pricing claim using only relevant captures. Exclude unrelated quotes and leave unverified cost unknown. |
+
+These are historical report statements, not newly verified vendor facts or a regenerated result. A new valid run should replace this limited summary with the matrix, segment-specific tradeoffs and supported owner/buyer actions above. More personas repeating the same mistaken task would not solve the problem.
+
 ## 4. Population and behavioral model
 
 ### Population
@@ -107,19 +232,19 @@ Evaluate within-segment diversity and subgroup errors. Increasing the number of 
 
 Separate self-reported certainty, evidence quality, and statistical uncertainty. They are different quantities. Model-attributed influence edges describe provenance; estimating an intervention's effect requires a controlled comparison. An effect inside the simulator does not establish a real-world causal effect.
 
-Two details of the current edge rule ([social/influence.ts](../simulation/src/social/influence.ts)) change with the model version. The 0.5 threshold is a no-op with integer sentiment, and a first opinion is measured from zero, so a persona forming its first view after reading counts as moved. The corrected rule requires a prior opinion for an `influence` edge and records a first opinion after exposure as a separate `formed` kind, so a first opinion is never counted as influence.
+The baseline edge rule counted a first opinion as movement from zero. The implemented [correction](../simulation/src/social/influence.ts) requires a prior opinion for an `influence` edge; a non-neutral first opinion citing another persona's post about the same POI gets the separate `formed` kind. The 0.5 threshold remains a no-op for changes in integer sentiment. A first opinion is never counted as influence.
 
 ### Social echo in finding counts
 
-The current report already shows an interval: each theme's "k of n personas" with a 95% Wilson range ([report/themes.ts](../simulation/src/report/themes.ts), `prevalence`). It treats each persona as an independent witness. With social rounds on, that is not true. A persona that reads a post is handed it in its next product step ([agent/loop.ts](../simulation/src/agent/loop.ts), [poi/text.ts](../simulation/src/poi/text.ts), [poi/design.ts](../simulation/src/poi/design.ts)), so a friction reported after reading about it may repeat the post rather than confirm it. Social runs therefore inflate k and narrow the range. The correction must not swing the other way: a rule that discounts real defects in social runs confounds the social-on/off comparison in §9 with the rule itself.
+The baseline report showed each theme's "k of n personas" with a 95% Wilson range ([report/themes.ts](../simulation/src/report/themes.ts), `prevalence`), treating each persona as an independent witness. With social rounds on, that is not true. A persona that reads a post is handed it in its next product step ([agent/loop.ts](../simulation/src/agent/loop.ts), [poi/text.ts](../simulation/src/poi/text.ts), [poi/design.ts](../simulation/src/poi/design.ts)), so a friction reported after reading about it may repeat the post rather than confirm it. Counting every report as independent can inflate k and narrow the range. The implemented correction must not swing the other way: a rule that discounts real defects in social runs confounds the social-on/off comparison in §9 with the rule itself.
 
-Two things separate the two. First, the engine knows at each product step which posts it handed the persona, but does not log it: a heard post ([agent/prompt.ts](../simulation/src/agent/prompt.ts), `HeardPost`) carries author, text and POI name with no post id, and a step's opinion change cites `post_ids: []` ([agent/loop.ts](../simulation/src/agent/loop.ts)). Carrying the post id through and recording the heard ids on the step and friction events makes exposure before a report a fact of the log and costs about ten lines. Second, the judge tags posts with the friction groups they discuss ([report/models.ts](../simulation/src/report/models.ts)), and `social.feed_viewed` records which posts each persona was shown and when. For each theme:
+Two things separate the two. First, heard posts now carry a post id ([agent/prompt.ts](../simulation/src/agent/prompt.ts), `HeardPost`), and step and friction events record the heard ids ([agent/loop.ts](../simulation/src/agent/loop.ts)), making exposure before a report a fact of the log. Second, the judge tags posts with the friction groups they discuss ([report/models.ts](../simulation/src/report/models.ts)), and `social.feed_viewed` records which posts each persona was shown and when. For each theme:
 
 - A persona counts as **first-hand** when at least one of its reports on the theme precedes the first feed that showed it a post tagged with that theme, or when any of its reports on the theme has `confirmed` or `observed` trust ([report/friction.ts](../simulation/src/report/friction.ts)). A browser signal cannot be an echo of a post, so the discount applies to `reported` frictions only.
 - Otherwise it counts as **heard first**. It stays visible beside the share, but not in k.
-- Ranking, evidence level and the "2+ personas" rule for top lists use first-hand k. Without judge tags, the report falls back to the recorded heard ids: a `reported` friction logged at a step whose heard posts include one by a persona already in the theme counts as heard first. Without either, the report says it could not separate echoes.
+- Ranking, evidence level and the "2+ personas" rule for top lists use first-hand k. Without a judge result, the report falls back to the recorded heard ids: a `reported` friction logged at a step whose heard posts include one by a persona already in the theme counts as heard first. Without either, the report says it could not separate echoes.
 
-This changes report code and a few event-payload lines, and adds no model calls. It is still a within-run quantity: the range describes this run's personas, not the human population, and the report must keep saying so. Replicate-level intervals (§9) are the measure for comparisons between runs.
+This correction added no model calls. Counts remain descriptive of this run's personas; a Wilson range does not establish independence among them or quantify uncertainty in a product comparison. Replicate-level intervals (§9) are the measure for comparisons between runs.
 
 Use the same frozen language policy across a comparison. Browser locale, persona language, response language, and translation are distinct inputs and must be evaluated rather than assumed equivalent.
 
@@ -142,11 +267,11 @@ flowchart LR
 
 Assign operation IDs from run, logical phase, round, persona, input, step, and purpose. Allocate reproducible RNG streams by stable identities with a documented derivation/jump policy; record algorithm and stream allocation. Do not consume one global random stream in promise-completion order.
 
-Model sampling is part of the experiment definition. Today the gateway sets no temperature or seed ([llm/gateway.ts](../simulation/src/llm/gateway.ts)), and routing names model aliases such as `claude-haiku-5-5` ([settings.ts](../simulation/src/settings.ts)), so a provider can change both defaults and weights between two runs with the same seed. Request a temperature per role, use dated model snapshots where the provider offers them, pass a provider seed where supported, and record the settings sent, less any the provider reports it ignored, with the model version it reports, in the run manifest. Routes with reasoning enabled (`providerOptions` in [llm/gateway.ts](../simulation/src/llm/gateway.ts)) get no temperature, so they record none. This does not make fresh replicates identical; it makes their variation declared.
+Model sampling is part of the experiment definition. The gateway now requests per-role temperatures and supported seeds and records accepted settings plus the reported response model ([llm/gateway.ts](../simulation/src/llm/gateway.ts)). Routing still names model aliases such as `claude-haiku-5-5` ([settings.ts](../simulation/src/settings.ts)), so weights may change between two runs with the same seed. Use dated model snapshots where the provider offers them and retain these settings in the run manifest. Routes with reasoning enabled get no temperature, so they record none. This does not make fresh replicates identical; it makes their variation declared.
 
 Freeze observation inputs for each social phase. Issue independent requests concurrently, save attempt telemetry immediately, stage validated decisions, and apply effects in canonical logical order. Feed tie-breaking uses logical IDs/order. API response speed must not select whose post becomes most recent. Product steps within a persona remain sequential; independent personas may execute concurrently.
 
-This deliberately fixes a baseline hazard: [social decisions](../simulation/src/run.ts) currently append as calls finish, and [feed ranking](../simulation/src/social/feed.ts) uses event sequence as a recency tie-breaker. Identical recorded answers can therefore yield different subsequent exposure when response timing changes.
+This fixes the baseline hazard in which [social decisions](../simulation/src/run.ts) appended as calls finished and [feed ranking](../simulation/src/social/feed.ts) used event sequence as a recency tie-breaker. The implemented scheduler stages decisions and applies them in population order; ties use seeded ordering. Preserve these guarantees when adding target/task scheduling.
 
 At budget or deadline boundaries, use a frozen admission order and explicit partial-phase policy. Admit a complete phase cohort when its conservative reservations fit; otherwise stop before that cohort or use a predeclared sampling policy with known inclusion probabilities. Do not silently retain only the fastest responders. Provider failures or a wall-clock stop still produce missing observations and partial results, not an assurance of identical live execution.
 
@@ -180,6 +305,8 @@ The current gateway already supports shared prefixes; the [social call](../simul
 **Response caching has a narrower role than prefix caching.** Recorded responses are appropriate for replay and deduplicating the same operation. Reusing them across fresh replicates would erase intended variation and must not be counted as new independent evidence. Semantic answer caches across different personas are excluded from the initial design.
 
 One budget ledger covers all model-backed phases, including retries, summarization, judging, and report writing. Reserve conservative request cost before dispatch using known pricing, input bounds and output/reasoning caps; reconcile returned usage, keep unknown charges reserved, and stop admission if a safe estimate cannot be made. Record setup cost separately and include it in end-to-end comparisons when population authoring is part of the experiment. Keep deadlines active through final analysis. Cancellation prevents new work but cannot guarantee that an already dispatched request will not be billed.
+
+Comparison runs reserve allowance for evidence extraction and final synthesis before admitting additional persona/task blocks. Store shared source captures once with their provenance; do not count reuse as repeated verification. Account for target/task coverage and analysis cost explicitly. The comparison revision may add model work; measure it against the existing pipeline rather than promising unchanged cost. If allowance ends, publish the evidence matrix with partial coverage and the unresolved decision, not an invented winner.
 
 Measure calls, tokens, cache usage, retry reasons, queue wait, model latency, active browsers, projection time, peak memory, recorded cost and cost uncertainty. Report setup, execution and analysis separately. No speedup claim is accepted without a reproducible workload and a behavioral non-inferiority comparison.
 
@@ -228,7 +355,7 @@ type Command =
       run_id: string; artifact_id: string };
 ```
 
-`RunManifest` is a JSON schema containing experiment/treatment/replicate identities, realized population and graph or their immutable blob references, input/environment hashes, policies, model/provider/deployment identifiers and supported sampling options, prompt/schema hashes, code/dependency versions, RNG allocation, budget/deadline/failure rules, and analysis/stopping definitions. Store actual overrides and interventions as subsequent events. Secret material is supplied through a separate private adapter/bootstrap channel and is not part of the manifest.
+`RunManifest` is a JSON schema containing experiment/treatment/replicate identities, realized population and graph or their immutable blob references, input/environment hashes, policies, model/provider/deployment identifiers and supported sampling options, prompt/schema hashes, code/dependency versions, RNG allocation, budget/deadline/failure rules, and analysis/stopping definitions. For a comparison it also freezes the brief, target/POI mapping, task/criterion rules, eligibility, access scopes and realized target order (§3.2–§3.3). Persist those comparison fields in the existing run snapshot first; they do not depend on phase 2. Store actual overrides and interventions as subsequent events. Secret material is supplied through a separate private adapter/bootstrap channel and is not part of the manifest.
 
 `start` atomically claims its idempotency key and request hash in the run store. Same key/body returns the existing run and status; same key/different body returns a conflict. Keep the claim for the run's retained lifetime. Use one typed error envelope with codes such as `invalid_request`, `unsupported_version`, `conflict`, `not_found`, and `resource_unavailable`. Event pagination returns a stable sequence cursor; reconnecting clients deduplicate by run and sequence and can rebuild from a snapshot plus later events. Results are available as partial while a run is active or interrupted.
 
@@ -288,11 +415,39 @@ Numeric behavioral tolerances, efficiency targets and sample sizes must be selec
 
 Each result includes experiment/model versions, completion/missingness, costs and uncertainty, effect estimates and interval scope, evidence references, assumptions/deviations, validation coverage, and the five separate evaluation dimensions. Persona certainty is never displayed as a confidence interval for a product conclusion.
 
+### Comparison acceptance cases
+
+Use local scripted/recorded fixtures with known facts, defects and restrictions; no live vendor access is needed for these checks. Keep tests beside the existing runner, POI and report code. Unit tests verify evidence attribution and denominators; integration fixtures exercise scheduling and policy failures; app/HTML/Markdown checks verify that the same decision and limitations reach the reader. Passing these tests verifies the comparison implementation, not human purchasing behavior.
+
+| Fixture / trigger | Required result |
+| --- | --- |
+| Four public ATS homepages; goal is tool selection. | Shared vendor-evaluation tasks and a four-column matrix; no invented comparison directory, invitation or candidate-review task. An invalid persona task is flagged, not counted as a vendor defect. |
+| All targets are observe-only, with no owned tool; buyer segments are included. | Every eligible target receives evidence and comparison coverage. No dependency on a full-mode baseline or user-kind segment. |
+| One tool has several pages/assets; another is a text/design prototype. | Evidence maps to the correct target and criterion once. Unsupported live-workflow comparisons are marked unknown, with artifact scope shown. |
+| Two authenticated targets use the same persona role. | Separate target sessions and fixtures; no account, memory or private-data leakage across vendors. Missing setup blocks only the affected task. |
+| Independent episodes are reordered; synthetic responses remain fixed. | No baseline-first prerequisite or survey leakage. Target metrics and supported findings remain unchanged; recorded order is correct. Buyer-journey carryover remains explicit and separately analyzed. |
+| Required login/API/CDN request is blocked; an unrelated tracker is also blocked. | The affected task/criterion shows the restriction and limited coverage; no automatic product defect. An unrelated blocked tracker does not invalidate otherwise supported evidence. |
+| Login is the assigned task: one target lacks valid test credentials; another has valid credentials and an observed product login defect. | The first is environment-blocked; the second is a valid task failure with supporting evidence. Both causes and their denominator treatment are visible. |
+| A candidate-profile quote is offered as pricing evidence; a generic console error as feature confirmation. | Both mismatched citations are rejected. Repetition or a high-confidence model label cannot promote them to confirmed findings. |
+| One plan has a stated price, another requires a quote, and a cheaper tier excludes the scenario's company size. | Visible terms and eligibility are preserved; quote-only cost is unknown, not unaffordable, free or zero. No false cheapest-tool verdict. |
+| The same plan meets the small-team scenario but excludes the enterprise scenario. | Separate scenario assessments and recommendations; no averaged fit label or cross-scenario paired metric. |
+| Two sources contradict each other, or a persona dislikes a feature that was successfully observed. | Keep the conflict and distinguish capability, task outcome and opinion. The narrative cannot erase contrary evidence. |
+| Five personas are scheduled for both tools; A has 3 completions, 1 task failure, 1 environment block; B has 2 completions, 1 abandonment, 2 global budget stops. | A shows 3/4 valid attempts and its block; B shows 2/3 and its two incomplete episodes. Pair overlap comes from persona/task IDs, never the smaller denominator; no unconditional winner from unequal coverage. |
+| Of four assigned episodes, one succeeds, one exhausts its planned task effort, one is globally interrupted and one invents a different task. | Completion is 1/2 valid attempts. The effort-limit failure remains in the denominator; incomplete and invalid-task exclusions are visible and cannot become preference votes. |
+| Preference collection has 2 A, 1 B, 1 tie, 1 neither suitable and 1 insufficient-evidence answer, plus 1 gate exclusion, 1 not collected, 1 failed call and 1 invalid response. | A is 2/6 valid answers; all answer counts and four excluded/missing responses are visible. No missing call becomes a tie. All-tool preference cannot be reconstructed by summing pairwise votes. |
+| Owned tool loses a criterion to a competitor; a different criterion favors the owned tool. | Both differences cite evidence for both sides and the relevant segment. Owner actions address the owned tool; buyer mode instead supplies selection conditions and follow-ups. |
+| All tools have equal supported outcomes, or every decisive criterion is unknown. | No forced differentiation. Report parity or insufficient evidence and the specific next check needed to decide. |
+| Synthesis fails or the run ends before all targets are covered. | Export the deterministic matrix, coverage and stop reasons. Do not mark the study as a completed selection because one tool's task succeeded. |
+
+Review the resulting report against the r-0001 failure examples in §3.1. A reviewer should be able to locate the scoped recommendation, compare every target on the same criteria, trace each material claim and identify the next action without reading transcripts. This usefulness check complements deterministic fixtures; neither is a claim of behavioral validation.
+
 ## 10. Compatibility and review decisions
 
 Extract the current behavior behind the new boundary before changing social mechanisms. Prove parity with scripted and recorded fixtures; fresh model output equality is not a migration requirement. Keep legacy readers and the old behavior version available during comparison. Introduce new model/event schema versions explicitly; do not reinterpret old influence edges as causal effects or rewrite historical results under new rules.
 
 The engine compatibility facade preserves existing app commands and translates run events/projections. Preserve containment, recorded-login handling, cost interruption, locale behavior, and report/evidence access during extraction. The new store is additive; any legacy data conversion needs a separate reversible migration design.
+
+Comparison contracts and report projections need explicit versions. Preserve single-target research behavior and legacy report readers. Old runs lacking task/criterion/target attribution remain labeled legacy; do not backfill invented coverage, silently split `no_preference`, or relabel their votes as validated comparisons. Optional reanalysis must preserve the original artifact, declare its source limitations and label any new interpretation. Keep report generation and exports on the same comparison projection so the app and downloaded report cannot disagree.
 
 Current verification commands remain executable from the repository root:
 
@@ -305,9 +460,9 @@ npm run acceptance -w @gnomi/simulation -- --m4 --out /tmp/gnomi-m4-baseline-rev
 
 The workspace has its own `test`, `typecheck`, `cli` and `acceptance` scripts. A replay command does not exist yet. Live evaluations require an explicit configured allowance and must report actual model routing, environment and source revision; this documentation task runs no paid evaluation.
 
-### Order of work
+### Completed foundation
 
-Each step is its own PR. None adds model calls to an everyday run; evaluation runs spend live tokens and need an explicit allowance. The move goes first, so the rule above, extract before changing, holds: every later step lands inside the boundary with the parity tests behind it.
+Steps 1–6 describe the completed foundation recorded in the opening status. They added no model calls to an everyday run; evaluation runs spend live tokens and need an explicit allowance. Preserve their parity and scientific checks while implementing the comparison revision.
 
 | Step | Change | Cost |
 | --- | --- | --- |
@@ -319,9 +474,23 @@ Each step is its own PR. None adds model calls to an everyday run; evaluation ru
 | 6 | ODD description and parameter provenance for the corrected model (§3). | Writing time. |
 | Later | Phase 2: run store, protocol and recovery (§8). | Large; only when a headless or hosted runner needs it. |
 
-Review decisions still needed before implementation:
+### Next: comparison delivery
 
-1. Confirm the `simulation/` workspace and local-process boundary, with remote hosting deferred.
+Deliver these slices inside the existing runtime before considering phase 2. Each slice includes its relevant §9 fixtures; the complete comparison experience requires all five. Use existing TypeScript discriminated unions, Zod boundary validation and colocated tests. No new dependency or hosted service is required by this design.
+
+| Slice | Scope and existing touchpoints | Exit evidence |
+| --- | --- | --- |
+| 1. Explicit study | Versioned brief, targets, tasks, criteria and target-specific access/session assignments in [types.ts](../simulation/src/types.ts), [POI eligibility](../simulation/src/poi/pois.ts), and engine/app setup. Preserve legacy decoding. | All-public, buyer, multi-artifact and prototype studies validate without inferring identity from permission mode. |
+| 2. Comparable episodes | [run.ts](../simulation/src/run.ts), [agent prompts](../simulation/src/agent/prompt.ts), and [POI comparisons](../simulation/src/poi/compare.ts): neutral tasks, preflight, isolated target context, recorded order and outcome/coverage events. | Fixed task fixtures reject invented assignments; reorder, session-isolation and partial-block cases pass. |
+| 3. Evidence and metrics | Target/scenario/task/criterion observations, recorded semantic assessments, positive evidence, restriction attribution and pure per-target/paired projections in [report/build.ts](../simulation/src/report/build.ts) and [report/compare.ts](../simulation/src/report/compare.ts). | Citation, contradiction, denominator and missingness fixtures pass; replay uses recorded assessments and the matrix remains available without model synthesis. |
+| 4. Decision and actions | [report/models.ts](../simulation/src/report/models.ts) synthesizes only the validated matrix; optional final preferences follow sufficient exposure. Keep the allowance active. | Supported tradeoffs, parity/inconclusive cases and correct owner/buyer actions; every comparative claim has evidence on both sides. |
+| 5. Reader experience | [Report.tsx](../app/src/renderer/src/Report.tsx), [HTML export](../app/src/renderer/src/reportFile.tsx), and [Markdown export](../simulation/src/report/markdown.ts) share the decision-first projection. | The §3.5 layout and r-0001 usefulness check pass across exports, including partial and legacy results. |
+
+No paid rerun is required to revise this document or verify the scripted cases. A later live pilot needs a configured allowance and correctly scoped vendor access. Measure coverage, useful evidence and supported decisions before increasing persona count.
+
+Scientific review decisions still needed:
+
+1. Retain the implemented `simulation/` workspace and local-process boundary; remote hosting remains deferred.
 2. Choose the first validation task/population and identify usable human reference evidence. Without it the first release remains exploratory.
 3. Freeze the first benchmark, precision/non-inferiority margins and spending envelope after a pilot; then decide which optional libraries earn adoption.
 

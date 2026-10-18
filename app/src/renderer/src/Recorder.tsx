@@ -13,11 +13,11 @@ export function useRecorder(onSaved: (session: SessionInfo) => Promise<void>) {
   const { busy, outcome, run } = useAction();
 
   /** `before` runs first and may refuse with a sentence, such as "fix the form" or "save the project". */
-  const start = (role: string, before?: () => Promise<string | null>) =>
+  const start = (role: string, before?: () => Promise<string | null>, target_id?: string) =>
     run(async () => {
       const problem = await before?.();
       if (problem) return { ok: false, text: problem };
-      await call('record_session', { role });
+      await call('record_session', { role, ...(target_id ? { target_id } : {}) });
       setRecording(role);
       return null;
     });

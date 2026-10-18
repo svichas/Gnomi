@@ -1,9 +1,13 @@
+import { createComparisonRuntime, comparisonSession, ComparisonEnvironmentError } from './comparison/runtime.ts';
+import { effectiveComparisonPois, validateComparison } from './comparison/config.ts';
+import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
 import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
+import { costUsd, isPriced } from './llm/prices.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
 import { comparisonFor } from './poi/compare.ts';
 import { poiBudget, runnerFor } from './poi/index.ts';
@@ -84,11 +88,13 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
 export function startRun(config: RunConfig, { store, blobs, browsers, llm, record, sessions }: RunDeps): RunHandle {
   const { run_id, project } = config;
   const { settings } = project;
+  const comparisonIssues = validateComparison(project);
+  if (comparisonIssues.length) throw new Error(comparisonIssues.join(' '));
   const base = { run_id, round: 1, persona_id: null, poi_id: null }; // round moves on with social rounds
   // Each persona uses the POIs its segment is eligible for, one after another, in the project's order (tech.md §7).
   const assigned = new Map(config.personas.map((p) => [p.id, poisFor(project.pois, segmentOf(p, project))]));
   // Social rounds (tech.md §6.4): R usage slices, each followed by a social phase. 0 runs one straight slice, as before M4.
-  const rounds = socialRounds(settings, project.audience);
+  const rounds = project.comparison ? 0 : socialRounds(settings, project.audience);
   const follows = rounds ? networkGraph(settings.network_policy ?? 'legacy', config.personas, config.seed) : null;
   const hard = new AbortController(); // observed cost cap, stop(), tripwire or error: cancel model calls in flight
   const drain = new AbortController(); // every run-wide stop: no step or persona starts, paused personas wake
@@ -107,10 +113,29 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   // Spend comes from the log, read incrementally, so it counts every llm.call any gateway recorded, retries included.
   let spent = 0;
   let seen = 0;
+  let navigationSpent = 0;
+  const comparisonCosts = { navigator: { cost: 0, calls: 0 }, judge: { cost: 0, calls: 0 } };
+  const blockReservations = new Map<string, { total: number; navigation: number }>();
+  let comparisonAdmissionReason: string | null = null;
   const spentUsd = () => {
     for (const e of store.events(run_id, { types: ['llm.call'], afterSeq: seen })) {
       seen = e.seq;
-      if (e.type === 'llm.call') spent += e.payload.cost_usd;
+      if (e.type === 'llm.call') {
+        spent += e.payload.cost_usd;
+        if (project.comparison) {
+          const cost = e.payload.cost_usd;
+          if (e.payload.role === 'navigator') navigationSpent += cost;
+          if (e.payload.role === 'navigator' || e.payload.role === 'judge') {
+            comparisonCosts[e.payload.role].cost += cost;
+            comparisonCosts[e.payload.role].calls++;
+          }
+          const reservation = blockReservations.get(e.persona_id ?? '');
+          if (reservation) {
+            reservation.total = Math.max(0, reservation.total - cost);
+            if (e.payload.role === 'navigator') reservation.navigation = Math.max(0, reservation.navigation - cost);
+          }
+        }
+      }
     }
     return spent;
   };
@@ -136,12 +161,12 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   // Reaching the recorded cap above cancels all model work; browser actions already dispatched still settle and log.
   let inFlight = 0;
   let stepsDone = 0;
-  const beginStep = () => {
+  const beginStep = (estimatedCost?: number) => {
     if (drain.signal.aborted) return false;
     checkRecordedBudget();
     if (drain.signal.aborted) return false;
     const now = spentUsd();
-    const perStep = stepsDone ? now / stepsDone : 0;
+    const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
     if (now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
       halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
       return false;
@@ -155,6 +180,39 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     checkRecordedBudget(); // Also protects callers supplying a custom gateway without per-attempt notifications.
   };
 
+  // Admission reserves a minimum useful matched block: one observation and two evidence-review calls per target.
+  // Observed per-role costs replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
+  // this improves coverage allocation, while the recorded-cost guard remains the run-wide stop policy.
+  const comparisonCallCost = (role: 'navigator' | 'judge') => {
+    const observed = comparisonCosts[role];
+    if (observed.calls) return observed.cost / observed.calls;
+    const model = settings.routing[role];
+    if (!isPriced(model)) return null;
+    return costUsd(model, { input_tokens: role === 'navigator' ? 5000 : 1500, output_tokens: role === 'navigator' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
+  };
+  const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
+    if (drain.signal.aborted) return false;
+    const now = spentUsd();
+    const scenario = project.comparison!.scenarios.find((item) => item.id === task.scenario_id)!;
+    if (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? '')) return true;
+    const targetCount = task.entries.filter((entry) => {
+      const poi = project.pois.find((item) => item.id === entry.poi_id)!;
+      return poi.segments === null || poi.segments.includes(persona.segment_id ?? '');
+    }).length;
+    // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
+    // observed charges take over once available, retaining the existing support for unpriced model routes.
+    const navigatorCost = comparisonCallCost('navigator') ?? 0, judgeCost = comparisonCallCost('judge') ?? 0;
+    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + 2 * judgeCost) };
+    const reserved = [...blockReservations.values()].reduce((sum, value) => ({ total: sum.total + value.total, navigation: sum.navigation + value.navigation }), { total: 0, navigation: 0 });
+    const navigationLimit = settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction);
+    if (now + reserved.total + needed.total > settings.cost_budget_usd || navigationSpent + reserved.navigation + needed.navigation > navigationLimit) {
+      comparisonAdmissionReason = 'The remaining allowance cannot admit another complete matched task block with evidence analysis; its targets were left unattempted.';
+      return false;
+    }
+    blockReservations.set(persona.id, needed);
+    return true;
+  };
+
   const tripwire = (persona_id: string, poi_id: string) => (kind: EventPayloads['containment.tripwire']['kind'], detail: string) => {
     record({ ...base, persona_id, poi_id, type: 'containment.tripwire', payload: { kind, detail } });
     halt({ reason: 'tripwire', detail }, true);
@@ -162,11 +220,14 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   const observe = observeOptions(hard.signal); // robots.txt once per run and observe-only POI
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
-  const openPage = (persona: Persona, role: string | null) => async (poi: WebPoi) => {
+  const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi) => {
     const login = poi.mode === 'full' ? role : null;
     const saved = login ? await sessions?.load(login) : null;
+    if (target && saved && saved.info.target_id !== target.id) throw new ComparisonEnvironmentError(`The recorded session is not bound to ${target.name}; record its own test account.`);
     const observing = await observe(poi);
+    if (target && observing && !observing.robots(new URL(poi.start_url))) throw new ComparisonEnvironmentError(`The configured entry page for ${target.name} is unavailable under robots.txt or its retrieval policy.`);
     hard.signal.throwIfAborted();
+    if (target && login && !saved) throw new ComparisonEnvironmentError(`The recorded login for ${target.name} is missing; record its own test account.`);
     if (login && !saved) throw new Error(`The recorded "${login}" login is missing. Record it again, then start a new run.`);
     return browsers.newPage({
       device: persona.device,
@@ -447,7 +508,24 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     await Promise.all(running);
   };
 
+  const comparison = project.comparison ? createComparisonRuntime({
+    config, llm: budgetedLlm, blobs, record, events: () => store.events(run_id), signal: hard.signal,
+    openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
+    beginBlock: beginComparisonBlock,
+    endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
+    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigator') ?? undefined); },
+    beginAnalysisStep: () => beginStep(comparisonCallCost('judge') ?? undefined), endStep, stopped: () => drain.signal.aborted,
+    stopReason: () => halted?.detail ?? (halted ? halted.reason : comparisonAdmissionReason ?? 'The navigation allowance was exhausted; remaining allowance is reserved for evidence analysis.'),
+    tripwire,
+  }) : null;
+
   const schedule = async () => {
+    if (comparison) {
+      await inParallel(config.personas, (persona) => comparison.runPersona(persona));
+      comparison.finishUnscheduled();
+      if (comparisonAdmissionReason && !halted) halt({ reason: 'cost_budget', detail: comparisonAdmissionReason }, false);
+      return;
+    }
     if (!rounds) return inParallel(config.personas, episode);
     // Once every episode is over the swarm keeps talking, within the R rounds, while anyone has something to read or tell: a text
     // read in one sitting is still discussed, and what a persona found in its last stretch of use reaches the feed.
@@ -484,22 +562,27 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     const clock = setTimeout(() => halt({ reason: 'wall_clock', detail: `the ${settings.wall_clock_budget_min}-minute limit was reached` }, false), settings.wall_clock_budget_min * 60_000);
     try {
       if (config.reset) {
-        const hooks = [...new Set(webPois(project.pois).flatMap((poi) => poi.reset_hook_url ?? []))];
+        const hooks = [...new Set(webPois(effectiveComparisonPois(project)).flatMap((poi) => poi.reset_hook_url ?? []))];
         if (hooks.length === 0) throw new Error('This project has no reset hook to call.');
         for (const url of hooks) await resetStaging(url);
       }
       // The host's preflight catches this first; a run started some other way ends here, logged, rather than half-scheduled.
-      const idle = config.personas.find((p) => assigned.get(p.id)!.length === 0);
+      const idle = !project.comparison && config.personas.find((p) => assigned.get(p.id)!.length === 0);
       if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
       for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
       await schedule();
     } catch (err) {
       halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true);
     } finally {
-      clearTimeout(clock);
+      comparison?.finishUnscheduled();
+      if (!comparison) clearTimeout(clock);
     }
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
-    if (!halted) await runReportModels({ config, llm: budgetedLlm, record, events: () => store.events(run_id) });
+    try {
+      if (!halted && !comparison) await runReportModels({ config, llm: budgetedLlm, record, events: () => store.events(run_id) });
+    } finally {
+      clearTimeout(clock); // Comparison analysis remains under the run's wall-clock allowance.
+    }
 
     const stopped = halted as EventPayloads['run.stopped'] | null;
     record(stopped ? { ...base, type: 'run.stopped', payload: stopped } : { ...base, type: 'run.finished', payload: {} });

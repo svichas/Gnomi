@@ -106,7 +106,7 @@ export function wordsFor(persona: Persona, project: ProjectConfig): Words {
 
 /** The profile as prompts see it: only attributes the schema enables for prompts, grouped, plus the segment's context. */
 export function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string): string {
-  const segmentContext = segment
+  const segmentContext = segment && !project.comparison
     ? [
         `  account: ${ACCOUNT[segment.account_state]}`,
         `  arrived: ${ENTRY[segment.entry]}`,
@@ -115,6 +115,8 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
     : [];
   const groups = new Map<string, string[]>();
   for (const { attribute, value } of profileEntries(persona, project.persona_schema, 'prompt')) {
+    // Authored context can invent an invitation/account/task; the frozen comparison brief supplies those facts.
+    if (project.comparison && ['context_of_use', 'motivation'].includes(attribute.id)) continue;
     const formatted = attribute.id === 'pronouns' ? `${value}/${obj}`
       : attribute.id === 'country' ? `${countryName(String(value))} (${value})`
       : Array.isArray(value) ? value.join(', ') : String(value);
@@ -161,16 +163,17 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const profile = profileBlock(persona, project, segment, obj);
+  const comparison = !!project.comparison;
   const competitor = poi?.mode === 'observe_only' ? poi.name : null;
   const site = competitor ?? project.name;
   // tech.md §9.3: the prompt forbids sending anything, and containment stops whatever is sent anyway.
   const observing = competitor
     ? `
 
-${competitor} is a competitor of ${project.name}, and ${p} is only looking at it: ${p} browses and reads, and may type into fields, but never submits a form, signs up, logs in, buys or sends anything on ${competitor}. An action that failed with submit_blocked tried to send something: it was stopped before it left the browser, and it is not a problem with ${competitor}. An action that failed with robots_disallowed tried to open a page ${competitor} asks automated visitors not to open: that page cannot be shown, and it is not a problem with ${competitor} either. Once ${p} has seen how far ${competitor} goes with the task without sending anything, done is the answer.`
+${competitor} ${comparison ? 'is the current comparison target' : `is a competitor of ${project.name}`}, and ${p} is only looking at it: ${p} browses and reads, and may type into fields, but never submits a form, signs up, logs in, buys or sends anything on ${competitor}. An action that failed with submit_blocked tried to send something: it was stopped before it left the browser, and it is not a problem with ${competitor}. An action that failed with robots_disallowed tried to open a page ${competitor} asks automated visitors not to open: that page cannot be shown, and it is not a problem with ${competitor} either. Once ${p} has seen how far ${competitor} goes with the task without sending anything, done is the answer.`
     : '';
 
-  return `This is ${persona.name}. ${p} is ${competitor ? `looking at ${competitor}, a competitor of ${project.name}, to see how it handles the same work` : `using ${project.name} to get something done at work`}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Each turn shows what is on ${p}'s screen right now, and the question is always the same: what does ${p} do next, and what does ${p} think and feel along the way?
+  return `This is ${persona.name}. ${p} is ${competitor ? (comparison ? `evaluating ${competitor} against the assigned task` : `looking at ${competitor}, a competitor of ${project.name}, to see how it handles the same work`) : `using ${project.name} to get something done at work`}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Each turn shows what is on ${p}'s screen right now, and the question is always the same: what does ${p} do next, and what does ${p} think and feel along the way?
 
 People give up on tools that waste their time. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 
@@ -183,7 +186,7 @@ ${rules.map((r) => `- ${r}`).join('\n')}
 
 ${p}'s task: "${goal}"
 How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}${observing}
+The product: ${project.name}${project.description ? `. ${project.description}` : ''}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud, in ${poss} own voice, in at most 40 words.

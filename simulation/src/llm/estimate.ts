@@ -3,6 +3,7 @@ import { poiBudget } from '../poi/index.ts';
 import { poisFor } from '../poi/pois.ts';
 import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
+import type { ComparisonStudy } from '../comparison/types.ts';
 import { costUsd, isPriced } from './prices.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
@@ -28,7 +29,8 @@ const REPORT_MINUTES = [0.2, 1] as const;
  * The navigator's steps and one end-of-episode survey per persona and POI, one socialiser call per persona and social round, plus
  * the report's judge and author calls per POI. Without `pois`, each persona uses one web POI.
  */
-export function estimateRun({ personas, settings, audience = null, pois, at = new Date() }: { personas: Persona[]; settings: RunSettings; audience?: Audience | null; pois?: Poi[]; at?: Date }): RunEstimate {
+export function estimateRun({ personas, settings, audience = null, pois, comparison, at = new Date() }: { personas: Persona[]; settings: RunSettings; audience?: Audience | null; pois?: Poi[]; comparison?: ComparisonStudy | null; at?: Date }): RunEstimate {
+  if (comparison) return estimateComparison({ personas, settings, pois, study: comparison, at });
   const budgets = personas.map((p) => (pois ? poisFor(pois, audience?.segments.find((s) => s.id === p.segment_id) ?? null).map((poi) => poiBudget(p, poi)) : [stepBudget(p)]));
   const budget = budgets.flat().reduce((n, steps) => n + steps, 0);
   const [fewest, most] = STEP_SHARE.map((share) => budget * share);
@@ -64,6 +66,35 @@ export function estimateRun({ personas, settings, audience = null, pois, at = ne
     cost_usd: [fewest * cached + survey + socialCall(CACHE_HIT) + report.cost_usd[0], most * uncached + survey + socialCall(0) + report.cost_usd[1]],
     minutes: [minutes(fewest + surveys + social, STEP_SECONDS[0]) + report.minutes[0], minutes(most + surveys + social, STEP_SECONDS[1]) + report.minutes[1]],
     unpriced: [...new Set([...(priced ? [] : [model.model]), ...(socialPriced ? [] : [socialiser.model]), ...report.unpriced])],
+  };
+}
+
+/** Comparison episodes collect evidence before two judge passes; legacy surveys and social calls are not used. */
+function estimateComparison({ personas, settings, pois, study, at }: { personas: Persona[]; settings: RunSettings; pois?: Poi[]; study: ComparisonStudy; at: Date }): RunEstimate {
+  const tasks = personas.flatMap((persona) => study.tasks.flatMap((task) => {
+    const scenario = study.scenarios.find((candidate) => candidate.id === task.scenario_id);
+    if (!scenario || (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? ''))) return [];
+    return task.entries.filter((entry) => {
+      const source = pois?.find((poi) => poi.id === entry.poi_id);
+      return !pois || (source && (source.segments === null || source.segments.includes(persona.segment_id ?? '')));
+    }).map(() => task);
+  }));
+  const episodes = tasks.length;
+  if (!episodes) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
+  const steps = tasks.reduce((sum, task) => sum + task.max_steps, 0);
+  const price = (model: ModelChoice, input: number, output: number) => isPriced(model)
+    ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
+  const navigator = settings.routing.navigator;
+  const judge = settings.routing.judge;
+  const prompt = PROMPT_TOKENS + (settings.screenshots ? SCREENSHOT_TOKENS : 0);
+  const lowSteps = steps * STEP_SHARE[0];
+  const analyses = episodes * 2;
+  const parallel = Math.max(1, Math.min(settings.concurrency, personas.length));
+  return {
+    calls: Math.round((lowSteps + steps) / 2) + analyses,
+    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 4_000, 1_000), steps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 60_000, 6_000)],
+    minutes: [(lowSteps * 2 + analyses * 5) / parallel / 60 + OVERHEAD_MIN, (steps * 6 + analyses * 30) / parallel / 60 + OVERHEAD_MIN],
+    unpriced: [...new Set([navigator, judge].filter((model) => !isPriced(model)).map((model) => model.model))],
   };
 }
 
