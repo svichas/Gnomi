@@ -165,7 +165,7 @@ try {
   await page.getByRole('button', { name: 'New run', exact: true }).click();
   await page.locator('#panel-project').waitFor();
   await page.locator('#tab-run').click();
-  assert.equal(await page.getByRole('button', { name: 'Simulations', exact: true }).getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.getByRole('button', { name: 'Simulations', exact: true }).count(), 0, 'replaying saved events does not add a run to this app session');
   console.log('ok    setup, Settings and New run remain available while the simulation continues');
 
   await page.evaluate(() => window.completionSmoke.finish());

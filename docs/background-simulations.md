@@ -2,7 +2,7 @@
 
 Start a simulation from a project's Review step, then continue editing or open another project. Each project can have one active simulation, and different projects can run concurrently. The settings and audience captured when a run starts remain its inputs, even if you edit the project afterward. Budgets and concurrency limits apply to each run.
 
-The **Simulations** pill stays at the bottom right throughout the app. It starts collapsed and expands upward in place. It lists every run started in the current app session, with active runs first, including runs that need attention, completed reports, stopped runs and interrupted runs. Open a row to return to that project's simulation or report; its stop control affects only that run.
+The **Simulations** pill appears at the bottom right after the first simulation starts in the current app session. It stays hidden when the session has no runs. On screens with a bottom action bar, the pill sits above it, leaving the next-step buttons accessible. It starts collapsed and expands upward in place. It lists every run started in the current app session, with active runs first, including runs that need attention, completed reports, stopped runs and interrupted runs. Open a row to return to that project's simulation or report; its stop control affects only that run.
 
 The session list survives a renderer reload. Quitting Gnomi stops active simulations and ends the session; saved history and reports remain in their projects. Folder operations such as delete, rename, duplicate and export require the affected project's run to finish or stop. Recording a login and pending setup tasks must finish before switching projects.
 

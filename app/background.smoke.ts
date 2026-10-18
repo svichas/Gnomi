@@ -53,15 +53,12 @@ try {
   };
   const home = () => page.getByRole('button', { name: 'Projects', exact: true }).click();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
-  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
-  await toggle.click();
-  await dock.getByText('Room for your next discovery.', { exact: true }).waitFor();
-  await settle();
+  assert.equal(await dock.count(), 0, 'the pill stays hidden before the first simulation');
   await page.screenshot({ path: join(shots, 'simulation-dock-empty.png') });
-  await toggle.press('Escape');
-  assert.equal(await toggle.evaluate((button) => button === document.activeElement), true);
   await start();
   await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor({ timeout: 45_000 });
+  await toggle.waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false', 'the first simulation reveals a collapsed pill');
   await home();
   await page.getByRole('button', { name: 'Open Pricing & plans', exact: true }).click();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
@@ -78,11 +75,12 @@ try {
   await dock.getByText('Needs your attention', { exact: true }).waitFor();
   assert.equal(await dock.getByText('Completed · Report ready', { exact: true }).count(), 2);
   await settle();
-  for (const width of [1440, 1024, 768, 320]) {
+  for (const width of [1440, 1024, 768, 640, 320]) {
     await page.setViewportSize({ width, height: 780 });
     const expanded = (await dock.boundingBox())!;
     assert.ok(expanded.x >= 0 && expanded.x + expanded.width <= width);
     assert.ok(expanded.y >= 0 && expanded.y + expanded.height <= 780);
+    assert.ok(Math.abs(780 - expanded.y - expanded.height - (width <= 700 ? 16 : 24)) < 1, 'without an action bar the pill stays near the bottom');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: join(shots, `simulation-dock-${width}.png`) });
     await toggle.click();
@@ -97,6 +95,28 @@ try {
   await page.setViewportSize({ width: 1100, height: 780 });
   await toggle.press('Escape');
   assert.equal(await toggle.evaluate((button) => button === document.activeElement), true);
+  await page.getByRole('button', { name: 'Open Pricing & plans', exact: true }).click();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  for (const [width, height] of [[1440, 780], [1024, 780], [768, 780], [640, 780], [320, 780], [320, 520]]) {
+    await page.setViewportSize({ width, height });
+    await page.waitForFunction(() => {
+      const bar = [...document.querySelectorAll('.action-bar')].find((element) => (element as HTMLElement).offsetHeight)?.getBoundingClientRect();
+      const pill = document.querySelector('.simulation-dock')?.getBoundingClientRect();
+      return bar && pill && Math.abs(bar.top - pill.bottom - 16) < 1;
+    });
+    const bar = (await page.locator('.action-bar:visible').boundingBox())!;
+    const collapsed = (await dock.boundingBox())!;
+    assert.ok(Math.abs(height - bar.y - bar.height - (width <= 700 ? 16 : 24)) < 1, 'the next bar stays at the bottom');
+    await toggle.click();
+    await settle();
+    const expanded = (await dock.boundingBox())!;
+    assert.ok(expanded.y >= 0 && expanded.x >= 0 && expanded.x + expanded.width <= width, `expanded pill fits ${width}×${height}`);
+    assert.ok(Math.abs(expanded.y + expanded.height - collapsed.y - collapsed.height) < 1, 'expanding keeps the pill above the next bar');
+    await page.screenshot({ path: join(shots, `simulation-dock-above-actions-${width}-${height}.png`) });
+    await toggle.press('Escape');
+    await settle();
+  }
+  await page.setViewportSize({ width: 1100, height: 780 });
   await page.reload();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
@@ -122,10 +142,8 @@ try {
   page = await app.firstWindow();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Simulations', exact: true }).click();
-  await page.getByText('Room for your next discovery.', { exact: true }).waitFor();
-  console.log('ok    a new app session starts with an empty dock; project run history remains on disk');
-  await page.getByRole('button', { name: 'Simulations', exact: true }).click();
+  assert.equal(await page.getByRole('complementary', { name: 'Session simulations' }).count(), 0, 'a new app session hides the empty pill');
+  console.log('ok    the pill hides when empty and sits above the next bar; project run history remains on disk');
   const history = page.getByRole('button', { name: 'Past runs', exact: true });
   const historyPanel = page.getByRole('region', { name: 'Project run history', exact: true });
   await history.click();

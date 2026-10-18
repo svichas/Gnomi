@@ -17,7 +17,6 @@ function duration(run: SessionRun, now: number) {
 export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): Promise<boolean>; projects: ProjectEntry[] }) {
   const [runs, setRuns] = useState<SessionRun[]>([]);
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
   const [disconnected, setDisconnected] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
@@ -28,7 +27,7 @@ export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): 
   useEffect(() => {
     let active = true;
     const off = onSessionRun((run) => setRuns((previous) => [run, ...previous.filter((entry) => keyOf(entry) !== keyOf(run))]));
-    void call('get_session_runs', {}).then((all) => { if (active) setRuns(all); }, (err) => { if (active) setProblem(errorText(err)); }).finally(() => { if (active) setLoading(false); });
+    void call('get_session_runs', {}).then((all) => { if (active) setRuns(all); }, (err) => { if (active) setProblem(errorText(err)); });
     void stopped.then(() => { if (active) setDisconnected(true); });
     return () => { active = false; off(); };
   }, []);
@@ -41,6 +40,9 @@ export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): 
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [expanded, running, disconnected]);
+
+  // Keep the subscription mounted so the first run reveals the pill without a reload.
+  if (runs.length === 0) return null;
 
   async function openRun(run: SessionRun) {
     setOpening(keyOf(run));
@@ -59,7 +61,7 @@ export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): 
       setStopping((previous) => { const next = new Set(previous); next.delete(key); return next; });
     }
   }
-  const summary = disconnected ? 'Connection lost' : running ? `${running} running` : complete ? `${complete} completed` : runs.length ? `${runs.length} ended` : 'This session';
+  const summary = disconnected ? 'Connection lost' : running ? `${running} running` : complete ? `${complete} completed` : `${runs.length} ended`;
   const sorted = [...runs].sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running') || b.started_at - a.started_at);
 
   return <aside className="simulation-dock" data-expanded={expanded} data-live={running > 0 && !disconnected} aria-label="Session simulations" onKeyDown={(event) => {
@@ -70,8 +72,7 @@ export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): 
         <header className="simulation-dock-heading"><span className="simulation-dock-eyebrow">This session</span><h2>Your simulations</h2><p>Keep working. Your simulations stay here.</p></header>
         {disconnected && <p className="simulation-dock-error" role="alert">The engine disconnected. Reopen Gnomi to check saved results.</p>}
         {problem && <p className="simulation-dock-error" role="alert">{problem}</p>}
-        {!runs.length ? <div className="simulation-dock-empty"><span><Icon name="leaf" size={24} /></span><strong>{loading ? 'Loading this session…' : 'Room for your next discovery.'}</strong><p>{loading ? 'Checking your simulations.' : 'Start a simulation in any project. Follow its progress here while you explore another.'}</p></div> :
-          <ul className="simulation-dock-list" aria-label="Simulations from this session">
+        <ul className="simulation-dock-list" aria-label="Simulations from this session">
             {sorted.map((run) => {
               const key = keyOf(run);
               const live = run.status === 'running';
@@ -89,8 +90,8 @@ export function SimulationDock({ onOpen, projects }: { onOpen(run: SessionRun): 
                 {live && !disconnected && <button type="button" className="simulation-dock-stop" disabled={isStopping} onClick={() => void stopRun(run)} aria-label={`Stop ${name} simulation ${run.run_id}`} title="Stop simulation"><span aria-hidden="true" /></button>}
               </li>;
             })}
-          </ul>}
-        {runs.length > 0 && <p className="simulation-dock-footnote">{running} running <span>·</span> {complete} completed <span>·</span> {runs.length} total</p>}
+        </ul>
+        <p className="simulation-dock-footnote">{running} running <span>·</span> {complete} completed <span>·</span> {runs.length} total</p>
       </div>
     </div>
     <button ref={trigger} type="button" className="simulation-dock-toggle" aria-label="Simulations" aria-expanded={expanded} aria-controls="session-simulations" onClick={() => setExpanded((was) => !was)}>
