@@ -1,4 +1,5 @@
-.simulation-dock { position: fixed; z-index: 40; right: 24px; bottom: 24px; width: min(360px, calc(100vw - 32px)); border: 1px solid var(--gnomi-line); border-radius: 28px; background: var(--gnomi-surface); box-shadow: 0 8px 32px #22282318, 0 2px 6px #22282308; overflow: hidden; transition: border-radius 220ms ease, box-shadow 220ms ease; }
+.simulation-dock { --dock-edge: 24px; --dock-bottom: var(--dock-edge); position: fixed; z-index: 40; right: 24px; bottom: var(--dock-bottom); width: min(360px, calc(100vw - 32px)); border: 1px solid var(--gnomi-line); border-radius: 28px; background: var(--gnomi-surface); box-shadow: 0 8px 32px #22282318, 0 2px 6px #22282308; overflow: hidden; transition: border-radius 220ms ease, box-shadow 220ms ease; }
+.app-shell:has(.action-bar:not([hidden] *)) .simulation-dock { --dock-bottom: calc(var(--action-bar-height, 66px) + var(--dock-edge) + 16px); }
 .simulation-dock[data-expanded='true'] { border-radius: 20px 20px 28px 28px; box-shadow: 0 16px 48px #22282324, 0 2px 8px #2228230a; }
 .simulation-dock-expansion { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 240ms ease, visibility 240ms; }
 .simulation-dock[data-expanded='true'] .simulation-dock-expansion { grid-template-rows: 1fr; visibility: visible; }
@@ -6,8 +7,8 @@
 .simulation-dock-heading { padding: 24px 24px 16px; }
 .simulation-dock-eyebrow { color: var(--gnomi-action); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
 .simulation-dock-heading h2 { margin: 4px 0; font-size: 19px; font-weight: 550; letter-spacing: -.03em; }
-.simulation-dock-heading p, .simulation-dock-empty p { color: var(--gnomi-text-muted); font-size: 12px; line-height: 1.6; }
-.simulation-dock-list { max-height: min(360px, calc(100dvh - 280px)); overflow-y: auto; overscroll-behavior: contain; padding: 0 12px; }
+.simulation-dock-heading p { color: var(--gnomi-text-muted); font-size: 12px; line-height: 1.6; }
+.simulation-dock-list { max-height: max(0px, min(360px, calc(100dvh - var(--dock-bottom) - 256px))); overflow-y: auto; overscroll-behavior: contain; padding: 0 12px; }
 .simulation-dock-run { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--gnomi-line); padding: 4px 0; }
 .simulation-dock-open { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 12px 8px; text-align: left; border-radius: 12px; }
 .simulation-dock-open:hover:not(:disabled) { background: var(--gnomi-canvas); }
@@ -29,9 +30,6 @@
 .simulation-dock-stop:disabled { opacity: .4; }
 .simulation-dock-footnote { padding: 12px 24px 16px; color: var(--gnomi-text-muted); font-size: 10px; }
 .simulation-dock-footnote span { margin: 0 5px; }
-.simulation-dock-empty { display: grid; justify-items: center; gap: 12px; padding: 16px 32px 32px; text-align: center; }
-.simulation-dock-empty > span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: var(--gnomi-selected); color: var(--gnomi-action); }
-.simulation-dock-empty strong { font-size: 13px; font-weight: 500; }
 .simulation-dock-error { margin: 0 20px 12px; font-size: 12px; color: var(--gnomi-error); }
 .simulation-dock-toggle { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 0 20px 0 12px; background: var(--gnomi-surface); text-align: left; }
 .simulation-dock[data-expanded='true'] .simulation-dock-toggle { border-top: 1px solid var(--gnomi-line); }
@@ -44,10 +42,9 @@
 .simulation-dock-summary { margin-left: auto; font-size: 11px; color: var(--gnomi-text-muted); white-space: nowrap; }
 .simulation-dock-chevron { display: flex; color: var(--gnomi-text-muted); transform: rotate(-90deg); transition: transform 220ms ease; }
 .simulation-dock[data-expanded='true'] .simulation-dock-chevron { transform: rotate(90deg); }
-.app-shell { padding-bottom: 72px; }
-.app-shell .action-bar { bottom: 96px; }
-.app-shell .app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 120px); }
+.app-shell:has(.simulation-dock) { padding-bottom: 72px; }
+.app-shell:has(.simulation-dock) .app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 120px); }
 html:has(.simulation-dock):has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action-bar-height, 66px) + 120px); }
 @keyframes simulation-dock-pulse { 0% { transform: scale(.9); opacity: .5; } 75%, 100% { transform: scale(1.25); opacity: 0; } }
-@media (max-width: 600px) { .simulation-dock { right: 16px; bottom: 16px; } .simulation-dock-toggle { gap: 8px; padding-right: 16px; } .app-shell .action-bar { bottom: 88px; } }
+@media (max-width: 700px) { .simulation-dock { --dock-edge: 16px; right: 16px; } .simulation-dock-toggle { gap: 8px; padding-right: 16px; } }
 @media (prefers-reduced-motion: reduce) { .simulation-dock, .simulation-dock-expansion, .simulation-dock-chevron { transition: none; } .simulation-dock-indicator::after { animation: none !important; } }
