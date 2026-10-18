@@ -42,9 +42,23 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   const frozen = events.find((event) => event.type === 'run.started')?.payload.config ?? config;
   const setup = runSetup(frozen);
   const pois = frozen?.project ? withPois(frozen.project).pois : [];
+  const comparison = frozen?.project.comparison;
+  const taskKey = (persona: string, task: string, target: string) => JSON.stringify([persona, task, target]);
   const planned = new Set<string>();
   const assigned = new Map<string, string[]>();
   for (const persona of setup.personas) {
+    if (comparison) {
+      for (const task of comparison.tasks) {
+        const scenario = comparison.scenarios.find((item) => item.id === task.scenario_id);
+        if (scenario?.segment_ids && !scenario.segment_ids.includes(persona.segment_id ?? '')) continue;
+        for (const entry of task.entries) {
+          const poi = pois.find((item) => item.id === entry.poi_id);
+          if (!poi || (poi.segments && !poi.segments.includes(persona.segment_id ?? ''))) continue;
+          planned.add(taskKey(persona.id, task.id, entry.target_id));
+        }
+      }
+      continue;
+    }
     const segment = setup.segments.find((candidate) => candidate.id === persona.segment_id) ?? null;
     const ids = poisFor(pois, segment).map((poi) => poi.id);
     // Early logs have no POI envelope. They still contain one experience per persona.
@@ -82,6 +96,14 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
 
     if (!event.persona_id) continue;
     const id = event.persona_id;
+    if (comparison) {
+      if (event.type === 'comparison.episode_started' || event.type === 'comparison.assessment') beganExploring = true;
+      if (event.type === 'comparison.episode_finished') {
+        const key = taskKey(id, event.payload.task_id, event.payload.target_id);
+        if (planned.has(key)) concluded.add(key);
+      }
+      continue;
+    }
     if (event.type === 'persona.episode_started') {
       beganExploring = true;
       currentPoi.set(id, event.payload.poi_id);
@@ -102,8 +124,8 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   const reportReady = ended && (generated || reportAvailable);
   const complete = successful && reportReady;
   const researchDone = reportPois !== null || successful;
-  const sessions = { done: researchDone ? planned.size : concluded.size, total: planned.size };
-  const configuredRounds = frozen?.project.settings ? socialRounds(frozen.project.settings, frozen.project.audience) : 0;
+  const sessions = { done: researchDone && !comparison ? planned.size : concluded.size, total: planned.size };
+  const configuredRounds = !comparison && frozen?.project.settings ? socialRounds(frozen.project.settings, frozen.project.audience) : 0;
   const currentRound = Math.max(0, ...roundsStarted, ...roundsEnded);
   const rounds = { done: roundsEnded.size, total: Math.max(configuredRounds, currentRound), current: currentRound };
   const hasDiscussion = rounds.total > 0;
@@ -126,7 +148,7 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   else if (beganExploring || currentRound > 0) phase = 'exploring';
   else phase = 'starting';
 
-  const sessionDetail = `${sessions.done} of ${sessions.total} sessions concluded`;
+  const sessionDetail = `${sessions.done} of ${sessions.total} ${comparison ? 'tool/task outcomes recorded' : 'sessions concluded'}`;
   const roundDetail = researchDone ? `${plural(rounds.done, 'round')} concluded` : `Round ${rounds.current || 1} of up to ${rounds.total}`;
   const reportDetail = reportReady ? successful ? 'Report ready to explore' : 'Partial report ready' : successful ? 'Saving the final report' : reportPois !== null ? reportPois.length === 0 ? 'Preparing the final report' : reportPois.every((poi) => themed.has(poi)) ? 'Writing suggested improvements' : 'Grouping feedback into findings' : 'Available after the simulation';
   const labels: Record<RunPhase, string> = {
@@ -140,8 +162,8 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
     interrupted: 'Simulation interrupted',
   };
   const details: Record<RunPhase, string> = {
-    starting: `${plural(setup.personas.length, 'person')} will explore ${plural(pois.length, 'point of interest')}.`,
-    exploring: sessions.done === sessions.total && sessions.total > 0 ? 'Collecting final feedback from your audience.' : sessionDetail,
+    starting: comparison ? `${plural(setup.personas.length, 'person')} will compare ${plural(comparison.targets.length, 'tool')} using ${plural(comparison.tasks.length, 'shared task')}.` : `${plural(setup.personas.length, 'person')} will explore ${plural(pois.length, 'point of interest')}.`,
+    exploring: comparison ? `${sessionDetail}. Evidence is assessed after each task.` : sessions.done === sessions.total && sessions.total > 0 ? 'Collecting final feedback from your audience.' : sessionDetail,
     discussing: `${roundDetail} · People are sharing and responding to their experiences.`,
     reporting: reportDetail,
     saving: 'The simulation has finished. Your report will appear when it is ready.',
@@ -151,7 +173,7 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   };
 
   const stages: RunProgressStage[] = [{
-    id: 'exploration', label: 'Explore', detail: sessionDetail,
+    id: 'exploration', label: comparison ? 'Compare tools' : 'Explore', detail: sessionDetail,
     state: researchDone ? 'complete' : ended ? 'stopped' : beganExploring || currentRound > 0 ? 'active' : 'pending',
   }];
   if (hasDiscussion) stages.push({

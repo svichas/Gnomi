@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectConfig, RunSettings, SessionInfo, WebPoi } from '@gnomi/simulation/types.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import { blankAudience } from './audience.ts';
-import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, startHost, toConfig } from './form.ts';
+import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, rolesInUse, startHost, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { nextPoiId, POI_KINDS, type PoiDraft } from './poi/index.ts';
 import type { WebDraft } from './poi/web.ts';
@@ -19,6 +20,30 @@ const only = (config: ProjectConfig | string) => {
   assert.ok(typeof config !== 'string', String(config));
   return config.pois[0] as WebPoi;
 };
+
+test('comparison setup survives form round trips and rejects removed target references', () => {
+  const config = toConfig(form());
+  assert.ok(typeof config !== 'string');
+  config.pois.push({ ...config.pois[0]!, id: 'poi-2', name: 'Alternative' });
+  config.comparison = draftComparison(config);
+  const draft = initialDraft(config);
+  assert.deepEqual(toConfig(draft), config);
+  draft.form.comparison!.question = 'A changed decision';
+  assert.notEqual(config.comparison.question, draft.form.comparison!.question, 'draft does not mutate saved inputs');
+  draft.form.pois.pop();
+  assert.match(String(toConfig(draft)), /comparison/i);
+});
+
+test('comparison uses only target-bound sessions, independently of audience roles', () => {
+  const config = toConfig(form({ role: 'legacy-role' }));
+  assert.ok(typeof config !== 'string');
+  config.pois.push({ ...config.pois[0]!, id: 'poi-2', name: 'Alternative' });
+  config.comparison = draftComparison(config);
+  assert.deepEqual(rolesInUse(config), []);
+  config.comparison.targets[1]!.access_scope = 'authenticated_workflow';
+  config.comparison.targets[1]!.session_role = 'alternative-admin';
+  assert.deepEqual(rolesInUse(config), ['alternative-admin']);
+});
 
 test('hostOf takes a bare host, a host with a port, or a whole address, and refuses anything else', () => {
   assert.equal(hostOf('cdn.example.com'), 'cdn.example.com');

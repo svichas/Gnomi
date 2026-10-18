@@ -24,6 +24,10 @@ const PRINT = `@media print {
   h1, h2, h3, h4 { break-after: avoid; }
   li, tr, img, blockquote, dl > div { break-inside: avoid; }
   img { max-height: 3in; }
+  .comparison-matrix { min-width: 0 !important; font-size: 10px; overflow-wrap: anywhere; }
+  .comparison-matrix th:first-child { width: 20%; }
+  .comparison-matrix th, .comparison-matrix td { padding: 6px; }
+  .comparison-matrix .tone-chip { white-space: normal; padding: 2px 4px; font-size: 10px; }
 }`;
 
 const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -59,13 +63,17 @@ export async function reportHtml(report: ReportData, thumbnails: (paths: string[
       </InFile>,
     );
   draw(); // the first pass only learns which screenshots the report shows, in order
-  const made = await thumbnails([...new Set(shown)]);
+  const paths = [...new Set(shown)];
+  const made = await thumbnails(paths);
   let left = IMAGE_BYTES;
-  for (const path of shown) {
+  for (const path of paths) {
     const image = made[path];
-    if (!image || image.length > left) continue;
+    // Only embed raster thumbnails. A malformed or external URL must not make an export fetch resources.
+    if (!image || !/^data:image\/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image)) continue;
+    const bytes = image.length * shown.filter((candidate) => candidate === path).length;
+    if (bytes > left) continue;
     images.set(path, image);
-    left -= image.length;
+    left -= bytes;
   }
   return `<!doctype html>
 <html lang="en">

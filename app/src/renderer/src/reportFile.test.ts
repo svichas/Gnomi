@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite';
 import { createServer } from 'vite';
 import type { Report } from '@gnomi/simulation/types.ts';
 import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
+import { comparisonFixture } from './comparisonReport.fixture.ts';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -64,6 +67,29 @@ test('a 50-persona report with screenshots stays under 25 MB, leaving out screen
 test('the JSON export round-trips the report', async () => {
   const report = fixture(3, 2);
   assert.deepEqual(JSON.parse(await reportFile(report, 'json', thumbnails())), report);
+});
+
+test('HTML exports escape untrusted report text and reject external or active thumbnail resources', async () => {
+  const report = fixture(1, 1);
+  const attack = '</title><script>alert("report")</script><img src=x onerror="alert(1)">';
+  report.goal = attack;
+  report.frictions[0].what = attack;
+  report.frictions[0].quote = '<svg onload="alert(2)">';
+  for (const resource of ['https://example.test/tracker.png', 'javascript:alert(1)', 'data:image/svg+xml,<svg onload="alert(1)"/>']) {
+    const html = await reportFile(report, 'html', async (paths) => Object.fromEntries(paths.map((path) => [path, resource])));
+    assert.doesNotMatch(html, /<(?:script|img src=x|svg onload)/i);
+    assert.ok(html.includes('&lt;script&gt;alert(&quot;report&quot;)&lt;/script&gt;'));
+    assert.ok(html.includes('This screenshot is not included in the file.'));
+    assert.doesNotMatch(html, /<[^>]+\b(?:src|href)\s*=\s*(?!["']?data:)/i);
+  }
+});
+
+test('repeated evidence screenshots cannot exceed the embedded image allowance', async () => {
+  const report = fixture(1, 3);
+  report.frictions.forEach((friction) => { friction.screenshot = 'shared-evidence.jpg'; });
+  const html = await reportFile(report, 'html', thumbnails(Math.ceil(IMAGE_BYTES / 2)));
+  assert.ok(Buffer.byteLength(html) < 25_000_000);
+  assert.ok(html.includes('This screenshot is not included in the file.'));
 });
 
 test('the opinion spread and homogeneity render into the export, the sentiment line as inline SVG', async () => {
@@ -132,4 +158,83 @@ test('a problem one persona met is a single report, below and apart from one sev
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Objections (1)') && html.indexOf('Objections (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
   assert.ok(html.indexOf('Single reports (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
   assert.ok(html.includes('What to fix first (1)'));
+});
+
+test('comparison HTML leads with the scoped decision, compares every target and keeps valid denominators visible', async () => {
+  const report = fixture(5, 1);
+  report.comparison = comparisonFixture();
+  const html = await reportFile(report, 'html', thumbnails());
+  const sections = ['Decision and scope', 'Side-by-side comparison', 'Where each tool fits', 'Next checks before choosing', 'Coverage and limitations', 'Evidence behind the comparison'];
+  for (let i = 1; i < sections.length; i++) assert.ok(html.indexOf(sections[i - 1]) < html.indexOf(sections[i]), `${sections[i - 1]} precedes ${sections[i]}`);
+  for (const target of report.comparison.study.targets) assert.ok(html.includes(`<th scope="col" class="p-3 align-top font-medium text-stone-900">${target.name}</th>`));
+  for (const text of ['Public-site evaluation', '3 / 4', '75% of valid attempts', '2 / 3', '67% of valid attempts', 'Environment blocked', 'Incomplete', 'Invalid task', 'Not attempted', '2 matched persona/task pairs', '3 / 5 eligible episodes assessed · 1 distinct source', 'Vendor claim', 'Unknown', 'Expected benefit (hypothesis)', 'Validate:', 'Evidence excluded from conclusions', 'Preference collection was not performed.']) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /At a glance|What to fix first|How each persona did|persona reached the goal/);
+  assert.doesNotMatch(html, /<(?:button|select|script)\b/);
+  assert.match(html, /href="#comparison-evidence-2"/);
+  assert.match(html, /id="comparison-evidence-2"/);
+  assert.ok(html.includes('Applicable monthly plan is at most $400.'), 'the frozen assessment rule remains inspectable');
+  assert.match(html, /src="data:image\/jpeg;base64,/);
+  assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'all exported details are visible');
+});
+
+test('comparison scenarios and access scopes stay separate, with all targets present in each matrix', async () => {
+  const report = fixture(1, 0);
+  report.comparison = comparisonFixture();
+  report.comparison.study.scenarios.push({ id: 'enterprise', name: 'Enterprise scenario', context: '500 employees.', segment_ids: ['seg-a'] });
+  report.comparison.study.targets[3].access_scope = 'prototype';
+  for (const cell of report.comparison.cells.filter((cell) => cell.target_id === 'target-3')) cell.access_scope = 'prototype';
+  report.comparison.cells.push({ ...report.comparison.cells[0], scenario_id: 'enterprise', assessment: 'does_not_meet', summary: 'The applicable plan excludes a 500-person company.', evidence: [] });
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.includes('Enterprise scenario'));
+  assert.ok(html.includes('The applicable plan excludes a 500-person company.'));
+  assert.ok(html.includes('Prototype evaluation'));
+  assert.ok(html.includes('Different access scope'));
+  assert.equal(html.split('>Shared criterion</th>').length - 1, 3, 'scenario and access differences get separate matrices');
+  for (const target of report.comparison.study.targets) assert.equal(html.split(`<th scope="col" class="p-3 align-top font-medium text-stone-900">${target.name}</th>`).length - 1, 3);
+});
+
+test('comparison text and evidence stay escaped, including target names, sources and proposed actions', async () => {
+  const report = fixture(1, 0);
+  report.comparison = comparisonFixture();
+  const attack = '<img src="https://example.test/escape" onerror="alert(1)"><script>bad()</script>';
+  report.comparison.study.targets[0].name = attack;
+  report.comparison.cells[0].summary = attack;
+  report.comparison.cells[0].evidence[0].source = 'javascript:alert(2)';
+  report.comparison.cells[0].evidence[0].quote = attack;
+  report.comparison.actions[0].action = attack;
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.doesNotMatch(html, /<script|<img src="https:|href="javascript:/);
+  assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;'));
+  assert.match(html, /Source: javascript:alert\(2\)/, 'the captured source is inert text');
+  assert.doesNotMatch(html, /<[^>]+\b(?:src|href)="(?!data:|#)/);
+});
+
+test('the app comparison exposes transcript inspection while keeping the same decision and matrix as export', async () => {
+  const report = fixture(1, 0);
+  report.comparison = comparisonFixture();
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const html = renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} }));
+  assert.ok(html.includes(report.comparison.decision.summary));
+  assert.match(html, /<button[^>]*>Inspect Persona 0’s evidence<\/button>/);
+  assert.match(html, /aria-label="Comparison matrix:/);
+  assert.match(html, /tabindex="0"/);
+  assert.doesNotMatch(html, /At a glance|What to fix first/);
+});
+
+test('owner studies label the focal tool and action owner; legacy comparison votes remain explicitly legacy', async () => {
+  const report = fixture(1, 0);
+  report.comparison = comparisonFixture();
+  report.comparison.study.purpose = 'improve_own_product';
+  report.comparison.study.focal_target_id = 'target-0';
+  report.comparison.tradeoffs = [{ focal_target_id: 'target-0', other_target_id: 'target-2', scenario_id: 'small-team', task_id: 'evaluate', segment_id: 'seg-a', criterion_id: 'price', result: 'advantage', summary: 'Harbor meets this cost requirement; Northstar exceeds it.', evidence_seqs: [100, 102] }];
+  report.comparison.actions[0].owner = 'product_team';
+  report.comparison.actions[0].target_id = 'target-0';
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Your tool', 'Your product team', 'Actions for your product and evaluation', 'Focal-tool advantage', 'Harbor meets this cost requirement; Northstar exceeds it.']) assert.ok(html.includes(text));
+  delete report.comparison;
+  report.comparisons = [{ poi_id: 'competitor', with_poi_id: 'poi-gym', segments: [], answers: [] }];
+  const legacy = await reportFile(report, 'html', thumbnails());
+  assert.match(legacy, /Legacy comparison:/);
+  assert.match(legacy, /At a glance/);
+  assert.doesNotMatch(legacy, /Side-by-side comparison/);
 });

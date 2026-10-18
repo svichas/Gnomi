@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import { loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
+import { effectiveComparisonPois } from '@gnomi/simulation/comparison/config.ts';
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
@@ -51,6 +52,7 @@ export function Review(props: {
 }) {
   const { config, info, onFix, onBack, onRecheck, onChecked, onStarted, onSocial } = props;
   const saved = typeof config === 'string' ? null : config;
+  const sources = saved ? effectiveComparisonPois(saved) : [];
   const roles = saved ? rolesInUse(saved) : [];
   const [reset, setReset] = useState(false);
   const [logins, setLogins] = useState<Record<string, Login>>(() => Object.fromEntries(roles.map((role) => [role, 'checking' as const])));
@@ -105,9 +107,9 @@ export function Review(props: {
     const login = logins[role];
     if (login === 'checking' || login === undefined || login.ok) continue;
     issues.push({
-      text: `The recorded ${role} login no longer works${login.reason ? `: ${login.reason}` : '.'}`,
-      blocking: true,
-      action: <Button onClick={() => void recorder.start(role)} disabled={recorder.busy || recorder.recording !== null} small>Re-record {role} login</Button>,
+      text: `${role} login is unavailable${login.reason ? `: ${login.reason}` : '.'}${saved?.comparison ? ' Affected tasks will be reported as access-limited.' : ''}`,
+      blocking: !saved?.comparison,
+      action: <Button onClick={() => void recorder.start(role, undefined, saved?.comparison?.targets.find((target) => target.session_role === role)?.id)} disabled={recorder.busy || recorder.recording !== null} small>Re-record {role} login</Button>,
     });
   }
   if (estimate && 'error' in estimate) issues.push({ text: `No estimate: ${estimate.error}`, blocking: true, action: null });
@@ -148,13 +150,24 @@ export function Review(props: {
         <Section title="What they will try" edit={fix('project', 'Edit setup')}>
           <Fact label="Goal">{saved.goal}</Fact>
           {saved.description && <Fact label="The product">{saved.description}</Fact>}
-          {saved.pois.length > 1 && <Fact label="Points of interest, in order">{saved.pois.map((poi) => <span key={poi.id} className="block">{poi.name}</span>)}</Fact>}
-          {webPois(saved.pois).length > 0 && <Fact label="Start pages">
+          {saved.pois.length > 1 && <Fact label={saved.comparison ? 'Materials to evaluate' : 'Points of interest, in order'}>{saved.pois.map((poi) => <span key={poi.id} className="block">{poi.name}</span>)}</Fact>}
+          {!saved.comparison && webPois(saved.pois).length > 0 && <Fact label="Start pages">
             {webPois(saved.pois).flatMap((poi) => poi === loginPoi(saved.pois)
               ? [...roles.map((role) => `${role}: ${info?.sessions.find((session) => session.role === role)?.start_url ?? poi.start_url}`), ...(loggedOut(saved) ? [`logged out: ${poi.start_url}`] : [])]
               : [`${poi.name}: ${poi.start_url}`]).map((page) => <span key={page} className="block break-all">{page}</span>)}
           </Fact>}
         </Section>
+
+        {saved.comparison && <Section title="Comparison brief" edit={fix('project', 'Edit comparison')} wide>
+          <Fact label="Decision">{saved.comparison.question}</Fact>
+          <Fact label="Purpose">{saved.comparison.purpose === 'choose_tool' ? 'Choose a tool' : `Improve ${saved.comparison.targets.find((target) => target.id === saved.comparison!.focal_target_id)?.name ?? 'your product'}`}</Fact>
+          <Fact label="Approach">{saved.comparison.execution.mode === 'independent' ? 'Independent tasks; no memory shared between tools.' : 'Buyer journey; prior observations are carried forward.'} Tool order is balanced within segments.</Fact>
+          <Fact label="Criteria">{saved.comparison.criteria.map((criterion) => <span className="block" key={criterion.id}>{criterion.name} · {criterion.importance === 'must_have' ? 'must have' : 'preference'}</span>)}</Fact>
+          <Fact label="Shared tasks">{saved.comparison.tasks.map((task, i) => <span className="block" key={task.id}>{i + 1}. {task.instruction} · Up to {task.max_steps} steps per tool.</span>)}</Fact>
+          <Fact label="Tool access">{saved.comparison.targets.map((target) => <span className="block" key={target.id}>{target.name} · {target.access_scope.replaceAll('_', ' ')} · {target.session_role ? `${target.session_role} login` : 'no login'}</span>)}</Fact>
+          <Fact label="Assumptions">{saved.comparison.assumptions.map((assumption, i) => <span className="block" key={i}>{assumption}</span>)}</Fact>
+          <p className="review-note">The report compares captured evidence. Unavailable access or unresolved requirements stay visible. It does not infer missing features from pages it could not inspect.</p>
+        </Section>}
 
         <Section title="Who will browse" edit={fix('audience', 'Edit audience')}>
           {saved.audience ? (
@@ -178,7 +191,7 @@ export function Review(props: {
             <Fact label="People">{info?.persona ? `${info.persona.name}, ${info.persona.job_title} (the built-in persona)` : 'One built-in persona'}</Fact>
           )}
           <Fact label="Social rounds">
-            {saved.audience ? (
+            {saved.comparison ? 'Off: comparison tasks use the declared independent or buyer-journey context.' : saved.audience ? (
               <>
                 <Check checked={saved.settings.social ?? false} onChange={onSocial}>Let personas interact in a shared feed</Check>
                 <span className="block pl-6 text-xs text-stone-500">
@@ -201,10 +214,11 @@ export function Review(props: {
             <Fact label="Browsers at once">{saved.settings.concurrency}</Fact>
           </div>
           <p className="review-note">At the cost limit, new work stops and outstanding model requests are canceled. Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed the limit. Persona generation is charged separately.</p>
+          {saved.comparison && <p className="review-note">The estimate includes evidence assessment and verification for each tool/task. {Math.round(saved.comparison.execution.analysis_reserve_fraction * 100)}% of the allowance is reserved for analysis; incomplete coverage is reported if the run stops early.</p>}
         </Section>
 
         <Section title="Models" edit={fix('settings', 'Edit models')}>
-          {(['navigator', ...(socialRounds(saved.settings, saved.audience) ? ['socialiser' as const] : []), 'judge', 'author'] satisfies LlmRole[]).map((role) => (
+          {(['navigator', ...(!saved.comparison && socialRounds(saved.settings, saved.audience) ? ['socialiser' as const] : []), 'judge', ...(!saved.comparison ? ['author' as const] : [])] satisfies LlmRole[]).map((role) => (
             <Fact key={role} label={ROLE_TEXT[role].label}>{PROVIDER_LABELS[saved.settings.routing[role].provider]} · {saved.settings.routing[role].model}</Fact>
           ))}
         </Section>
@@ -215,11 +229,11 @@ export function Review(props: {
               {roles.length === 0 && 'None: the personas browse logged out.'}
               {roles.map((role) => {
                 const login = logins[role];
-                return <span key={role} className="block">{login === 'checking' || login === undefined ? `Checking the recorded ${role} login…` : login.ok ? `The recorded ${role} login works.` : `The recorded ${role} login no longer works.`}</span>;
+                return <span key={role} className="block">{login === 'checking' || login === undefined ? `Checking the recorded ${role} login…` : login.ok ? `The recorded ${role} login works.` : `${role} login is unavailable.${saved.comparison ? ' Affected tasks remain access-limited.' : ''}`}</span>;
               })}
-              {roles.length > 0 && loggedOut(saved) && <span className="block text-stone-600">The other personas browse logged out.</span>}
+              {!saved.comparison && roles.length > 0 && loggedOut(saved) && <span className="block text-stone-600">The other personas browse logged out.</span>}
             </Fact>
-            {webPois(saved.pois).map((poi, _, all) => {
+            {webPois(sources).map((poi, _, all) => {
               const of = all.length > 1 ? ` (${poi.name})` : '';
               return [
                 <Fact key={`${poi.id}-hosts`} label={`Allowed hosts${of}`}>{[startHost(poi.start_url) ?? poi.start_url, ...poi.allowed_hosts].join(', ')}. Everything else is blocked.</Fact>,
@@ -227,13 +241,13 @@ export function Review(props: {
               ];
             })}
           </div>
-          {webPois(saved.pois).filter((poi) => poi.not_production).map((poi) => <p key={poi.id} className="review-note">You confirmed that {poi.name} is not a production site.</p>)}
-          {webPois(saved.pois).some((poi) => poi.reset_hook_url !== null) && (
+          {webPois(sources).filter((poi) => poi.mode === 'full' && poi.not_production).map((poi) => <p key={poi.id} className="review-note">You confirmed that {poi.name} is not a production site.</p>)}
+          {webPois(sources).some((poi) => poi.reset_hook_url !== null) && (
             <div className="space-y-1">
               <Check checked={reset} onChange={setReset}>
                 Reset staging before the run
               </Check>
-              {webPois(saved.pois).flatMap((poi) => (poi.reset_hook_url === null ? [] : [<p key={poi.id} className="break-all pl-6 text-xs text-stone-500">Gnomi sends a POST to {poi.reset_hook_url} first.</p>]))}
+              {webPois(sources).flatMap((poi) => (poi.reset_hook_url === null ? [] : [<p key={poi.id} className="break-all pl-6 text-xs text-stone-500">Gnomi sends a POST to {poi.reset_hook_url} first.</p>]))}
             </div>
           )}
           <p className="review-note">Gnomi cannot see what staging does behind the scenes. Make sure it sends email to a test inbox and takes payments in test mode.</p>

@@ -5,6 +5,7 @@ import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dim
 import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
+import { ComparisonReport } from './ComparisonReport.tsx';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { PersonaAvatar } from './Icon.tsx';
@@ -906,6 +907,7 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
 const noScreenshot: RenderScreenshot = () => null;
 
 export function Report({ report, filter = {}, onInspect, renderScreenshot = noScreenshot }: { report: ReportData; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot }) {
+  const inFile = useContext(InFile);
   const selectedPersonas = report.personas.filter((persona) => matchesProfileValues(persona.attributes, filter));
   const ids = new Set(selectedPersonas.map((persona) => persona.id));
   const filtered = !!filter.dimension && !!filter.value;
@@ -920,7 +922,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
   return (
-    <section aria-labelledby="report-title" className="space-y-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
+    <section aria-labelledby="report-title" className="min-w-0 space-y-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
       <header className="space-y-3">
         <div className="space-y-1">
           <h2 id="report-title" className="text-xl font-medium tracking-tight text-stone-900">
@@ -929,7 +931,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
           <p className="text-sm text-stone-700">
             <span className="font-medium text-stone-900">Goal:</span> {report.goal}
           </p>
-          {(report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">What the personas tried, in this order: {report.pois.map(poiName).join(', ')}</p>}
+          {!report.comparison && (report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">What the personas tried, in this order: {report.pois.map(poiName).join(', ')}</p>}
           {report.status === 'stopped' && report.stop_reason && <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
         </div>
         <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
@@ -942,8 +944,10 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         </dl>
         <Note tone="info">{report.banner}</Note>
         {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
-        {filtered && <p role="status" className="text-sm text-stone-700">Showing {details.personas.length} of {report.personas.length} personas under How each persona did. Everything else describes the full run.</p>}
+        {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
+        {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under How each persona did. Everything else describes the full run.`}</p>}
       </header>
+      {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
       <Glance report={report} themes={themes} />
       {report.themes && <Priorities themes={themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
       {report.went_well && report.went_well.length > 0 && <WentWell likes={report.went_well} />}
@@ -952,7 +956,8 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       {report.buyers && report.buyers.length > 0 && <BuyerSurvey rows={report.buyers} pois={report.pois} />}
       {report.comparisons?.map((comparison) => <Comparison key={comparison.poi_id} comparison={comparison} pois={report.pois} />)}
       <Personas report={details} onInspect={onInspect} renderScreenshot={renderScreenshot} />
-      {report.spread && (
+      </>}
+      {!report.comparison && report.spread && (
         <Fold id="spread-title" title="Opinion spread" hint="How talk travelled on the simulated feed">
           <Spread spread={report.spread} personas={report.personas} onInspect={onInspect} />
         </Fold>

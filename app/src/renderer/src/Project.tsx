@@ -7,6 +7,7 @@ import { useRecorder } from './Recorder.tsx';
 import { ActionBar, Button, Card, Field, inputClass, Note, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { PersonaHeader } from './ProfileFields.tsx';
+import { ComparisonSetup } from './ComparisonSetup.tsx';
 
 export function Project(props: {
   info: ProjectInfo | null;
@@ -33,7 +34,7 @@ export function Project(props: {
   };
 
   const recorder = useRecorder(async (session) => {
-    if (form.role === null && audience === null) set('role', session.role); // the first login recorded is the one the built-in persona uses
+    if (!form.comparison && form.role === null && audience === null) set('role', session.role); // legacy single-product login
     await onSaved();
   });
 
@@ -82,8 +83,10 @@ export function Project(props: {
 
       <PoiList pois={form.pois} onChange={(change) => onForm((was) => ({ ...was, pois: change(was.pois) }))} segments={audience?.segments ?? []} sessions={sessions} />
 
+      <ComparisonSetup draft={draft} onChange={(study) => set('comparison', study)} sessions={sessions} sessionsPersist={sessionsPersist} recorder={recorder} saveFirst={saveFirst} />
+
       {/* Logins are recorded on, and used by, your own web apps only: a competitor's site is browsed logged out. */}
-      {form.pois.some((poi) => poi.type === 'web' && poi.mode === 'full') && <details className="disclosure">
+      {!form.comparison && form.pois.some((poi) => poi.type === 'web' && poi.mode === 'full') && <details className="disclosure">
         <summary><Icon name="settings" />Logins<span>Recorded logins for web apps</span></summary>
         <div className="space-y-5 disclosure-body">
       <Logins
