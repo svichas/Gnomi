@@ -1,6 +1,6 @@
 # Proposed simulation: scientific experiments in a contained runtime
 
-Status: **Draft for review; not implemented.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b`, revised the same day after review: it now addresses the report's existing prevalence ranges, sampling control and feed position, trims the library list, and phases the work with a cost per step (§10). The implemented baseline is documented in [old_simulation.md](old_simulation.md). This proposal does not install dependencies, move code, or establish new performance results.
+Status: **Draft for review; not implemented.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b`, revised the same day after two reviews. The first added the report's existing prevalence ranges, sampling control and feed position, trimmed the library list, and phased the work with a cost per step (§10). The second put the move first, added heard-post ids as the attribution fix, limited the echo discount to reported frictions, corrected the reach-back list and the library table, and gave every file a destination. The implemented baseline is documented in [old_simulation.md](old_simulation.md). This proposal does not install dependencies, move code, or establish new performance results.
 
 ## 1. Objective and scope
 
@@ -23,26 +23,25 @@ Success has separate dimensions: implementation correctness, reproducible record
 
 Dependencies point from `app/` and the engine compatibility facade into the simulation's public exports. No simulation source imports `app/` or `engine/` internals. Core policies do not import Electron, Playwright, provider SDKs, or SQLite. Existing interfaces in [seams.ts](../engine/src/seams.ts) are useful extraction points, but the broad `ProjectStore` must become narrower run-scoped ports.
 
-Proposed layout; these paths do not exist yet:
+Proposed layout; these paths do not exist yet. Files keep their current names and relative paths, so the move is a `git mv` whose diff is empty apart from import paths, and history follows each file:
 
 ```text
 simulation/
-  package.json                 # explicit exports and independent scripts
+  package.json                 # an explicit exports map and independent scripts
   src/
-    contracts/                 # schemas, manifests, commands, events, results
-    runtime/                   # phase coordinator, lifecycle, budget ledger
-    agents/                    # decision policies, prompts, bounded memory
-    social/                    # networks, exposure, feeds, opinion reducers
-    metrics/                   # outcomes, uncertainty, validation results
-    ports/                     # model, environment, run-store, blob, clock interfaces
-    adapters/                  # AI SDK, Playwright, SQLite, fixture implementations
-    transport/                 # local message adapter and standalone JSON runner
+    run.ts  safety.ts  types.ts  seams.ts  settings.ts  persona.ts  assets.ts
+    cli.ts  acceptance.ts      # the standalone entry points, as today
+    agent/  poi/  social/  opinion/  signals/  report/  llm/  browser/
+    log/                       # the SQLite and blob adapters behind seams.ts
+    acceptance/                # the evaluation harness and its fixtures (§9)
+    audience/locations.ts  audience/sample.ts  profile/
+    graph/synthetic.ts         # the seeded fixture run, beside the harness
   experiments/                 # versioned study definitions and analysis settings
-  fixtures/                    # frozen inputs and recorded observations/responses
-  tests/                       # boundary, protocol, replay, experiment tests
 ```
 
-Export only deliberate entry points such as `/contracts`, `/runner`, `/replay`, and `/metrics`; avoid wildcard access to source internals. An import-boundary check must enforce the dependency direction; it can extend the existing [no-electron.test.ts](../engine/src/no-electron.test.ts) to also forbid `app/` and `engine/` imports. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
+Tests stay beside the code as `*.test.ts`, as they are now. The taxonomy of contracts, runtime, ports and adapters describes what these folders contain; it is not a rename to perform during the move. Rename a folder later only when it outgrows its name.
+
+The `exports` map names each file the engine and the app import, in place of the wildcard. The app's imports do not change in the move PR: the engine re-exports what the app uses today, and the app switches to `@gnomi/simulation` paths afterwards. An import-boundary check enforces the dependency direction. [no-electron.test.ts](../engine/src/no-electron.test.ts) is a regular expression over import statements, so a copy in the new workspace that also forbids `@gnomi/engine`, `../engine` and `app/` is a few lines. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
 
 ### Reaching the boundary in two phases
 
@@ -50,10 +49,11 @@ The boundary is reached by moving code first and redesigning storage later. The 
 
 What the boundary crosses today:
 
-- The engine exports every source file (`"./*": "./src/*"` in [engine/package.json](../engine/package.json)). The app imports 20 different engine modules, 52 times from [types.ts](../engine/src/types.ts) alone.
-- Simulation code reaches back into authoring and storage code: `poi/` imports `log/sqlite.ts`, `log/blobs.ts`, `assets.ts` and `audience/sample.ts`; `report/` imports `audience/diversity.ts` and `log/sqlite.ts`; `llm/` imports `audience/write.ts`; `social/` and `graph/` import the seeded-sampling helpers in `audience/sample.ts`.
+- The engine exports every source file (`"./*": "./src/*"` in [engine/package.json](../engine/package.json)). The app imports 20 different engine modules, 53 times from [types.ts](../engine/src/types.ts) alone.
+- Simulation code reaches back into authoring code, counting source files only: `poi/` imports `assets.ts`, `audience/locations.ts`, `audience/sample.ts` and `profile/schema.ts`; `report/` imports `audience/diversity.ts` and `profile/schema.ts`; `llm/` imports `audience/sample.ts`; `agent/`, `browser/` and `run.ts` import `audience/locations.ts` and `profile/schema.ts`; `social/` and `graph/` import the seeded-sampling helpers in `audience/sample.ts`. Only tests import `log/sqlite.ts` and `log/blobs.ts`.
+- In the other direction, `audience/write.ts`, `host.ts`, `cli.ts` and the app's provider test import `llm/`, and five renderer files import `graph/`. Those two folders are shared, so the move has to say where they go (below).
 
-**Phase 1, move with no behaviour change.** Create the workspace with explicit exports. Move `run.ts`, `agent/`, `poi/`, `social/`, `opinion/`, `signals/`, `report/`, `llm/`, `browser/` and `safety.ts`. Split `types.ts` into simulation contracts (run config, events, report) and project types that stay in the engine. Replace each reach-back with a port or by moving the helper: seeded sampling moves into the simulation, asset reads go through `BlobStore`, and `ProjectStore` use becomes a narrow run-store port over the existing SQLite log. Existing tests prove parity; tokens and results do not change. The PR is large but mechanical.
+**Phase 1, move with no behaviour change.** Create the workspace and move the files in the layout above with `git mv`. `types.ts` moves whole: `RunConfig` freezes the entire `ProjectConfig`, so the project types are simulation inputs, and a split would only re-export them. `profile/` moves whole too, since the acceptance fixture samples profiles and all three files depend only on moved code. The engine keeps what authors and hosts: `host.ts`, `protocol.ts`, `sessions.ts`, `figma/`, the audience writer and proposer (`audience/index.ts`, `write.ts`, `propose.ts`, `demo.ts`, `diversity.ts`) and the UI readers `graph/index.ts` and `graph/feed.ts`, all importing from the simulation's exports. Two reach-backs need a line each: the pure `similarity` and `MEAN_SIMILARITY` that `report/spread.ts` uses move out of `audience/diversity.ts`, which then imports them; and `run.ts` takes `Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>` as its run-store port, leaving `log/` as the adapter that implements the whole interface. `llm/` moves and is exported, so the audience writer imports the gateway from the simulation; the dependency points the right way. The harness's `../../../gym/` imports keep the same depth. The run's tests ([run.test.ts](../engine/src/run.test.ts), [run.e2e.test.ts](../engine/src/run.e2e.test.ts)) and the scripted acceptance rehearsals are the parity baseline; tokens and results do not change. The PR is large but mechanical.
 
 **Phase 2, when a headless or hosted runner needs it.** The separate run store, `sim-<UUID>` ids, idempotency keys, checkpoints and the command protocol in §8. A single-user desktop app gains little from them, and they add a second lifecycle owner and a migration.
 
@@ -98,7 +98,7 @@ Evaluate within-segment diversity and subgroup errors. Increasing the number of 
 
 ### Social mechanisms
 
-1. **Network formation:** use a directed graph with explicit tie semantics and optional weights. Compare the legacy segment-biased network with clustered and random null networks. Persist the realized graph, not just its seed. Treat dynamic following/trust as later, separately evaluated policies.
+1. **Network formation:** use a directed graph with explicit tie semantics and optional weights. Compare the legacy segment-biased network with null networks. The null that answers whether segment homophily drives spread keeps every persona's out-degree and rewires whom it follows without regard to segment: a degree-preserving rewiring of the realized graph, about twenty lines in-house. Clustered and random generators are secondary controls. Persist the realized graph, not just its seed. Treat dynamic following/trust as later, separately evaluated policies.
 2. **Availability and attention:** define whether a persona visits the feed during a logical interval independently of whether it posts. Record activation probabilities, sampled eligibility, and exposure decisions. Quiet readers may still change their opinions.
 3. **Feed selection:** rank eligible content using a versioned, inspectable policy. Parameters may include tie strength, relevance, recency, and popularity. Freeze candidate/tie-breaking rules and log actual exposure, including each post's position in the feed shown. Models favour items early in a list, and the current ranking puts the most-reacted posts first, so position and popularity reinforce each other. Order equal-rank posts with a seeded per-persona shuffle rather than event sequence. Keep chronological and no-trending controls. Never infer exposure simply from a follow edge.
 4. **Decision:** an active persona receives its own permitted observations, bounded memory, and selected feed. One structured model response may propose a post/reply/reaction/no-public-action plus an opinion update. Silence is a valid social action; failed inference is a different outcome.
@@ -107,17 +107,19 @@ Evaluate within-segment diversity and subgroup errors. Increasing the number of 
 
 Separate self-reported certainty, evidence quality, and statistical uncertainty. They are different quantities. Model-attributed influence edges describe provenance; estimating an intervention's effect requires a controlled comparison. An effect inside the simulator does not establish a real-world causal effect.
 
+Two details of the current edge rule ([social/influence.ts](../engine/src/social/influence.ts)) change with the model version. The 0.5 threshold is a no-op with integer sentiment, and a first opinion is measured from zero, so a persona forming its first view after reading counts as moved. The corrected rule requires a prior opinion for an `influence` edge and records a first opinion after exposure as a separate `formed` kind, so the graph can show both without mixing them.
+
 ### Social echo in finding counts
 
-The current report already shows an interval: each theme's "k of n personas" with a 95% Wilson range ([report/themes.ts](../engine/src/report/themes.ts), `prevalence`). It treats each persona as an independent witness. With social rounds on, that is not true. A persona that reads a post is handed it in its next product step ([agent/loop.ts](../engine/src/agent/loop.ts), [poi/text.ts](../engine/src/poi/text.ts), [poi/design.ts](../engine/src/poi/design.ts)), so a friction reported after reading about it may repeat the post rather than confirm it. Social runs therefore inflate k and narrow the range.
+The current report already shows an interval: each theme's "k of n personas" with a 95% Wilson range ([report/themes.ts](../engine/src/report/themes.ts), `prevalence`). It treats each persona as an independent witness. With social rounds on, that is not true. A persona that reads a post is handed it in its next product step ([agent/loop.ts](../engine/src/agent/loop.ts), [poi/text.ts](../engine/src/poi/text.ts), [poi/design.ts](../engine/src/poi/design.ts)), so a friction reported after reading about it may repeat the post rather than confirm it. Social runs therefore inflate k and narrow the range. The correction must not swing the other way: a rule that discounts real defects in social runs confounds the social-on/off comparison in §9 with the rule itself.
 
-The log already holds what is needed to separate the two. The judge tags posts with the friction groups they discuss ([report/models.ts](../engine/src/report/models.ts)), and `social.feed_viewed` records which posts each persona was shown and when. For each theme:
+Two things separate the two. First, the engine knows at each product step which posts it handed the persona, but does not log it: a heard post ([agent/prompt.ts](../engine/src/agent/prompt.ts), `HeardPost`) carries author, text and POI name with no post id, and a step's opinion change cites `post_ids: []` ([agent/loop.ts](../engine/src/agent/loop.ts)). Carrying the post id through and recording the heard ids on the step and friction events makes exposure before a report a fact of the log, lets product-step opinion changes draw influence edges, and costs about ten lines. Second, the judge tags posts with the friction groups they discuss ([report/models.ts](../engine/src/report/models.ts)), and `social.feed_viewed` records which posts each persona was shown and when. For each theme:
 
-- A persona counts as **first-hand** when at least one of its reports on the theme precedes the first feed that showed it a post tagged with that theme.
+- A persona counts as **first-hand** when at least one of its reports on the theme precedes the first feed that showed it a post tagged with that theme, or when any of its reports on the theme has `confirmed` or `observed` trust ([report/friction.ts](../engine/src/report/friction.ts)). A browser signal cannot be an echo of a post, so the discount applies to `reported` frictions only.
 - Otherwise it counts as **heard first**. It stays visible beside the share, but not in k.
-- Ranking, evidence level and the "2+ personas" rule for top lists use first-hand k. Without judge tags, the report says it could not separate echoes.
+- Ranking, evidence level and the "2+ personas" rule for top lists use first-hand k. Without judge tags, the report falls back to the recorded heard ids: a `reported` friction logged at a step whose heard posts include one by a persona already in the theme counts as heard first. Without either, the report says it could not separate echoes.
 
-This changes report code only and adds no model calls. It is still a within-run quantity: the range describes this run's personas, not the human population, and the report must keep saying so. Replicate-level intervals (§9) are the measure for comparisons between runs.
+This changes report code and a few event-payload lines, and adds no model calls. It is still a within-run quantity: the range describes this run's personas, not the human population, and the report must keep saying so. Replicate-level intervals (§9) are the measure for comparisons between runs.
 
 Use the same frozen language policy across a comparison. Browser locale, persona language, response language, and translation are distinct inputs and must be evaluated rather than assumed equivalent.
 
@@ -140,7 +142,7 @@ flowchart LR
 
 Assign operation IDs from run, logical phase, round, persona, input, step, and purpose. Allocate reproducible RNG streams by stable identities with a documented derivation/jump policy; record algorithm and stream allocation. Do not consume one global random stream in promise-completion order.
 
-Model sampling is part of the experiment definition. Today the gateway sets no temperature or seed ([llm/gateway.ts](../engine/src/llm/gateway.ts)), and routing names model aliases such as `claude-haiku-5-5` ([settings.ts](../engine/src/settings.ts)), so a provider can change both defaults and weights between two runs with the same seed. Set temperature explicitly per role, use dated model snapshots where the provider offers them, pass a provider seed where supported, and record the requested settings and the model version the provider reports in the run manifest. This does not make fresh replicates identical; it makes their variation declared.
+Model sampling is part of the experiment definition. Today the gateway sets no temperature or seed ([llm/gateway.ts](../engine/src/llm/gateway.ts)), and routing names model aliases such as `claude-haiku-5-5` ([settings.ts](../engine/src/settings.ts)), so a provider can change both defaults and weights between two runs with the same seed. Request a temperature per role, use dated model snapshots where the provider offers them, pass a provider seed where supported, and record both the requested settings and what the provider accepted, with the model version it reports, in the run manifest. Routes with reasoning enabled (`providerOptions` in [llm/gateway.ts](../engine/src/llm/gateway.ts)) may reject or ignore temperature, so the recorded value is the fact and the request is the intent. This does not make fresh replicates identical; it makes their variation declared.
 
 Freeze observation inputs for each social phase. Issue independent requests concurrently, save attempt telemetry immediately, stage validated decisions, and apply effects in canonical logical order. Feed tie-breaking uses logical IDs/order. API response speed must not select whose post becomes most recent. Product steps within a persona remain sequential; independent personas may execute concurrently.
 
@@ -188,8 +190,8 @@ These are proposed choices, not installation instructions. Pin compatible versio
 | Library | Proposed role | Decision and limit |
 | --- | --- | --- |
 | [Vercel AI SDK](https://ai-sdk.dev/docs/introduction) and [Zod](https://zod.dev/) | Provider adapters and structured input/output validation. | Keep the existing stack. Simulation policies and quota/budget semantics remain ours. |
-| [Graphology](https://graphology.github.io/standard-library/) with metrics and [generators](https://graphology.github.io/standard-library/generators.html) | Graph representation, topology measurements, clustered/random experimental controls. | **Adopt.** The app already depends on it, so this moves an existing dependency into the runtime. Use supported seeded RNG hooks; generators do not provide calibrated human networks. |
-| [simple-statistics](https://simple-statistics.github.io/docs/) or [jStat](https://jstat.github.io/) | Run-level bootstrap, paired differences, and the t or normal quantiles that non-inferiority tests need. | **Adopt in the evaluation layer only.** Check that the chosen library provides the quantiles; jStat does. The Wilson function in the report stays hand-written. Library functions do not decide the unit of inference. |
+| [Graphology](https://graphology.github.io/standard-library/) with [metrics](https://graphology.github.io/standard-library/metrics.html) and [generators](https://graphology.github.io/standard-library/generators.html) | Graph representation, assortativity and degree measurements, clustered/random secondary controls. | **Adopt for metrics.** The app already depends on it, so this moves an existing dependency into the runtime. Its generators give Erdős–Rényi and clustered graphs, not the degree-preserving rewiring that is the primary null (§4); that stays in-house. Use supported seeded RNG hooks; generators do not provide calibrated human networks. |
+| [simple-statistics](https://simple-statistics.github.io/docs/) | Run-level mean, variance, quantiles and bootstrap resampling of whole replicates. | **Adopt in the evaluation layer only.** ESM, typed and maintained. It has no Student t quantile, which a handful of replicates needs in place of z; a thirty-row table of 95% t quantiles is one array beside it. jStat would supply the quantile but is UMD, typed through a separate package and barely maintained, so it is not adopted. The Wilson function in the report stays hand-written. Library functions do not decide the unit of inference. |
 | Node SQLite and existing Playwright integration | Local durable runs, contained browser interaction. | **Keep** and adapt; preserve host restrictions, observe-only rules, login handling and evidence capture. |
 | [graphology-communities-louvain](https://graphology.github.io/standard-library/communities-louvain.html) | Optional community diagnostics. | **Later**, when an evaluation reads community diagnostics. Fix resolution/RNG; an algorithmic community is not automatically a real social group. |
 | [p-queue](https://github.com/sindresorhus/p-queue) | In-process execution queues, concurrency and cancellation plumbing. | **Not now.** The run's `inParallel` is about 15 lines and covers today's needs. Revisit if concurrency should rise again after a throttle. It would not implement token quotas, billing reservations or deterministic order in any case. |
@@ -305,14 +307,14 @@ The proposed workspace must later provide its own `test`, `typecheck`, scripted 
 
 ### Order of work
 
-Each step is its own PR. None adds model calls to an everyday run; evaluation runs spend live tokens and need an explicit allowance.
+Each step is its own PR. None adds model calls to an everyday run; evaluation runs spend live tokens and need an explicit allowance. The move goes first, so the rule above, extract before changing, holds: every later step lands inside the boundary with the parity tests behind it.
 
 | Step | Change | Cost |
 | --- | --- | --- |
-| 1 | Count first-hand reports separately from social echoes (§4). | Report code only; changes the ranking of social runs. |
-| 2 | Record social answers in population order after each phase; log feed positions and shuffle ties by seed; set and record per-role temperature and model versions (§4, §5). | Small engine changes; same calls and tokens. |
-| 3 | Phase 1 move into `simulation/` with the boundary test (§2). | Large, mechanical; no behaviour change. |
-| 4 | Graphology in the runtime; random and clustered null networks as evaluation options (§4, §7). | Small; one existing dependency. |
+| 1 | Phase 1 move into `simulation/` with the boundary test (§2). | Large, mechanical; no behaviour change. |
+| 2 | Carry post ids on heard posts and record them on step and friction events; count first-hand reports separately from social echoes, discounting `reported` frictions only (§4). | A few event-payload lines plus report code; changes the ranking of social runs. |
+| 3 | Record social answers in population order after each phase; log feed positions and shuffle ties by seed; request per-role temperature and record what was accepted with the model version; require a prior opinion for an influence edge (§4, §5). | Small changes; same calls and tokens. |
+| 4 | Graphology metrics in the runtime; degree-preserving rewiring plus random and clustered null networks as evaluation options (§4, §7). | Small; one existing dependency and about twenty lines. |
 | 5 | Evaluation harness: repeat-N runs, generic-persona and chronological-feed controls, Gym defect recall, run-level statistics (§9). | Tokens per evaluation, not per user run. |
 | 6 | ODD description and parameter provenance for the corrected model (§3). | Writing time. |
 | Later | Phase 2: run store, protocol and recovery (§8). | Large; only when a headless or hosted runner needs it. |
