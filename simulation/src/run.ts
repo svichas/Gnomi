@@ -16,7 +16,7 @@ import { allowedHosts, productionDomain } from './safety.ts';
 import { socialRounds } from './settings.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { readBoard, selectFeed, type Board, type FeedPost } from './social/feed.ts';
-import { followGraph } from './social/graph.ts';
+import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
 
 /** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
@@ -88,7 +88,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const assigned = new Map(config.personas.map((p) => [p.id, poisFor(project.pois, segmentOf(p, project))]));
   // Social rounds (tech.md §6.4): R usage slices, each followed by a social phase. 0 runs one straight slice, as before M4.
   const rounds = socialRounds(settings, project.audience);
-  const follows = rounds ? followGraph(config.personas, config.seed) : null;
+  const follows = rounds ? networkGraph(settings.network_policy ?? 'legacy', config.personas, config.seed) : null;
   const hard = new AbortController(); // observed cost cap, stop(), tripwire or error: cancel model calls in flight
   const drain = new AbortController(); // every run-wide stop: no step or persona starts, paused personas wake
   let halted: EventPayloads['run.stopped'] | null = null;

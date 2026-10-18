@@ -109,10 +109,14 @@ export interface RunSettings {
   screenshots: boolean; // send each step's screenshot to the navigator; always stored as evidence
   social?: boolean; // social rounds between usage slices (tech.md §6.4); absent before M4, which is off
   rounds?: number; // R when social rounds are on, 1–10, default 5
+  network_policy?: NetworkPolicy; // which follow graph (social/graph.ts); absent means 'legacy'
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
 }
 
 // 'chronological' is the evaluation control for the ranked feed (new_simulation.md §4).
+// The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
+export type NetworkPolicy = 'legacy' | 'rewired' | 'random' | 'clustered';
+
 export type FeedPolicy = 'ranked' | 'chronological';
 
 export type UsageFrequency = 'daily' | 'weekly' | 'monthly' | 'rarely' | 'never';

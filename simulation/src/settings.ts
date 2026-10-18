@@ -50,6 +50,7 @@ export const DEFAULT_SETTINGS: RunSettings = {
   screenshots: true,
   social: true,
   rounds: 5,
+  network_policy: 'legacy',
   feed_policy: 'ranked',
 };
 
