@@ -1,0 +1,132 @@
+1
+00:00:01,032 --> 00:00:02,112
+You know your product.
+
+2
+00:00:02,312 --> 00:00:04,672
+But what happens when someone sees it for the
+first time?
+
+3
+00:00:05,432 --> 00:00:06,432
+Meet Gnomi.
+
+4
+00:00:06,552 --> 00:00:08,592
+Social simulation for product teams.
+
+5
+00:00:08,872 --> 00:00:10,872
+Perspective before you ship.
+
+6
+00:00:11,352 --> 00:00:12,552
+Start with your audience.
+
+7
+00:00:12,792 --> 00:00:17,072
+Define the roles, languages, devices, and
+goals that matter.
+
+8
+00:00:17,432 --> 00:00:20,952
+Gnomi turns those differences into individual
+simulated people.
+
+9
+00:00:21,432 --> 00:00:24,912
+Share your idea, staging app,
+or your Figma design.
+
+10
+00:00:25,432 --> 00:00:26,832
+Set a goal and a budget.
+
+11
+00:00:27,192 --> 00:00:29,832
+Each persona explores from
+a different perspective.
+
+12
+00:00:30,152 --> 00:00:31,152
+They click.
+
+13
+00:00:31,272 --> 00:00:32,272
+They hesitate.
+
+14
+00:00:32,392 --> 00:00:33,432
+They hit friction.
+
+15
+00:00:33,672 --> 00:00:38,032
+And you can follow the actions, thoughts, and
+evidence behind every step.
+
+16
+00:00:38,472 --> 00:00:40,232
+Then the conversation starts.
+
+17
+00:00:40,552 --> 00:00:43,912
+Personas post, reply, and react.
+
+18
+00:00:44,392 --> 00:00:47,472
+One confusing experience can become a shared
+opinion.
+
+19
+00:00:47,832 --> 00:00:50,752
+Watch where it travels, and whose view
+changes.
+
+20
+00:00:51,272 --> 00:00:53,232
+Gnomi brings it together in a report:
+
+21
+00:00:53,512 --> 00:00:58,832
+ranked potential frictions, affected
+segments, screenshots, and quotes.
+
+22
+00:00:59,192 --> 00:01:03,112
+See what happened, why it matters, and what
+you could change.
+
+23
+00:01:03,592 --> 00:01:07,112
+Projects run on your machine, with your own
+model keys.
+
+24
+00:01:07,432 --> 00:01:10,112
+Model inputs go to the provider you
+configure.
+
+25
+00:01:10,552 --> 00:01:12,392
+These are simulated findings.
+
+26
+00:01:12,872 --> 00:01:16,792
+Use them as hypotheses, then validate
+important decisions with real people.
+
+27
+00:01:17,512 --> 00:01:18,752
+Find the friction.
+
+28
+00:01:19,112 --> 00:01:20,592
+Follow the conversation.
+
+29
+00:01:20,952 --> 00:01:22,552
+Know what to test next.
+
+30
+00:01:23,032 --> 00:01:24,032
+Gnomi.

@@ -1,0 +1,18 @@
+# Publish the current presentation and its self-contained source bundle.
+# Earlier versions, render intermediates, and working files stay local.
+*
+!.gitignore
+!output/
+output/*
+!output/gnomi-film/
+output/gnomi-film/*
+!output/gnomi-film/Gnomi-explainer.mp4
+!output/gnomi-film/Gnomi-editable.zip
+!output/gnomi-film/Gnomi.en.srt
+!output/gnomi-film/cover.jpg
+!output/gnomi-film/storyboard.jpg
+!output/gnomi-film/narration.txt
+!output/gnomi-film/production-notes.txt
+!output/gnomi-film/assets/
+output/gnomi-film/assets/*
+!output/gnomi-film/assets/gnomi-personas.glb

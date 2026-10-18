@@ -1,0 +1,81 @@
+GNOMI — PERSPECTIVE BEFORE YOU SHIP
+87-second product presentation · 1920 × 1080 · 24 fps
+Revision 3 — idea, staging app, and Figma design · 18 October 2026
+
+DELIVERABLES
+Gnomi-explainer.mp4 — final H.264/AAC film with optional English subtitles
+Gnomi.aive — editable Synthcut project with separate picture, narration, music and SFX
+Gnomi.en.srt — English subtitle sidecar
+narration.txt — clean voiceover script
+storyboard.jpg — scene overview
+assets/gnomi-personas.glb — five original reusable 3D character models
+source/ — deterministic animation and capture scripts
+
+CREATIVE
+Warm Paper, Ink and Olive from Gnomi's existing identity. Ten chapters combine
+procedural 3D figures, animated connections, floating evidence cards, camera
+movement, staggered typography and actual app screenshots.
+Revision 2 replaces detailed characters with smooth two-form ceramic sculptures,
+adds soft studio shadows, reduces visual decoration, and uses slimmer displays.
+The bottom progress bar, chapter counter, badges and “The product film” label
+have been removed. Typography, copy and the palette are quieter and more spacious.
+
+SOURCES AND CLAIMS
+Grounded in docs/idea.md, docs/pitch/gnomi-pitch.md, docs/brand.md and docs/roadmap.md.
+The report example is adapted from the documented hiring-manager username
+friction in the 16 October 2026 pitch. It is an example, not a new measurement.
+Product screenshots were captured from the actual Electron app using an isolated,
+disposable synthetic demo project. The film labels this demo data. No user data
+or live model run was needed. Social visuals are illustrative.
+At the user’s request, revision 3 presents the broader product concept with
+idea, staging app and Figma design as starting points. This scene is illustrative;
+the original pitch identifies web staging as current and design inputs as planned.
+The film explicitly identifies findings as synthetic hypotheses and preserves
+the local-storage / configured-model-provider distinction.
+
+AUDIO
+Narrator: Justin Case — Warm, Trustworthy, Clear, via ElevenLabs MCP (eleven_v4).
+Base narration take: assets/narration-4.mp3.
+Current narration: assets/narration-revised.wav, with the input-options pickup
+from assets/input-options-pickup.mp3 replacing source seconds 20.4–29.2.
+The pickup uses the same voice/model and is level matched by +4.2 dB.
+The rest of the narration and all later timings are preserved.
+Instrumental: ElevenLabs MCP (eleven_music_v2).
+Transition whooshes and message pops: ElevenLabs MCP (eleven_text_to_sound_v2).
+Audio assets and alternate narration / whoosh takes are preserved in assets/.
+Generated with the user's connected ElevenLabs workspace for this requested film.
+ElevenLabs flow: https://elevenlabs.io/app/flows/lWSoUGJ9NAxCSqxrXciO
+
+EDITING
+Open Gnomi.aive in Synthcut. Chapter markers identify all ten sections.
+Audio clips are separate, so narration, music and effects remain adjustable.
+Picture comes from the local deterministic 3D animation in source/film.js.
+
+RENDERING (from the Gnomi repository root)
+1. npm install --prefix output/gnomi-film/source
+2. node output/gnomi-film/source/capture-app.mjs (requires the built app)
+3. python3 output/gnomi-film/source/revise-inputs.py
+   node output/gnomi-film/source/render.mjs stills
+4. node output/gnomi-film/source/render.mjs video
+5. ffmpeg -y -f concat -safe 0 -i output/gnomi-film/source/concat.txt -c copy output/gnomi-film/visuals.mp4
+6. Open the Synthcut project and export the edit to Gnomi-master.mp4.
+7. python3 output/gnomi-film/source/package.py
+
+DEPENDENCIES
+Three.js 0.180.0: https://threejs.org/docs/
+Uses the repository's playwright-core, installed Chromium, and FFmpeg.
+Inter is bundled under assets/OFL.txt. Gnomi logos are existing project artwork.
+The app and engine implementation were not modified for this video.
+
+MOVING THE EDIT
+After extracting the source bundle elsewhere, run:
+  python3 source/relink-project.py
+Then open Gnomi-relocated.aive in Synthcut.
+
+FINAL QA
+87.000 seconds; 2,088 frames; H.264 1920x1080 at 24 fps; stereo AAC at 48 kHz.
+Optional English mov_text subtitle stream plus SRT sidecar.
+Audio: -16.1 LUFS integrated, -1.0 dBFS measured true peak.
+Full file decoded without errors. No unintended black intervals detected.
+Ten representative rendered frames reviewed. Revised final frames checked
+after the Synthcut export. Chapter markers remain in the editing project.
