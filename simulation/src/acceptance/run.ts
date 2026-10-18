@@ -4,6 +4,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import { arch, cpus, platform } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { mean } from 'simple-statistics';
 import { gymAssets } from '../../../gym/assets.ts';
 import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { importLocalFile } from '../assets.ts';
@@ -18,9 +19,10 @@ import { reportToMarkdown } from '../report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '../run.ts';
 import type { BlobStore, BrowserPool, LlmGateway, Recorder, Responder } from '../seams.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
-import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report } from '../types.ts';
-import { assess, BILLING_CAVEAT, createAllowance, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, validateOptions, type Criterion, type Facts, type Options, type Status } from './checks.ts';
-import { complaint, fixture, FIXTURE_VERSION, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
+import { graphMetrics, networkGraph } from '../social/graph.ts';
+import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
+import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, pairedDifference, TOP, validateOptions, type Arm, type Criterion, type Facts, type Options, type Status } from './checks.ts';
+import { complaint, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase, type FrameMismatches } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
@@ -355,7 +357,6 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
 }
 
 const M3_SCOPE = 'Friction pipeline: the frozen population on Gym v2 (all 25 defects) over three run seeds, then the same population on the no-defect control build. Themes are mapped to catalogued defects by a reviewer.';
-const TOP = 20; // precision is measured over a report's top 20 themes
 
 /** Each run's top themes with an empty `defect` for a reviewer to map to the catalogue (or leave null for a false positive). */
 function themeSheet(out: string, runs: { name: string; report?: Report }[], live: boolean) {
@@ -568,5 +569,112 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
   };
   json(join(options.out, 'acceptance.json'), result);
+  return result;
+}
+
+const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed. Outcomes are run-level; whole replicates are the unit of analysis. Defect recall and precision use a page-overlap mapping, not reviewed verdicts.';
+// The predeclared benchmark fields (new_simulation.md §9); none is filled yet, so validity and efficiency cannot be claimed.
+const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: null, efficiency_margin: null, confirmatory_repeats: null };
+const METRICS = ['completion_rate', 'abandonment_rate', 'recall', 'precision', 'themes', 'first_hand', 'heard_first', 'cost_usd', 'llm_calls', 'segment_assortativity', 'mean_in_degree', 'top_decile_in_share'] as const;
+type Outcomes = ReturnType<typeof outcomesOf>;
+
+/** One finished run's outcomes, with segment numerators and denominators; the graph is the one the run built, absent without social rounds. */
+function outcomesOf(report: Report, data: Fixture, seed: number, catalogue: string) {
+  const n = report.personas.length;
+  const count = (outcome: string) => report.personas.filter((p) => p.outcome === outcome).length;
+  const themes = report.themes ?? [];
+  const settings = data.project.settings;
+  const defects = defectScores(themes, catalogue, DEFECT_IDS);
+  const graph = settings.social ? graphMetrics(networkGraph(settings.network_policy ?? 'legacy', data.personas, seed), data.personas) : null;
+  return {
+    personas: n, completed: count('done'), abandoned: count('abandoned'),
+    completion_rate: n ? count('done') / n : null, abandonment_rate: n ? count('abandoned') / n : null,
+    segments: report.segments.map((s) => ({ segment_id: s.id, personas: s.personas, completed: s.outcomes.done, abandoned: s.outcomes.abandoned })),
+    defects, recall: defects.recall, precision: defects.precision,
+    themes: themes.length, first_hand: themes.reduce((sum, t) => sum + (t.prevalence?.personas ?? 0), 0), heard_first: themes.reduce((sum, t) => sum + (t.heard_first ?? 0), 0),
+    cost_usd: report.cost_usd, llm_calls: report.llm_calls,
+    segment_assortativity: graph?.segment_assortativity ?? null, mean_in_degree: graph?.mean_in_degree ?? null, top_decile_in_share: graph?.top_decile_in_share ?? null,
+  };
+}
+
+const fmt = (x: number | null) => x === null ? 'n/a' : Number(x.toFixed(4)).toString();
+
+/** Evaluate mode (new_simulation.md §9): repeated matched replicates over the declared arms, per-arm means and paired differences from baseline. */
+export async function runEvaluation(options: Options, env: Record<string, string | undefined> = process.env) {
+  validateOptions(options, env);
+  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
+  mkdirSync(dirname(options.out), { recursive: true });
+  mkdirSync(options.out);
+  const source = provenance(options.out);
+  const catalogue = readFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), 'utf8');
+  copyFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), join(options.out, 'defects.yaml'));
+  const allowance = createAllowance(options.allowance_usd ?? Infinity);
+  const arms: Arm[] = options.arms ?? (Object.keys(ARMS) as Arm[]);
+  const seeds = Array.from({ length: options.repeats ?? 5 }, (_, r) => SEED + r);
+  const replicates = seeds.map((seed, r) => ({ replicate: r + 1, seed, arms: {} as Partial<Record<Arm, { run_status: string | null; evidence: string; outcomes: Outcomes | null }>> }));
+  let error: string | null = null;
+  let pool: BrowserPool | undefined;
+  let server: Awaited<ReturnType<typeof startGym>> | undefined;
+  const started = Date.now();
+  try {
+    server = await startGym({ port: 0, defects: 'all' });
+    const base = prepare(fixture(server.url), options);
+    const plain = generic(base);
+    json(join(options.out, 'fixture.json'), base);
+    json(join(options.out, 'manifest.json'), {
+      version: 1, suite: 'evaluate', mode: options.mode, scope: EVALUATE_SCOPE, repeats: seeds.length, seeds, arms: Object.fromEntries(arms.map((arm) => [arm, ARMS[arm]])),
+      provider: options.provider, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
+      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0, benchmark: BENCHMARK,
+      recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
+      gym: { defects: DEFECT_IDS, catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
+    });
+    pool = await launchBrowserPool();
+    for (const entry of replicates) {
+      for (const arm of arms) {
+        if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
+        const spec: { settings?: Partial<RunSettings>; generic?: true } = ARMS[arm];
+        const from = spec.generic ? plain : base;
+        const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
+        const name = `r${entry.replicate}-${arm}`;
+        const run = await runSeed(name, entry.seed, data, options, pool, allowance, env, data.project.settings.social !== false);
+        entry.arms[arm] = { run_status: run.run_status, evidence: name, outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, entry.seed, catalogue) : null };
+      }
+    }
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  } finally {
+    await pool?.close().catch(() => {});
+    await server?.close();
+  }
+  const series = (arm: Arm, metric: typeof METRICS[number]) => replicates.map((entry) => entry.arms[arm]?.outcomes?.[metric] ?? null);
+  const means = Object.fromEntries(arms.map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => {
+    const values = series(arm, metric).filter((x) => x !== null);
+    return [metric, { n: values.length, mean: values.length ? mean(values) : null }];
+  }))]));
+  const differences = Object.fromEntries(arms.filter((arm) => arm !== 'baseline').map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => [metric, pairedDifference(series(arm, metric), series('baseline', metric))]))]));
+  const missing = Object.entries(BENCHMARK).filter(([, value]) => value === null).map(([key]) => key);
+  const labels = { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
+  const status: Status = error ? 'FAIL' : options.mode === 'scripted' ? 'NOT_RUN' : 'REVIEW_NEEDED';
+  const complete = replicates.filter((entry) => arms.every((arm) => entry.arms[arm]?.outcomes)).length;
+  const result = {
+    status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete, arms,
+    method: 'Per arm, the mean over finished replicates; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished. Personas are never the unit.',
+    replicates, means, differences,
+    recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
+    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
+  };
+  json(join(options.out, 'results.json'), result);
+  const lines = [
+    '# Evaluation results', '',
+    `Behavioural validity: ${labels.behavioural_validity}. Efficiency: ${labels.efficiency}. Missing predeclared benchmark fields: ${missing.join(', ')}.`, '',
+    `${options.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${complete} of ${seeds.length} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${error ? ` Error: ${error}` : ''}`, '',
+    ...Object.entries(differences).flatMap(([arm, metrics]) => [
+      `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
+      ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? 'n/a' : `${fmt(d.lower)} to ${fmt(d.upper)}`} | ${d.n} |`), '',
+    ]),
+  ];
+  writeFileSync(join(options.out, 'results.md'), `${lines.join('\n')}\n`);
   return result;
 }

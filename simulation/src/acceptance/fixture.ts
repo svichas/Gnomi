@@ -113,3 +113,16 @@ export function withBuyers(base: Fixture, count: number, goal: string): Fixture 
     personas: [...base.personas, ...Array.from({ length: count }, (_, slot) => person(buyers, audience, schema, slot, 50 + slot))],
   };
 }
+
+/** The generic-persona control (new_simulation.md §9): the same people and seeds with profile attributes and biography stripped to their segment's defaults. */
+export function generic(base: Fixture): Fixture {
+  const segments = new Map(base.project.audience!.segments.map((s) => [s.id, s]));
+  const middle = ([lo, hi]: [number, number]) => Math.round((lo + hi) / 2);
+  return { ...base, personas: base.personas.map((persona) => {
+    const segment = segments.get(persona.segment_id!)!;
+    return {
+      ...persona, attributes: {}, job_title: `${segment.name} team member`, industry: 'Business services', background: segment.description,
+      context_of_use: 'At work.', voice: 'Plain and brief.', tech_skill: middle(segment.tech_skill), patience: middle(segment.patience),
+    };
+  }) };
+}

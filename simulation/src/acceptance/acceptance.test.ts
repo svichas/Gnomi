@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { fixture, germanProbe, gym, subset } from './fixture.ts';
-import { assess, createAllowance, executionCriterion, observeAttempt, parseOptions, validateOptions } from './checks.ts';
+import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
+import { assess, createAllowance, defectScores, executionCriterion, observeAttempt, pairedDifference, parseOptions, t95, validateOptions } from './checks.ts';
+import { runEvaluation } from './run.ts';
 import type { LlmAttempt } from '../seams.ts';
+import type { ReportTheme } from '../types.ts';
 
 test('the frozen acceptance fixture is deterministic, has fifty people and a guaranteed German probe', () => {
   const first = fixture('http://localhost:4317');
@@ -102,4 +107,68 @@ test('run attempt callbacks precede shared allowance cancellation, and callback 
   assert.throws(() => observeAttempt(attempt(0.5), () => { throw new Error('observer failed'); }, failed, (value) => evidence.push(value)), /observer failed/);
   assert.equal(failed.spent(), 0.5);
   assert.equal(evidence.length, 1);
+});
+
+test('the t table gives the two-sided 95% quantiles, and the normal one above thirty degrees of freedom', () => {
+  assert.deepEqual([t95(1), t95(5), t95(30), t95(31)], [12.706, 2.571, 2.042, 1.96]);
+});
+
+test('the paired difference is the mean of per-replicate differences with a t interval, over pairs where both measured', () => {
+  // differences 1, 2, 3: mean 2, sample variance 1, half-width 4.303 × √(1/3)
+  const d = pairedDifference([2, 4, 6, 9], [1, 2, 3, null]);
+  assert.equal(d.n, 3);
+  assert.equal(d.mean, 2);
+  assert.ok(Math.abs(d.lower! - (2 - 4.303 / Math.sqrt(3))) < 1e-9 && Math.abs(d.upper! - (2 + 4.303 / Math.sqrt(3))) < 1e-9);
+  assert.deepEqual(pairedDifference([5], [3]), { n: 1, mean: 2, lower: null, upper: null }, 'one pair has no interval');
+  assert.deepEqual(pairedDifference([null], [3]), { n: 0, mean: null, lower: null, upper: null });
+});
+
+test('defect scores map themes to enabled web defects by the catalogue pages they reached; only confirmed or observed themes find one', () => {
+  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new]\n- id: D02\n  poi: web\n  pages: [dashboard, "jobs/:id"]\n- id: D03\n  poi: web\n  pages: [settings]\n- id: D28\n  poi: text\n  pages: [pricing]\n';
+  const theme = (rank: number, trust: ReportTheme['trust'], pages: string[]) => ({ rank, trust, pages }) as ReportTheme;
+  const themes = [theme(1, 'observed', ['localhost:1/jobs/new']), theme(2, 'reported', ['localhost:1/']), theme(3, 'confirmed', ['localhost:1/candidates'])];
+  assert.deepEqual(defectScores(themes, catalogue, ['D01', 'D02', 'D28']), { found: 1, defects: 2, recall: 0.5, matched: 2, top: 3, precision: 2 / 3 });
+  assert.deepEqual(defectScores([], catalogue, []), { found: 0, defects: 0, recall: null, matched: 0, top: 0, precision: null });
+});
+
+test('evaluate mode takes repeats and arms, always with the baseline', () => {
+  const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
+  assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 5);
+  assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
+  assert.throws(() => parseOptions(['--evaluate', '--arms', 'baseline,other']), /got other/);
+  assert.throws(() => parseOptions(['--evaluate', '--m4']), /one of/);
+});
+
+test('the generic persona keeps the person and seed but strips attributes and biography to the segment', () => {
+  const base = subset(fixture('http://localhost:4317'), 4);
+  const plain = generic(base);
+  const [before, after] = [base.personas[0], plain.personas[0]];
+  assert.deepEqual([after.id, after.seed, after.device, after.attributes], [before.id, before.seed, before.device, {}]);
+  assert.equal(after.background, base.project.audience!.segments[0].description);
+  assert.equal(after.patience, 3);
+});
+
+test('a scripted evaluation of two replicates and two arms writes matched results labelled unvalidated and inconclusive', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '2', '--arms', 'baseline,chronological_feed', '--personas', '4', '--out', out]));
+  assert.equal(result.error, null);
+  assert.equal(result.status, 'NOT_RUN');
+  assert.deepEqual(result.labels, { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' });
+  assert.ok(result.missing_benchmark.includes('human_reference_dataset'));
+  assert.equal(result.recorded_cost_usd, 0);
+  assert.deepEqual(result.replicates.map((r) => [r.seed - result.replicates[0].seed, Object.keys(r.arms)]), [[0, ['baseline', 'chronological_feed']], [1, ['baseline', 'chronological_feed']]]);
+  const outcomes = result.replicates[0].arms.baseline!.outcomes!;
+  assert.equal(outcomes.personas, 4);
+  assert.equal(outcomes.segments.reduce((sum, s) => sum + s.personas, 0), 4);
+  assert.equal(outcomes.defects.defects, 25);
+  assert.equal(typeof outcomes.segment_assortativity, 'number');
+  assert.equal(result.means.baseline.completion_rate.n, 2);
+  assert.deepEqual(Object.keys(result.differences), ['chronological_feed']);
+  assert.equal(result.differences.chronological_feed.llm_calls.n, 2);
+  assert.deepEqual(readdirSync(out).sort(), ['defects.yaml', 'fixture.json', 'manifest.json', 'price-table.ts', 'r1-baseline', 'r1-chronological_feed', 'r2-baseline', 'r2-chronological_feed', 'results.json', 'results.md']);
+  assert.equal(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).suite, 'evaluate');
+  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /NOT_VALIDATED[\s\S]*INCONCLUSIVE[\s\S]*human_reference_dataset/);
 });
