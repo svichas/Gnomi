@@ -7,7 +7,7 @@ import type { ProjectStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { EventType, GnomiEvent, Persona, RunConfig, RunStatus, SetupCall } from '../types.ts';
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const draftKey = (key: string) => createHash('sha256').update(key).digest('hex');
 
 // IF NOT EXISTS makes the schema idempotent: a crash mid-way is finished by the next open; a v1 file gains new tables.
@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS persona (
   segment_id TEXT,
   position INTEGER NOT NULL,
   profile_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS persona_generation (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  persona_count INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS persona_draft (
   cache_key TEXT PRIMARY KEY,
@@ -143,6 +147,11 @@ export function openProject(dir: string): ProjectStore {
     db.exec(SCHEMA);
     // Existing sessions retain no target binding; only a new recording can establish ownership.
     if (!db.prepare('PRAGMA table_info(session)').all().some((column) => column.name === 'target_id')) db.exec('ALTER TABLE session ADD COLUMN target_id TEXT');
+    if (user_version < 6) db.exec(`
+      INSERT OR IGNORE INTO persona_generation (id, persona_count)
+      SELECT 1, json_extract(config_json, '$.audience.persona_count') FROM project
+      WHERE json_extract(config_json, '$.audience.persona_count') IS NOT NULL AND EXISTS (SELECT 1 FROM persona);
+    `);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
   } catch (error) {
     db.exec('ROLLBACK');
@@ -302,11 +311,16 @@ export function openProject(dir: string): ProjectStore {
     listPersonas() {
       return (selectPersonas.all() as PersonaDbRow[]).map((row) => JSON.parse(row.profile_json) as Persona);
     },
-    replacePersonas(personas) {
+    getGeneratedPersonaCount() {
+      const row = db.prepare('SELECT persona_count FROM persona_generation WHERE id = 1').get();
+      return row ? Number(row.persona_count) : null;
+    },
+    replacePersonas(personas, personaCount) {
       db.exec('BEGIN');
       try {
         clearPersonas.run();
         personas.forEach((p, position) => insertPersona.run(p.id, p.segment_id, position, JSON.stringify(p)));
+        if (personaCount !== undefined) db.prepare('INSERT INTO persona_generation (id, persona_count) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET persona_count = excluded.persona_count').run(personaCount);
         db.exec('COMMIT');
       } catch (err) {
         db.exec('ROLLBACK');

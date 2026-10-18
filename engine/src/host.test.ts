@@ -337,6 +337,33 @@ test('save_project rejects invalid schemas without replacing the saved project',
   assert.deepEqual((await call('get_project', {})).project, config);
 });
 
+test('changing the persona count requires generation before a run, including after saving and reopening', async () => {
+  const countDir = join(dir, 'persona-count');
+  const config = project({}, { audience: audience([segment('seg-count', { share: 100, role: 'count-check' })], 3) });
+  await call('open_project', { dir: countDir });
+  await call('set_secret', { name: 'session_key', value: key });
+  await call('save_project', { project: config });
+  const original = await call('generate_personas', {});
+  await call('add_persona', { segment_id: 'seg-count' });
+  await assert.rejects(call('start_run', { reset: false }), /No login is recorded/, 'hand-added personas stay extra');
+  await call('remove_persona', { id: original.personas[0].id });
+  await assert.rejects(call('start_run', { reset: false }), /No login is recorded/, 'individual removals do not require regeneration');
+
+  for (const persona_count of [2, 4]) {
+    const changed = { ...config, audience: { ...config.audience!, persona_count } };
+    await call('save_project', { project: changed });
+    const before = (await call('get_project', {})).personas;
+    await call('open_project', { dir });
+    await call('open_project', { dir: countDir });
+    await assert.rejects(call('start_run', { reset: false }), /persona count.*changed.*generate personas again/i);
+    assert.deepEqual((await call('get_project', {})).personas, before, 'a refused run preserves the saved personas');
+    const generated = await call('generate_personas', {});
+    assert.equal(generated.personas.length, persona_count + 1, 'the hand-added persona remains extra');
+    await assert.rejects(call('start_run', { reset: false }), /No login is recorded/, 'generation clears the count check');
+  }
+  await call('open_project', { dir });
+});
+
 test('changed model profile inputs require refreshed biographies before starting any browser work', async () => {
   const config = project({}, { audience: audience([segment('seg-profile', { share: 100 })], 3), persona_schema: getPersonaSchema(), role: null });
   await call('save_project', { project: config });

@@ -22,7 +22,7 @@ The earlier writer generated four full biographies per persona, kept one, and ra
 
 ## Call flow
 
-The persona count accepts 1–200, including when the audience has several segments. Generation allocates exactly that count by segment share, preferring three per active segment when the total allows it and lowering that minimum for smaller runs. One persona goes to the largest segment (the first segment breaks equal-share ties). Personas added by hand remain extra. Reducing the count and clicking Generate personas keeps matching profiles without making new model calls for them.
+The persona count accepts 1–200, including when the audience has several segments. Generation allocates exactly that count by segment share, preferring three per active segment when the total allows it and lowering that minimum for smaller runs. One persona goes to the largest segment (the first segment breaks equal-share ties). Personas added by hand remain extra. Changing the count requires clicking Generate personas before reviewing or starting a run, including after saving or reopening the project. The count used for the last successful generation is saved with the population; individual edits, additions and removals do not change it. Reducing the count and clicking Generate personas keeps matching profiles without making new model calls for them.
 
 Traits and candidate selection remain seeded in code. Model calls use the project's `persona_writer` route:
 

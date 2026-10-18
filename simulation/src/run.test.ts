@@ -181,6 +181,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
     listSessions: () => [],
     putSession: () => {},
     listPersonas: () => [],
+    getGeneratedPersonaCount: () => null,
     replacePersonas: () => {},
     putPersona: () => {},
     deletePersona: () => {},

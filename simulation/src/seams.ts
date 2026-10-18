@@ -44,8 +44,10 @@ export interface ProjectStore {
   putSession(info: SessionInfo): void;
   /** The current editable population, in segment then slot order. Runs freeze a copy in their snapshot. */
   listPersonas(): Persona[];
-  /** Swaps the whole population in one transaction. */
-  replacePersonas(personas: Persona[]): void;
+  /** Count setting used by the last successful population generation. Individual edits do not change it. */
+  getGeneratedPersonaCount(): number | null;
+  /** Swaps the whole population and, when supplied, its generated count in one transaction. */
+  replacePersonas(personas: Persona[], personaCount?: number): void;
   /** Insert or replace by id. */
   putPersona(persona: Persona): void;
   deletePersona(id: string): void;

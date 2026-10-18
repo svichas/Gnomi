@@ -24,6 +24,7 @@ export interface ProjectInfo {
   project: ProjectConfig | null;
   persona: Persona; // the built-in persona, used when the project has no audience
   personas: Persona[]; // the current population, empty until personas are generated
+  generated_persona_count?: number | null; // count setting used by the last successful population generation
   diversity: DiversityReport | null; // of the current population
   runs: RunRow[];
   sessions: SessionInfo[];

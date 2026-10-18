@@ -451,6 +451,8 @@ Edges, each with `weight`, `first_seq`, `last_seq` and `round` so the scrubber c
 
 The renderer keeps a Graphology graph in memory and applies edge and node deltas batched every 250 ms; layout runs in a web worker (ForceAtlas2) with POI nodes pinned on a ring so two runs of the same project look alike.
 
+The simulation map opens with all connection types visible and offers All activity, Friction, and Social views. A separate event projection shows the latest recorded moment for up to six people in the selected round: thoughts, friction with severity, posts, replies, reactions, opinion updates, and outcomes. Earlier rounds supply post authors but never future moments. Reply/reaction arrows point from the actor to the original post's author; missing authors and self-replies create no arrow. The underlying `talked` connection remains an undirected aggregate. Clicking a bubble or moment opens the persona inspector at that event. Bubbles follow pan, zoom, and layout, avoid labels in small audiences, and can be hidden; moments without room on the canvas remain in the keyboard-accessible list. Focusing a person or product area narrows both connections and moments.
+
 ## 6. Agent design
 
 ### 6.1 One persona, one agent, one prompt layout

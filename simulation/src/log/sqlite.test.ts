@@ -8,7 +8,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { buildReport } from '../report/build.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { NewEvent, Persona, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
+import type { Audience, NewEvent, Persona, ProjectConfig, RunConfig, SessionInfo } from '../types.ts';
 import { openProject } from './sqlite.ts';
 
 const project: ProjectConfig = {
@@ -125,7 +125,7 @@ test('reopening keeps the project, the population, runs and events', (t) => {
   const raw = new DatabaseSync(join(dir, 'project.sqlite'));
   assert.equal(raw.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
   raw.close();
-  assert.equal(userVersion(dir), 5);
+  assert.equal(userVersion(dir), 6);
 });
 
 test('profile schemas and typed persona values survive reopening without rewriting legacy records', (t) => {
@@ -164,7 +164,7 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.events(run), [appended]);
   upgraded.close();
-  assert.equal(userVersion(dir), 5);
+  assert.equal(userVersion(dir), 6);
 });
 
 test('a v2 project upgrades on open with an empty population', (t) => {
@@ -181,7 +181,7 @@ test('a v2 project upgrades on open with an empty population', (t) => {
   assert.deepEqual(upgraded.listPersonas(), []);
   assert.deepEqual(upgraded.listSessions(), [sessionInfo('recruiter')]);
   upgraded.close();
-  assert.equal(userVersion(dir), 5);
+  assert.equal(userVersion(dir), 6);
 });
 
 test('a v4 session table gains target ownership without rebinding legacy logins', (t) => {
@@ -201,7 +201,7 @@ test('a v4 session table gains target ownership without rebinding legacy logins'
   assert.equal(reopened.listSessions().find((session) => session.role === 'tool-b')?.target_id, 'target-b');
   assert.equal(reopened.listSessions().find((session) => session.role === 'recruiter')?.target_id, undefined);
   reopened.close();
-  assert.equal(userVersion(dir), 5);
+  assert.equal(userVersion(dir), 6);
 });
 
 test('a project saved before M1, M2 or M5 reads back with the defaults and its one POI as the list', (t) => {
@@ -278,6 +278,41 @@ test('replacing the population is all or nothing', (t) => {
   assert.throws(() => store.replacePersonas([personaOf('p-2-01', 'seg-b'), personaOf('p-2-01', 'seg-b')]), /UNIQUE constraint/);
   assert.deepEqual(store.listPersonas(), [kept]);
   store.close();
+});
+
+test('the generated persona count survives individual edits, saves and reopening, and changes atomically with generation', (t) => {
+  const dir = tempDir(t);
+  let store = openProject(dir);
+  const [a, b] = [personaOf('p-1-01'), personaOf('p-1-02')];
+  assert.equal(store.getGeneratedPersonaCount(), null);
+  store.replacePersonas([a, b], 2);
+  store.deletePersona(b.id);
+  store.putPersona({ ...a, name: 'Edited' });
+  store.saveProject(project);
+  store.close();
+  store = openProject(dir);
+  assert.equal(store.getGeneratedPersonaCount(), 2);
+  assert.throws(() => store.replacePersonas([a, a], 3), /UNIQUE constraint/);
+  assert.equal(store.getGeneratedPersonaCount(), 2, 'a failed population save preserves the last successful count');
+  store.replacePersonas([a], 1);
+  assert.equal(store.getGeneratedPersonaCount(), 1);
+  store.close();
+});
+
+test('legacy populations adopt their saved count without restoring individually removed personas', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  const audience: Audience = { seed: 1, persona_count: 2, segments: [], company_size: [1, 10], languages: { en: 1 }, accessibility: { none: 1, low_vision: 0, colour_blind: 0, motor: 0, screen_reader: 0 } };
+  store.saveProject({ ...project, audience });
+  store.replacePersonas([personaOf('p-1-01')]);
+  store.close();
+  const legacy = new DatabaseSync(join(dir, 'project.sqlite'));
+  legacy.exec('DROP TABLE persona_generation; PRAGMA user_version = 5;');
+  legacy.close();
+  const reopened = openProject(dir);
+  assert.equal(reopened.getGeneratedPersonaCount(), 2);
+  assert.equal(reopened.listPersonas().length, 1);
+  reopened.close();
 });
 
 test('sessions upsert by role and list in role order', (t) => {

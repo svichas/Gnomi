@@ -75,7 +75,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const [filters, setFilters] = useState<Filters>({ persona: '', segment: '', category: '' });
   const [inspecting, setInspecting] = useState<{ persona: string; seq: number | null } | null>(null);
   const closeInspector = useCallback(() => setInspecting(null), []);
-  const openPersona = useCallback((id: string) => setInspecting({ persona: id, seq: null }), []);
+  const openPersona = useCallback((id: string, seq?: number) => setInspecting({ persona: id, seq: seq ?? null }), []);
   const [view, setView] = useState<'activity' | 'report'>('activity');
   const openedReport = useRef(false);
 

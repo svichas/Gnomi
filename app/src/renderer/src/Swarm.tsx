@@ -13,6 +13,9 @@ import { Button, Check } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { connectionMatches, summarizeConnections } from './swarm-view.ts';
 import type { GraphFilter } from './swarm-view.ts';
+import { roundMoments, selectMoments } from './swarm-moments.ts';
+import type { MomentView } from './swarm-moments.ts';
+import { MomentBubbles, MomentList } from './SwarmMoments.tsx';
 import './swarm.css';
 
 // Colours from docs/brand.md §5: the categorical sequence for segments, Ink for POIs, status colours for edge meaning.
@@ -21,14 +24,14 @@ const NO_SEGMENT = '#686D65';
 const POI_COLOR = '#222823';
 const EDGES: Record<EdgeType, { label: string; color: string; description: string }> = {
   used: { label: 'Product use', color: '#87917D99', description: 'A person interacted with a product area' },
-  talked: { label: 'Conversations', color: '#686D6577', description: 'People replied or reacted to one another' },
+  talked: { label: 'Conversations', color: '#417F7888', description: 'People replied or reacted to one another' },
   influenced: { label: 'Opinion shifts', color: '#496D85', description: 'A conversation contributed to a change of opinion' },
   friction: { label: 'Friction', color: '#AA5147', description: 'A person reported difficulty with a product area' },
 };
 const BATCH_MS = 250; // tech.md §5.5: the live graph is patched at most four times a second
 const SETTLE_MS = 4000; // the layout stops this long after the last change
 const SMALL_GRAPH_LIMIT = 24;
-const DEFAULT_CONNECTIONS: EdgeType[] = ['used', 'friction'];
+const DEFAULT_CONNECTIONS: EdgeType[] = [...EDGE_TYPES];
 
 const segmentColor = (segments: Segment[], id: string | null) => {
   const index = segments.findIndex((segment) => segment.id === id);
@@ -116,6 +119,14 @@ function Interaction({ onOpen, onHover, onFocus }: { onOpen(personaId: string): 
       leaveNode: () => onHover(null),
     });
   }, [sigma, register, onOpen, onHover, onFocus]);
+  useEffect(() => {
+    const resize = new ResizeObserver(([entry]) => {
+      const padding = entry.contentRect.width < 480 ? 64 : 88;
+      if (sigma.getSetting('stagePadding') !== padding) sigma.setSetting('stagePadding', padding);
+    });
+    resize.observe(sigma.getContainer());
+    return () => resize.disconnect();
+  }, [sigma]);
   return null;
 }
 
@@ -143,7 +154,7 @@ function NodeCard({ node, segments }: { node: SwarmNode; segments: Segment[] }) 
 }
 
 /** An event-backed map of product use, friction, and social influence. */
-export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: GnomiEvent[]; segments: Segment[]; expectedPersonas?: number; onOpen(personaId: string): void }) {
+export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: GnomiEvent[]; segments: Segment[]; expectedPersonas?: number; onOpen(personaId: string, seq?: number): void }) {
   const [graph] = useState(() => new Graph({ multi: true, type: 'mixed' }));
   const [scrub, setScrub] = useState<number | null>(null); // null follows the run as it happens
   const [types, setTypes] = useState<Set<EdgeType>>(() => new Set(DEFAULT_CONNECTIONS));
@@ -151,6 +162,8 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   const [focus, setFocus] = useState<string | null>(null);
   const [moving, setMoving] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [momentView, setMomentView] = useState<MomentView>('all');
+  const [bubbles, setBubbles] = useState(true);
   const [shown, setShown] = useState<SwarmGraph>(emptyGraph); // what is drawn, for the counts and the hover card
   const latest = useRef(events);
   latest.current = events;
@@ -222,13 +235,15 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   }, [graph, scrub, segments]);
 
   const summary = useMemo(() => summarizeConnections(shown.edges.values(), filter), [shown, filter]);
+  const moments = useMemo(() => roundMoments(events, round, shown.last_seq), [events, round, shown.last_seq]);
+  const highlights = useMemo(() => selectMoments(moments, momentView, focus), [moments, momentView, focus]);
   const viewRef = useRef({ focus, connectedNodes: summary.connectedNodes, nodeCount: shown.nodes.size });
   viewRef.current = { focus, connectedNodes: summary.connectedNodes, nodeCount: shown.nodes.size };
 
   // Filters are a style over the edges, not graph data: sigma 4 cannot repaint attribute changes on edges it has not indexed yet.
   const sigma = useRef<Sigma | null>(null);
   const [options] = useState(() => ({
-    settings: { itemSizesReference: 'screen' as const, labelRenderedSizeThreshold: 9, stagePadding: 64, minCameraRatio: 0.15, maxCameraRatio: 4 },
+    settings: { itemSizesReference: 'screen' as const, labelRenderedSizeThreshold: 9, stagePadding: 88, minCameraRatio: 0.15, maxCameraRatio: 4 },
     styles: {
       nodes: [DEFAULT_STYLES.nodes, {
         cursor: 'pointer',
@@ -259,13 +274,18 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   const personas = nodes.filter((node) => node.kind === 'persona').length;
   const hoveredNode = hovered ? shown.nodes.get(hovered) : undefined;
   const focusedNode = focus ? shown.nodes.get(focus) : undefined;
-  const filtered = types.size !== DEFAULT_CONNECTIONS.length || DEFAULT_CONNECTIONS.some((type) => !types.has(type)) || onlyRound || focus !== null;
-  const resetFilters = () => { setTypes(new Set(DEFAULT_CONNECTIONS)); setOnlyRound(false); setFocus(null); };
+  const filtered = types.size !== DEFAULT_CONNECTIONS.length || DEFAULT_CONNECTIONS.some((type) => !types.has(type)) || onlyRound || focus !== null || momentView !== 'all';
+  const resetFilters = () => { setTypes(new Set(DEFAULT_CONNECTIONS)); setOnlyRound(false); setFocus(null); setMomentView('all'); };
+  const name = (id: string) => shown.nodes.get(`persona:${id}`)?.label ?? id;
+  const changeMomentView = (view: MomentView) => {
+    setMomentView(view);
+    setTypes(new Set(view === 'social' ? ['talked', 'influenced'] : view === 'friction' ? ['friction'] : DEFAULT_CONNECTIONS));
+  };
 
   return (
       <section aria-label="Swarm graph" className="swarm-panel">
         <div className="swarm-heading">
-          <div><h2>Simulation map</h2><p>See where people explore, encounter friction, and influence each other.</p></div>
+          <div><h2>Simulation map</h2><p>A closer look at what people think, where they struggle, and who they talk to.</p></div>
           <span className="swarm-round-badge">{scrub === null ? 'Latest' : 'History'} · Round {round}</span>
         </div>
         <div className="swarm-toolbar">
@@ -276,15 +296,27 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
             <Icon name={moving ? 'check' : 'play'} size={14} />{moving ? 'Freeze layout' : 'Resume layout'}
           </Button>}
         </div>
+        <div className="swarm-viewbar">
+          <div className="swarm-view-switch" role="group" aria-label="Map activity view">
+            {([['all', 'All activity', 'activity'], ['friction', 'Friction', 'alert'], ['social', 'Social', 'message']] as const).map(([view, label, icon]) => <button key={view} aria-pressed={momentView === view} onClick={() => changeMomentView(view)}><Icon name={icon} size={14} />{label}</button>)}
+          </div>
+          <Check checked={bubbles} onChange={setBubbles}>Show bubbles</Check>
+        </div>
         <div className="swarm-canvas" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
           <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
             <Interaction onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
+            {bubbles && <MomentBubbles moments={highlights} name={name} onOpen={onOpen} showConversations={types.has('talked')} />}
             <ControlsContainer position="bottom-right">
               <ZoomControl labels={{ zoomIn: 'Zoom in', zoomOut: 'Zoom out', reset: 'Fit the whole graph' }} />
             </ControlsContainer>
           </SigmaContainer>
           {hoveredNode && <NodeCard node={hoveredNode} segments={segments} />}
           {shown.nodes.size === 0 && <div className="swarm-empty"><Icon name="people" size={28} /><strong>Your simulation map is taking shape</strong><p>{expectedPersonas ? `${expectedPersonas} simulated ${expectedPersonas === 1 ? 'person' : 'people'} will appear as they join.` : 'People and product areas appear as the simulation starts.'}</p></div>}
+          {shown.nodes.size > 0 && <div className="swarm-canvas-caption"><span />{momentView === 'social' ? 'Arrows show who replied or reacted to whom' : 'Each bubble is a recorded persona moment'}</div>}
+        </div>
+        <div className="swarm-moments">
+          <div className="swarm-moments-heading"><h3>{momentView === 'social' ? 'Who’s talking to whom' : momentView === 'friction' ? 'Where people struggle' : 'Thoughts & reactions'}</h3><span>Round {round} · {highlights.length ? `${highlights.length} recent moments` : 'No moments yet'}</span></div>
+          {highlights.length ? <MomentList moments={highlights} name={name} onOpen={onOpen} /> : <p className="swarm-moments-empty">{momentView === 'social' ? 'No social moments in this round and focus. Replies and reactions appear here when people interact.' : momentView === 'friction' ? 'No friction reported in this round and focus.' : 'Thoughts, friction, and conversations will appear as people take part in this round.'}</p>}
         </div>
         <div className="swarm-legend">
           <span>People by segment</span>
@@ -318,7 +350,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
                 </label>
               ))}
             </div>
-            <p className="swarm-filter-help">Product use and friction are shown first. Enable Conversations and Opinion shifts to explore social connections.</p>
+            <p className="swarm-filter-help">Lines show accumulated connections. Bubbles and moments show activity from the selected round; arrows point from the speaker to the person they replied or reacted to.</p>
           </fieldset>
           {filtered && summary.visible === 0 && shown.edges.size > 0 && <p className="swarm-filter-empty">No connections match this view. Choose another person, round, or connection type.</p>}
         </div>

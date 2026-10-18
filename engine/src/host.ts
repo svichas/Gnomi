@@ -195,6 +195,7 @@ function readInfo(store: ProjectStore, unlocked: boolean): ProjectInfo {
     project: config,
     persona: BUILTIN_PERSONA,
     personas,
+    generated_persona_count: store.getGeneratedPersonaCount(),
     diversity: personas.length ? diversityReport(personas) : null,
     runs: store.listRuns(),
     sessions: unlocked ? store.listSessions() : [],
@@ -317,7 +318,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const { config, audience } = withAudience();
     const progress = (value: PersonaProgress) => broadcast({ kind: 'progress', task: 'generate_personas', ...value });
     const { personas, cost_usd } = await syncPersonas(audience, current().store.listPersonas(), writer(config, progress));
-    current().store.replacePersonas(personas);
+    current().store.replacePersonas(personas, audience.persona_count);
     current().store.clearPersonaDrafts();
     return { personas, diversity: diversityReport(personas), cost_usd };
   }),
@@ -365,6 +366,8 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
     const personas = population(config);
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
+    const generatedCount = store.getGeneratedPersonaCount();
+    if (config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
     if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
     if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
     if (config.audience && personas.some((person) =>

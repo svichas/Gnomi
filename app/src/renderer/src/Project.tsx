@@ -26,7 +26,7 @@ export function Project(props: {
   const set = <K extends keyof Form>(key: K, value: Form[K]) => onForm((was) => ({ ...was, [key]: value }));
   const { busy, outcome, run } = useAction();
   const sessions = info?.sessions ?? [];
-  const needsPersonas = audience !== null && !info?.personas.length;
+  const needsPersonas = audience !== null && (!info?.personas.length || audience.persona_count !== (info.generated_persona_count ?? info.project?.audience?.persona_count));
 
   const saveFirst = async () => {
     const saved = await save();

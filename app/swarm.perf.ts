@@ -52,11 +52,9 @@ try {
   await graph.getByText(/^200 personas, 10 points of interest/).waitFor();
   assert.equal(await graph.getByRole('checkbox', { name: /^Product use/ }).isChecked(), true);
   assert.equal(await graph.getByRole('checkbox', { name: /^Friction/ }).isChecked(), true);
-  assert.equal(await graph.getByRole('checkbox', { name: /^Conversations/ }).isChecked(), false);
-  assert.equal(await graph.getByRole('checkbox', { name: /^Opinion shifts/ }).isChecked(), false);
-  // Measure every edge; the default overview deliberately starts with product use and friction.
-  await graph.getByRole('checkbox', { name: /^Conversations/ }).check();
-  await graph.getByRole('checkbox', { name: /^Opinion shifts/ }).check();
+  assert.equal(await graph.getByRole('checkbox', { name: /^Conversations/ }).isChecked(), true);
+  assert.equal(await graph.getByRole('checkbox', { name: /^Opinion shifts/ }).isChecked(), true);
+  // Measure all connections and the bounded moment overlay together.
   await graph.locator('.sigma-container').scrollIntoViewIfNeeded();
 
   // Stand in for the engine's port and stream the remaining rounds as the engine would: frames of 100 events every 100 ms.
@@ -107,8 +105,9 @@ try {
   await graph.getByText(summary).waitFor();
   console.log(`swarm frame rate: ${result.fps.toFixed(1)} fps (${result.renders.toFixed(1)} graph renders/s) over ${result.seconds.toFixed(1)} s of panning and zooming with ${live.length} live events; p95 frame ${result.p95_ms.toFixed(1)} ms, worst ${result.worst_ms.toFixed(1)} ms; ${summary}`);
   await page.waitForTimeout(4500); // let the layout settle for the screenshots
+  await graph.getByRole('button', { name: 'Social', exact: true }).click();
   await graph.getByRole('button', { name: 'Reset view', exact: true }).click();
-  assert.equal(await graph.getByRole('checkbox', { name: /^Conversations/ }).isChecked(), false);
+  assert.equal(await graph.getByRole('checkbox', { name: /^Conversations/ }).isChecked(), true);
   await graph.getByRole('button', { name: 'Fit the whole graph' }).click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shots, 'swarm-200.png') });

@@ -103,6 +103,7 @@ export function Review(props: {
     issues.push({ text: problemFor(config, screen), blocking: true, action: fix(screen, { project: 'Fix in Setup', audience: 'Fix in Audience', settings: 'Fix in Settings' }[screen]) });
   }
   if (saved?.audience && personas.length === 0) issues.push({ text: 'Your audience has no personas yet. Generate them before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
+  if (saved?.audience && personas.length > 0 && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count)) issues.push({ text: 'The persona count has changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
   for (const role of roles) {
     const login = logins[role];
     if (login === 'checking' || login === undefined || login.ok) continue;
