@@ -1,6 +1,24 @@
 # Persona generation
 
-Updated 2026-10-16. The earlier writer generated four full biographies per persona, kept one, and ran six requests at a time. Duplicate names triggered another complete write in a serial pass after the progress counter reached 100%. DeepSeek requests did not specify thinking mode, allowing the provider's high-thinking default. Setup requests had no durable per-call diagnostics.
+Updated 2026-10-18.
+
+## How simulated users are made
+
+Gnomi creates fictional profiles from audience assumptions supplied or approved by the team. It does not recruit participants, copy actual customers, or establish that the generated population represents real users.
+
+1. **Define the audience.** Enter segments and their shares, or review the model's optional suggestions. Configure traits such as language, device, patience and access needs, along with the product description and task. Defaults and model suggestions are assumptions until checked against research or audience data.
+2. **Sample traits in code.** Gnomi allocates the requested population across segments and samples each profile's enabled traits from configured distributions using saved seeds. Segment shares control allocation; they do not prove that those shares match the market.
+3. **Write candidate profiles.** The configured `persona_writer` model receives the product, segment, task and sampled traits. It proposes four short fictional candidates with identities, contexts, goal interpretations, voices and selection weights. Those model-generated weights are not measured probabilities of real people existing.
+4. **Select and expand.** Seeded code chooses a candidate using those weights, excluding already-used names where possible. A second model call expands only the chosen biography; the sampled traits remain fixed. Name repair handles collisions.
+5. **Review before running.** Inspect the profiles and diversity report, then edit, regenerate, add or remove personas. A diversity check detects similarities in generated profiles; it does not validate their behaviour against people.
+
+The resulting profile conditions an agent's actions and generated comments during a run. A seed makes code-level sampling repeatable for the same inputs; fresh model responses may still differ. Reusing saved personas preserves their profiles, but neither that nor a seed guarantees identical behaviour in later runs.
+
+Generated biographies, quotes, opinions and findings remain synthetic. Use them to formulate questions for real participants, not as participant testimony or evidence of customer needs. See [Interpreting simulations](interpreting-simulations.md) for report terminology and validation.
+
+## Writer implementation history
+
+The earlier writer generated four full biographies per persona, kept one, and ran six requests at a time. Duplicate names triggered another complete write in a serial pass after the progress counter reached 100%. DeepSeek requests did not specify thinking mode, allowing the provider's high-thinking default. Setup requests had no durable per-call diagnostics.
 
 ## Call flow
 
@@ -15,7 +33,7 @@ Traits and candidate selection remain seeded in code. Model calls use the projec
 | Name repair, when needed | `rename_persona` | One per clashed slot | Four names only |
 | Selected biography | `expand_persona` | 50 | One 150–200 word biography for the sampled candidate |
 
-The ordinary generation path now makes 100 shorter calls. It avoids writing three discarded full biographies, at the cost of an extra request and repeated input context per persona. The stages overlap: each persona's biography starts as soon as its sketch is in and every earlier slot holds its name, so the first persona is written after about one sketch and one biography instead of after all 50 sketches. Names still settle in slot order, so the same seed gives the same population. Biographies and renames take a free request slot before the next sketch does. A clashed slot is renamed with every name settled so far excluded, so compliant suggestions always give it a fresh name. Noncompliant suggestions can still produce a duplicate, which the existing diversity report flags.
+The ordinary generation path now makes 100 shorter calls. It avoids writing three discarded full biographies, at the cost of an extra request and repeated input context per persona. The stages overlap: each persona's biography starts as soon as its sketch is in and every earlier slot holds its name, so the first persona is written after about one sketch and one biography instead of after all 50 sketches. Names settle in slot order, making selection repeatable for the same seed and candidate responses. Biographies and renames take a free request slot before the next sketch does. A clashed slot is renamed with every name settled so far excluded, so compliant suggestions always give it a fresh name. Noncompliant suggestions can still produce a duplicate, which the existing diversity report flags.
 
 DeepSeek persona writing explicitly disables thinking. Other providers use low effort (or no reasoning where the existing OpenAI model capability check allows it). Other DeepSeek roles explicitly request their configured low/high effort. No models or provider routes are changed. See the [DeepSeek thinking-mode documentation](https://api-docs.deepseek.com/guides/thinking_mode/).
 

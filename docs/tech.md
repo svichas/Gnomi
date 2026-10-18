@@ -643,6 +643,8 @@ Segment eligibility: each POI lists which segments engage with it (default: all 
 
 ## 8. Friction detection and report generation
 
+**Interpretation boundary.** Findings are hypotheses, not evidence about real users. The existing `evidence` fields hold simulation records: actions, screenshots, errors and generated comments. Trust labels describe corroboration inside a run. “Confirmed” does not mean human-validated, and multiple agents can share model bias or repeat the same social post. Counts, sentiment, Wilson intervals and `strong`/`some`/`single` labels are internal ranking signals, not estimates or calibrated confidence for a real population. See [Interpreting simulations](interpreting-simulations.md).
+
 ### 8.1 Two sources, combined
 
 **Self-reports** come from the `friction` field on any step, from `abandon` reasons and from the end-of-episode survey. They capture confusion the persona is aware of and can articulate.
@@ -750,7 +752,7 @@ One module in the engine wraps the Vercel AI SDK: `call(role, prompt, schema, op
 
 ### 10.2 Model routing
 
-Persona generation uses a separate concurrency setting (default 12, range 1–32), bounded requests, saved stage checkpoints, and setup-call diagnostics. See [persona generation](persona-generation.md) for the call flow, recovery behavior and measured tradeoffs.
+Persona generation uses a separate concurrency setting (default 32 for new projects; older projects retain their saved value; range 1–32), bounded requests, saved stage checkpoints, and setup-call diagnostics. See [persona generation](persona-generation.md) for the call flow, recovery behavior and measured tradeoffs.
 
 | Role | Used for | Calls in a default run (50 personas) | Default on Anthropic | Default on OpenAI | Default on Google | Default on DeepSeek | Local option |
 |---|---|---|---|---|---|---|---|

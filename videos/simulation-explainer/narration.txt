@@ -1,0 +1,23 @@
+How does a simulated experience become a useful finding? Inside Gnomi, a product experiment becomes a sequence you can inspect: what each persona saw, did, and heard.
+
+Start by defining the experiment. Freeze the question, population, product version, outcomes, and limits. For an A/B comparison, use matched populations and networks, with separate mutable state in each world.
+
+The population is synthetic. Each persona brings goals, familiarity, constraints, and prior experience. A directed network defines who follows whom. These are explicit modeling assumptions; adding more personas does not remove shared model bias.
+
+The simulation lives in its own runtime. The app presents controls and results. The engine handles authoring and imports. Adapters connect the runtime to browsers, model providers, and storage, so the same core can run headlessly.
+
+Execution moves through logical rounds. First, personas experience the product. Each step combines permitted observations with that persona's own memory. Models propose behavior; code checks valid actions and records evidence. Independent personas can work concurrently.
+
+Next, freeze the social snapshot and select who reads which posts. Everyone sees only their permitted feed. A quiet reader can still update an opinion. Forming a first opinion is recorded separately from changing an existing one.
+
+Model requests may finish in any order. Validated decisions are applied in stable logical order. This keeps a fast API response from deciding whose post appears newest. Then the next round starts from the updated state.
+
+Evidence keeps experience separate from echo. A persona may discover a problem firsthand, or report it after hearing someone else. Both remain visible. Firsthand counts drive finding rankings, while observed or confirmed browser evidence is retained.
+
+The design distinguishes three kinds of repeatability. Event replay rebuilds from saved events. Recorded-input execution checks that scheduling changes preserve outcomes. Fresh replicates make new requests, so outputs can vary. The dedicated run store and recovery protocol are planned work.
+
+Efficiency comes from assigning work carefully. Code handles selection, accounting, validation, and metrics. Models handle language and behavioral proposals. Budgets, retries, and model settings must stay visible. Any claimed speedup needs a measured comparison that also checks behavioral quality.
+
+Evaluation compares whole runs. Match A and B within each replicate, then compare differences across independent pairs. Test social on versus off, ranking versus chronological feeds, and alternative networks. Connected personas are not independent human observations.
+
+The runtime, corrected social rules, and evaluation harness are implemented on the simulation branch. Human behavioral validation has not been done. Gnomi turns synthetic experiences into traceable hypotheses, helping teams decide what to investigate with real people.

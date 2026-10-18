@@ -16,7 +16,7 @@ body {
   background: var(--paper); color: var(--ink);
   font: 400 11.5px/1.5 'Inter', -apple-system, sans-serif;
   font-feature-settings: 'tnum' 1, 'cv11' 1;
-  padding: 26px 40px 22px; display: flex; flex-direction: column; gap: 14px;
+  padding: 26px 40px 22px; display: flex; flex-direction: column; gap: 9px;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 h1 { font-size: 40px; line-height: 1.06; font-weight: 500; letter-spacing: -0.03em; }
@@ -29,12 +29,12 @@ header { display: flex; justify-content: space-between; align-items: center; }
 header img { width: 118px; display: block; }
 
 .hero { display: grid; grid-template-columns: 1fr 318px; gap: 26px; align-items: start; }
-.lede { font-size: 13.5px; line-height: 1.55; margin-top: 12px; max-width: 370px; }
+.lede { font-size: 13px; line-height: 1.5; margin-top: 12px; max-width: 370px; }
 .lede strong { font-weight: 550; }
 
 .card { background: var(--white); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
 .finding h3 { font-size: 13px; line-height: 1.35; font-weight: 550; margin: 4px 0 6px; }
-.trust { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 550; color: var(--success); }
+.trust { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 550; color: var(--olive); }
 .quote { border-left: 2px solid var(--olive); padding-left: 10px; margin: 7px 0; }
 .quote p:first-child { font-size: 11.5px; font-style: italic; }
 .suggest { background: var(--sage); border-radius: 8px; padding: 6px 10px; font-size: 10.5px; }
@@ -46,7 +46,7 @@ header img { width: 118px; display: block; }
 
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .chart { padding: 12px 16px 10px; display: flex; flex-direction: column; gap: 6px; }
-.chart svg { display: block; width: 100%; }
+.chart svg { display: block; width: 100%; height: 156px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
 th { font-size: 10px; font-weight: 550; text-align: center; padding: 6px 4px; color: var(--stone); }
@@ -78,14 +78,13 @@ footer { margin-top: auto; display: flex; justify-content: space-between; gap: 2
 <section class="hero">
   <div>
     <h1>Perspective before<br>you ship.</h1>
-    <p class="lede">Gnomi fills your staging app with <strong>simulated users who match your real audience</strong>, with their own languages, devices and access needs. They try to get a job done, hit friction and <strong>talk about it with each other</strong>. You get ranked frictions with evidence, and a view of how opinions spread.</p>
+    <p class="lede">Gnomi fills your staging app with <strong>fictional personas based on your audience settings</strong>, with their own languages, devices and access needs. They try to get a job done, hit friction and <strong>talk about it with each other</strong>. You get ranked friction hypotheses with simulation records, and a view of how generated opinions spread.</p>
   </div>
   <div class="card finding">
-    <div class="label">From a Gnomi report</div>
+    <div class="label">Hypothesis from a simulated run</div>
     <h3>Hiring manager field needs an exact username and offers no suggestions</h3>
     <span class="trust">
-      <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.5" fill="#34704f"/><path d="M3.4 6.2l1.8 1.8 3.4-3.6" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Confirmed: self-report backed by a validation error
+      Within-run: generated complaint + validation error
     </span>
     <div class="quote">
       <p>„Keine Liste, kein Vorschlag – ich tippe einfach einen Namen ein und schaue, ob es klappt.“</p>
@@ -109,10 +108,10 @@ footer { margin-top: auto; display: flex; justify-content: space-between; gap: 2
     <span class="small">Other methods: typical ranges including recruiting, not measurements. Gnomi: measured runs of 4–8 simulated users.</span>
   </div>
   <div class="card chart">
-    <h2>See how opinions form</h2>
+    <h2>See how simulated opinions form</h2>
     <span class="small" style="margin-top:-4px">“Assigning a hiring manager who has no account yet threw away my whole job draft. Has anyone else lost a job post this way?”</span>
     <svg id="spread" viewBox="0 0 320 166" role="img" aria-label="One complaint from a recruiter reached all 7 other simulated users: 2 repeated it and 1 changed their opinion"></svg>
-    <span class="small">A live run with 8 simulated users. A second run gave the same reach, with 4 repeats and 2 changed minds.</span>
+    <span class="small">A live run with 8 simulated users; a second had the same reach, 4 repeats and 2 changed opinions. This is not a prediction of human word of mouth.</span>
   </div>
 </section>
 
@@ -125,16 +124,16 @@ footer { margin-top: auto; display: flex; justify-content: space-between; gap: 2
 </section>
 
 <section class="steps">
-  <div class="step"><b><i>1</i>Describe your audience</b><span>Segments, countries, languages, devices and access needs. Gnomi samples the people.</span></div>
+  <div class="step"><b><i>1</i>Describe your audience</b><span>Set segments and shares. Code samples traits by seed; a model proposes four profiles. One is selected and expanded. Review and edit.</span></div>
   <div class="step"><b><i>2</i>Point it at staging</b><span>Record a login once. Gnomi visits only the hosts you allow.</span></div>
   <div class="step"><b><i>3</i>Watch the swarm</b><span>A live graph of who used what, who talked to whom and who changed whose mind.</span></div>
-  <div class="step"><b><i>4</i>Share the report</b><span>Frictions ranked by segment, with evidence. Export to HTML, PDF or Markdown.</span></div>
+  <div class="step"><b><i>4</i>Share the report</b><span>Hypotheses ranked by simulated segment, with logs and generated quotes. Test key items with real people.</span></div>
 </section>
 
 <footer>
   <div class="small" style="max-width:530px">
     Runs on your machine with your own model keys; model inputs go only to the provider you configure. Today: web apps on staging. Next: prototypes, design frames, copy and run comparison.
-    Findings come from simulated users: treat them as hypotheses and validate key decisions with real people. Figures measured on Gnomi’s test app, 16 Oct 2026.
+    Simulated findings are hypotheses, not evidence about real users. Profiles encode audience assumptions; logs record agent actions; quotes are generated. Validate with real people. Figures measured on Gnomi’s test app, 16 Oct 2026.
   </div>
   <div class="cta">Know what to test next.</div>
 </footer>
@@ -228,12 +227,11 @@ function el(parent, tag, attrs, text) {
 // Capability matrix: 2 = yes, 1 = partly, 0 = no. Columns: moderated, unmoderated, internal, Gnomi.
 (() => {
   const rows = [
-    ['Explains why people get stuck', [2, 1, 1, 2], 'reasoning and quotes'],
-    ['Shows how opinions spread between users', [0, 0, 0, 2], 'posts, replies, changed minds'],
+    ['Offers explanations of friction', [2, 1, 1, 2], 'Gnomi comments are generated'],
+    ['Explores opinion spread', [0, 0, 0, 2], 'simulated posts and opinions in Gnomi'],
     ['Feedback before launch, with no recruiting', [0, 0, 2, 2]],
     ['Fresh eyes, not the people who built it', [2, 2, 0, 2], 'simulated first-timers'],
-    ['Any segment, language or access need, on demand', [1, 1, 0, 2]],
-    ['Cheap enough to rerun on every release', [0, 1, 1, 2]],
+    ['Configurable segments, languages and access needs', [1, 1, 0, 2]],
     ['Real human behaviour', [2, 2, 1, 0], 'use Gnomi to pick what to test with people'],
   ];
   const dot = (v, gnomi) => {

@@ -1,132 +1,165 @@
 1
-00:00:01,032 --> 00:00:02,112
+00:00:00,750 --> 00:00:02,340
 You know your product.
 
 2
-00:00:02,312 --> 00:00:04,672
-But what happens when someone sees it for the
-first time?
+00:00:02,510 --> 00:00:05,500
+But what happens when someone sees it for
+the first time?
 
 3
-00:00:05,432 --> 00:00:06,432
+00:00:05,870 --> 00:00:06,860
 Meet Gnomi.
 
 4
-00:00:06,552 --> 00:00:08,592
+00:00:06,990 --> 00:00:09,260
 Social simulation for product teams.
 
 5
-00:00:08,872 --> 00:00:10,872
+00:00:09,390 --> 00:00:11,660
 Perspective before you ship.
 
 6
-00:00:11,352 --> 00:00:12,552
-Start with your audience.
+00:00:12,030 --> 00:00:14,580
+You define audience segments and their
+shares.
 
 7
-00:00:12,792 --> 00:00:17,072
-Define the roles, languages, devices, and
-goals that matter.
+00:00:14,830 --> 00:00:19,430
+Gnomi samples traits such as language,
+device, and patience using a saved
 
 8
-00:00:17,432 --> 00:00:20,952
-Gnomi turns those differences into individual
-simulated people.
+00:00:19,470 --> 00:00:20,740
+random seed.
 
 9
-00:00:21,432 --> 00:00:24,912
-Share your idea, staging app,
-or your Figma design.
+00:00:21,070 --> 00:00:24,700
+A language model proposes fictional
+profiles from those traits.
 
 10
-00:00:25,432 --> 00:00:26,832
-Set a goal and a budget.
+00:00:24,990 --> 00:00:28,140
+Gnomi selects one candidate and expands
+its biography.
 
 11
-00:00:27,192 --> 00:00:29,832
-Each persona explores from
-a different perspective.
+00:00:28,390 --> 00:00:31,020
+You review and edit the personas before a
+run.
 
 12
-00:00:30,152 --> 00:00:31,152
-They click.
+00:00:31,190 --> 00:00:33,900
+They represent your assumptions about an
+audience.
 
 13
-00:00:31,272 --> 00:00:32,272
-They hesitate.
+00:00:34,230 --> 00:00:38,100
+Share your idea, staging app, or your
+Figma design.
 
 14
-00:00:32,392 --> 00:00:33,432
-They hit friction.
+00:00:38,310 --> 00:00:40,140
+Set a goal and a budget.
 
 15
-00:00:33,672 --> 00:00:38,032
-And you can follow the actions, thoughts, and
-evidence behind every step.
+00:00:40,550 --> 00:00:43,380
+Each persona explores from a different
+perspective.
 
 16
-00:00:38,472 --> 00:00:40,232
-Then the conversation starts.
+00:00:43,510 --> 00:00:44,540
+They click.
 
 17
-00:00:40,552 --> 00:00:43,912
-Personas post, reply, and react.
+00:00:44,710 --> 00:00:45,780
+They pause.
 
 18
-00:00:44,392 --> 00:00:47,472
-One confusing experience can become a shared
-opinion.
+00:00:45,910 --> 00:00:47,620
+They encounter friction.
 
 19
-00:00:47,832 --> 00:00:50,752
-Watch where it travels, and whose view
-changes.
+00:00:47,990 --> 00:00:52,150
+Follow their actions, generated comments,
+and screenshots to inspect what
 
 20
-00:00:51,272 --> 00:00:53,232
-Gnomi brings it together in a report:
+00:00:52,190 --> 00:00:53,900
+happened in the simulation.
 
 21
-00:00:53,512 --> 00:00:58,832
-ranked potential frictions, affected
-segments, screenshots, and quotes.
+00:00:54,230 --> 00:00:56,100
+Then the conversation starts.
 
 22
-00:00:59,192 --> 00:01:03,112
-See what happened, why it matters, and what
-you could change.
+00:00:56,230 --> 00:00:59,380
+Personas post, reply, and react.
 
 23
-00:01:03,592 --> 00:01:07,112
-Projects run on your machine, with your own
-model keys.
+00:00:59,670 --> 00:01:03,070
+Watch how a complaint travels through this
+simulated community, and whose
 
 24
-00:01:07,432 --> 00:01:10,112
+00:01:03,110 --> 00:01:05,300
+generated opinion changes.
+
+25
+00:01:05,750 --> 00:01:10,590
+Gnomi brings it together in a report:
+ranked friction hypotheses, affected
+
+26
+00:01:10,630 --> 00:01:14,740
+simulated segments, screenshots, and
+generated quotes.
+
+27
+00:01:15,030 --> 00:01:17,180
+These records show what the agents did.
+
+28
+00:01:17,270 --> 00:01:22,060
+They do not establish what real users need
+or how often a problem occurs.
+
+29
+00:01:22,390 --> 00:01:26,180
+Projects run on your machine, with your
+own model keys.
+
+30
+00:01:26,390 --> 00:01:29,260
 Model inputs go to the provider you
 configure.
 
-25
-00:01:10,552 --> 00:01:12,392
-These are simulated findings.
+31
+00:01:29,590 --> 00:01:33,940
+Simulated findings are hypotheses, not
+evidence about real users.
 
-26
-00:01:12,872 --> 00:01:16,792
-Use them as hypotheses, then validate
-important decisions with real people.
+32
+00:01:34,230 --> 00:01:37,790
+Choose what to investigate, then test it
+with real people before drawing
 
-27
-00:01:17,512 --> 00:01:18,752
+33
+00:01:37,830 --> 00:01:39,100
+conclusions.
+
+34
+00:01:39,430 --> 00:01:40,700
 Find the friction.
 
-28
-00:01:19,112 --> 00:01:20,592
+35
+00:01:40,870 --> 00:01:42,460
 Follow the conversation.
 
-29
-00:01:20,952 --> 00:01:22,552
+36
+00:01:42,630 --> 00:01:44,420
 Know what to test next.
 
-30
-00:01:23,032 --> 00:01:24,032
+37
+00:01:44,710 --> 00:01:45,390
 Gnomi.

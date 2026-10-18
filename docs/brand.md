@@ -6,7 +6,7 @@
 
 ## 1. The idea
 
-**Gnomi means “opinion” in Greek: γνώμη.** The name is the starting point for the identity. Gnomi gives product teams another perspective before they ship: simulated people use a product, encounter friction, and exchange opinions. Teams can inspect the evidence and decide what to investigate with real users.
+**Gnomi means “opinion” in Greek: γνώμη.** The name is the starting point for the identity. Gnomi gives product teams another perspective before they ship: simulated people use a product, encounter friction, and exchange opinions. Teams can inspect simulation records and decide which hypotheses to investigate with real users.
 
 The brand should feel like a thoughtful research tool: clear, observant, approachable, and comfortable with uncertainty. Its visual restraint leaves room for the people, quotes, screenshots, and findings inside the product.
 
@@ -18,7 +18,7 @@ The brand should feel like a thoughtful research tool: clear, observant, approac
 | Primary audience | Product designers, product managers, and founders; researchers and engineers also use it |
 | Short descriptor | **Social simulation for product teams.** |
 | Primary line | **Perspective before you ship.** |
-| Supporting line | **Simulated users. Evidence to investigate.** |
+| Supporting line | **Simulated users. Hypotheses to investigate.** |
 | Social-feature line | **See how opinions form.** |
 
 **One-sentence description:** Gnomi lets simulated users try your product and exchange opinions, helping your team find potential UX friction and decide what to test with real people.
@@ -27,7 +27,7 @@ These are positioning foundations. Public copy must reflect the features availab
 
 ## 2. Principles
 
-- **Evidence first.** A concrete screenshot, observed action, or quote carries more weight than a promotional claim.
+- **Make the run inspectable.** Show screenshots and recorded actions, and label persona quotes as generated. These records document the simulation, not real users’ needs.
 - **Room for disagreement.** Different segments can have different experiences. Preserve those differences instead of making everything one score.
 - **Calm by default.** Use space, type, and alignment to establish hierarchy. Color should signal something useful.
 - **Honest about simulation.** Describe personas as simulated people and findings as hypotheses. “Confirmed” is a trust label within a simulation, not proof from real users.
@@ -173,11 +173,13 @@ Write like a thoughtful colleague reviewing a product. Be specific about what ha
 
 Example numbers above are illustrative copy, not measured results or performance claims.
 
-Use **simulated users** in introductions and **personas** after the term is established. Prefer **potential friction**, **evidence**, **suggested change**, **compare runs**, and **validate with real users**. Keep “swarm” for the feature name or contexts where the social simulation has been explained.
+Use **simulated users** in introductions and **personas** after the term is established. Prefer **friction hypothesis**, **simulation records**, **generated quote**, **suggested change**, **compare runs**, and **validate with real users**. Use **evidence** only with an explicit scope, such as evidence of a browser error during a run; never imply human validation. Keep “swarm” for the feature name or contexts where the social simulation has been explained.
 
 Recommended report notice:
 
-> These findings come from simulated users. Treat them as hypotheses and validate important decisions with real people.
+> Simulated findings are hypotheses, not evidence about real users. Screenshots and logs document the simulation; quotes and opinions are generated. Use the report to choose what to investigate with real people.
+
+Explain persona generation when introducing the product: the team defines audience segments and trait distributions; seeded code samples traits; a language model proposes fictional candidates and expands the selected biography; the team reviews the profiles. These encode audience assumptions, not a representative sample. See [Persona generation](persona-generation.md) and [Interpreting simulations](interpreting-simulations.md).
 
 When describing local operation, preserve the product’s boundary: local storage and execution still allow requests to the configured model provider and the permitted product hosts. Treat roadmap budgets, timings, and evaluation targets as targets until there are dated measurements.
 

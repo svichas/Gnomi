@@ -4,13 +4,13 @@
 
 # Perspective before you ship.
 
-Gnomi fills your staging app with **simulated users who match your real audience**, with their own languages, devices and access needs. They try to get a job done, hit friction and **talk about it with each other**. You get ranked frictions with evidence, and a view of how opinions spread.
+Gnomi fills your staging app with **fictional personas based on your audience settings**, with their own languages, devices and access needs. They try to get a job done, hit friction and **talk about it with each other**. You get ranked friction hypotheses with simulation records, and a view of how generated opinions spread.
 
-> **From a Gnomi report**
+> **Hypothesis from a simulated run**
 >
 > **Hiring manager field needs an exact username and offers no suggestions**
 >
-> ✅ Confirmed: self-report backed by a validation error
+> Within-run corroboration: generated complaint + validation error
 >
 > *„Keine Liste, kein Vorschlag – ich tippe einfach einen Namen ein und schaue, ob es klappt.“*
 > “No list, no suggestion. I just type a name and see if it works.” Alex, simulated recruiter in Germany · step 8 · screenshot
@@ -33,11 +33,11 @@ Time from “we have a build” to first findings.
 
 *Other methods: typical ranges including recruiting, not measurements. Gnomi: measured runs of 4–8 simulated users.*
 
-## See how opinions form
+## See how simulated opinions form
 
 > “Assigning a hiring manager who has no account yet threw away my whole job draft. Has anyone else lost a job post this way?”
 
-One recruiter posted this complaint. It reached all 7 other simulated users:
+A simulated recruiter’s feed contained this complaint. It reached all 7 other simulated users:
 
 | Segment | Saw it | Repeated it | Changed opinion |
 |---|---|---|---|
@@ -46,31 +46,36 @@ One recruiter posted this complaint. It reached all 7 other simulated users:
 | Admins (2) | 2 | 1 | – |
 | Coordinators (1) | 1 | – | – |
 
-*A live run with 8 simulated users. A second run gave the same reach, with 4 repeats and 2 changed minds.*
+*A live run with 8 simulated users; a second had the same reach, 4 repeats and 2 changed opinions. This is not a prediction of human word of mouth.*
 
 ## What each method can tell you
 
 | | Moderated study | Unmoderated test | Internal review | **Gnomi** |
 |---|:-:|:-:|:-:|:-:|
-| Explains why people get stuck *(reasoning and quotes)* | ● | ◐ | ◐ | ● |
-| Shows how opinions spread between users *(posts, replies, changed minds)* | ○ | ○ | ○ | ● |
+| Offers explanations of friction *(Gnomi comments are generated)* | ● | ◐ | ◐ | ● |
+| Explores opinion spread *(simulated posts and opinions in Gnomi)* | ○ | ○ | ○ | ● |
 | Feedback before launch, with no recruiting | ○ | ○ | ● | ● |
 | Fresh eyes, not the people who built it *(simulated first-timers)* | ● | ● | ○ | ● |
-| Any segment, language or access need, on demand | ◐ | ◐ | ○ | ● |
-| Cheap enough to rerun on every release | ○ | ◐ | ◐ | ● |
+| Configurable segments, languages and access needs | ◐ | ◐ | ○ | ● |
 | Real human behaviour *(use Gnomi to pick what to test with people)* | ● | ● | ◐ | ○ |
 
 ● Yes · ◐ Partly · ○ No · Ratings reflect how each method usually works, not a benchmark.
 
+## How simulated users are generated
+
+You set or approve audience segments, shares and trait distributions such as language, device and patience. Seeded code samples traits; the configured language model proposes four fictional profiles with selection weights. Code selects one and the model expands its biography. You review and edit the personas before running. The weights and profiles are model-generated assumptions, not measured audience probabilities. [Generation details](../persona-generation.md).
+
+Screenshots and logs document agent activity; generated quotes are not participant testimony. “Confirmed” in an app report means corroboration within that simulation. Counts and social spread do not estimate real-world prevalence. [How to interpret and validate findings](../interpreting-simulations.md).
+
 ## How it works
 
-1. **Describe your audience.** Segments, countries, languages, devices and access needs. Gnomi samples the people.
+1. **Describe your audience.** Set segments and shares. Seeded code samples traits; a model writes fictional profiles. Review and edit them.
 2. **Point it at staging.** Record a login once. Gnomi visits only the hosts you allow.
 3. **Watch the swarm.** A live graph of who used what, who talked to whom and who changed whose mind.
-4. **Share the report.** Frictions ranked by segment, with evidence. Export to HTML, PDF or Markdown.
+4. **Share the report.** Hypotheses ranked by simulated segment, with logs and generated quotes. Test key items with real people.
 
 ---
 
 **Know what to test next.**
 
-<sub>Runs on your machine with your own model keys; model inputs go only to the provider you configure. Today: web apps on staging. Next: prototypes, design frames, copy and run comparison. Findings come from simulated users: treat them as hypotheses and validate key decisions with real people. Figures measured on Gnomi’s test app, 16 Oct 2026.</sub>
+<sub>Runs on your machine with your own model keys; model inputs go only to the provider you configure. Today: web apps on staging. Next: prototypes, design frames, copy and run comparison. Simulated findings are hypotheses, not evidence about real users. Profiles encode audience assumptions; logs record agent actions; quotes are generated. Validate with real people. Figures measured on Gnomi’s test app, 16 Oct 2026.</sub>

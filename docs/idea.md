@@ -4,7 +4,7 @@
 
 ## 1. Pitch
 
-Gnomi is a social swarm simulator for product teams. Before a launch or a design change ships, Gnomi generates a population of AI personas that mirrors the product's real audience, lets them use the product (a staging web app, a prototype, design frames, or copy) while pursuing a goal the team sets, and lets them talk to each other in a shared social space so that opinions spread and shift as they would in a real user community. The team watches the swarm live, in a graph of who used what, who talked to whom and who changed whose mind, and receives a report that ranks UX frictions per point of interest, with evidence (the step, a screenshot, a persona quote), a suggested change, and how sentiment moved through the swarm. Gnomi runs on the team's own machine, on the team's own LLM keys, and treats every finding as a hypothesis to validate with real users, not a verdict.
+Gnomi is a social swarm simulator for product teams. Before a launch or a design change ships, Gnomi generates a population of fictional AI personas based on the team's audience assumptions, lets them use the product (a staging web app, a prototype, design frames, or copy) while pursuing a goal the team sets, and lets them talk to each other in a shared social space to explore how generated opinions spread and shift within the simulation. The team watches the swarm live, in a graph of who used what, who talked to whom and who changed whose mind, and receives a report that ranks UX frictions per point of interest, with simulation records (the step, a screenshot, a generated persona quote), a suggested change, and how sentiment moved through the swarm. Gnomi runs on the team's own machine, on the team's own LLM keys, and treats every finding as a hypothesis to validate with real users, not a verdict.
 
 ## 2. The problem, and why now
 
@@ -18,7 +18,7 @@ Gnomi is a social swarm simulator for product teams. Before a launch or a design
 - Inference is cheap enough. A cheap-tier model can drive a persona through a 40-step task for cents, so a 50-persona run costs about what one hour of a human participant costs, and runs in under an hour.
 - Teams already pay for LLM API keys and are wary of sending product data to yet another vendor. A local-first, bring-your-own-keys tool fits how design and product teams buy tools today.
 
-**What Gnomi is not.** It is not a replacement for user research. Synthetic users are systematically more patient, more articulate and more alike than real ones. Gnomi's value is earlier, cheaper, broader coverage of *candidate* frictions, with the evidence needed to decide which ones deserve a real test.
+**What Gnomi is not.** It is not a replacement for user research. Synthetic users are systematically more patient, more articulate and more alike than real ones. Gnomi's value is earlier, cheaper, broader coverage of *candidate* frictions, with inspectable simulation records to help decide which ones deserve a real test.
 
 ## 3. Target users and jobs-to-be-done
 
@@ -47,9 +47,9 @@ Gnomi is designed so that the first three can go from install to report without 
 | **Episode** | A persona's continuous session on one POI, from the start page until it declares the goal done, gives up, or hits its step budget. |
 | **Swarm feed** | The shared social space of a run: posts, replies and reactions by personas, visible to each persona through its follow graph. |
 | **Friction** | A moment where a persona struggled: a self-reported problem, an objectively observed signal (failed action, loop, backtracking, timeout, error), or both. Frictions are clustered into *friction themes* for the report. |
-| **Evidence** | What backs a friction: the step number, the screenshot at that step, the page or frame, the persona's quote, and the objective signals seen. |
+| **Evidence** | The report's existing name for simulation records: step, screenshot, page or frame, generated quote and observed signals. These document the run; they are not evidence about real users. |
 | **Report** | The end-of-run document: per POI, sentiment by segment, ranked friction themes with evidence and suggested changes, and how opinions spread through the swarm. Exportable. |
-| **Trust level** | How much a friction should be believed: *confirmed* (self-reported and observed), *observed* (objective signal only), *reported* (self-reported only). |
+| **Trust level** | Corroboration within a simulation: *confirmed* (generated self-report and observed signal), *observed* (signal only), *reported* (generated self-report only). None means validated by real users. |
 
 ## 5. The end-to-end journey
 
@@ -61,6 +61,8 @@ Gnomi is designed so that the first three can go from install to report without 
 4. **Write the goal.** One plain-language scenario, with optional per-segment overrides. Gnomi shows how each segment will read it.
 5. **Keys and models.** In settings, add provider keys, test each one, pick a model per role (navigator, socialiser, judge, author, and the persona writer used at setup) or accept the defaults, and set a budget.
 6. **Pre-run summary.** Gnomi shows the persona count, POIs, estimated cost and time, the containment settings (allowed hosts, blocked services), and one Start button.
+
+Persona creation combines seeded trait sampling with model-written candidates and a selected biography, followed by team review. It creates fictional profiles rather than recruiting people. See [Persona generation](persona-generation.md#how-simulated-users-are-made).
 
 ### 5.2 Run
 
@@ -79,6 +81,8 @@ While the run is live, the user can:
 ### 5.4 Report
 
 At the end, Gnomi clusters frictions into themes, ranks them by segment-weighted impact, severity and trust, attaches evidence, drafts a suggested change for each, and summarises how opinions spread. The report opens in the app and exports as a self-contained HTML file, PDF, Markdown or JSON.
+
+The rankings are hypotheses. Counts and sentiment describe the simulated population, and generated quotes are not participant testimony. Screenshots and logs can establish what the agents did, but not what real users need. See [Interpreting simulations](interpreting-simulations.md) for trust-label limits and the validation workflow.
 
 ### 5.5 Iterate
 
@@ -303,6 +307,8 @@ Personas per run: 50 by default, configurable from 1 to 200. Counts follow segme
 
 ## 9. Example report excerpt
 
+The following is an illustrative synthetic report, not a human study. All counts and quotes refer to fictional personas; “confirmed” means corroborated within the simulation.
+
 > ### POI: Staging app — "Create job post" flow
 >
 > **Sentiment by segment (−2 to +2):** recruiters +0.6 (n=27), hiring managers −0.8 (n=13), admins +0.9 (n=5). Recruiters' sentiment fell from +1.1 in round 1 to +0.6 by round 5, after the "hiring manager invite" thread spread (see opinion spread below).
@@ -326,7 +332,7 @@ Personas per run: 50 by default, configurable from 1 to 200. Counts follow segme
 
 ## 10. Non-goals
 
-- **Replacing user research.** Gnomi produces hypotheses with evidence, not validated findings, and says so in every report.
+- **Replacing user research.** Gnomi produces hypotheses with simulation records, not evidence about real users or validated findings, and says so in every report.
 - **Quantitative prediction.** Gnomi does not predict conversion rates, NPS or market size. Sentiment scores are relative within a run and between runs of the same project.
 - **Testing production.** Gnomi refuses to run against hosts the user has not marked as staging and contains outbound traffic. It is not a monitoring or load-testing tool.
 - **Defeating bot protection.** Gnomi never attempts CAPTCHAs, MFA or any bot-detection bypass. The human does these in the login recorder.
