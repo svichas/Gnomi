@@ -61,7 +61,7 @@ async function clickNode(page: Page, prefix: string): Promise<string> {
   }
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + node.x, box.y + node.y);
-  await page.getByRole('region', { name: 'Swarm graph' }).getByRole('status').waitFor(); // the hover card
+  await page.getByRole('region', { name: 'Swarm graph' }).locator('.swarm-node-card').waitFor();
   await page.mouse.click(box.x + node.x, box.y + node.y);
   return node.key.slice(prefix.length);
 }
@@ -101,7 +101,7 @@ async function openReport(page: Page, options: { timeout?: number } = {}) {
 }
 
 async function showActivity(page: Page) {
-  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+  await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
   const activity = page.getByRole('region', { name: 'Activity', exact: true });
   const filters = activity.getByRole('button', { name: /^Filter/ });
   if (await filters.getAttribute('aria-expanded') === 'false') await filters.click();
@@ -141,7 +141,7 @@ try {
 
   await stage('the window shows a project journey and a separate Settings control', async () => {
     await tab('Settings').waitFor();
-    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Review', 'Activity']);
+    assert.deepEqual((await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button').allInnerTexts()).map((text) => text.replace(/^\d/, '').trim()), ['Setup', 'Audience', 'Review', 'Simulation']);
   });
 
   await stage('the engine started and opened the project', async () => {
@@ -654,10 +654,10 @@ try {
     // The scripted swarm run above: personas, the Gym, its used and friction edges, and its social rounds.
     await tab('Run').click();
     await page.getByLabel('Run history', { exact: true }).selectOption('r-0005');
-    await page.getByRole('tab', { name: 'Connections' }).click();
+    await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
     await graph.getByText(/^6 personas, 1 point of interest, [1-9]\d* connections$/).waitFor();
-    assert.match(await graph.innerText(), /Used \([1-9]/);
-    assert.match(await graph.innerText(), /Friction \([1-9]/);
+    assert.ok(Number(await graph.locator('.swarm-filter').filter({ hasText: 'Product use' }).locator('.swarm-filter-count').innerText()) > 0);
+    assert.ok(Number(await graph.locator('.swarm-filter').filter({ hasText: 'Friction' }).locator('.swarm-filter-count').innerText()) > 0);
     assert.ok(await graph.getByRole('slider').isEnabled(), 'its rounds can be scrubbed');
     await clickNode(page, 'persona:');
     await inspector.getByRole('region', { name: 'Social memory' }).getByText(/^Follows \(\d+\)$/).waitFor();
@@ -677,22 +677,24 @@ try {
     await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
     await tab('Run').click();
     await page.getByLabel('Run history', { exact: true }).selectOption(config.run_id);
-    await page.getByRole('tab', { name: 'Connections' }).click();
+    await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
     await graph.getByText(`12 personas, 3 points of interest, ${buildGraph(logged).edges.size} connections`).waitFor();
+    await page.getByText('Audience conversations', { exact: true }).click();
     const feed = page.getByRole('region', { name: 'Feed' });
     await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();
     assert.ok(await feed.getByText('Injected by the test harness').count() >= 1, 'the injected post is labelled');
     await page.screenshot({ path: join(shots, 'swarm.png') });
 
-    // Scrub back to round 1: the graph and the feed are rebuilt from the log up to that round.
+    // Scrub the map to round 1; the optional conversation archive retains the full run.
     const slider = graph.getByRole('slider');
     await slider.focus();
     await page.keyboard.press('Home');
     await graph.getByText('Round 1 of 3').waitFor();
     await graph.getByText(`${graphAtRound(logged, 1).edges.size} connections`, { exact: false }).waitFor();
-    await feed.getByRole('heading', { name: `Feed (${feedThreads(logged.filter((event) => event.round <= 1)).length} threads)` }).waitFor();
+    await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();
     await page.keyboard.press('End');
-    await graph.getByText('Round 3 of 3 (latest)').waitFor();
+    await graph.getByText('Round 3 of 3').waitFor();
+    await graph.getByText('Latest · Round 3').waitFor();
 
     const id = await clickNode(page, 'persona:');
     const memory = socialMemory(logged, id);
@@ -704,7 +706,7 @@ try {
     await inspector.getByRole('button', { name: 'Close' }).click();
     const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
     await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
-    await page.screenshot({ path: join(shots, 'swarm-720.png'), fullPage: true });
+    await graph.screenshot({ path: join(shots, 'swarm-720.png') });
     await app.evaluate(({ BrowserWindow }, [width, height]) => BrowserWindow.getAllWindows()[0].setSize(width, height), size);
   });
 } finally {

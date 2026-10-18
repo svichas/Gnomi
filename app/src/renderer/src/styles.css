@@ -330,22 +330,6 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .build-copy > .build-recent { font-size: 12px !important; color: var(--gnomi-text); }
 .build-meter { height: 6px; border-radius: 4px; background: var(--gnomi-line); overflow: hidden; margin-top: 24px; max-width: 320px; }
 .build-meter span { display: block; height: 100%; background: var(--gnomi-action); border-radius: inherit; transition: width .4s ease; }
-.report-bar { fill: var(--gnomi-sage); transform-box: fill-box; transform-origin: bottom; animation: report-bar 2.4s ease-in-out infinite; }
-.report-bar-1 { animation-delay: -.8s; fill: var(--gnomi-action); }
-.report-bar-2 { animation-delay: -1.6s; }
-.report-meter span { background: linear-gradient(90deg, var(--gnomi-action) 40%, color-mix(in srgb, var(--gnomi-action) 55%, white) 50%, var(--gnomi-action) 60%) 0 0 / 200% 100%; animation: report-shimmer 1.6s linear infinite; }
-.report-steps { display: grid; gap: 10px; margin-top: 20px; }
-.report-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--gnomi-text-muted); }
-.report-steps li[data-state="active"] { color: var(--gnomi-text); font-weight: 500; }
-.report-steps li[data-state="done"] { color: var(--gnomi-text); }
-.report-steps small { display: block; font-size: 11px; font-weight: 400; color: var(--gnomi-text-muted); }
-.report-step-mark { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--gnomi-line); border-radius: 50%; background: var(--gnomi-surface); font-size: 11px; }
-.report-step-mark .build-thinking { gap: 2px; height: auto; }
-.report-step-mark .build-thinking i { width: 3px; height: 3px; }
-.report-steps li[data-state="active"] .report-step-mark { border-color: var(--gnomi-action); }
-.report-steps li[data-state="done"] .report-step-mark { border-color: var(--gnomi-action); background: var(--gnomi-action); color: var(--gnomi-surface); }
-@keyframes report-bar { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
-@keyframes report-shimmer { to { background-position: -200% 0; } }
 @keyframes build-float { 0%, 100% { transform: translateY(3px); } 50% { transform: translateY(-5px); } }
 @keyframes build-connect { to { stroke-dashoffset: -110; } }
 @keyframes build-glow { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
@@ -355,7 +339,6 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
   .build-scene { width: 100%; max-width: 300px; margin-inline: auto; }
   .build-copy { text-align: center; }
   .build-copy p, .build-meter { margin-inline: auto; }
-  .report-steps { width: fit-content; margin-inline: auto; text-align: left; }
   .audience-next { padding: 20px; }
   .audience-next > .button { width: 100%; }
   .audience-steps { gap: 12px; }

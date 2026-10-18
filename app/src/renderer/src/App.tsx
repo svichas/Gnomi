@@ -22,7 +22,7 @@ const TABS = [
   { id: 'project', label: 'Setup' },
   { id: 'audience', label: 'Audience' },
   { id: 'review', label: 'Review' },
-  { id: 'run', label: 'Activity' },
+  { id: 'run', label: 'Simulation' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'] | 'settings';
 
@@ -206,7 +206,7 @@ export function App() {
     project: ['What would you like to learn?', 'Give your simulated users a place to start and a goal to try.'],
     audience: ['A few different perspectives.', 'Choose who will try your product. These personas are simulated users.'],
     review: ['One last look before you start.', 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
-    run: ['See the experience unfold.', 'Follow what people try, where they pause, and what they have to say.'],
+    run: ['Simulation', 'Follow your audience’s experience, from first impressions to final findings.'],
     settings: ['Make Gnomi work for you.', 'Connect an AI provider and choose your limits.'],
   };
 
@@ -237,7 +237,7 @@ export function App() {
                 {TABS.map(({ id, label }, index) => <button key={id} type="button" id={`tab-${id}`} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span>{label}</button>)}
               </nav>
             </div>
-            <div className="page-heading"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : currentProject?.name ?? 'Your project'}</p><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
+            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><p className="eyebrow">{tab === 'settings' ? 'Preferences' : currentProject?.name ?? 'Your project'}</p><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'} className="max-w-2xl">
               <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
             </div>

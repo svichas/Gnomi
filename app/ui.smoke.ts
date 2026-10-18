@@ -37,7 +37,11 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
-  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor().catch(async (error) => {
+    console.error('Initial UI:', await page.locator('body').innerText(), errors);
+    await page.screenshot({ path: join(shots, 'ui-startup-failure.png') });
+    throw error;
+  });
   await page.evaluate(() => document.fonts.ready);
   assert.ok(await page.getByAltText('Gnomi', { exact: true }).evaluate((image) => (image as HTMLImageElement).naturalWidth > 0));
   assert.ok(await page.evaluate(() => [...document.fonts].some((font) => font.family === 'Inter' && font.status === 'loaded')));
@@ -56,9 +60,19 @@ try {
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.locator('#tab-run').click();
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
-  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+  await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
+  await page.getByRole('region', { name: 'Swarm graph' }).waitFor();
+  await page.waitForFunction((population) => document.querySelector('#swarm-focus optgroup[label="Simulated people"]')?.childElementCount === population, config.personas.length);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: join(shots, 'simulation-overview.png') });
   const activity = page.getByRole('region', { name: 'Activity', exact: true });
   await activity.getByRole('heading', { name: 'Activity', exact: true }).waitFor();
+  await activity.getByRole('heading', { name: 'Activity', exact: true }).evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  const quotedMoment = activity.locator('.timeline-item').filter({ has: page.locator('.moment-quote') }).first();
+  await quotedMoment.waitFor();
+  assert.ok(await quotedMoment.locator('.moment-quote').isVisible(), 'thoughts and feedback are readable before expanding details');
+  assert.ok(await quotedMoment.locator('.timeline-one-line').isVisible(), 'the action stays visible alongside its quote');
+  await page.screenshot({ path: join(shots, 'simulation-activity.png') });
   await activity.getByRole('button', { name: 'Filter', exact: true }).click();
   await activity.getByLabel('Kind of event').selectOption('steps');
   await activity.scrollIntoViewIfNeeded();
@@ -133,10 +147,12 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   assert.equal(await activity.locator('.timeline-item').first().evaluate((element) => getComputedStyle(element).transitionDuration), '0s');
   await page.setViewportSize({ width: 1100, height: 900 });
-  await page.getByRole('tab', { name: 'Timeline', exact: true }).focus();
+  await page.getByRole('tab', { name: 'Simulation', exact: true }).focus();
   await page.keyboard.press('End');
+  assert.equal(await page.getByRole('tab', { name: 'Report', exact: true }).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('Home');
   await page.getByRole('region', { name: 'Swarm graph' }).waitFor();
-  assert.equal(await page.getByRole('tab', { name: 'Connections', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true');
   await page.locator('#tab-project').click();
   await page.setViewportSize({ width: 768, height: 900 });
   await page.waitForTimeout(300); // hidden graph resize callbacks must not throw
