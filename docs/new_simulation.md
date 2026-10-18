@@ -1,6 +1,6 @@
 # Proposed simulation: scientific experiments in a contained runtime
 
-Status: **Draft for review; not implemented.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b`. The implemented baseline is documented in [old_simulation.md](old_simulation.md). This proposal does not install dependencies, move code, or establish new performance results.
+Status: **Draft for review; not implemented.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b`, revised the same day after review: it now addresses the report's existing prevalence ranges, sampling control and feed position, trims the library list, and phases the work with a cost per step (§10). The implemented baseline is documented in [old_simulation.md](old_simulation.md). This proposal does not install dependencies, move code, or establish new performance results.
 
 ## 1. Objective and scope
 
@@ -42,7 +42,20 @@ simulation/
   tests/                       # boundary, protocol, replay, experiment tests
 ```
 
-Export only deliberate entry points such as `/contracts`, `/runner`, `/replay`, and `/metrics`; avoid wildcard access to source internals. An import-boundary check must enforce the dependency direction. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
+Export only deliberate entry points such as `/contracts`, `/runner`, `/replay`, and `/metrics`; avoid wildcard access to source internals. An import-boundary check must enforce the dependency direction; it can extend the existing [no-electron.test.ts](../engine/src/no-electron.test.ts) to also forbid `app/` and `engine/` imports. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
+
+### Reaching the boundary in two phases
+
+The boundary is reached by moving code first and redesigning storage later. The move is where most of the containment value is; §8's run store and recovery protocol are where most of the cost is.
+
+What the boundary crosses today:
+
+- The engine exports every source file (`"./*": "./src/*"` in [engine/package.json](../engine/package.json)). The app imports 20 different engine modules, 52 times from [types.ts](../engine/src/types.ts) alone.
+- Simulation code reaches back into authoring and storage code: `poi/` imports `log/sqlite.ts`, `log/blobs.ts`, `assets.ts` and `audience/sample.ts`; `report/` imports `audience/diversity.ts` and `log/sqlite.ts`; `llm/` imports `audience/write.ts`; `social/` and `graph/` import the seeded-sampling helpers in `audience/sample.ts`.
+
+**Phase 1, move with no behaviour change.** Create the workspace with explicit exports. Move `run.ts`, `agent/`, `poi/`, `social/`, `opinion/`, `signals/`, `report/`, `llm/`, `browser/` and `safety.ts`. Split `types.ts` into simulation contracts (run config, events, report) and project types that stay in the engine. Replace each reach-back with a port or by moving the helper: seeded sampling moves into the simulation, asset reads go through `BlobStore`, and `ProjectStore` use becomes a narrow run-store port over the existing SQLite log. Existing tests prove parity; tokens and results do not change. The PR is large but mechanical.
+
+**Phase 2, when a headless or hosted runner needs it.** The separate run store, `sim-<UUID>` ids, idempotency keys, checkpoints and the command protocol in §8. A single-user desktop app gains little from them, and they add a second lifecycle owner and a migration.
 
 ## 3. Define the model before running it
 
@@ -87,12 +100,24 @@ Evaluate within-segment diversity and subgroup errors. Increasing the number of 
 
 1. **Network formation:** use a directed graph with explicit tie semantics and optional weights. Compare the legacy segment-biased network with clustered and random null networks. Persist the realized graph, not just its seed. Treat dynamic following/trust as later, separately evaluated policies.
 2. **Availability and attention:** define whether a persona visits the feed during a logical interval independently of whether it posts. Record activation probabilities, sampled eligibility, and exposure decisions. Quiet readers may still change their opinions.
-3. **Feed selection:** rank eligible content using a versioned, inspectable policy. Parameters may include tie strength, relevance, recency, and popularity. Freeze candidate/tie-breaking rules and log actual exposure. Keep chronological and no-trending controls. Never infer exposure simply from a follow edge.
+3. **Feed selection:** rank eligible content using a versioned, inspectable policy. Parameters may include tie strength, relevance, recency, and popularity. Freeze candidate/tie-breaking rules and log actual exposure, including each post's position in the feed shown. Models favour items early in a list, and the current ranking puts the most-reacted posts first, so position and popularity reinforce each other. Order equal-rank posts with a seeded per-persona shuffle rather than event sequence. Keep chronological and no-trending controls. Never infer exposure simply from a follow edge.
 4. **Decision:** an active persona receives its own permitted observations, bounded memory, and selected feed. One structured model response may propose a post/reply/reaction/no-public-action plus an opinion update. Silence is a valid social action; failed inference is a different outcome.
 5. **Opinion transition:** initially use the frozen LLM decision policy with strict validation of allowed values and supporting evidence. Record before/after state and references to firsthand observations or exposed posts. No update is valid. Do not add an automatic popularity-to-belief conversion or force convergence. Mechanistic alternatives require their own parameter definitions and controlled comparison.
 6. **Memory:** retain recent observations plus a bounded summary of older relevant evidence, with source IDs and explicit uncertainty. Summarization policies must be versioned and tested for lost contradictions and invented facts. No global knowledge or access to another persona's private history.
 
 Separate self-reported certainty, evidence quality, and statistical uncertainty. They are different quantities. Model-attributed influence edges describe provenance; estimating an intervention's effect requires a controlled comparison. An effect inside the simulator does not establish a real-world causal effect.
+
+### Social echo in finding counts
+
+The current report already shows an interval: each theme's "k of n personas" with a 95% Wilson range ([report/themes.ts](../engine/src/report/themes.ts), `prevalence`). It treats each persona as an independent witness. With social rounds on, that is not true. A persona that reads a post is handed it in its next product step ([agent/loop.ts](../engine/src/agent/loop.ts), [poi/text.ts](../engine/src/poi/text.ts), [poi/design.ts](../engine/src/poi/design.ts)), so a friction reported after reading about it may repeat the post rather than confirm it. Social runs therefore inflate k and narrow the range.
+
+The log already holds what is needed to separate the two. The judge tags posts with the friction groups they discuss ([report/models.ts](../engine/src/report/models.ts)), and `social.feed_viewed` records which posts each persona was shown and when. For each theme:
+
+- A persona counts as **first-hand** when at least one of its reports on the theme precedes the first feed that showed it a post tagged with that theme.
+- Otherwise it counts as **heard first**. It stays visible beside the share, but not in k.
+- Ranking, evidence level and the "2+ personas" rule for top lists use first-hand k. Without judge tags, the report says it could not separate echoes.
+
+This changes report code only and adds no model calls. It is still a within-run quantity: the range describes this run's personas, not the human population, and the report must keep saying so. Replicate-level intervals (§9) are the measure for comparisons between runs.
 
 Use the same frozen language policy across a comparison. Browser locale, persona language, response language, and translation are distinct inputs and must be evaluated rather than assumed equivalent.
 
@@ -114,6 +139,8 @@ flowchart LR
 ```
 
 Assign operation IDs from run, logical phase, round, persona, input, step, and purpose. Allocate reproducible RNG streams by stable identities with a documented derivation/jump policy; record algorithm and stream allocation. Do not consume one global random stream in promise-completion order.
+
+Model sampling is part of the experiment definition. Today the gateway sets no temperature or seed ([llm/gateway.ts](../engine/src/llm/gateway.ts)), and routing names model aliases such as `claude-haiku-5-5` ([settings.ts](../engine/src/settings.ts)), so a provider can change both defaults and weights between two runs with the same seed. Set temperature explicitly per role, use dated model snapshots where the provider offers them, pass a provider seed where supported, and record the requested settings and the model version the provider reports in the run manifest. This does not make fresh replicates identical; it makes their variation declared.
 
 Freeze observation inputs for each social phase. Issue independent requests concurrently, save attempt telemetry immediately, stage validated decisions, and apply effects in canonical logical order. Feed tie-breaking uses logical IDs/order. API response speed must not select whose post becomes most recent. Product steps within a persona remain sequential; independent personas may execute concurrently.
 
@@ -161,19 +188,22 @@ These are proposed choices, not installation instructions. Pin compatible versio
 | Library | Proposed role | Decision and limit |
 | --- | --- | --- |
 | [Vercel AI SDK](https://ai-sdk.dev/docs/introduction) and [Zod](https://zod.dev/) | Provider adapters and structured input/output validation. | Keep the existing stack. Simulation policies and quota/budget semantics remain ours. |
-| [Graphology](https://graphology.github.io/standard-library/) with metrics and [generators](https://graphology.github.io/standard-library/generators.html) | Graph representation, topology measurements, clustered/random experimental controls. | Extend the existing dependency into the runtime. Use supported seeded RNG hooks; generators do not provide calibrated human networks. |
-| [graphology-communities-louvain](https://graphology.github.io/standard-library/communities-louvain.html) | Optional community diagnostics. | Adopt when the evaluation needs it. Fix resolution/RNG; an algorithmic community is not automatically a real social group. |
-| [pure-rand](https://github.com/dubzzz/pure-rand) | Explicit reproducible PRNG implementation and stream allocation. | Candidate for the new model version. Preserve the old RNG for legacy parity; switching generators changes realizations. |
-| [p-queue](https://github.com/sindresorhus/p-queue) | In-process execution queues, concurrency and cancellation plumbing. | Proposed scheduling dependency. It does not implement token quotas, billing reservations, deterministic simulation order or distributed recovery. Running operations must honor cancellation. |
-| [Promptfoo](https://www.promptfoo.dev/docs/usage/node-package/) | Development/evaluation tool for prompt/model comparisons and custom assertions. | Route evaluation calls through the same gateway and allowance ledger; disable response reuse for fresh replicate measurements. Model judges remain fallible measurements. |
-| [simple-statistics](https://simple-statistics.github.io/docs/) | Descriptive statistics and resampling primitives. | Candidate for the evaluation layer. We must implement and verify the appropriate independent-run or paired-run analysis; library functions do not decide the unit of inference. |
-| Node SQLite and existing Playwright integration | Local durable runs, contained browser interaction. | Retain and adapt; preserve host restrictions, observe-only rules, login handling and evidence capture. |
+| [Graphology](https://graphology.github.io/standard-library/) with metrics and [generators](https://graphology.github.io/standard-library/generators.html) | Graph representation, topology measurements, clustered/random experimental controls. | **Adopt.** The app already depends on it, so this moves an existing dependency into the runtime. Use supported seeded RNG hooks; generators do not provide calibrated human networks. |
+| [simple-statistics](https://simple-statistics.github.io/docs/) or [jStat](https://jstat.github.io/) | Run-level bootstrap, paired differences, and the t or normal quantiles that non-inferiority tests need. | **Adopt in the evaluation layer only.** Check that the chosen library provides the quantiles; jStat does. The Wilson function in the report stays hand-written. Library functions do not decide the unit of inference. |
+| Node SQLite and existing Playwright integration | Local durable runs, contained browser interaction. | **Keep** and adapt; preserve host restrictions, observe-only rules, login handling and evidence capture. |
+| [graphology-communities-louvain](https://graphology.github.io/standard-library/communities-louvain.html) | Optional community diagnostics. | **Later**, when an evaluation reads community diagnostics. Fix resolution/RNG; an algorithmic community is not automatically a real social group. |
+| [p-queue](https://github.com/sindresorhus/p-queue) | In-process execution queues, concurrency and cancellation plumbing. | **Not now.** The run's `inParallel` is about 15 lines and covers today's needs. Revisit if concurrency should rise again after a throttle. It would not implement token quotas, billing reservations or deterministic order in any case. |
+| [Promptfoo](https://www.promptfoo.dev/docs/usage/node-package/) | Development/evaluation tool for prompt/model comparisons and custom assertions. | **Not now.** It brings its own provider layer, which would bypass the gateway and allowance ledger. Extending the existing acceptance harness is cheaper. |
+| [pure-rand](https://github.com/dubzzz/pure-rand) | Reproducible PRNG and stream allocation. | **Skip.** The engine already derives an independent stream per stable key with `fnv1a` and `mulberry32` (for example `follows/<seed>` in [social/graph.ts](../engine/src/social/graph.ts) and `profile/<seed>/<segment>/<attribute>` in [profile/sample.ts](../engine/src/profile/sample.ts)). Document that allocation instead; switching generators changes every saved realization for no scientific gain. |
+| A tokenizer such as js-tiktoken | Exact token estimates. | **Skip.** Estimates only gate admission and rate buckets; actual usage comes back from providers. Reading provider rate-limit headers would improve the limiter more. |
 
 [OASIS](https://github.com/camel-ai/oasis) is a reference for social actions and recommendation mechanisms. [Concordia](https://github.com/google-deepmind/concordia) is a reference for component-based agents, memory and environment resolution. Both would add Python integration if adopted wholesale. Study or benchmark selected mechanics first; neither framework establishes Gnomi's validity or performance.
 
 [vLLM](https://docs.vllm.ai/en/latest/) is an optional deployment experiment for open models using continuous batching and prefix caching. Keep it outside the runtime dependency set and compare total hardware/hosting cost and measured quality. A generic agent orchestration framework or vector database is not an initial requirement; introduce one only for a measured capability gap.
 
 ## 8. Portable API, persistence and recovery
+
+This section is phase 2 (§2): build it when a headless or hosted runner needs it, not as part of the move.
 
 ### Public contract
 
@@ -224,9 +254,11 @@ Exactly-once application of a stored decision is achievable with transactional o
 
 Use held-out human task observations where available: completion/abandonment, specific usability failures, action sequences, and changes following observed exposure. Separate calibration and validation by participants, studies or scenarios as appropriate; freeze splits and avoid near-duplicate leakage. Data used to author personas or tune prompts belongs in the calibration provenance. Interview-grounded agents have been assessed against the people represented, but that result does not transfer automatically to Gnomi's product or social tasks. [Park et al., 2024](https://arxiv.org/abs/2411.10109)
 
-Compare against simple baselines and the legacy model. Record error by relevant segment and environment, as well as aggregate error. No human reference dataset means `NOT_VALIDATED`, even if all implementation and plausibility tests pass. The report must name its tested scope and untested populations/scenarios.
+The first benchmark need not wait for a human study. [Gym](../gym)'s seeded-defect builds and control build (M3) give known ground truth for one narrow use: does the report find real usability defects and avoid inventing them? Track recall and precision against those defects per release. This validates defect detection on Gym, not human behaviour in general.
 
-Use deterministic checks for factual references, schemas, legal actions, accounting and exposure. Semantic review uses a frozen rubric, a blinded human sample, reviewer agreement and adjudication. LLM judges may assist after comparison with human labels; their agreement is not human behavioral validation. Record judge identity and prompt separately from the simulated agents. [Zheng et al., 2023](https://arxiv.org/abs/2306.05685)
+Compare against simple baselines and the legacy model. Two cheap controls belong in every evaluation: a **generic persona** with no profile attributes, whose findings show what the model says regardless of audience, and a **chronological feed**, which separates content effects from ranking effects. Record error by relevant segment and environment, as well as aggregate error. No human reference dataset means `NOT_VALIDATED`, even if all implementation and plausibility tests pass. The report must name its tested scope and untested populations/scenarios.
+
+Use deterministic checks for factual references, schemas, legal actions, accounting and exposure. Semantic review uses a frozen rubric, a blinded human sample, reviewer agreement and adjudication. LLM judges may assist after comparison with human labels; their agreement is not human behavioral validation. Record judge identity and prompt separately from the simulated agents. By default the judge (`claude-sonnet-5-5`) shares a model family with the navigator and socialiser (`claude-haiku-5-5`); evaluation runs should be able to use a judge from another provider to limit self-preference. [Zheng et al., 2023](https://arxiv.org/abs/2306.05685)
 
 ### Replication, uncertainty and sensitivity
 
@@ -270,6 +302,20 @@ npm run acceptance -w @gnomi/engine -- --m4 --out /tmp/gnomi-m4-baseline-review
 ```
 
 The proposed workspace must later provide its own `test`, `typecheck`, scripted headless-run and replay commands. They do not exist yet. Live evaluations require an explicit configured allowance and must report actual model routing, environment and source revision; this documentation task runs no paid evaluation.
+
+### Order of work
+
+Each step is its own PR. None adds model calls to an everyday run; evaluation runs spend live tokens and need an explicit allowance.
+
+| Step | Change | Cost |
+| --- | --- | --- |
+| 1 | Count first-hand reports separately from social echoes (§4). | Report code only; changes the ranking of social runs. |
+| 2 | Record social answers in population order after each phase; log feed positions and shuffle ties by seed; set and record per-role temperature and model versions (§4, §5). | Small engine changes; same calls and tokens. |
+| 3 | Phase 1 move into `simulation/` with the boundary test (§2). | Large, mechanical; no behaviour change. |
+| 4 | Graphology in the runtime; random and clustered null networks as evaluation options (§4, §7). | Small; one existing dependency. |
+| 5 | Evaluation harness: repeat-N runs, generic-persona and chronological-feed controls, Gym defect recall, run-level statistics (§9). | Tokens per evaluation, not per user run. |
+| 6 | ODD description and parameter provenance for the corrected model (§3). | Writing time. |
+| Later | Phase 2: run store, protocol and recovery (§8). | Large; only when a headless or hosted runner needs it. |
 
 Review decisions still needed before implementation:
 
