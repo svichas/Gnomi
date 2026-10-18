@@ -1,11 +1,14 @@
-import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
+import type { Api, EngineToClient, Method, SessionRun } from '@gnomi/engine/protocol.ts';
 import type { GnomiEvent, PersonaProgress } from '@gnomi/simulation/types.ts';
 
 // The engine client: typed requests over the MessagePort that main hands to the page (tech.md §11).
 let port: MessagePort | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
-const listeners = new Set<(event: GnomiEvent) => void>();
+const listeners = new Set<{ listener: (event: GnomiEvent) => void; projectDir: string | undefined }>();
+const sessionListeners = new Set<(run: SessionRun) => void>();
+let eventProject: string | undefined;
+export function setEventProject(dir: string) { eventProject = dir; }
 const progressListeners = new Set<(progress: PersonaProgress) => void>();
 
 const STOPPED = 'The engine stopped unexpectedly. Quit and reopen Gnomi to continue.';
@@ -27,7 +30,13 @@ export const connected = new Promise<{ startupError: string | null; sessionsPers
     });
     port.onmessage = ({ data }: MessageEvent<EngineToClient>) => {
       if (data.kind === 'event') {
-        listeners.forEach((listener) => listener(data.event));
+        listeners.forEach(({ listener, projectDir }) => {
+          if (!data.project_dir || data.project_dir === projectDir) listener(data.event);
+        });
+        return;
+      }
+      if (data.kind === 'session_run') {
+        sessionListeners.forEach((listener) => listener(data.run));
         return;
       }
       if (data.kind === 'progress') {
@@ -54,9 +63,15 @@ export async function call<M extends Method>(method: M, params: Api[M]['params']
 }
 
 /** Every event the engine appends, from now on; returns the unsubscribe function. */
-export function onEvent(listener: (event: GnomiEvent) => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+export function onEvent(listener: (event: GnomiEvent) => void, projectDir = eventProject): () => void {
+  const subscription = { listener, projectDir };
+  listeners.add(subscription);
+  return () => listeners.delete(subscription);
+}
+
+export function onSessionRun(listener: (run: SessionRun) => void): () => void {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
 }
 
 /** Progress of a long request (writing personas), from now on; returns the unsubscribe function. */

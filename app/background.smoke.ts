@@ -1,0 +1,136 @@
+// Real Electron + real engine, with disposable projects and scripted models. No credentials or external sites.
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _electron as electron } from 'playwright-core';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { importText } from '@gnomi/simulation/assets.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { ProjectConfig } from '@gnomi/simulation/types.ts';
+import { startGym } from '../gym/server.ts';
+
+const dir = mkdtempSync(join(tmpdir(), 'gnomi-background-'));
+const userData = join(dir, 'user-data');
+const library = join(userData, 'projects');
+const shots = join(import.meta.dirname, 'test-results');
+mkdirSync(library, { recursive: true });
+mkdirSync(shots, { recursive: true });
+const gym = await startGym({ port: 0, captcha: true });
+const settings = { ...structuredClone(DEFAULT_SETTINGS), social: false };
+const base = { description: 'Disposable background simulation fixture', role: null, audience: null, settings };
+const hiring: ProjectConfig = { ...base, name: 'Hiring workspace', goal: 'Review candidates', pois: [{ id: 'hiring', type: 'web', mode: 'full', segments: null, name: 'Candidates', start_url: `${gym.url}/candidates`, allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null }] };
+const pricingDir = join(library, 'pricing.gnomi');
+const asset = await importText(createFsBlobStore(pricingDir), '# Pricing\nStarter costs $10 per month. Includes unlimited projects. Cancel at any time.', 'pricing.md');
+const pricing: ProjectConfig = { ...base, name: 'Pricing & plans', goal: 'Understand the Starter plan', pois: [{ id: 'pricing', type: 'text', segments: null, name: 'Pricing page', asset: asset.id }] };
+for (const [id, project] of [['hiring.gnomi', hiring], ['pricing.gnomi', pricing]] as const) {
+  const store = openProject(join(library, id));
+  store.saveProject(project);
+  store.close();
+}
+writeFileSync(join(userData, 'current-project'), 'hiring.gnomi');
+const env = { ...process.env, GNOMI_FAKE_LLM: '1' };
+Reflect.deleteProperty(env, 'GNOMI_PROJECT_DIR');
+const launch = () => electron.launch({ executablePath: createRequire(import.meta.url)('electron') as string,
+  args: ['--use-mock-keychain', `--user-data-dir=${userData}`, join(import.meta.dirname, 'out/main/index.js')], env });
+let app = await launch();
+let passed = false;
+setTimeout(() => { console.error('Background smoke timed out.'); process.exit(1); }, 120_000).unref();
+try {
+  let page = await app.firstWindow();
+  page.setDefaultTimeout(15_000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const dock = page.getByRole('complementary', { name: 'Session simulations' });
+  const toggle = dock.getByRole('button', { name: 'Simulations', exact: true });
+  const entries = dock.getByRole('list', { name: 'Simulations from this session' }).getByRole('listitem');
+  const settle = () => dock.evaluate((element) => Promise.all(element.getAnimations({ subtree: true }).filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
+  const start = async () => {
+    await page.locator('#tab-review').click();
+    await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
+  };
+  const home = () => page.getByRole('button', { name: 'Projects', exact: true }).click();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  await toggle.click();
+  await dock.getByText('Room for your next discovery.', { exact: true }).waitFor();
+  await settle();
+  await page.screenshot({ path: join(shots, 'simulation-dock-empty.png') });
+  await toggle.press('Escape');
+  assert.equal(await toggle.evaluate((button) => button === document.activeElement), true);
+  await start();
+  await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor({ timeout: 45_000 });
+  await home();
+  await page.getByRole('button', { name: 'Open Pricing & plans', exact: true }).click();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await start();
+  await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
+  await start();
+  await page.waitForFunction(() => document.querySelector('.simulation-dock-summary')?.textContent === '1 running' && document.querySelectorAll('.simulation-dock-run[data-state="finished"]').length === 2);
+  await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
+  await home();
+  await page.screenshot({ path: join(shots, 'simulation-dock-collapsed.png') });
+  await toggle.click();
+  await entries.nth(2).waitFor();
+  assert.equal(await entries.count(), 3, 'every run in the session is retained, including repeated runs in a project');
+  await dock.getByText('Needs your attention', { exact: true }).waitFor();
+  assert.equal(await dock.getByText('Completed · Report ready', { exact: true }).count(), 2);
+  await settle();
+  for (const width of [1440, 1024, 768, 320]) {
+    await page.setViewportSize({ width, height: 780 });
+    const expanded = (await dock.boundingBox())!;
+    assert.ok(expanded.x >= 0 && expanded.x + expanded.width <= width);
+    assert.ok(expanded.y >= 0 && expanded.y + expanded.height <= 780);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: join(shots, `simulation-dock-${width}.png`) });
+    await toggle.click();
+    await page.waitForFunction(() => document.querySelector('.simulation-dock')!.getBoundingClientRect().height < 60);
+    const collapsed = (await dock.boundingBox())!;
+    assert.ok(Math.abs(collapsed.x - expanded.x) < 1 && Math.abs(collapsed.width - expanded.width) < 1);
+    assert.ok(Math.abs(collapsed.y + collapsed.height - expanded.y - expanded.height) < 1, 'the pill grows upward without moving its anchor');
+    await toggle.press('Enter');
+    await entries.nth(2).waitFor();
+    await settle();
+  }
+  await page.setViewportSize({ width: 1100, height: 780 });
+  await toggle.press('Escape');
+  assert.equal(await toggle.evaluate((button) => button === document.activeElement), true);
+  await page.reload();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  await toggle.click();
+  await entries.nth(2).waitFor();
+  assert.equal(await entries.count(), 3, 'renderer reload preserves this app session');
+  await dock.getByRole('button', { name: /^Stop Hiring workspace simulation/ }).click();
+  await dock.getByText('Stopped · Partial report', { exact: true }).waitFor();
+  assert.equal(await dock.getByText('Completed · Report ready', { exact: true }).count(), 2);
+  await dock.getByRole('button', { name: /^Open Hiring workspace simulation/ }).click();
+  await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  assert.match(await page.locator('.header-project').innerText(), /Hiring workspace/);
+  assert.match(await page.locator('.simulation-goal').innerText(), /Review candidates/);
+  await toggle.click();
+  await dock.getByRole('button', { name: /^Open Pricing & plans simulation r-0002/ }).click();
+  await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
+  assert.match(await page.locator('.simulation-goal').innerText(), /Understand the Starter plan/);
+  assert.deepEqual(errors, []);
+  console.log('ok    background + completed + repeated runs, responsive upward expansion, keyboard, reload, targeted stop and report navigation');
+  await app.close();
+  app = await launch();
+  page = await app.firstWindow();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Simulations', exact: true }).click();
+  await page.getByText('Room for your next discovery.', { exact: true }).waitFor();
+  console.log('ok    a new app session starts with an empty dock; project run history remains on disk');
+  passed = true;
+} catch (err) {
+  await (await app.firstWindow()).screenshot({ path: join(shots, 'background-failure.png') });
+  throw err;
+} finally {
+  await app.close();
+  await gym.close();
+  if (passed) rmSync(dir, { recursive: true, force: true });
+  else console.error(`Background smoke artifacts: ${dir}`);
+}

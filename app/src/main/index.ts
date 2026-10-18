@@ -37,7 +37,7 @@ const catalog = (): ProjectCatalog => ({ projects: library.list(), currentId: cu
 const lastProjectFile = () => join(app.getPath('userData'), 'current-project');
 
 async function openManagedProject(id: string) {
-  const project = await request('open_project', { dir: library.directory(id) });
+  const project = await request('open_project', { dir: library.directory(id), project_id: id });
   currentProjectId = id;
   writeFileSync(lastProjectFile(), id);
   return project;
@@ -118,7 +118,7 @@ async function startEngine(): Promise<Startup> {
     await Promise.all([
       (async () => {
         if (override) {
-          await request('open_project', { dir: override });
+          await request('open_project', { dir: override, project_id: 'development' });
           currentProjectId = 'development';
         } else {
           const entries = library.list();
@@ -171,10 +171,12 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
       if (result.canceled || !result.filePaths[0]) return { catalog: catalog(), project: null, canceled: true };
       destination = result.filePaths[0];
     }
-    // Closing is the engine's authoritative idle check and checkpoints its SQLite database.
-    // With no project open, renderer requests cannot mutate one while files are copied or moved.
-    await request('close_project', {});
-    closed = true;
+    // Navigation detaches a live project without stopping it. Folder mutations still require the
+    // target to be idle; other projects' runs keep their own stores and continue in the background.
+    if (input.action !== 'create' && input.action !== 'open') {
+      await request('close_project', { dir: library.directory(input.id) });
+      closed = true;
+    }
     let selected = previous;
     let exportedTo: string | undefined;
     switch (input.action) {

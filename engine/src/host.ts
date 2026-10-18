@@ -5,7 +5,8 @@ import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, rege
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
@@ -54,15 +55,19 @@ const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretNam
 const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
+type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
+// Only a selected project or one with a live run keeps its database open.
+const projects = new Map<string, OpenProject>();
+const sessionRuns = new SessionRuns((run) => broadcast({ kind: 'session_run', run }));
 let projectRequests = 0; // includes awaited persona writes and run preflight, before a RunHandle exists
-let open: { store: ProjectStore; blobs: BlobStore; record: Recorder } | null = null;
+let open: OpenProject | null = null;
 let browsers: Promise<BrowserPool> | null = null;
 let sessions: SessionStore | null = null; // while a project is open and main has sent the session key
 let recording: { role: string; rec: Promise<LoginRecording> } | null = null; // one login recording at a time
 let setupTask: { stop: AbortController; done: Promise<unknown> } | null = null;
 
 function writeSetup<T>(work: () => Promise<T>): Promise<T> {
-  if (setupTask || runs.size) return Promise.reject(new Error('Wait for the current generation or run to finish.'));
+  if (setupTask || hasRun(current().store.dir)) return Promise.reject(new Error('Wait for the current generation or run to finish.'));
   const stop = new AbortController();
   const done = Promise.resolve().then(work).finally(() => { setupTask = null; });
   setupTask = { stop, done };
@@ -205,7 +210,8 @@ async function shutdown() {
   const launched = browsers;
   browsers = null;
   await launched?.then((pool) => pool.close()).catch(() => {});
-  open?.store.close();
+  for (const project of projects.values()) project.store.close();
+  projects.clear();
   open = null;
   sessions = null;
 }
@@ -215,9 +221,18 @@ function broadcast(msg: EngineToClient) {
 }
 
 function canSwitchProject() {
-  if (runs.size) throw new Error('Stop the current run before switching projects');
   if (recording) throw new Error('Save or cancel the login recording before switching projects');
   if (projectRequests) throw new Error('Wait for the current project task to finish before switching projects');
+}
+
+function hasRun(dir: string) {
+  return [...runs.keys()].some((key) => JSON.parse(key)[0] === dir);
+}
+
+function releaseProject(project: OpenProject | null) {
+  if (!project || hasRun(project.store.dir)) return;
+  project.store.close();
+  projects.delete(project.store.dir);
 }
 
 const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] | Promise<Api[M]['result']> } = {
@@ -227,8 +242,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (name === 'session_key') refreshSessions();
     return null;
   },
-  open_project({ dir }) {
+  open_project({ dir, project_id }) {
     canSwitchProject();
+    dir = resolve(dir);
+    const existing = projects.get(dir);
+    if (existing) {
+      const loaded = readInfo(existing.store, secrets.has('session_key'));
+      if (open !== existing) releaseProject(open);
+      open = existing;
+      refreshSessions();
+      return loaded;
+    }
     // Validate/open first: a bad destination must not leave the current project with a closed database.
     const store = openProject(dir);
     let loaded: ProjectInfo;
@@ -236,18 +260,25 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       store.close();
       throw error;
     }
-    open?.store.close();
-    open = { store, blobs: createFsBlobStore(dir), record: createRecorder(store, (event) => broadcast({ kind: 'event', event })) };
+    releaseProject(open);
+    open = { store, blobs: createFsBlobStore(dir), record: createRecorder(store, (event) => {
+      sessionRuns.record(dir, event, project_id);
+      broadcast({ kind: 'event', event, project_dir: dir });
+    }) };
+    projects.set(dir, open);
     refreshSessions();
     return loaded;
   },
-  close_project() {
+  close_project({ dir }) {
     canSwitchProject();
-    open?.store.close();
+    const target = dir ? resolve(dir) : open?.store.dir;
+    if (target && hasRun(target)) throw new Error('Stop the project’s run before changing its folder.');
+    releaseProject(open);
     open = null;
     sessions = null;
     return null;
   },
+  get_session_runs: () => sessionRuns.list(),
   get_project: () => info(),
   save_project({ project }) {
     if (setupTask) throw new Error('Wait for persona generation to finish before saving project changes.');
@@ -317,7 +348,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
-    if (runs.size) throw new Error('A run is already in progress'); // one run at a time
+    if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
     // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
     const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
     if (refusal) throw new Error(refusal);
@@ -343,18 +374,22 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
       ? await pool()
       : { newPage: async (opts) => (await pool()).newPage(opts) };
-    if (runs.size) throw new Error('A run is already in progress'); // checked again: the awaits above let another start slip in
+    if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     let run: RunHandle | undefined;
     const llm = gateway(record, (provider) => run?.throttle(provider));
     run = startRun(store.createRun(newRunConfig(config, { personas, sessions: verified, reset })), { store, blobs, browsers: browserPool, llm, record, sessions });
     const started = run;
-    runs.set(started.run_id, started);
-    started.done.finally(() => runs.delete(started.run_id)).catch(() => {});
+    const key = runKey(store.dir, started.run_id);
+    runs.set(key, started);
+    started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
+      runs.delete(key);
+      if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
+    });
     return { run_id: started.run_id };
   },
-  stop_run({ run_id }) {
-    runs.get(run_id)?.stop();
+  stop_run({ run_id, project_dir }) {
+    runs.get(runKey(project_dir ? resolve(project_dir) : current().store.dir, run_id))?.stop();
     return null;
   },
   async record_session({ role }) {
@@ -398,7 +433,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return (await verify(project(), role)).result;
   },
   resume_personas({ run_id, persona_ids }) {
-    for (const id of persona_ids) runs.get(run_id)?.resume(id);
+    for (const id of persona_ids) runs.get(runKey(current().store.dir, run_id))?.resume(id);
     return null;
   },
   get_events: ({ run_id, after_seq, persona_id }) =>
@@ -421,7 +456,7 @@ function serve(transport: Transport) {
   clients.add(transport);
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
-    const projectTask = msg.method !== 'open_project' && msg.method !== 'close_project' && msg.method !== 'set_secret' && !['figma_test', 'figma_frames', 'figma_previews'].includes(msg.method); // the rest of Figma's work reads no project
+    const projectTask = !['open_project', 'close_project', 'set_secret', 'get_session_runs', 'figma_test', 'figma_frames', 'figma_previews'].includes(msg.method);
     if (projectTask) projectRequests++;
     try {
       const handler = handlers[msg.method] as (params: unknown) => unknown;
