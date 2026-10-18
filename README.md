@@ -1,8 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/gnomi-logo-reversed.svg">
-    <img src="assets/brand/gnomi-logo.svg" alt="Gnomi" width="260">
-  </picture>
+  <a href="https://github.com/svichas/Gnomi#gh-dark-mode-only">
+    <img src="assets/brand/gnomi-logo-light.svg#gh-dark-mode-only" alt="Gnomi" width="260">
+  </a>
+  <a href="https://github.com/svichas/Gnomi#gh-light-mode-only">
+    <img src="assets/brand/gnomi-logo.svg#gh-light-mode-only" alt="Gnomi" width="260">
+  </a>
 </p>
 
 <p align="center">
