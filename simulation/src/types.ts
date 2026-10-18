@@ -113,10 +113,10 @@ export interface RunSettings {
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
 }
 
-// 'chronological' is the evaluation control for the ranked feed (new_simulation.md §4).
 // The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
 export type NetworkPolicy = 'legacy' | 'rewired' | 'random' | 'clustered';
 
+// 'chronological' is the evaluation control for the ranked feed (new_simulation.md §4).
 export type FeedPolicy = 'ranked' | 'chronological';
 
 export type UsageFrequency = 'daily' | 'weekly' | 'monthly' | 'rarely' | 'never';

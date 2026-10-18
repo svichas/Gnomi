@@ -19,9 +19,10 @@ import { readBoard, selectFeed, type Board, type FeedPost } from './social/feed.
 import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
 
+import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
+
 /** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
 export type RunStore = Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>;
-import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
 export interface RunDeps {
   store: RunStore;

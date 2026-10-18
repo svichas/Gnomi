@@ -79,7 +79,6 @@ test('graph metrics on a hand-built graph', () => {
   const follows = new Map([['p-0-0', ['p-0-1']], ['p-0-1', ['p-0-0']], ['p-1-0', ['p-1-1']], ['p-1-1', ['p-0-0']]]);
   const m = graphMetrics(follows, people);
   assert.equal(m.mean_in_degree, 1);
-  assert.equal(m.mean_out_degree, 1);
   assert.equal(m.segment_assortativity, 0.25); // 3 of 4 follows stay in a segment (0.75) less the 0.5 expected by chance
   assert.equal(m.top_decile_in_share, 0.5); // one persona of four, p-0-0, receives two of the four follows
   assert.equal(graphMetrics(new Map(), people).segment_assortativity, 0);

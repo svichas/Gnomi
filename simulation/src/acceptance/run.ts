@@ -19,7 +19,7 @@ import { reportToMarkdown } from '../report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '../run.ts';
 import type { BlobStore, BrowserPool, LlmGateway, Recorder, Responder } from '../seams.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
-import { graphMetrics, networkGraph } from '../social/graph.ts';
+import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
 import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, pairedDifference, TOP, validateOptions, type Arm, type Criterion, type Facts, type Options, type Status } from './checks.ts';
 import { complaint, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
@@ -578,14 +578,15 @@ const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: nul
 const METRICS = ['completion_rate', 'abandonment_rate', 'recall', 'precision', 'themes', 'first_hand', 'heard_first', 'cost_usd', 'llm_calls', 'segment_assortativity', 'mean_in_degree', 'top_decile_in_share'] as const;
 type Outcomes = ReturnType<typeof outcomesOf>;
 
-/** One finished run's outcomes, with segment numerators and denominators; the graph is the one the run built, absent without social rounds. */
-function outcomesOf(report: Report, data: Fixture, seed: number, catalogue: string) {
+/** One finished run's outcomes, with segment numerators and denominators; the graph is the one the run logged on persona.created, absent without social rounds. */
+function outcomesOf(report: Report, data: Fixture, events: GnomiEvent[], catalogue: string) {
   const n = report.personas.length;
   const count = (outcome: string) => report.personas.filter((p) => p.outcome === outcome).length;
   const themes = report.themes ?? [];
   const settings = data.project.settings;
   const defects = defectScores(themes, catalogue, DEFECT_IDS);
-  const graph = settings.social ? graphMetrics(networkGraph(settings.network_policy ?? 'legacy', data.personas, seed), data.personas) : null;
+  const follows = new Map(events.flatMap((event) => event.type === 'persona.created' && event.payload.follows ? [[event.payload.persona.id, event.payload.follows] as const] : []));
+  const graph = settings.social ? graphMetrics(follows, data.personas) : null;
   return {
     personas: n, completed: count('done'), abandoned: count('abandoned'),
     completion_rate: n ? count('done') / n : null, abandonment_rate: n ? count('abandoned') / n : null,
@@ -638,7 +639,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
         const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
         const name = `r${entry.replicate}-${arm}`;
         const run = await runSeed(name, entry.seed, data, options, pool, allowance, env, data.project.settings.social !== false);
-        entry.arms[arm] = { run_status: run.run_status, evidence: name, outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, entry.seed, catalogue) : null };
+        entry.arms[arm] = { run_status: run.run_status, evidence: name, outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null };
       }
     }
   } catch (err) {

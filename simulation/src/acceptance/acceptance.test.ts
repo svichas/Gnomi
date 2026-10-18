@@ -134,7 +134,7 @@ test('defect scores map themes to enabled web defects by the catalogue pages the
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 5);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 7);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'baseline,other']), /got other/);
   assert.throws(() => parseOptions(['--evaluate', '--m4']), /one of/);

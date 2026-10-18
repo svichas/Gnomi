@@ -79,7 +79,6 @@ export function graphMetrics(follows: Map<string, string[]>, personas: Persona[]
   return {
     segment_assortativity: g.size ? graphLib.modularity(g, { getNodeCommunity: 'segment' }) : 0,
     mean_in_degree: g.size / n,
-    mean_out_degree: g.size / n,
     // The share of all follows that the top tenth of personas by in-degree receive.
     top_decile_in_share: g.size ? inDegrees.slice(0, Math.ceil(n / 10)).reduce((a, b) => a + b, 0) / g.size : 0,
   };

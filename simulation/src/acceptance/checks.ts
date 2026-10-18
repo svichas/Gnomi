@@ -20,6 +20,8 @@ export const ARMS = {
   social_off: { settings: { social: false } },
   chronological_feed: { settings: { feed_policy: 'chronological' } },
   rewired_network: { settings: { network_policy: 'rewired' } },
+  random_network: { settings: { network_policy: 'random' } },
+  clustered_network: { settings: { network_policy: 'clustered' } },
   generic_persona: { generic: true },
 } satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true }>;
 export type Arm = keyof typeof ARMS;
