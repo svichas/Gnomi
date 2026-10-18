@@ -1,0 +1,19 @@
+You know your product. But what happens when someone sees it for the first time?
+
+Meet Gnomi. Social simulation for product teams. Perspective before you ship.
+
+Start with your audience. Define the roles, languages, devices, and goals that matter. Gnomi turns those differences into individual simulated people.
+
+Share your idea, staging app, or your Figma design. Set a goal and a budget. Each persona explores from a different perspective.
+
+They click. They hesitate. They hit friction. And you can follow the actions, thoughts, and evidence behind every step.
+
+Then the conversation starts. Personas post, reply, and react. One confusing experience can become a shared opinion. Watch where it travels, and whose view changes.
+
+Gnomi brings it together in a report: ranked potential frictions, affected segments, screenshots, and quotes. See what happened, why it matters, and what you could change.
+
+Projects run on your machine, with your own model keys. Model inputs go to the provider you configure.
+
+These are simulated findings. Use them as hypotheses, then validate important decisions with real people.
+
+Find the friction. Follow the conversation. Know what to test next. Gnomi.
