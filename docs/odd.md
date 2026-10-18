@@ -91,7 +91,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
 
-**Model sampling (`llm/gateway.ts`).** Per-role temperature is requested unless the route has reasoning on, in which case none is sent. A provider seed is passed to Google, DeepSeek and OpenAI-compatible routes only, derived from run, persona, round and purpose (31 bits). The temperature and seed requested, and the model the provider reports, are recorded on each `llm.call`; the recorded value is the fact and the request is the intent.
+**Model sampling (`llm/gateway.ts`).** Per-role temperature is requested unless the route has reasoning on, in which case none is sent. A provider seed is passed to Google, DeepSeek and OpenAI-compatible routes only, derived from run, persona, round and purpose (31 bits). The temperature and seed sent, less any the provider reports it ignored, and the model the provider reports, are recorded on each `llm.call`.
 
 ## 8. Parameter table
 

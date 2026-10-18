@@ -2,7 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogle } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { APICallError, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type JSONValue, type LanguageModel, type LanguageModelUsage } from 'ai';
+import { APICallError, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type JSONValue, type LanguageModel, type LanguageModelUsage, type Warning } from 'ai';
 import { z } from 'zod';
 import type { LlmAttempt, LlmGateway, LlmRequest, LlmResult, Recorder, SecretName, SecretsStore, UserPart } from '../seams.ts';
 import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
@@ -116,6 +116,10 @@ function providerOptions({ provider, model }: ModelChoice, role: LlmRole, overri
   }
 }
 
+/** A setting the provider reports it ignored was not applied, so the log records null for it. */
+export const accepted = <V>(value: V | null, feature: 'temperature' | 'seed', warnings: readonly Warning[]) =>
+  warnings.some((w) => w.type === 'unsupported' && w.feature === feature) ? null : value;
+
 /** About four characters a token and 1.2k for a screenshot (tech.md §10.4): enough to pace requests, not to bill them. */
 function estimateTokens(system: string, user: UserPart[]) {
   const chars = user.reduce((n, p) => n + (p.type === 'text' ? p.text.length : 0), system.length);
@@ -222,6 +226,7 @@ export function createGateway({
         let status: 'ok' | 'error' | 'invalid_output' = 'ok';
         let error: string | null = null;
         let response_model: string | null = null;
+        let warnings: readonly Warning[] = [];
         let thrown: unknown;
         try {
           const result = await generateText({
@@ -252,6 +257,7 @@ export function createGateway({
           finish = result.finishReason;
           object = result.output;
           response_model = result.response.modelId;
+          warnings = result.warnings ?? [];
         } catch (err) {
           thrown = err;
           if (NoObjectGeneratedError.isInstance(err)) {
@@ -284,7 +290,7 @@ export function createGateway({
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
         const attempt: LlmAttempt = {
-          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error, temperature, seed, response_model },
+          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error, temperature: accepted(temperature, 'temperature', warnings), seed: accepted(seed, 'seed', warnings), response_model },
           transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, shared, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;

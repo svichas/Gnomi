@@ -4,7 +4,7 @@ import { afterEach, mock, test } from 'node:test';
 import { z } from 'zod';
 import type { LlmAttempt, LlmRequest, Recorder, SecretName } from '../seams.ts';
 import type { EventOf, GnomiEvent, ModelChoice, ProviderId } from '../types.ts';
-import { createGateway, InvalidOutputError, testProviderKey } from './gateway.ts';
+import { accepted, createGateway, InvalidOutputError, testProviderKey } from './gateway.ts';
 import type { Clock } from './limiter.ts';
 
 const KEYS: Record<'anthropic' | 'openai' | 'google' | 'deepseek', string> = {
@@ -687,4 +687,9 @@ test('testProviderKey never puts a key in the message it returns', async () => {
     assert.ok(!offline.ok && !offline.error.includes(key), JSON.stringify(offline));
     mock.restoreAll();
   }
+});
+
+test('a sampling setting the provider reports it ignored is logged as null', () => {
+  const ignored = [{ type: 'unsupported' as const, feature: 'temperature' }];
+  assert.deepEqual([accepted(1, 'temperature', ignored), accepted(42, 'seed', ignored), accepted(1, 'temperature', [])], [null, 42, 1]);
 });
