@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ProfileAttribute, Segment } from '@gnomi/engine/types.ts';
+import type { ProfileAttribute, Segment } from '@gnomi/simulation/types.ts';
 import { AttributeRule } from './AttributeRule.tsx';
 import { ATTRIBUTE_TYPES, choiceValues, defaultRule, PROFILE_GROUPS, setAttributeChoices, setSegmentRule } from './profile.ts';
 import { Button, Check, Field, inputClass } from './ui.tsx';

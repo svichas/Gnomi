@@ -1,6 +1,6 @@
-import type { GnomiEvent, RunConfig, RunStatus } from '@gnomi/engine/types.ts';
-import { poisFor, withPois } from '@gnomi/engine/poi/pois.ts';
-import { socialRounds } from '@gnomi/engine/settings.ts';
+import type { GnomiEvent, RunConfig, RunStatus } from '@gnomi/simulation/types.ts';
+import { poisFor, withPois } from '@gnomi/simulation/poi/pois.ts';
+import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { runSetup } from './activity.ts';
 
 export type RunPhase = 'starting' | 'exploring' | 'discussing' | 'reporting' | 'saving' | 'complete' | 'stopped' | 'interrupted';

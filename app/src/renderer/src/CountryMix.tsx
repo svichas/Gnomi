@@ -1,4 +1,4 @@
-import { COUNTRY_PROFILES, countryName } from '@gnomi/engine/audience/locations.ts';
+import { COUNTRY_PROFILES, countryName } from '@gnomi/simulation/audience/locations.ts';
 import { countryShares, removeCountry, setCountryShare } from './audience.ts';
 import { Button, Field, inputClass, NumberInput } from './ui.tsx';
 

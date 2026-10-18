@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import type { BlobStore, ProjectStore, SessionStore, StorageState } from './seams.ts';
+import type { BlobStore, ProjectStore, SessionStore, StorageState } from '@gnomi/simulation/seams.ts';
 
 // Blob layout: format version, 12-byte IV, 16-byte GCM tag, then the ciphertext.
 const FORMAT = 1;

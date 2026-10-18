@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BUILTIN_PERSONA } from '@gnomi/engine/persona.ts';
-import { DEFAULT_SETTINGS } from '@gnomi/engine/settings.ts';
-import type { EventPayloads, EventType, GnomiEvent, RunConfig, Segment } from '@gnomi/engine/types.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { EventPayloads, EventType, GnomiEvent, RunConfig, Segment } from '@gnomi/simulation/types.ts';
 import { runProgress } from './runProgress.ts';
 
 function config({ people = 2, places = 1, social = false, rounds = 3 } = {}): RunConfig {

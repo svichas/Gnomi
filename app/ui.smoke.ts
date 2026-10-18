@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { syntheticRun } from '../engine/src/graph/synthetic.ts';
-import { openProject } from '../engine/src/log/sqlite.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { toRows } from './src/renderer/src/activity.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-ui-'));

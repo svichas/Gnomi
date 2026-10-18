@@ -1,12 +1,12 @@
 // The persona writer: verbalized sampling (four candidates with probabilities, one picked by seed) restores diversity on API models (tech.md §2.4).
 import { z } from 'zod';
-import type { LlmRequest } from '../seams.ts';
-import type { Persona, ProjectConfig, Segment, UsageFrequency } from '../types.ts';
+import type { LlmRequest } from '@gnomi/simulation/seams.ts';
+import type { Persona, ProjectConfig, Segment, UsageFrequency } from '@gnomi/simulation/types.ts';
 import type { AudienceDeps } from './index.ts';
-import { fnv1a, mulberry32, postingPropensity, type Traits } from './sample.ts';
-import { getPersonaSchema, isAttributeEnabled, profileEntries } from '../profile/schema.ts';
-import { profileSignature } from '../profile/signature.ts';
-import { latin } from '../llm/english.ts';
+import { fnv1a, mulberry32, postingPropensity, type Traits } from '@gnomi/simulation/audience/sample.ts';
+import { getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
+import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
+import { latin } from '@gnomi/simulation/llm/english.ts';
 
 const text = latin(z.string().trim().min(1));
 const candidate = z.object({

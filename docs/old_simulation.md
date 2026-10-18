@@ -1,6 +1,6 @@
 # Current simulation: implementation snapshot
 
-**Snapshot:** 18 October 2026, source revision `9e383901046046eb9d6e06853f3a0aaf86504a4b`.
+**Snapshot:** 18 October 2026, source revision `9e383901046046eb9d6e06853f3a0aaf86504a4b`. **Historical:** this describes the engine before the move; the code now lives under `simulation/` (see [new_simulation.md](new_simulation.md)), so the `engine/` links below name the old locations and revision.
 
 This document describes the implementation at that revision, including its limits. It is the baseline for the proposed [new simulation](new_simulation.md). It does not make the proposed architecture or validation requirements current behavior. Some older sections of [tech.md](tech.md) describe intentions; the source links below are authoritative for this snapshot.
 

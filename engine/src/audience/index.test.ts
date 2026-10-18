@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InvalidOutputError } from '../llm/gateway.ts';
-import type { LlmGateway, LlmRequest, LlmResult, Responder } from '../seams.ts';
-import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, Persona, ProjectConfig } from '../types.ts';
+import { InvalidOutputError } from '@gnomi/simulation/llm/gateway.ts';
+import type { LlmGateway, LlmRequest, LlmResult, Responder } from '@gnomi/simulation/seams.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { Audience, Persona, ProjectConfig } from '@gnomi/simulation/types.ts';
 import { addPersona, DEMO_PERSONA_WRITER, defaultAudience, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './index.ts';
-import { addedSeed, GENERATION, postingPropensity, sampleTraits, TRAIT_KEYS } from './sample.ts';
+import { addedSeed, GENERATION, postingPropensity, sampleTraits, TRAIT_KEYS } from '@gnomi/simulation/audience/sample.ts';
 import { choose, nameKey, TAKEN_LABEL, type Candidate } from './write.ts';
-import { getPersonaSchema } from '../profile/schema.ts';
-import { personaProfileIsCurrent } from '../profile/signature.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 
 const project: ProjectConfig = {
   name: 'Gym ATS',

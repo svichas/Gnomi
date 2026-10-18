@@ -1,4 +1,4 @@
-import type { EventOf, Persona } from '@gnomi/engine/types.ts';
+import type { EventOf, Persona } from '@gnomi/simulation/types.ts';
 import { call } from './engine.ts';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
 import { Button, Note, useAction } from './ui.tsx';

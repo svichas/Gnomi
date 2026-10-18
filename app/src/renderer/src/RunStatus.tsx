@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GnomiEvent, RunConfig, RunRow } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, RunConfig, RunRow } from '@gnomi/simulation/types.ts';
 import { runSetup } from './activity.ts';
 import { runProgress } from './runProgress.ts';
 import { missingUsageText, recordedCost } from './cost.ts';

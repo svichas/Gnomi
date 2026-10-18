@@ -1,8 +1,8 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/engine/types.ts';
-import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
-import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/engine/report/markdown.ts';
+import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/simulation/types.ts';
+import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
+import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { missingUsageText } from './cost.ts';
@@ -37,7 +37,7 @@ function OutcomeChip({ outcome }: { outcome: Outcome }) {
   return <span data-tone={OUTCOMES[outcome].tone} className="tone-chip">{OUTCOMES[outcome].text}</span>;
 }
 
-// The persona prompt's scale (engine/src/agent/prompt.ts): 1 is a small irritation, 4 means the persona cannot go on.
+// The persona prompt's scale (simulation/src/agent/prompt.ts): 1 is a small irritation, 4 means the persona cannot go on.
 const SEVERITY = {
   4: { text: 'Blocker', plain: 'they could not go on', tone: 'bad' },
   3: { text: 'Major', plain: 'hard to get past', tone: 'high' },
@@ -69,7 +69,7 @@ function SeverityLegend() {
 
 const bySeverity = (a: ReportFriction, b: ReportFriction) => b.severity - a.severity || a.seq - b.seq;
 
-// How much a finding rests on (engine/src/report/themes.ts prevalence). Reports before it only have the persona count.
+// How much a finding rests on (simulation/src/report/themes.ts prevalence). Reports before it only have the persona count.
 const EVIDENCE_LEVEL = {
   strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it', order: 3 },
   some: { text: 'Some evidence', plain: 'two or more personas', order: 2 },
@@ -192,7 +192,7 @@ function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] 
   );
 }
 
-/** The passage of a text a confusion quotes (engine/src/poi/text.ts). */
+/** The passage of a text a confusion quotes (simulation/src/poi/text.ts). */
 function Passage({ passage }: { passage: ReportFriction['passage'] }) {
   if (!passage?.text) return null;
   return (

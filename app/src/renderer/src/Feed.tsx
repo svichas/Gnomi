@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { feedThreads } from '@gnomi/engine/graph/feed.ts';
 import type { FeedPost } from '@gnomi/engine/graph/feed.ts';
-import type { GnomiEvent } from '@gnomi/engine/types.ts';
+import type { GnomiEvent } from '@gnomi/simulation/types.ts';
 
 interface Props {
   names: Map<string, string>;

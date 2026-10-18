@@ -1,6 +1,6 @@
-import { withPois } from '../poi/pois.ts';
-import { influenceEdges } from '../social/influence.ts';
-import type { EventOf, GnomiEvent } from '../types.ts';
+import { withPois } from '@gnomi/simulation/poi/pois.ts';
+import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
+import type { EventOf, GnomiEvent } from '@gnomi/simulation/types.ts';
 
 // The swarm graph (tech.md §5.5): a pure projection of one run's events. It is applied incrementally and reports what each
 // batch changed, so the live view patches only those nodes and edges; applying any split of a log equals building it at once.
@@ -41,6 +41,7 @@ export interface SwarmEdge {
   last_seq: number;
   round: number; // the round it first appeared in
   last_round: number; // the latest round that added to it, for "only this round"
+  kind?: 'influence' | 'formed'; // influenced edges only: formed is a first opinion after reading, kept apart so it never counts as influence
 }
 
 export interface SwarmGraph {
@@ -145,7 +146,7 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
       if (!who) return;
       // The shared rule over just the cited posts and this change: the same edges influenceEdges finds over the whole log.
       const cited = [...new Set(event.payload.cause.post_ids)].flatMap((id) => graph.posts.get(id) ?? []);
-      for (const edge of influenceEdges([...cited, event])) bump(graph, changes, 'influenced', personaNode(graph, changes, edge.from).key, personaNode(graph, changes, edge.to).key, 1, event);
+      for (const edge of influenceEdges([...cited, event])) bump(graph, changes, 'influenced', personaNode(graph, changes, edge.from).key, personaNode(graph, changes, edge.to).key, 1, event, edge.kind);
       sentiment(graph, changes, event.payload.poi_id, who, event.payload.after.sentiment);
       return;
     }
@@ -175,11 +176,11 @@ function poiNode(graph: SwarmGraph, changes: GraphChanges, id: string): PoiNode 
   return node;
 }
 
-function bump(graph: SwarmGraph, changes: GraphChanges, type: EdgeType, source: string, target: string, by: number, event: GnomiEvent) {
-  const key = `${type}:${source}>${target}`;
+function bump(graph: SwarmGraph, changes: GraphChanges, type: EdgeType, source: string, target: string, by: number, event: GnomiEvent, kind?: SwarmEdge['kind']) {
+  const key = `${type}:${source}>${target}${kind === 'formed' ? ':formed' : ''}`;
   const edge = graph.edges.get(key);
   if (edge) Object.assign(edge, { weight: edge.weight + by, last_seq: event.seq, last_round: event.round });
-  else graph.edges.set(key, { key, type, source, target, weight: by, first_seq: event.seq, last_seq: event.seq, round: event.round, last_round: event.round });
+  else graph.edges.set(key, { key, type, source, target, weight: by, first_seq: event.seq, last_seq: event.seq, round: event.round, last_round: event.round, ...(kind && { kind }) });
   changes.edges.add(key);
 }
 

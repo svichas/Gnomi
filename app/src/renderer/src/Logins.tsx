@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { SessionInfo } from '@gnomi/engine/types.ts';
+import type { SessionInfo } from '@gnomi/simulation/types.ts';
 import { call, errorText } from './engine.ts';
 import { RecordingPanel } from './Recorder.tsx';
 import type { Recorder } from './Recorder.tsx';

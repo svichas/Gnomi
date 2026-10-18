@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { SessionInfo } from '@gnomi/engine/types.ts';
+import type { SessionInfo } from '@gnomi/simulation/types.ts';
 import { call } from './engine.ts';
 import { Button, useAction } from './ui.tsx';
 

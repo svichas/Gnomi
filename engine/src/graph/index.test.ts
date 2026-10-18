@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mulberry32 } from '../audience/sample.ts';
-import { influenceEdges } from '../social/influence.ts';
-import type { EventPayloads, EventType, GnomiEvent, Opinion, Persona } from '../types.ts';
+import { mulberry32 } from '@gnomi/simulation/audience/sample.ts';
+import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
+import type { EventPayloads, EventType, GnomiEvent, Opinion, Persona } from '@gnomi/simulation/types.ts';
 import { applyEvents, buildGraph, emptyGraph, graphAtRound } from './index.ts';
 import type { PersonaNode, PoiNode, SwarmEdge, SwarmNode } from './index.ts';
-import { syntheticRun } from './synthetic.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 
 function logOf() {
   const events: GnomiEvent[] = [];
@@ -16,7 +16,7 @@ function logOf() {
   const created = (id: string, segment_id: string | null) => add('persona.created', { persona: { id, name: `Name ${id}`, segment_id } as Persona }, { persona_id: id });
   const step = (persona_id: string, poi_id: string, round = 1) => add('persona.step', {
     step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: true, error: null },
-    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 0,
+    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 0, heard_post_ids: [],
   }, { persona_id, poi_id, round });
   const post = (persona_id: string, post_id: string, parent_id: string | null = null, round = 1) => add('social.post', { post_id, parent_id, text: 'Hard to find', about_poi_id: 'poi-1' }, { persona_id, round });
   return { events, add, created, step, post };
@@ -40,7 +40,7 @@ test('used: the first step on a POI draws the edge; its weight counts steps and 
 test('friction: weight is the summed severity, and both the persona and the POI count frictions', () => {
   const { events, created, add } = logOf();
   created('a', 'seg-1');
-  for (const severity of [2, 3]) add('persona.friction_reported', { step_no: 1, severity, what: 'x', expected: 'y', where: { url: '', ref: null } }, { persona_id: 'a', poi_id: 'poi-1' });
+  for (const severity of [2, 3]) add('persona.friction_reported', { step_no: 1, severity, what: 'x', expected: 'y', where: { url: '', ref: null }, heard_post_ids: [] }, { persona_id: 'a', poi_id: 'poi-1' });
   assert.equal(edgesOf(events, 'friction')[0].weight, 5);
   const graph = buildGraph(events);
   assert.equal((graph.nodes.get('persona:a') as PersonaNode).friction_count, 2);
@@ -60,7 +60,7 @@ test('talked: replies and reactions between two personas make one undirected edg
   assert.deepEqual(edgesOf(events, 'talked').map(({ key, source, target, weight }) => ({ key, source, target, weight })), [{ key: 'talked:persona:a>persona:b', source: 'persona:a', target: 'persona:b', weight: 3 }]);
 });
 
-test('influenced: edges follow the shared rule, one per pair with a count', () => {
+test('influenced: edges follow the shared rule, one per pair and kind with a count', () => {
   const { events, created, post, add } = logOf();
   for (const id of ['a', 'b']) created(id, 'seg-1');
   post('a', 's1');
@@ -69,13 +69,17 @@ test('influenced: edges follow the shared rule, one per pair with a count', () =
   changed(null, -1, ['s1'], 2);
   changed(-1, -1, ['s1'], 2); // no movement
   changed(-1, 1, ['s1', 's1'], 3);
-  assert.deepEqual(edgesOf(events, 'influenced').map(({ source, target, weight, round, last_round }) => ({ source, target, weight, round, last_round })), [{ source: 'persona:a', target: 'persona:b', weight: 2, round: 2, last_round: 3 }]);
+  changed(1, -1, ['s1'], 4);
+  assert.deepEqual(edgesOf(events, 'influenced').map(({ source, target, weight, round, last_round, kind }) => ({ source, target, weight, round, last_round, kind })), [
+    { source: 'persona:a', target: 'persona:b', weight: 1, round: 2, last_round: 2, kind: 'formed' },
+    { source: 'persona:a', target: 'persona:b', weight: 2, round: 3, last_round: 4, kind: 'influence' },
+  ]);
 
   const { events: swarm } = syntheticRun({ personas: 40, pois: 3, rounds: 4, seed: 7 });
   const counts = new Map<string, number>();
-  for (const edge of influenceEdges(swarm)) counts.set(`persona:${edge.from}>persona:${edge.to}`, (counts.get(`persona:${edge.from}>persona:${edge.to}`) ?? 0) + 1);
+  for (const edge of influenceEdges(swarm)) counts.set(`persona:${edge.from}>persona:${edge.to}/${edge.kind}`, (counts.get(`persona:${edge.from}>persona:${edge.to}/${edge.kind}`) ?? 0) + 1);
   assert.ok(counts.size > 0);
-  assert.deepEqual(new Map(edgesOf(swarm, 'influenced').map((edge) => [`${edge.source}>${edge.target}`, edge.weight])), counts);
+  assert.deepEqual(new Map(edgesOf(swarm, 'influenced').map((edge) => [`${edge.source}>${edge.target}/${edge.kind}`, edge.weight])), counts);
 });
 
 test('a persona node follows its episode to an end, and the run ending marks the rest unfinished', () => {

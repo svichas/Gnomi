@@ -1,6 +1,6 @@
 import { useId } from 'react';
-import { MAX_ROUNDS } from '@gnomi/engine/settings.ts';
-import type { RunSettings } from '@gnomi/engine/types.ts';
+import { MAX_ROUNDS } from '@gnomi/simulation/settings.ts';
+import type { RunSettings } from '@gnomi/simulation/types.ts';
 import { Icon } from './Icon.tsx';
 
 const ROUND_CHOICES = Array.from({ length: MAX_ROUNDS }, (_, index) => index + 1);

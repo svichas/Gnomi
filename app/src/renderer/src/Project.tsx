@@ -1,5 +1,5 @@
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { ProjectConfig } from '@gnomi/engine/types.ts';
+import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { PoiList } from './poi/PoiList.tsx';

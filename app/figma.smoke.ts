@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron, type Page } from 'playwright-core';
 import { FAKE_KEY } from '../engine/src/figma/fake.ts';
-import { syntheticRun } from '../engine/src/graph/synthetic.ts';
-import { openProject } from '../engine/src/log/sqlite.ts';
-import type { DesignPoi } from '../engine/src/types.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import type { DesignPoi } from '@gnomi/simulation/types.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-figma-'));
 const projectDir = join(dir, 'project.gnomi');

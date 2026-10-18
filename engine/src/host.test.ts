@@ -8,13 +8,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { startGym } from '../../gym/server.ts';
-import { createFsBlobStore } from './log/blobs.ts';
-import { openProject } from './log/sqlite.ts';
-import { getPersonaSchema } from './profile/schema.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { createSessionStore } from './sessions.ts';
-import { DEFAULT_SETTINGS } from './settings.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { Api, EngineToClient, Method } from './protocol.ts';
-import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from './types.ts';
+import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
 type Listener = (e: { data: unknown; ports: [] }) => void;
 const listeners: Listener[] = [];

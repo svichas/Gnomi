@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { TextPoi } from '@gnomi/engine/types.ts';
+import type { TextPoi } from '@gnomi/simulation/types.ts';
 import { call, errorText } from '../engine.ts';
 import { Button, Field, inputClass, Note } from '../ui.tsx';
 import type { PoiFormProps } from './index.ts';
 
-const MAX_BYTES = 2 * 1024 * 1024; // the engine's limit for a text asset (engine/src/assets.ts), checked here before a big file is read
+const MAX_BYTES = 2 * 1024 * 1024; // the engine's limit for a text asset (simulation/src/assets.ts), checked here before a big file is read
 
 /** Copy for personas to read: pasted, or a .md or .txt file, stored in the project's assets; the saved text shows as they will read it. */
 export function TextPoiForm({ draft, onChange }: PoiFormProps<TextPoi>) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PersonaSchema, ProfileAttribute } from '@gnomi/engine/types.ts';
-import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
+import type { PersonaSchema, ProfileAttribute } from '@gnomi/simulation/types.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { choiceValues, customAttribute, defaultRule, formatAttribute, parseProfileTemplate, serializeProfileTemplate, setAttributeChoices, setSegmentRule } from './profile.ts';
 
 const schema: PersonaSchema = { version: 1, attributes: [] };

@@ -11,7 +11,7 @@ interface Window {
     listProviders(): Promise<import('../../providers.ts').ProviderList>;
     clearKey(provider: KeyedProvider): Promise<void>;
     /** The engine's zero-cost check of a saved key, or of the project's saved local endpoint; main keeps the result. */
-    testKey(provider: import('@gnomi/engine/types.ts').ProviderId): Promise<import('../../providers.ts').KeyTest>;
+    testKey(provider: import('@gnomi/simulation/types.ts').ProviderId): Promise<import('../../providers.ts').KeyTest>;
     /** The Figma token goes to main and never comes back; only its mask does. Frames are then read by the engine, not the page. */
     saveFigmaToken(token: string): Promise<import('../../providers.ts').FigmaEntry>;
     clearFigmaToken(): Promise<void>;

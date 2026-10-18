@@ -1,9 +1,9 @@
 import { RunStatus } from './RunStatus.tsx';
 import './run.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/engine/types.ts';
-import { isAttributeEnabled } from '@gnomi/engine/profile/schema.ts';
-import { groupProfiles } from '@gnomi/engine/report/dimensions.ts';
+import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/simulation/types.ts';
+import { isAttributeEnabled } from '@gnomi/simulation/profile/schema.ts';
+import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
 import { socialMemory } from '@gnomi/engine/graph/feed.ts';
 import { Activity, ProfileFilters } from './Activity.tsx';
 import { filterEvents, filterPersonas, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';

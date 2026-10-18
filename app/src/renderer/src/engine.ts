@@ -1,5 +1,5 @@
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import type { GnomiEvent, PersonaProgress } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, PersonaProgress } from '@gnomi/simulation/types.ts';
 
 // The engine client: typed requests over the MessagePort that main hands to the page (tech.md §11).
 let port: MessagePort | undefined;

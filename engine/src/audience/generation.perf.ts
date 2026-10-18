@@ -8,11 +8,11 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { defaultAudience } from './index.ts';
 import { DEMO_PERSONA_WRITER } from './demo.ts';
-import { sampleTraits, slotSeed } from './sample.ts';
+import { sampleTraits, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { writePersonas, type Candidate } from './write.ts';
-import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { LlmGateway } from '../seams.ts';
-import type { ProjectConfig } from '../types.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { LlmGateway } from '@gnomi/simulation/seams.ts';
+import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 
 const ref = process.argv[2];
 if (!ref) throw new Error('Pass the baseline git ref to compare against.');

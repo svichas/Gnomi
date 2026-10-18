@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { defaultAudience, syncPersonas, type AudienceDeps } from './index.ts';
 import { DEMO_PERSONA_WRITER } from './demo.ts';
 import { nameKey, TAKEN_LABEL, type Candidate } from './write.ts';
-import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { LlmGateway, LlmRequest } from '../seams.ts';
-import type { ProjectConfig } from '../types.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { LlmGateway, LlmRequest } from '@gnomi/simulation/seams.ts';
+import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 
 const project: ProjectConfig = {
   name: 'Example', description: 'A scheduling tool', goal: 'Book an appointment', role: null,

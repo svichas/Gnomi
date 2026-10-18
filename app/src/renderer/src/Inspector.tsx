@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
-import { foldOpinions } from '@gnomi/engine/opinion/index.ts';
+import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { call, errorText, onEvent } from './engine.ts';

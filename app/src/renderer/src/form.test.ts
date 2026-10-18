@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_SETTINGS } from '@gnomi/engine/settings.ts';
-import type { ProjectConfig, RunSettings, SessionInfo, WebPoi } from '@gnomi/engine/types.ts';
-import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { ProjectConfig, RunSettings, SessionInfo, WebPoi } from '@gnomi/simulation/types.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { blankAudience } from './audience.ts';
 import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, startHost, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';

@@ -4,11 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import type { StorageState } from './seams.ts';
-import { createFsBlobStore } from './log/blobs.ts';
-import { openProject } from './log/sqlite.ts';
+import type { StorageState } from '@gnomi/simulation/seams.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { createSessionStore } from './sessions.ts';
-import type { SessionInfo } from './types.ts';
+import type { SessionInfo } from '@gnomi/simulation/types.ts';
 
 const KEY = randomBytes(32).toString('hex');
 const OTHER_KEY = randomBytes(32).toString('hex');

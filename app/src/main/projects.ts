@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openProject } from '@gnomi/engine/log/sqlite.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import type { ProjectEntry } from '../projects.ts';
 
 const NAME_FILE = 'project-name.json';

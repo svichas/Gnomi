@@ -1,5 +1,5 @@
-import { PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
-import type { LlmRole, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
+import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import type { LlmRole, ProviderId, RunSettings } from '@gnomi/simulation/types.ts';
 
 // The provider list of the Settings page. Keys stay in main, encrypted by the OS; the page only ever sees what is here.
 
@@ -45,7 +45,7 @@ export interface ProviderList {
   figma: FigmaEntry | null;
 }
 
-// The hosts Gnomi's own code connects to, besides the sites under test (tech.md §13). Keep in step with engine/src/llm/gateway.ts.
+// The hosts Gnomi's own code connects to, besides the sites under test (tech.md §13). Keep in step with simulation/src/llm/gateway.ts.
 const PROVIDER_HOSTS: Record<KeyedProvider, string> = {
   anthropic: 'api.anthropic.com',
   openai: 'api.openai.com',

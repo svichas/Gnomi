@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import type { PersonaProgress } from '@gnomi/engine/types.ts';
+import type { PersonaProgress } from '@gnomi/simulation/types.ts';
 
 /** Decorative motion surrounds real engine progress; audience planning has no invented percentage. */
 export function BuildProgress({ kind, progress }: { kind: 'audience' | 'personas'; progress: PersonaProgress | null }) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Report as ReportData } from '@gnomi/engine/types.ts';
+import type { Report as ReportData } from '@gnomi/simulation/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
 import type { ReportFormat } from '../../reports.ts';
 import { Button, Note, useAction } from './ui.tsx';

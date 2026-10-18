@@ -62,7 +62,7 @@ test('a response without a DOCUMENT node is refused', () => {
 test('nothing outside the spike folder imports it', () => {
   const root = join(import.meta.dirname, '../../../..');
   const spike = join('figma', 'spike');
-  const offenders = ['engine/src', 'app/src'].flatMap((dir) =>
+  const offenders = ['engine/src', 'simulation/src', 'app/src'].flatMap((dir) =>
     readdirSync(join(root, dir), { recursive: true, encoding: 'utf8' })
       .filter((f) => /\.tsx?$/.test(f) && !f.includes(spike))
       .filter((f) => readFileSync(join(root, dir, f), 'utf8').includes('figma/spike'))

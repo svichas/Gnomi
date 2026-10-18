@@ -11,18 +11,18 @@ import { after, before, test, type TestContext } from 'node:test';
 import type { Page } from 'playwright-core';
 import { GYM_ACCOUNTS, startGym } from '../../gym/server.ts';
 import { DEMO_PERSONA_WRITER, syncPersonas } from './audience/index.ts';
-import { launchBrowserPool } from './browser/pool.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SURVEY, findRef } from './llm/scripted.ts';
-import { createFsBlobStore } from './log/blobs.ts';
-import { openProject } from './log/sqlite.ts';
-import { BUILTIN_PERSONA } from './persona.ts';
-import { buildReport } from './report/build.ts';
-import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
-import { allowedHosts, checkTarget } from './safety.ts';
+import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
+import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER, DEMO_SURVEY, findRef } from '@gnomi/simulation/llm/scripted.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { createRecorder, newRunConfig, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
+import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore } from './sessions.ts';
-import { DEFAULT_SETTINGS } from './settings.ts';
-import type { BrowserPool, LlmGateway, LlmRequest, Responder, SessionStore } from './seams.ts';
-import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo, WebPoi } from './types.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { BrowserPool, LlmGateway, LlmRequest, Responder, SessionStore } from '@gnomi/simulation/seams.ts';
+import type { Audience, EventOf, GnomiEvent, Persona, ProjectConfig, RunSettings, Segment, SessionInfo, WebPoi } from '@gnomi/simulation/types.ts';
 
 const web = (project: ProjectConfig) => project.pois[0] as WebPoi;
 
@@ -142,8 +142,8 @@ async function world(t: TestContext, gymOptions: Parameters<typeof startGym>[0] 
   ) => {
     let handle: RunHandle | undefined;
     const record = createRecorder(store, (e) => handle && opts.onEvent?.(e, handle));
-    // Walks script the steps only; every persona answers the demo survey at the end unless the test answers it.
-    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? (opts.survey ?? (() => DEMO_SURVEY))(req) : navigator(req)) }, record, { costPerCall: opts.costPerCall ?? 0 });
+    // Walks script the steps only; every persona answers the demo survey at the end unless the test answers it, and the demo socialiser takes the social rounds an audience gets by default.
+    const scripted = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? (opts.survey ?? (() => DEMO_SURVEY))(req) : navigator(req)), socialiser: DEMO_SOCIALISER }, record, { costPerCall: opts.costPerCall ?? 0 });
     let calls = 0;
     const llm: LlmGateway = {
       async call<T>(req: LlmRequest<T>) {
@@ -426,13 +426,14 @@ test('M1 (f): the reset hook resets staging before the persona is created', asyn
 
 // —— M2 ——
 
-/** The most episodes running at once, from the log: a persona is in flight from episode_started to her last event. */
+/** The most personas stepping at once, from the log: a persona is in flight from her first step of a round to her last. */
 function peakInFlight(events: GnomiEvent[]): number {
   const spans = new Map<string, [number, number]>();
   for (const e of events) {
-    if (!e.persona_id || e.type === 'persona.created' || e.type === 'llm.call') continue;
-    const span = spans.get(e.persona_id);
-    spans.set(e.persona_id, span ? [span[0], e.seq] : [e.seq, e.seq]);
+    if (!e.persona_id || e.type !== 'persona.step') continue; // steps only, per round: social phases run after every slice
+    const key = `${e.persona_id}/${e.round}`;
+    const span = spans.get(key);
+    spans.set(key, span ? [span[0], e.seq] : [e.seq, e.seq]);
   }
   return Math.max(...[...spans.values()].map(([start]) => [...spans.values()].filter(([s, end]) => s <= start && end >= start).length));
 }

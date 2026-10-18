@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent } from '../types.ts';
+import type { EventPayloads, EventType, GnomiEvent } from '@gnomi/simulation/types.ts';
 import { feedThreads, socialMemory } from './feed.ts';
 
 function logOf() {

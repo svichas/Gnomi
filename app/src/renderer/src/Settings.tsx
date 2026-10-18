@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
-import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/engine/types.ts';
+import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/simulation/types.ts';
 import { configuredProviders, egressList, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
 import { problemFor, ROLES } from './form.ts';

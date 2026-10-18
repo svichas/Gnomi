@@ -1,4 +1,4 @@
-import type { TextPoi } from '@gnomi/engine/types.ts';
+import type { TextPoi } from '@gnomi/simulation/types.ts';
 import type { PoiKind } from './index.ts';
 
 // The draft is the POI as saved: its text is already an asset once pasted or chosen (TextPoiForm.tsx).

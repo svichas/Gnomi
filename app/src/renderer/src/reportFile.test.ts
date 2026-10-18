@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import tailwindcss from '@tailwindcss/vite';
 import { createServer } from 'vite';
-import type { Report } from '@gnomi/engine/types.ts';
-import { HYPOTHESIS_BANNER } from '@gnomi/engine/report/build.ts';
+import type { Report } from '@gnomi/simulation/types.ts';
+import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -74,7 +74,7 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
     first_hand: ['p-1-0'],
     second_hand: ['p-1-1'],
     segments: [{ segment_id: 'seg-a', name: 'Recruiters', personas: 2, seed: true }],
-    influence: [{ from: 'p-1-0', to: 'p-1-1', poi_id: 'poi', post_id: 's1', seq: 60, round: 2, delta: -1 }],
+    influence: [{ from: 'p-1-0', to: 'p-1-1', poi_id: 'poi', post_id: 's1', seq: 60, round: 2, delta: -1, kind: 'influence' as const }],
     sentiment: [{ round: 1, mean: -1, personas: 1 }, { round: 2, mean: -1.5, personas: 2 }],
   };
   report.spread = [{ poi_id: 'poi', name: 'Gym', ...stats, themes: [{ theme_id: 'g1', rank: 1, title: 'Saving fails', ...stats }] }];

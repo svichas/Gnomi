@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Persona } from '@gnomi/engine/types.ts';
-import { addedSeed, GENERATION, personaId, slotSeed } from '../../../../engine/src/audience/sample.ts';
+import type { Persona } from '@gnomi/simulation/types.ts';
+import { addedSeed, GENERATION, personaId, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
