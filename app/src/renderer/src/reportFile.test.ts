@@ -74,7 +74,7 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
     first_hand: ['p-1-0'],
     second_hand: ['p-1-1'],
     segments: [{ segment_id: 'seg-a', name: 'Recruiters', personas: 2, seed: true }],
-    influence: [{ from: 'p-1-0', to: 'p-1-1', poi_id: 'poi', post_id: 's1', seq: 60, round: 2, delta: -1 }],
+    influence: [{ from: 'p-1-0', to: 'p-1-1', poi_id: 'poi', post_id: 's1', seq: 60, round: 2, delta: -1, kind: 'influence' as const }],
     sentiment: [{ round: 1, mean: -1, personas: 1 }, { round: 2, mean: -1.5, personas: 2 }],
   };
   report.spread = [{ poi_id: 'poi', name: 'Gym', ...stats, themes: [{ theme_id: 'g1', rank: 1, title: 'Saving fails', ...stats }] }];

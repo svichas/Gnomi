@@ -2,6 +2,7 @@ import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
 import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
+import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
 import { comparisonFor } from './poi/compare.ts';
@@ -317,8 +318,9 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const names = new Map(config.personas.map((p) => [p.id, p.name]));
   const poiNames = new Map(project.pois.map((poi) => [poi.id, poi.name]));
   // One socialiser call per persona and phase (tech.md §6.6), admitted like a step so a stop or the cost cap prevents it.
-  const socialise = async (persona: Persona, round: number, own: GnomiEvent[], feed: FeedPost[], board: Board, opinions: CurrentOpinion[]) => {
-    if (!beginStep()) return;
+  // Resolves with the validated answer's recording, staged for the phase to apply in population order, or null when silent.
+  const socialise = async (persona: Persona, round: number, own: GnomiEvent[], feed: FeedPost[], board: Board, opinions: CurrentOpinion[]): Promise<(() => void) | null> => {
+    if (!beginStep()) return null;
     try {
       const post_ids = feed.map((p) => p.post_id);
       record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids } });
@@ -358,22 +360,24 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         schema: socialSchema(post_ids, pois.map((poi) => poi.id) as [string, ...string[]]),
         signal: hard.signal,
       });
-      if (hard.signal.aborted) return;
       const { action, post_id, text, reaction, about_poi_id, opinion_updates } = object;
       const mine = { ...base, persona_id: persona.id };
-      // The schema guarantees the text, post and reaction each action needs. A persona writes at most one post a round.
-      if (action === 'post' || action === 'reply') {
-        record({ ...mine, poi_id: about_poi_id, type: 'social.post', payload: { post_id: `r${round}-${persona.id}`, parent_id: action === 'reply' ? post_id : null, text: text!, about_poi_id } });
-      }
-      if (action === 'react') record({ ...mine, type: 'social.reaction', payload: { post_id: post_id!, kind: reaction! } });
-      for (const { poi_id, post_ids: cited, ...after } of opinion_updates) {
-        const before = opinionOf(poi_id);
-        if (sameOpinion(before, after)) continue;
-        record({ ...mine, poi_id, type: 'persona.opinion_changed', payload: { poi_id, before, after, cause: { step_ids: [], post_ids: [...new Set(cited)] } } });
-      }
+      return () => {
+        // The schema guarantees the text, post and reaction each action needs. A persona writes at most one post a round.
+        if (action === 'post' || action === 'reply') {
+          record({ ...mine, poi_id: about_poi_id, type: 'social.post', payload: { post_id: `r${round}-${persona.id}`, parent_id: action === 'reply' ? post_id : null, text: text!, about_poi_id } });
+        }
+        if (action === 'react') record({ ...mine, type: 'social.reaction', payload: { post_id: post_id!, kind: reaction! } });
+        for (const { poi_id, post_ids: cited, ...after } of opinion_updates) {
+          const before = opinionOf(poi_id);
+          if (sameOpinion(before, after)) continue;
+          record({ ...mine, poi_id, type: 'persona.opinion_changed', payload: { poi_id, before, after, cause: { step_ids: [], post_ids: [...new Set(cited)] } } });
+        }
+      };
     } catch (err) {
       // Two invalid answers leave the persona silent for this phase (tech.md §10.6); any other model error ends the run.
       if (!(err instanceof InvalidOutputError) && !hard.signal.aborted) throw err;
+      return null;
     } finally {
       endStep();
     }
@@ -403,7 +407,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     const due = new Map<Persona, { feed: FeedPost[]; own: GnomiEvent[] }>();
     for (const persona of config.personas.length > 1 ? config.personas : []) {
-      const feed = selectFeed(board, persona.id, follows?.get(persona.id) ?? [], new Set(assigned.get(persona.id)!.map((poi) => poi.id)));
+      const ties = mulberry32(fnv1a(`feed/${config.seed}/${persona.id}/${round}`));
+      const feed = selectFeed(board, persona.id, follows?.get(persona.id) ?? [], ties, new Set(assigned.get(persona.id)!.map((poi) => poi.id)), settings.feed_policy);
       const used = (lastStep.get(persona.id) ?? 0) > (lastRead.get(persona.id) ?? 0);
       if (feed.length || (used && round < rounds)) due.set(persona, { feed, own: own.get(persona.id) ?? [] });
     }
@@ -416,10 +421,15 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       record({ ...base, persona_id: p.persona_id, poi_id: p.poi_id, type: 'social.post', payload: { post_id: `inj-r${round}-${i + 1}`, parent_id: null, text: p.text, about_poi_id: p.poi_id, injected: true } });
     });
     const { due, board, opinions } = planPhase(round);
-    await inParallel([...due.keys()], (persona) => {
+    const staged = new Map<Persona, () => void>();
+    await inParallel([...due.keys()], async (persona) => {
       const { feed, own } = due.get(persona)!;
-      return socialise(persona, round, own, feed, board, opinions);
+      const apply = await socialise(persona, round, own, feed, board, opinions);
+      if (apply) staged.set(persona, apply);
     });
+    // In population order once every call has settled, so response speed cannot decide whose post is newest (new_simulation.md §5).
+    // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
+    if (!hard.signal.aborted) for (const persona of due.keys()) staged.get(persona)?.();
   };
 
   // At most `concurrency` personas in flight, each with its own page; a paused persona keeps its slot and its page.

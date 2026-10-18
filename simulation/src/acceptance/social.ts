@@ -34,7 +34,7 @@ export function spreadOf(events: GnomiEvent[]): Spread | null {
     }
     if (e.type === 'social.feed_viewed' && e.payload.post_ids.some((id) => thread.has(id))) mark(e.persona_id, 'saw');
   }
-  for (const edge of influenceEdges(events)) if (thread.has(edge.post_id)) mark(edge.to, 'influenced');
+  for (const edge of influenceEdges(events)) if (edge.kind === 'influence' && thread.has(edge.post_id)) mark(edge.to, 'influenced');
   const segment_id = segments.get(author) ?? null;
   const reached = [...reach.values()].sort((a, b) => a.persona_id.localeCompare(b.persona_id));
   const same = reached.filter((r) => r.segment_id === segment_id).length;
@@ -58,7 +58,7 @@ export function spreadCriterion(mode: Mode, spreads: (Spread | null)[]): Criteri
 /** A fixed pseudo-random sample: edges ordered by a hash of their identity, so input order and run order do not matter. */
 export function sampleInfluenceEdges(runs: SeedLog[], size = AUDIT_SIZE): { seed: number; edge: InfluenceEdge }[] {
   const key = (seed: number, edge: InfluenceEdge) => fnv1a(`${seed}:${edge.seq}:${edge.post_id}`);
-  return runs.flatMap(({ seed, events }) => influenceEdges(events).map((edge) => ({ seed, edge, key: key(seed, edge) })))
+  return runs.flatMap(({ seed, events }) => influenceEdges(events).filter((edge) => edge.kind === 'influence').map((edge) => ({ seed, edge, key: key(seed, edge) })))
     .sort((a, b) => a.key - b.key || a.seed - b.seed || a.edge.seq - b.edge.seq || a.edge.post_id.localeCompare(b.edge.post_id))
     .slice(0, size)
     .map(({ seed, edge }) => ({ seed, edge }));

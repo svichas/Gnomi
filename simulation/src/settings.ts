@@ -50,6 +50,7 @@ export const DEFAULT_SETTINGS: RunSettings = {
   screenshots: true,
   social: true,
   rounds: 5,
+  feed_policy: 'ranked',
 };
 
 export const MAX_ROUNDS = 10;

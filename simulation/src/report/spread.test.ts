@@ -121,13 +121,14 @@ test('seed posts, repeats and segments crossed, per POI and per theme, with the 
     { segment_id: 'rec', name: 'Recruiters', personas: 2, seed: true },
     { segment_id: 'hm', name: 'Hiring managers', personas: 2, seed: false },
   ]);
-  assert.deepEqual(saving.influence.map((e) => [e.from, e.to, e.post_id, e.round, e.delta]), [['a1', 'a2', 's1', 2, -1], ['a1', 'b2', 's1', 2, -2]]);
+  // Abe's first opinion after reading Ana's post is formed, not a shift, so only Bea's change counts as influence.
+  assert.deepEqual(saving.influence.map((e) => [e.from, e.to, e.post_id, e.round, e.delta]), [['a1', 'b2', 's1', 2, -2]]);
   assert.deepEqual(home.seeds.map((s) => [s.post_id, s.round]), [['s4', 2]]);
   assert.deepEqual(home.segments, [{ segment_id: 'hm', name: 'Hiring managers', personas: 1, seed: true }]);
   assert.deepEqual(home.influence, []);
   assert.equal(poi.posts, 4, "Ari's post is about no POI");
   assert.deepEqual(poi.seeds.map((s) => s.post_id), ['s1']);
-  assert.equal(poi.influence.length, 2);
+  assert.equal(poi.influence.length, 1);
 });
 
 test('first-hand personas had their own friction in the theme; second-hand ones only posted about it', () => {
@@ -231,6 +232,6 @@ test('Markdown carries the spread per POI and theme, and homogeneity in the meth
     '#### 2. Reported friction on /',
     '- Mean sentiment by round, -2 to +2: 1: no opinions; 2: no opinions; 3: no opinions',
   ]) assert.ok(md.includes(expected), expected);
-  assert.match(md, /- Influence: Ana → Abe \(round 2, -1\.00, #\d+\); Ana → Bea \(round 2, -2\.00, #\d+\)/);
+  assert.match(md, /- Influence: Ana → Bea \(round 2, -2\.00, #\d+\)\n/);
   assert.match(md, /- Homogeneity \(mean pairwise TF-IDF cosine, warning at 0\.30\): posts \d\.\d\d \(5 posts\), persona backgrounds \d\.\d\d/);
 });

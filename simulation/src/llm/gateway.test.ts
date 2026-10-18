@@ -170,6 +170,9 @@ test('one call: cached system prefix, screenshot, low effort, native schema, cos
     usage_reported: true,
     status: 'ok',
     error: null,
+    temperature: null,
+    seed: null,
+    response_model: 'claude-haiku-5-5',
   });
   assert.deepEqual([run_id, persona_id], ['r-0001', 'p-001']);
   assert.match(calls[0].transcript, /"type":"image","mediaType":"image\/jpeg","bytes":4/);
@@ -207,6 +210,18 @@ test('each provider gets its own client, key, schema format and token accounting
   assert.match(local.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
   assert.match(calls[3].transcript, /Answer with one JSON object that matches this JSON Schema/, 'the transcript shows the prompt that was sent');
   assert.equal(anthropic.output_config.effort, 'low');
+
+  // Sampling: a navigator's temperature where the route takes one, a seed where the SDK passes one, and the model each answer named.
+  assert.deepEqual([anthropic.temperature, openai.temperature, google.generationConfig.temperature, local.temperature], [undefined, 1, 1, 1], 'Claude reasons, so no temperature is sent');
+  assert.deepEqual([anthropic.seed, openai.seed, typeof google.generationConfig.seed, typeof local.seed], [undefined, undefined, 'number', 'number']);
+  assert.equal(google.generationConfig.seed, local.seed, 'the seed follows the request, not the provider');
+  assert.deepEqual(calls.map((c) => [c.event.payload.temperature, c.event.payload.seed === null, c.event.payload.response_model]), [
+    [null, true, 'claude-haiku-5-5'],
+    [1, true, 'gpt-6-luna'],
+    [1, false, 'gemini-3.5-flash-lite'],
+    [1, false, 'gemma4:e4b'],
+  ]);
+  assert.equal(calls[2].event.payload.seed, google.generationConfig.seed, 'the log records the seed that was sent');
 
   // Tokens in the three fields the meter sums (uncached, read, written), and the cost from each model's own card.
   assert.deepEqual(
@@ -273,6 +288,7 @@ test('a role sets how hard the model thinks and how much room it has', async () 
   assert.deepEqual([sent.bodies[0].output_config.effort, sent.bodies[0].max_tokens], ['high', 16_384]);
   assert.deepEqual(sent.bodies.slice(1, 4).map((b) => b.reasoning.effort), ['high', 'low', 'none'], 'GPT-6.1 Sol cannot switch reasoning off, so a routine step on it is low; the judge thinks little');
   assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
+  assert.deepEqual(sent.bodies.slice(1).map((b) => b.temperature ?? b.generationConfig?.temperature), [undefined, undefined, 0.5, 1], 'reasoning OpenAI routes get none; the judge runs cooler');
 });
 
 test('explicit DeepSeek effort overrides control thinking and reserve room for reasoning', async () => {
@@ -285,6 +301,7 @@ test('explicit DeepSeek effort overrides control thinking and reserve room for r
   assert.deepEqual(sent.bodies.map((b) => [b.thinking.type, b.reasoning_effort, b.max_tokens]), [
     ['enabled', 'high', 16_384], ['enabled', 'high', 16_384], ['disabled', undefined, 4096],
   ]);
+  assert.deepEqual(sent.bodies.map((b) => b.temperature), [undefined, undefined, 1], 'thinking DeepSeek takes no temperature');
 });
 
 /** The observed failure: the entire completion allowance was spent before a complete JSON answer. */

@@ -1084,6 +1084,35 @@ test('the follow graph is stored with each persona, and feeds show what the foll
   assert.deepEqual(feeds.filter((e) => e.round === 2).map((e) => [e.persona_id, e.payload.post_ids]), [['p-0', []], ['p-1', ['r1-p-0']], ['p-2', ['r1-p-0']], ['p-3', ['r1-p-0']]]);
 });
 
+test('social answers are recorded in population order once the phase settles, however fast each call returns', async () => {
+  const completed: string[] = [];
+  const r = begin([], {
+    personas: swarm(4), project: SWARM, settings: { ...rounds(2), concurrency: 4 },
+    llm: (record) => {
+      const scripted = createScriptedGateway({
+        navigator: (req) => (req.purpose === 'survey' ? SURVEY : step('abandon', null, 'Done here')),
+        socialiser: (req) => ({ ...QUIET, action: 'post', text: `Notes from ${req.persona_id}`, about_poi_id: 'poi-1' }),
+        judge: DEMO_JUDGE,
+        author: DEMO_AUTHOR,
+      }, record);
+      return {
+        async call<T>(req: LlmRequest<T>) {
+          // The last persona answers first: completion runs in reverse population order.
+          if (req.role === 'socialiser') await sleep(40 - 10 * Number(req.persona_id!.slice(2)));
+          const result = await scripted.call(req);
+          if (req.role === 'socialiser' && req.round === 1) completed.push(req.persona_id!);
+          return result;
+        },
+      };
+    },
+  });
+  await r.run.done;
+  assert.deepEqual(completed, ['p-3', 'p-2', 'p-1', 'p-0']);
+  const first = (type: 'social.feed_viewed' | 'social.post') => of(r.events, type).filter((e) => e.round === 1).map((e) => e.persona_id);
+  assert.deepEqual(first('social.feed_viewed'), ['p-0', 'p-1', 'p-2', 'p-3']);
+  assert.deepEqual(first('social.post'), ['p-0', 'p-1', 'p-2', 'p-3'], 'posts land in population order, not completion order');
+});
+
 test('an injected post goes in at the start of its round’s social phase, before any feed, and reaches the followers’ feeds once', async () => {
   const text = 'The job form lost my whole draft.';
   const seen: string[] = [];

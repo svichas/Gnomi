@@ -8,6 +8,7 @@ import type { LlmAttempt, LlmGateway, LlmRequest, LlmResult, Recorder, SecretNam
 import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
 import { createLimiter, DEFAULT_LIMITS, realClock, type Clock, type Limit } from './limiter.ts';
 import { costUsd, type TokenUsage } from './prices.ts';
+import { fnv1a } from '../audience/sample.ts';
 
 /** The model gave no schema-valid answer on either attempt. */
 export class InvalidOutputError extends Error {}
@@ -27,6 +28,10 @@ const chatCompletions = (provider: ProviderId) => provider === 'deepseek' || pro
 // How hard each role thinks (tech.md §10.1): routine steps run low or the thinking tokens dominate the output bill (§10.2).
 // The judge merges and names groups a deterministic pass already made; reasoning made it the slowest step of a report.
 const EFFORT: Record<LlmRole, 'low' | 'medium' | 'high'> = { navigator: 'low', socialiser: 'low', persona_writer: 'low', judge: 'low', author: 'high' };
+// Sampling is part of the experiment (new_simulation.md §5): personas vary like people, the judge stays nearer its evidence.
+const TEMPERATURE: Record<LlmRole, number> = { navigator: 1, socialiser: 1, persona_writer: 1, judge: 0.5, author: 1 };
+// The AI SDK passes a seed to these providers only; Anthropic and OpenAI's Responses API take none.
+const SEEDED: ReadonlySet<ProviderId> = new Set(['google', 'deepseek', 'openai_compatible']);
 // GPT-5.6, GPT-6 Sol and GPT-6 Luna accept reasoning effort 'none'; GPT-6 Astra and 6.1 Sol start at 'low' (@ai-sdk/openai docs).
 const CAN_SKIP_REASONING = /^gpt-(5\.6|6-(sol|luna))/;
 
@@ -183,6 +188,11 @@ export function createGateway({
       const options = providerOptions(req.model, req.role, req.effort);
       const effort = req.effort ?? EFFORT[req.role];
       let maxOutputTokens = req.max_output_tokens ?? (effort === 'none' || effort === 'low' ? 4096 : 16_384);
+      // Reasoning routes reject temperature (Claude with effort, OpenAI reasoning, DeepSeek thinking), so they get none rather than a dropped one.
+      const reasoning = provider === 'anthropic' || (provider === 'openai' && options.openai.reasoningEffort !== 'none') || (provider === 'deepseek' && effort !== 'none' && effort !== 'low');
+      const temperature = reasoning ? null : TEMPERATURE[req.role];
+      // Per run, persona, round and purpose; 31 bits, as some providers read the seed as a signed 32-bit integer.
+      const seed = SEEDED.has(provider) ? fnv1a(`${req.run_id}/${req.persona_id}/${req.round}/${req.purpose ?? req.role}`) >>> 1 : null;
       const output = Output.object({ schema: req.schema });
       // DeepSeek supports JSON mode, not native schemas. Keep Output.object's validation and error metadata.
       if (provider === 'deepseek') output.responseFormat = Output.json().responseFormat;
@@ -211,6 +221,7 @@ export function createGateway({
         let finish: string | null = null;
         let status: 'ok' | 'error' | 'invalid_output' = 'ok';
         let error: string | null = null;
+        let response_model: string | null = null;
         let thrown: unknown;
         try {
           const result = await generateText({
@@ -228,6 +239,8 @@ export function createGateway({
             ],
             output,
             providerOptions: options,
+            temperature: temperature ?? undefined,
+            seed: seed ?? undefined,
             // Thinking tokens count against the cap, so the roles that think more get more room.
             maxOutputTokens,
             // The retries are ours, so that each failed attempt is logged and a 429 reaches onThrottle.
@@ -238,11 +251,13 @@ export function createGateway({
           text = result.text;
           finish = result.finishReason;
           object = result.output;
+          response_model = result.response.modelId;
         } catch (err) {
           thrown = err;
           if (NoObjectGeneratedError.isInstance(err)) {
             status = 'invalid_output';
             usage = err.usage;
+            response_model = err.response?.modelId ?? null;
             text = err.text ?? null;
             finish = err.finishReason ?? null;
             error = hideKey(err.cause instanceof Error ? err.cause.message : err.message);
@@ -269,7 +284,7 @@ export function createGateway({
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
         const attempt: LlmAttempt = {
-          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error },
+          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error, temperature, seed, response_model },
           transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, shared, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;

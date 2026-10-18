@@ -109,7 +109,11 @@ export interface RunSettings {
   screenshots: boolean; // send each step's screenshot to the navigator; always stored as evidence
   social?: boolean; // social rounds between usage slices (tech.md §6.4); absent before M4, which is off
   rounds?: number; // R when social rounds are on, 1–10, default 5
+  feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
 }
+
+// 'chronological' is the evaluation control for the ranked feed (new_simulation.md §4).
+export type FeedPolicy = 'ranked' | 'chronological';
 
 export type UsageFrequency = 'daily' | 'weekly' | 'monthly' | 'rarely' | 'never';
 
@@ -365,7 +369,7 @@ export interface EventPayloads {
   'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
   'persona.resumed': { step_no: number };
   // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a harness post, not a model's.
-  'social.feed_viewed': { post_ids: string[] };
+  'social.feed_viewed': { post_ids: string[] }; // in the order shown: a post's feed position is its index here
   'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };
   'social.reaction': { post_id: string; kind: 'agree' | 'disagree' };
   'containment.blocked_request': { host: string; url: string; method: string; reason?: 'observe_only' | 'robots' }; // no reason: an unlisted or production host
@@ -408,6 +412,9 @@ export interface EventPayloads {
     usage_reported?: boolean; // false means provider usage was absent/incomplete; cost may understate billing
     status: 'ok' | 'error' | 'invalid_output';
     error: string | null;
+    temperature?: number | null; // the sampling temperature sent; null when the route takes none
+    seed?: number | null; // the provider seed sent; null when the provider takes none
+    response_model?: string | null; // the model id the provider reported in its response, the fact behind `model`, the intent
   };
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.

@@ -38,6 +38,7 @@ test('spread counts personas who saw the complaint thread, replied in it or were
     post('x2', 'other'), saw('x3', ['other']), // another thread reaches no one
     changed('s3', 1, -1, ['r1']), // influenced by a reply in the thread
     changed('s4', 1, 1, ['c1']), // cited, but the opinion did not move
+    changed('s5', null, -1, ['c1']), // a first opinion formed after reading: not influence
     ev('run.round_ended', {}), ev('run.finished', {}),
   ];
   const spread = spreadOf(events)!;

@@ -1,4 +1,4 @@
-import type { GnomiEvent } from '../types.ts';
+import type { FeedPolicy, GnomiEvent } from '../types.ts';
 
 export const FEED_POSTS = 12;
 export const FEED_TOKENS = 2_500;
@@ -46,20 +46,24 @@ export function readBoard(events: GnomiEvent[]): Board {
 const tokens = (post: FeedPost) => Math.ceil((post.text.length + 100) / 4);
 
 /**
- * What one persona reads in a social phase (tech.md §6.6): unseen posts by the personas it follows, most reactions first (newest
- * first on ties), then two trending posts from anyone, at most 12 posts and about 2,500 tokens. Never its own posts. Given `pois`,
- * the persona's own points of interest, posts about them (or about nothing in particular) rank before posts about the others,
- * so a buyer reading the pricing copy hears about the pricing before the app it will never open. Pure.
+ * What one persona reads in a social phase (tech.md §6.6): unseen posts by the personas it follows, most reactions first, then two
+ * trending posts from anyone, at most 12 posts and about 2,500 tokens. Never its own posts. Given `pois`, the persona's own points of
+ * interest, posts about them (or about nothing in particular) rank before posts about the others, so a buyer reading the pricing copy
+ * hears about the pricing before the app it will never open. Ties go by `random`, a stream seeded per persona and round, never by
+ * event sequence, so response timing cannot pick the winner (new_simulation.md §5). The 'chronological' control shows the followed
+ * posts in seq order under the same caps, with no ranking and no trending slots. Pure.
  */
-export function selectFeed(board: Board, persona_id: string, follows: string[], pois?: ReadonlySet<string>): FeedPost[] {
+export function selectFeed(board: Board, persona_id: string, follows: string[], random: () => number, pois?: ReadonlySet<string>, policy: FeedPolicy = 'ranked'): FeedPost[] {
   const seen = board.seen.get(persona_id) ?? new Set();
   const followed = new Set(follows);
-  const relevant = (p: FeedPost) => (!pois || p.about_poi_id === null || pois.has(p.about_poi_id) ? 1 : 0);
-  const rank = (posts: FeedPost[]) => [...posts].sort((a, b) => relevant(b) - relevant(a) || b.agree + b.disagree - (a.agree + a.disagree) || b.seq - a.seq);
   const unseen = board.posts.filter((p) => p.author !== persona_id && !seen.has(p.post_id));
-  const mine = rank(unseen.filter((p) => followed.has(p.author))).slice(0, FEED_POSTS - TRENDING);
+  const shuffle = new Map(unseen.map((p) => [p, random()]));
+  const relevant = (p: FeedPost) => (!pois || p.about_poi_id === null || pois.has(p.about_poi_id) ? 1 : 0);
+  const rank = (posts: FeedPost[]) => [...posts].sort((a, b) => relevant(b) - relevant(a) || b.agree + b.disagree - (a.agree + a.disagree) || shuffle.get(a)! - shuffle.get(b)!);
+  const theirs = unseen.filter((p) => followed.has(p.author));
+  const mine = policy === 'chronological' ? theirs.slice(0, FEED_POSTS) : rank(theirs).slice(0, FEED_POSTS - TRENDING);
   const picked = new Set(mine);
-  const trending = rank(unseen.filter((p) => !picked.has(p))).slice(0, TRENDING);
+  const trending = policy === 'chronological' ? [] : rank(unseen.filter((p) => !picked.has(p))).slice(0, TRENDING);
   const feed: FeedPost[] = [];
   let used = 0;
   for (const post of [...mine, ...trending]) {

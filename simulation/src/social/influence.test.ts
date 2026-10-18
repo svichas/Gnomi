@@ -15,7 +15,7 @@ const changed = (seq: number, persona_id: string, before: number | null, after: 
 
 test('a cited post about the same POI that moved the sentiment draws one edge from its author', () => {
   const edges = influenceEdges([post(1, 'a', 's1'), changed(2, 'b', 1, -1, ['s1', 's1'])]);
-  assert.deepEqual(edges, [{ from: 'a', to: 'b', poi_id: 'poi-1', post_id: 's1', seq: 2, round: 2, delta: -2 }]);
+  assert.deepEqual(edges, [{ from: 'a', to: 'b', poi_id: 'poi-1', post_id: 's1', seq: 2, round: 2, delta: -2, kind: 'influence' }]);
 });
 
 test('no edge without movement, citation, a known post, the same POI or another author', () => {
@@ -32,7 +32,7 @@ test('no edge without movement, citation, a known post, the same POI or another 
   assert.deepEqual(influenceEdges(events), []);
 });
 
-test('a first opinion counts as moving from neutral', () => {
-  assert.equal(influenceEdges([post(1, 'a', 's1'), changed(2, 'b', null, -1, ['s1'])]).length, 1);
+test('a first opinion after reading a post is formed, not influenced, and moves from neutral', () => {
+  assert.deepEqual(influenceEdges([post(1, 'a', 's1'), changed(2, 'b', null, -1, ['s1'])]).map((e) => e.kind), ['formed']);
   assert.equal(influenceEdges([post(1, 'a', 's1'), changed(2, 'b', null, 0, ['s1'])]).length, 0);
 });

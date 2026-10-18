@@ -66,7 +66,7 @@ function statsOf(talk: Post[], firstHand: Set<string>, edges: InfluenceEdge[], s
 export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>): ReportSpread[] {
   const personaAt = new Map(events.map((e) => [e.seq, e.persona_id]));
   const personasOf = (t: ReportTheme) => new Set(t.seqs.flatMap((seq) => personaAt.get(seq) ?? []));
-  const edges = influenceEdges(events);
+  const edges = influenceEdges(events).filter((e) => e.kind === 'influence'); // a formed first opinion is not a shift
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
   const rounds = Math.max(1, ...events.map((e) => e.round));
   const pois = [...new Set(events.flatMap((e) => (e.type === 'social.post' && e.payload.about_poi_id !== null ? [e.payload.about_poi_id] : [])))];
