@@ -1,6 +1,6 @@
 # Proposed simulation: scientific experiments in a contained runtime
 
-Status: **Draft for review; not implemented.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b`, revised the same day after two reviews. The first added the report's existing prevalence ranges, sampling control and feed position, trimmed the library list, and phased the work with a cost per step (§10). The second put the move first, added heard-post ids as the attribution fix, limited the echo discount to reported frictions, corrected the reach-back list and the library table, and gave every file a destination. The implemented baseline is documented in [old_simulation.md](old_simulation.md). This proposal does not install dependencies, move code, or establish new performance results.
+Status: **Steps 1 to 6 of §10 are implemented on branch `claude/simulation-workspace`; phase 2 (§8) and review decisions 2 and 3 (§10) remain.** Written on 2026-10-18 against baseline commit `9e383901046046eb9d6e06853f3a0aaf86504a4b` and revised after two reviews. The branch has the `simulation/` workspace (step 1), heard-post ids and first-hand counts (step 2), ordered social phases, feed positions, seeded ties, per-role temperature and the prior-opinion influence rule (step 3), graph metrics and null networks (step 4), the evaluation harness (step 5) and the ODD description in [odd.md](odd.md) (step 6). The run store and protocol (phase 2) are not built, the first validation task and benchmark are not chosen, and no behavioural validation has been done. The baseline before the move is documented in [old_simulation.md](old_simulation.md). Sections below keep the original design wording where it still describes the design.
 
 ## 1. Objective and scope
 
@@ -23,7 +23,7 @@ Success has separate dimensions: implementation correctness, reproducible record
 
 Dependencies point from `app/` and the engine compatibility facade into the simulation's public exports. No simulation source imports `app/` or `engine/` internals. Core policies do not import Electron, Playwright, provider SDKs, or SQLite. Existing interfaces in [seams.ts](../engine/src/seams.ts) are useful extraction points, but the broad `ProjectStore` must become narrower run-scoped ports.
 
-Proposed layout; these paths do not exist yet. Files keep their current names and relative paths, so the move is a `git mv` whose diff is empty apart from import paths, and history follows each file:
+Layout, which now exists. Files keep their current names and relative paths, so the move is a `git mv` whose diff is empty apart from import paths, and history follows each file:
 
 ```text
 simulation/
@@ -41,7 +41,7 @@ simulation/
 
 Tests stay beside the code as `*.test.ts`, as they are now. The taxonomy of contracts, runtime, ports and adapters describes what these folders contain; it is not a rename to perform during the move. Rename a folder later only when it outgrows its name.
 
-The `exports` map names each file the engine and the app import, in place of the wildcard. The app's imports do not change in the move PR: the engine re-exports what the app uses today, and the app switches to `@gnomi/simulation` paths afterwards. An import-boundary check enforces the dependency direction. [no-electron.test.ts](../engine/src/no-electron.test.ts) is a regular expression over import statements, so a copy in the new workspace that also forbids `@gnomi/engine`, `../engine` and `app/` is a few lines. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
+The `exports` map names each file the engine and the app import, in place of the wildcard. The app's imports were switched to `@gnomi/simulation` paths in the move; the engine keeps no re-export shims. An import-boundary check enforces the dependency direction. [no-electron.test.ts](../engine/src/no-electron.test.ts) is a regular expression over import statements, so a copy in the new workspace that also forbids `@gnomi/engine`, `../engine` and `app/` is a few lines. Match existing TypeScript/ESM conventions, discriminated unions, and runtime schema validation at boundaries.
 
 ### Reaching the boundary in two phases
 
@@ -303,7 +303,7 @@ npm run typecheck
 npm run acceptance -w @gnomi/engine -- --m4 --out /tmp/gnomi-m4-baseline-review
 ```
 
-The proposed workspace must later provide its own `test`, `typecheck`, scripted headless-run and replay commands. They do not exist yet. Live evaluations require an explicit configured allowance and must report actual model routing, environment and source revision; this documentation task runs no paid evaluation.
+The workspace has its own `test`, `typecheck`, `cli` and `acceptance` scripts. A replay command does not exist yet. Live evaluations require an explicit configured allowance and must report actual model routing, environment and source revision; this documentation task runs no paid evaluation.
 
 ### Order of work
 

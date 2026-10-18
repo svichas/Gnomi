@@ -146,7 +146,8 @@ Live acceptance runs are opt-in and require provider credentials and an explicit
 | Directory | Contents |
 | --- | --- |
 | [`app/`](app/) | Electron shell and React UI: projects, audience editor, inputs, live graph, activity, and reports. |
-| [`engine/`](engine/) | TypeScript simulation engine: Playwright browser actions, persona generation, provider routing, social rounds, SQLite event storage, and reports. |
+| [`simulation/`](simulation/) | TypeScript simulation runtime: Playwright browser actions, provider routing, social rounds, SQLite event storage, and reports. |
+| [`engine/`](engine/) | Host process for the desktop app: project and audience authoring, Figma import, and the message protocol around the simulation. |
 | [`gym/`](gym/) | Demo web app, defect catalogue, design frames, and text fixtures. |
 | [`docs/`](docs/) | Product design, architecture, input contracts, evaluation guides, and roadmap. |
 | [`assets/brand/`](assets/brand/) | Logos, icons, typography, and brand assets. |

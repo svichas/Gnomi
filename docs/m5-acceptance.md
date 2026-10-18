@@ -11,7 +11,7 @@ The fixture's goals are for its applicant tracking system, so each case gives th
 ## Run without provider calls
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --m5 --out /tmp/gnomi-m5-scripted
+npm run acceptance -w @gnomi/simulation -- --m5 --out /tmp/gnomi-m5-scripted
 ```
 
 Choose a fresh output directory for each run. A scripted rehearsal runs everything above with the demo responders (a few seconds) and checks that the evidence is delivered: sentiment by segment, the buying survey, ranked confusions with quoted passages, one friction per frame, the sheets. Its answers are labelled samples that no model wrote, so every criterion stays `NOT_RUN`, whatever the structure shows. The rehearsal's design friction is on frame 2, not frame 4.
@@ -19,7 +19,7 @@ Choose a fresh output directory for each run. A scripted rehearsal runs everythi
 ## Run live
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --m5 --live --allowance-usd 5 --out acceptance-results/m5-live
+npm run acceptance -w @gnomi/simulation -- --m5 --live --allowance-usd 5 --out acceptance-results/m5-live
 ```
 
 The allowance works as in M2: a recorded-spend threshold shared by all eight runs, with the text runs first. Runs that have not started when it is reached, or when provider usage goes missing, stay missing; calls already dispatched may still be billed. The example figure is a starting point, not a measurement. A full-scale run makes about 1,100 navigator calls (a read and a survey per text persona, six frames and a survey per design persona), and the design calls send up to two frames each, downscaled to 1,024 px. Cost depends on the routing, so run a reduced run first and read its recorded cost.
@@ -51,7 +51,7 @@ The design runner records every expectation mismatch as a friction on its frame,
 ## Pure checks
 
 ```sh
-node --test engine/src/acceptance/m5.test.ts
+node --test simulation/src/acceptance/m5.test.ts
 ```
 
 These tests run the criteria on hand-built logs and reports (pass, fail, missing seeds, a run that did not finish, frictions on other frames, a reduced scale), the case builders, and two scripted rehearsals: the full one, and one on DeepSeek that skips the design case.

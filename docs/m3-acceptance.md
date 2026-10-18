@@ -5,7 +5,7 @@ The M3 mode of the [acceptance runner](m2-acceptance.md) checks the friction pip
 ## Run without provider calls
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --m3 --out /tmp/gnomi-m3-scripted
+npm run acceptance -w @gnomi/simulation -- --m3 --out /tmp/gnomi-m3-scripted
 ```
 
 A scripted rehearsal checks that every theme links to its log events. Scripted frictions do not come from the defects, so recall, precision, stability and the control run stay `NOT_RUN`.
@@ -13,7 +13,7 @@ A scripted rehearsal checks that every theme links to its log events. Scripted f
 ## Run live
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --m3 --live --allowance-usd 25 --out acceptance-results/m3-live
+npm run acceptance -w @gnomi/simulation -- --m3 --live --allowance-usd 25 --out acceptance-results/m3-live
 ```
 
 The allowance works as in M2 and is shared by all four runs; runs that have not started when it is reached stay missing. `--provider`, `--personas` and `--seeds` shrink a run as described in the [M2 guide](m2-acceptance.md#smaller-runs-and-other-providers). A smaller run reports its figures with a "Reduced scale" note and leaves every criterion that needs the full scale `NOT_RUN`.

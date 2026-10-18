@@ -7,7 +7,7 @@ The acceptance runner exercises 50 frozen personas against Gym v1 with all 12 de
 From the repository root:
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --out /tmp/gnomi-m2-scripted
+npm run acceptance -w @gnomi/simulation -- --out /tmp/gnomi-m2-scripted
 ```
 
 Choose a fresh output directory for each run. Scripted mode is the default and requires no credentials. It can pass execution, browser-locale and report-replay checks, but every criterion requiring a real model stays `NOT_RUN`. A fast, free scripted run does not establish the live time or cost targets.
@@ -17,7 +17,7 @@ Choose a fresh output directory for each run. Scripted mode is the default and r
 Configure `ANTHROPIC_API_KEY` in the local shell without putting it in repository files or command history. Then run:
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --live --allowance-usd 6 --out /tmp/gnomi-m2-live
+npm run acceptance -w @gnomi/simulation -- --live --allowance-usd 6 --out /tmp/gnomi-m2-live
 ```
 
 This example authorizes a $6 recorded-spend threshold across both cases. The population case retains its $5 run threshold; the second case can use only the remaining allowance. Missing usage stops further acceptance work. Calls already dispatched may still be charged, including after cancellation, so this is not a strict provider invoice cap. No extra model is called to grade the outputs.
@@ -33,7 +33,7 @@ Three options trade coverage for spend. They work in every mode (M2, `--m3`, `--
 - `--seeds N` runs the first N seeds of the M3 or M4 suite, or of M5's design runs.
 
 ```sh
-npm run acceptance -w @gnomi/engine -- --live --provider deepseek --personas 4 --allowance-usd 0.5 --out acceptance-results/m2-small
+npm run acceptance -w @gnomi/simulation -- --live --provider deepseek --personas 4 --allowance-usd 0.5 --out acceptance-results/m2-small
 ```
 
 Below 50 personas, the duration, cost and 12-browser targets (and M3's and M4's scale-dependent criteria, including spread, which saturates in a small population; [M5's mode](m5-acceptance.md) has its own scale rules) report their figures as `NOT_RUN` with a "Reduced scale" note, because they are claims about fifty people. Execution, population and replay are still checked for the smaller population, and the review sheets work the same way.
@@ -60,7 +60,7 @@ The frozen fixture does not establish live persona-writer diversity or biography
 ## Budget enforcement regressions
 
 ```sh
-node --test engine/src/llm/gateway.test.ts engine/src/llm/scripted.test.ts engine/src/run.test.ts
+node --test simulation/src/llm/gateway.test.ts simulation/src/llm/scripted.test.ts simulation/src/run.test.ts
 npm run smoke:budget -w @gnomi/app
 ```
 
