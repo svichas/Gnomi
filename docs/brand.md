@@ -43,6 +43,7 @@ The primary logo pairs the Olive mark with an Ink lowercase wordmark. The wordma
 |---|---|
 | [Primary logo](../assets/brand/gnomi-logo.svg) | App headers, documentation, report covers, light marketing surfaces |
 | [Monochrome logo](../assets/brand/gnomi-logo-mono.svg) | Single-color printing and restrained layouts |
+| [Light logo](../assets/brand/gnomi-logo-light.svg) | Sage mark and Paper wordmark for dark interfaces, including GitHub |
 | [Reversed logo](../assets/brand/gnomi-logo-reversed.svg) | Ink or Olive backgrounds |
 | [Wordmark](../assets/brand/gnomi-wordmark.svg) | Tight horizontal placements where the symbol already appears nearby |
 | [Olive icon](../assets/brand/gnomi-icon.svg) | Compact navigation, avatars, favicon source |

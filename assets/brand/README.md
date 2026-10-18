@@ -6,6 +6,7 @@ The design rules and rationale live in [docs/brand.md](../../docs/brand.md). Sta
 |---|---|---|
 | [gnomi-logo.svg](gnomi-logo.svg) | SVG · 260 × 80 | Primary Olive symbol + Ink wordmark, transparent |
 | [gnomi-logo-mono.svg](gnomi-logo-mono.svg) | SVG · 260 × 80 | Ink artwork, transparent |
+| [gnomi-logo-light.svg](gnomi-logo-light.svg) | SVG · 260 × 80 | Sage symbol + Paper wordmark, transparent; GitHub dark mode and dark surfaces |
 | [gnomi-logo-reversed.svg](gnomi-logo-reversed.svg) | SVG · 260 × 80 | Paper artwork, transparent; place on Ink or Olive |
 | [gnomi-wordmark.svg](gnomi-wordmark.svg) | SVG · 180 × 80 | Ink lowercase wordmark, transparent |
 | [gnomi-logo.png](gnomi-logo.png) | PNG · 1040 × 320 | Primary logo at 4× resolution, transparent |
