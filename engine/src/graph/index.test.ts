@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mulberry32 } from '../audience/sample.ts';
-import { influenceEdges } from '../social/influence.ts';
-import type { EventPayloads, EventType, GnomiEvent, Opinion, Persona } from '../types.ts';
+import { mulberry32 } from '@gnomi/simulation/audience/sample.ts';
+import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
+import type { EventPayloads, EventType, GnomiEvent, Opinion, Persona } from '@gnomi/simulation/types.ts';
 import { applyEvents, buildGraph, emptyGraph, graphAtRound } from './index.ts';
 import type { PersonaNode, PoiNode, SwarmEdge, SwarmNode } from './index.ts';
-import { syntheticRun } from './synthetic.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 
 function logOf() {
   const events: GnomiEvent[] = [];

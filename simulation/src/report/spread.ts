@@ -1,4 +1,4 @@
-import { MEAN_SIMILARITY, similarity } from '../audience/diversity.ts';
+import { MEAN_SIMILARITY, similarity } from './similarity.ts';
 import { influenceEdges, type InfluenceEdge } from '../social/influence.ts';
 import type { EventOf, GnomiEvent, Persona, ReportHomogeneity, ReportPost, ReportSpread, ReportTheme, SpreadStats } from '../types.ts';
 import { postsAbout, type Context, type Post } from './themes.ts';

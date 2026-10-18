@@ -1,8 +1,8 @@
-import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/engine/types.ts';
-import { profileEntries } from '@gnomi/engine/profile/schema.ts';
-import { attributeKey } from '@gnomi/engine/report/dimensions.ts';
-import { placesOf } from '@gnomi/engine/report/friction.ts';
-import { placeName } from '@gnomi/engine/poi/pois.ts';
+import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
+import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
+import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
+import { placesOf } from '@gnomi/simulation/report/friction.ts';
+import { placeName } from '@gnomi/simulation/poi/pois.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 

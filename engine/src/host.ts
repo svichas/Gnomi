@@ -2,32 +2,32 @@
 // library, tech.md §16.2): the parent port is a global on `process`, and main hands over one
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
-import { validateCountries } from './audience/locations.ts';
+import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { assetMime, assetPath, importLocalFile, importText } from './assets.ts';
-import { launchBrowserPool } from './browser/pool.ts';
-import { estimateRun } from './llm/estimate.ts';
-import { createGateway, testProviderKey } from './llm/gateway.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from './llm/scripted.ts';
+import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
+import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
+import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
+import { createGateway, testProviderKey } from '@gnomi/simulation/llm/gateway.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
 import { figmaClient } from './figma/client.ts';
 import { fakeFigma } from './figma/fake.ts';
 import { importFrames, listFrames, previews } from './figma/frames.ts';
-import { createFsBlobStore } from './log/blobs.ts';
-import { openProject } from './log/sqlite.ts';
-import { BUILTIN_PERSONA } from './persona.ts';
-import { preflight } from './poi/index.ts';
-import { browses, loginPoi, webPois } from './poi/pois.ts';
-import { validatePersonaSchema } from './profile/schema.ts';
-import { personaProfileIsCurrent } from './profile/signature.ts';
-import { buildReport } from './report/build.ts';
-import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from './run.ts';
-import { allowedHosts, checkTarget } from './safety.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { preflight } from '@gnomi/simulation/poi/index.ts';
+import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
+import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
+import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
-import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo } from './protocol.ts';
-import type { BlobStore, BrowserPool, LlmGateway, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore, Transport } from './seams.ts';
-import type { Audience, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from './types.ts';
+import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo, Transport } from './protocol.ts';
+import type { BlobStore, BrowserPool, LlmGateway, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
+import type { Audience, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
 
 interface PortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: PortLike[] }) => void): void;

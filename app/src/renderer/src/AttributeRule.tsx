@@ -1,4 +1,4 @@
-import type { AttributeSamplingRule, ProfileAttribute } from '@gnomi/engine/types.ts';
+import type { AttributeSamplingRule, ProfileAttribute } from '@gnomi/simulation/types.ts';
 import { defaultRule } from './profile.ts';
 import { Check, Field, inputClass, NumberInput } from './ui.tsx';
 

@@ -58,7 +58,7 @@ export function costUsd(choice: ModelChoice, usage: TokenUsage, at: Date = new D
   if (choice.provider === 'openai_compatible') return 0;
   const cards = PRICES[`${choice.provider}/${choice.model}`];
   // An unpriced model would make the cost budget silently blind, so refuse it.
-  if (!cards) throw new Error(`No price for model ${choice.model} (${choice.provider}); add it to engine/src/llm/prices.ts`);
+  if (!cards) throw new Error(`No price for model ${choice.model} (${choice.provider}); add it to simulation/src/llm/prices.ts`);
   const current = cards.findLast((c) => Date.parse(c.from) <= at.getTime()) ?? cards[0];
   const prompt = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
   const r = current.long && prompt > current.long.above ? current.long : current;

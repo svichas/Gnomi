@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
-import type { PersonaSchema, ProfileAttribute, ProfileGroup, Segment } from '@gnomi/engine/types.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import type { PersonaSchema, ProfileAttribute, ProfileGroup, Segment } from '@gnomi/simulation/types.ts';
 import { ATTRIBUTE_TYPES, choiceValues, customAttribute, parseProfileTemplate, profileProblem, PROFILE_GROUPS, serializeProfileTemplate, setAttributeChoices } from './profile.ts';
 import { ProfileAttributeEditor } from './ProfileAttributeEditor.tsx';
 import { Button, Card, Field, inputClass, Note, secondaryButton, useAction } from './ui.tsx';

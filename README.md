@@ -102,7 +102,7 @@ npm run gym
 Use `http://localhost:4317` as a web input in Gnomi. To exercise the engine without model calls, leave Gym running and use the scripted CLI:
 
 ```sh
-npm run cli -w @gnomi/engine -- \
+npm run cli -w @gnomi/simulation -- \
   --url http://localhost:4317 \
   --goal "Create a job post" \
   --allow localhost \
@@ -137,7 +137,7 @@ Run these commands from the repository root:
 | `npm run smoke -w @gnomi/app` | Build and run the scripted Electron smoke check. |
 | `npm run smoke:poi -w @gnomi/app` | Check the input setup flows in Electron. |
 | `npm run smoke:figma -w @gnomi/app` | Check the Figma import flow against the fixture API. |
-| `npm run acceptance -w @gnomi/engine -- --m5 --out /tmp/gnomi-m5-demo` | Run the text/design acceptance rehearsal without provider calls; use a fresh output directory. |
+| `npm run acceptance -w @gnomi/simulation -- --m5 --out /tmp/gnomi-m5-demo` | Run the text/design acceptance rehearsal without provider calls; use a fresh output directory. |
 
 Live acceptance runs are opt-in and require provider credentials and an explicit spending allowance. The [acceptance guides](#documentation) distinguish structural checks, live measurements, and findings that still need review.
 

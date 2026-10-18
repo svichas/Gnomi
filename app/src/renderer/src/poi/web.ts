@@ -1,5 +1,5 @@
-import { looksLikeStaging } from '@gnomi/engine/safety.ts';
-import type { SessionInfo, WebPoi } from '@gnomi/engine/types.ts';
+import { looksLikeStaging } from '@gnomi/simulation/safety.ts';
+import type { SessionInfo, WebPoi } from '@gnomi/simulation/types.ts';
 import type { PoiKind } from './index.ts';
 
 // A web app's fields as the Project screen edits them, and the rules that turn them into a WebPoi. No React, so tests run it.

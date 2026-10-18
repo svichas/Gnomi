@@ -12,10 +12,10 @@ import { _electron as electron } from 'playwright-core';
 import type { Locator, Page } from 'playwright-core';
 import { feedThreads, socialMemory } from '../engine/src/graph/feed.ts';
 import { buildGraph, graphAtRound } from '../engine/src/graph/index.ts';
-import { syntheticRun } from '../engine/src/graph/synthetic.ts';
-import { openProject } from '../engine/src/log/sqlite.ts';
-import { PROVIDER_DEFAULTS } from '../engine/src/settings.ts';
-import type { GnomiEvent } from '../engine/src/types.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import type { GnomiEvent } from '@gnomi/simulation/types.ts';
 import { startGym } from '../gym/server.ts';
 
 const appDir = import.meta.dirname;

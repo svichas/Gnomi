@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Persona } from '../types.ts';
+import type { Persona } from '@gnomi/simulation/types.ts';
 import { diversityReport } from './diversity.ts';
 
 // Written the way the persona writer is asked to write: first person, different people in the same product domain.

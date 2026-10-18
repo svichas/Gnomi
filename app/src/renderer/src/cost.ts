@@ -1,4 +1,4 @@
-import type { GnomiEvent, RunEstimate } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, RunEstimate } from '@gnomi/simulation/types.ts';
 
 const range = (low: number, high: number, show: (n: number) => string) => (show(low) === show(high) ? show(low) : `${show(low)}–${show(high)}`);
 

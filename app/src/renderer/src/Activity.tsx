@@ -1,9 +1,9 @@
 import { forwardRef, useId, useMemo, useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { Persona, Segment } from '@gnomi/engine/types.ts';
-import { attributeKey, formatAttributeValue } from '@gnomi/engine/report/dimensions.ts';
-import type { ProfileGroups } from '@gnomi/engine/report/dimensions.ts';
+import type { Persona, Segment } from '@gnomi/simulation/types.ts';
+import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
+import type { ProfileGroups } from '@gnomi/simulation/report/dimensions.ts';
 import { CATEGORIES, isTimelineHighlight } from './activity.ts';
 import type { Category, Filters, ProfileFilter, Row } from './activity.ts';
 import { activityMoments, momentKind, pendingActivityCount } from './activityFeed.ts';

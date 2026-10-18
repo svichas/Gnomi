@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import tailwindcss from '@tailwindcss/vite';
 import { createServer } from 'vite';
-import type { Report } from '@gnomi/engine/types.ts';
-import { HYPOTHESIS_BANNER } from '@gnomi/engine/report/build.ts';
+import type { Report } from '@gnomi/simulation/types.ts';
+import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.

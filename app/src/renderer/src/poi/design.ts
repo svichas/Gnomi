@@ -1,7 +1,7 @@
-import type { DesignPoi } from '@gnomi/engine/types.ts';
+import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import type { PoiKind } from './index.ts';
 
-/** File types a frame can be, as import_asset takes them (engine/src/assets.ts). */
+/** File types a frame can be, as import_asset takes them (simulation/src/assets.ts). */
 export const FRAME_TYPES = '.png,.jpg,.jpeg,.webp';
 
 // The draft is the POI as saved: frames in order, each an asset id and an optional step name.

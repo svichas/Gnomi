@@ -1,5 +1,5 @@
 // One persona, one URL, one goal, from a terminal: the headless entry point of tech.md §16.2.
-// node engine/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]
+// node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { DEFAULT_SETTINGS } from './settings.ts';
 import type { GnomiEvent, ProjectConfig } from './types.ts';
 
 const USAGE =
-  'Usage: node engine/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]';
+  'Usage: node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]';
 
 function describe(e: GnomiEvent): string {
   switch (e.type) {

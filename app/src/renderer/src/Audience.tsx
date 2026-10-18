@@ -1,9 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/engine/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
-import { personaProfileIsCurrent } from '@gnomi/engine/profile/signature.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';

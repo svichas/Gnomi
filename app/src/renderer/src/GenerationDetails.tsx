@@ -1,4 +1,4 @@
-import type { SetupCall } from '@gnomi/engine/types.ts';
+import type { SetupCall } from '@gnomi/simulation/types.ts';
 import { usd } from './ui.tsx';
 
 const STAGES: Record<string, string> = { propose_audience: 'Audience', write_persona: 'Sketches', rename_persona: 'Names', expand_persona: 'Biography' };

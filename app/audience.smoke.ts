@@ -6,9 +6,9 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { syntheticRun } from '../engine/src/graph/synthetic.ts';
-import { openProject } from '../engine/src/log/sqlite.ts';
-import type { PersonaProgress } from '../engine/src/types.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import type { PersonaProgress } from '@gnomi/simulation/types.ts';
 
 type HeldRequest = { release(): void; progress(done: number, total: number, detail?: Partial<PersonaProgress>): void; fail(): void };
 declare global { interface Window { audienceSmoke: HeldRequest | null; } }

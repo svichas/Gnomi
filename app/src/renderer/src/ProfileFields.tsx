@@ -1,5 +1,5 @@
-import { isAttributeEnabled, profileEntries } from '@gnomi/engine/profile/schema.ts';
-import type { Persona, PersonaSchema } from '@gnomi/engine/types.ts';
+import { isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
+import type { Persona, PersonaSchema } from '@gnomi/simulation/types.ts';
 import { PersonaAvatar } from './Icon.tsx';
 import { formatAttribute, NARRATIVE_FIELDS, STALE_PROFILE_FIELDS } from './profile.ts';
 

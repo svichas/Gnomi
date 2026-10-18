@@ -1,5 +1,5 @@
-import { importAsset, type AssetInfo } from '../assets.ts';
-import type { BlobStore } from '../seams.ts';
+import { importAsset, type AssetInfo } from '@gnomi/simulation/assets.ts';
+import type { BlobStore } from '@gnomi/simulation/seams.ts';
 import { FigmaError, type FigmaClient } from './client.ts';
 import { FILE_KEY, NODE_ID, parseFigmaLink } from './link.ts';
 

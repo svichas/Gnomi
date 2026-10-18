@@ -5,11 +5,11 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { openProject } from '../engine/src/log/sqlite.ts';
-import { BUILTIN_PERSONA } from '../engine/src/persona.ts';
-import { newRunConfig } from '../engine/src/run.ts';
-import { DEFAULT_SETTINGS } from '../engine/src/settings.ts';
-import type { ProjectConfig } from '../engine/src/types.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { newRunConfig } from '@gnomi/simulation/run.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-budget-smoke-'));
 const projectDir = join(dir, 'budget.gnomi');

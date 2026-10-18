@@ -1,4 +1,4 @@
-import type { Report, ReportBuyers, ReportLike } from '@gnomi/engine/types.ts';
+import type { Report, ReportBuyers, ReportLike } from '@gnomi/simulation/types.ts';
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
@@ -60,7 +60,7 @@ function Rows({ rows }: { rows: ReportBuyers[] }) {
   );
 }
 
-/** The buying survey of buyer segments (engine/src/report/buyers.ts), per point of interest when there are several. */
+/** The buying survey of buyer segments (simulation/src/report/buyers.ts), per point of interest when there are several. */
 export function BuyerSurvey({ rows, pois }: { rows: ReportBuyers[]; pois: Report['pois'] }) {
   const shown = pois.filter((poi) => rows.some((row) => row.poi_id === poi.id));
   return (

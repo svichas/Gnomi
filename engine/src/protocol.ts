@@ -1,6 +1,6 @@
-import type { AssetInfo } from './assets.ts';
+import type { AssetInfo } from '@gnomi/simulation/assets.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
-import type { SecretName } from './seams.ts';
+import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
   DiversityReport,
@@ -14,7 +14,7 @@ import type {
   SessionInfo,
   SetupCall,
   PersonaProgress,
-} from './types.ts';
+} from '@gnomi/simulation/types.ts';
 
 // Engine ⇄ client messages over a MessagePort (tech.md §11). Main and the renderer are both clients.
 // Every request gets exactly one response; events stream to every client as they are appended.
@@ -88,3 +88,8 @@ export type EngineToClient =
   | { kind: 'response'; id: number; ok: false; error: string }
   | { kind: 'event'; event: GnomiEvent }
   | ({ kind: 'progress'; task: 'generate_personas' } & PersonaProgress);
+
+export interface Transport {
+  send(msg: EngineToClient): void;
+  onMessage(handler: (msg: ClientToEngine) => void): void;
+}

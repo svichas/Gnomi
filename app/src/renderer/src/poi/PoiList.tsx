@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import { isEligible } from '@gnomi/engine/poi/pois.ts';
-import type { Poi, PoiType, Segment, SessionInfo } from '@gnomi/engine/types.ts';
+import { isEligible } from '@gnomi/simulation/poi/pois.ts';
+import type { Poi, PoiType, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
 import { Button, Check, Field, inputClass } from '../ui.tsx';
 import { Icon } from '../Icon.tsx';
 import { DesignPoiForm } from './DesignPoiForm.tsx';

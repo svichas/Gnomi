@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/engine/settings.ts';
+import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import { configuredProviders, egressList, routeOptions, routeProblem, withAvailableProvider, type ProviderEntry, type ProviderList } from './providers.ts';
 
 const entry = (provider: ProviderEntry['provider']): ProviderEntry => ({ provider, masked: 'sk-…abcd', remembered: true, test: null });

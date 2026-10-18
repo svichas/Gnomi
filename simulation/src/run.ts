@@ -17,10 +17,13 @@ import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { readBoard, selectFeed, type Board, type FeedPost } from './social/feed.ts';
 import { followGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
+
+/** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
+export type RunStore = Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>;
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
 export interface RunDeps {
-  store: ProjectStore;
+  store: RunStore;
   blobs: BlobStore;
   browsers: Pick<BrowserPool, 'newPage'>;
   llm: LlmGateway;
@@ -41,7 +44,7 @@ export interface RunHandle {
   done: Promise<Report>;
 }
 
-export function createRecorder(store: ProjectStore, onEvent: (event: GnomiEvent) => void): Recorder {
+export function createRecorder(store: RunStore, onEvent: (event: GnomiEvent) => void): Recorder {
   return (event, transcript) => {
     const stored = store.append(event);
     if (transcript) store.saveTranscript(stored.run_id, stored.seq, transcript.request, transcript.response);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { FigmaFile, FigmaImport } from '@gnomi/engine/figma/frames.ts';
-import type { DesignPoi } from '@gnomi/engine/types.ts';
+import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call } from '../engine.ts';
 import { Button, Check, Field, inputClass, Note, useAction } from '../ui.tsx';
 

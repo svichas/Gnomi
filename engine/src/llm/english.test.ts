@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
 import { writeSchema } from '../audience/write.ts';
-import { english, latin } from './english.ts';
+import { english, latin } from '@gnomi/simulation/llm/english.ts';
 
 test('English text allows any Latin letters and double-quoted screen text, never another script', () => {
   const text = english(z.string());

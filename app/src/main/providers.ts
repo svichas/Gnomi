@@ -1,7 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { SecretName } from '@gnomi/engine/seams.ts';
-import type { ProviderId } from '@gnomi/engine/types.ts';
+import type { SecretName } from '@gnomi/simulation/seams.ts';
+import type { ProviderId } from '@gnomi/simulation/types.ts';
 import { KEYED_PROVIDERS, type FigmaEntry, type KeyedProvider, type KeyTest, type ProviderEntry, type ProviderList } from '../providers.ts';
 
 // One encrypted file per key, under the names they have had since M0, so keys saved before the list simply appear in it.

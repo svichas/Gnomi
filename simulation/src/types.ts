@@ -159,7 +159,7 @@ export interface RunEstimate {
   unpriced: string[]; // models in the routing with no price, so the cost is a floor
 }
 
-/** What every point of interest has; the type adds what its runner needs (engine/src/poi/, docs/pois.md). */
+/** What every point of interest has; the type adds what its runner needs (simulation/src/poi/, docs/pois.md). */
 interface PoiBase {
   id: string;
   name: string;
@@ -179,7 +179,7 @@ export interface WebPoi extends PoiBase {
 /** Copy to read and rate: pasted, .md or .txt, stored in the project's assets/ folder. */
 export interface TextPoi extends PoiBase {
   type: 'text';
-  asset: string; // an asset id (engine/src/assets.ts)
+  asset: string; // an asset id (simulation/src/assets.ts)
 }
 
 /** One image or an ordered sequence of frames, shown one at a time (tech.md §7). */

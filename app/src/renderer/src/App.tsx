@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
+import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { AudienceTab } from './Audience.tsx';
 import { call, connected, errorText, onEvent, stopped } from './engine.ts';
 import { isEnd } from './activity.ts';

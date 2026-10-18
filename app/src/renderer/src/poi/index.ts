@@ -1,4 +1,4 @@
-import type { DesignPoi, Poi, PoiType, SessionInfo, TextPoi } from '@gnomi/engine/types.ts';
+import type { DesignPoi, Poi, PoiType, SessionInfo, TextPoi } from '@gnomi/simulation/types.ts';
 import { design } from './design.ts';
 import { text } from './text.ts';
 import { web, type WebDraft } from './web.ts';

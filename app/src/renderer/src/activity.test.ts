@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/engine/types.ts';
-import { getPersonaSchema } from '@gnomi/engine/profile/schema.ts';
-import { BUILTIN_PERSONA } from '@gnomi/engine/persona.ts';
+import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { countStates, filterEvents, filterPersonas, isPreparingReport, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, reportProgress, resetOutcome, runSetup, stopText, timelineSummary, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {

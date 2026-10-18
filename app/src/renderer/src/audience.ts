@@ -1,6 +1,6 @@
-import type { Audience, Persona, Segment } from '@gnomi/engine/types.ts';
-import { validateCountries } from '@gnomi/engine/audience/locations.ts';
-import { apportion as splitByShare } from '@gnomi/engine/audience/sample.ts';
+import type { Audience, Persona, Segment } from '@gnomi/simulation/types.ts';
+import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { apportion as splitByShare } from '@gnomi/simulation/audience/sample.ts';
 
 // The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
 
@@ -158,7 +158,7 @@ export function distribution(personas: Persona[], pick: (persona: Persona) => st
   return order ? entries : entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
-// FNV-1a over UTF-16 code units, as the engine derives each persona's seed (engine/src/audience/sample.ts; a test keeps the two together).
+// FNV-1a over UTF-16 code units, as the engine derives each persona's seed (simulation/src/audience/sample.ts; a test keeps the two together).
 function fnv1a(text: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);

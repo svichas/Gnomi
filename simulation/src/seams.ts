@@ -1,5 +1,4 @@
 import type { ZodType } from 'zod';
-import type { ClientToEngine, EngineToClient } from './protocol.ts';
 import type {
   Action,
   ActionOutcome,
@@ -191,9 +190,4 @@ export interface LlmResult<T> {
 export interface LlmGateway {
   /** Records one llm.call event (with its transcript) per attempt; retries once on invalid output, then throws. */
   call<T>(req: LlmRequest<T>): Promise<LlmResult<T>>;
-}
-
-export interface Transport {
-  send(msg: EngineToClient): void;
-  onMessage(handler: (msg: ClientToEngine) => void): void;
 }

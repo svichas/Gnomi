@@ -1,8 +1,8 @@
 // Deterministic and schema-valid, and every text says no model wrote it; the fixed name lists stand in for trait-derived names.
-import type { LlmRequest, Responder } from '../seams.ts';
-import type { Persona } from '../types.ts';
+import type { LlmRequest, Responder } from '@gnomi/simulation/seams.ts';
+import type { Persona } from '@gnomi/simulation/types.ts';
 import { LOGINS_LABEL, type Proposal } from './propose.ts';
-import { fnv1a, mulberry32, type Traits } from './sample.ts';
+import { fnv1a, mulberry32, type Traits } from '@gnomi/simulation/audience/sample.ts';
 import { languageName, nameKey, SELECTED_LABEL, TAKEN_LABEL, TRAITS_LABEL, WRITTEN_LABEL, type Candidate } from './write.ts';
 
 const FIRST: Record<Persona['pronouns'], string[]> = {

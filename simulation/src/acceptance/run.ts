@@ -112,13 +112,13 @@ function prepare(base: Fixture, options: Options, personas = options.personas): 
 /** Source, lockfile, price-table and runtime identity for a manifest; the price table is copied beside it. */
 function provenance(out: string) {
   const source = resolve(import.meta.dirname, '../../..');
-  const prices = readFileSync(join(source, 'engine/src/llm/prices.ts'), 'utf8');
-  copyFileSync(join(source, 'engine/src/llm/prices.ts'), join(out, 'price-table.ts'));
+  const prices = readFileSync(join(source, 'simulation/src/llm/prices.ts'), 'utf8');
+  copyFileSync(join(source, 'simulation/src/llm/prices.ts'), join(out, 'price-table.ts'));
   let revision = 'unknown';
   let dirty: boolean | null = null;
   try { revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* a source archive may have no Git metadata */ }
   try { dirty = execFileSync('git', ['status', '--porcelain'], { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0; } catch { /* source archive */ }
-  const sourceFiles = readdirSync(join(source, 'engine/src'), { recursive: true, encoding: 'utf8' }).filter((file) => file.endsWith('.ts')).map((file) => `engine/src/${file}`).concat(['gym/server.ts', 'engine/package.json']).sort();
+  const sourceFiles = readdirSync(join(source, 'simulation/src'), { recursive: true, encoding: 'utf8' }).filter((file) => file.endsWith('.ts')).map((file) => `simulation/src/${file}`).concat(['gym/server.ts', 'simulation/package.json']).sort();
   return {
     revision, dirty, source_sha256: hash(JSON.stringify(sourceFiles.map((file) => [file, hash(readFileSync(join(source, file)))]))),
     package_lock_sha256: hash(readFileSync(join(source, 'package-lock.json'))),

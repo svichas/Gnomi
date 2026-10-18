@@ -1,7 +1,7 @@
 // The audience proposal (idea.md §5.1 step 3, §8.3): the model drafts behaviour-defined segments; code fixes the shares.
 import { z } from 'zod';
-import type { ProjectConfig, Segment } from '../types.ts';
-import { apportion } from './sample.ts';
+import type { ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
+import { apportion } from '@gnomi/simulation/audience/sample.ts';
 
 // The line the demo writer reads the logins back from; keep it in step with DEMO_PERSONA_WRITER.
 export const LOGINS_LABEL = 'Recorded logins: ';

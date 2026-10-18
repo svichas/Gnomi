@@ -1,13 +1,13 @@
 import { useId } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import type { Segment, SessionInfo, UsageFrequency } from '@gnomi/engine/types.ts';
+import type { Segment, SessionInfo, UsageFrequency } from '@gnomi/simulation/types.ts';
 import { Icon } from './Icon.tsx';
 import { Button, Field, inputClass, NumberInput } from './ui.tsx';
 
 const FREQUENCY: Record<UsageFrequency, string> = { daily: 'Every day', weekly: 'Every week', monthly: 'Every month', rarely: 'Rarely', never: 'Never before' };
 const ENTRY: Record<Segment['entry'], string> = { direct: 'Opens the site directly', email_link: 'From a link in an email', shared_link: 'From a shared link' };
 const ACCOUNT: Record<Segment['account_state'], string> = { empty: 'A new, empty account', populated: 'An account with data' };
-// Absent is user (segments saved before M5). What each kind does by default is isEligible in engine/src/poi/pois.ts.
+// Absent is user (segments saved before M5). What each kind does by default is isEligible in simulation/src/poi/pois.ts.
 const KIND: Record<NonNullable<Segment['kind']>, { label: string; hint: string }> = {
   user: { label: 'Users', hint: 'Users try every point of interest, web apps included, then say whether they would keep using it.' },
   buyer: { label: 'Buyers', hint: 'Buyers only read text and look at designs, then say whether they would buy and what held them back.' },

@@ -2,6 +2,7 @@
   "name": "gnomi",
   "private": true,
   "workspaces": [
+    "simulation",
     "engine",
     "gym",
     "app"

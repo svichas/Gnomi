@@ -23,7 +23,8 @@
     "smoke:completion": "electron-vite build && node completion.smoke.ts"
   },
   "dependencies": {
-    "@gnomi/engine": "0.0.0"
+    "@gnomi/engine": "0.0.0",
+    "@gnomi/simulation": "0.0.0"
   },
   "devDependencies": {
     "@react-sigma/core": "6.0.0",

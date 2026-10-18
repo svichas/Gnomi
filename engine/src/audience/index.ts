@@ -1,11 +1,11 @@
-import type { LlmAttempt, LlmGateway, LlmRequest } from '../seams.ts';
-import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '../types.ts';
+import type { LlmAttempt, LlmGateway, LlmRequest } from '@gnomi/simulation/seams.ts';
+import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
-import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from './sample.ts';
+import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { nameKey, writePersonas } from './write.ts';
-import { validateCountries } from './locations.ts';
-import { sampleProfile } from '../profile/sample.ts';
-import { profileSignature } from '../profile/signature.ts';
+import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { sampleProfile } from '@gnomi/simulation/profile/sample.ts';
+import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';

@@ -5,10 +5,10 @@ import { ControlsContainer, SigmaContainer, useRegisterEvents, useSigma, ZoomCon
 import '@react-sigma/core/lib/style.css';
 import { DEFAULT_STYLES } from 'sigma';
 import type { Sigma } from 'sigma';
-import { fnv1a } from '@gnomi/engine/audience/sample.ts';
+import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { applyEvents, EDGE_TYPES, emptyGraph, graphAtRound } from '@gnomi/engine/graph/index.ts';
 import type { EdgeType, GraphChanges, SwarmEdge, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.ts';
-import type { GnomiEvent, Segment } from '@gnomi/engine/types.ts';
+import type { GnomiEvent, Segment } from '@gnomi/simulation/types.ts';
 import { Button, Check } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { connectionMatches, summarizeConnections } from './swarm-view.ts';

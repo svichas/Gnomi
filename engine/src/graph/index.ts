@@ -1,6 +1,6 @@
-import { withPois } from '../poi/pois.ts';
-import { influenceEdges } from '../social/influence.ts';
-import type { EventOf, GnomiEvent } from '../types.ts';
+import { withPois } from '@gnomi/simulation/poi/pois.ts';
+import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
+import type { EventOf, GnomiEvent } from '@gnomi/simulation/types.ts';
 
 // The swarm graph (tech.md §5.5): a pure projection of one run's events. It is applied incrementally and reports what each
 // batch changed, so the live view patches only those nodes and edges; applying any split of a log equals building it at once.

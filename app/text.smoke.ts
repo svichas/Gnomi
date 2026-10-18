@@ -7,10 +7,10 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { openProject } from '../engine/src/log/sqlite.ts';
-import { BUILTIN_PERSONA } from '../engine/src/persona.ts';
-import { DEFAULT_SETTINGS } from '../engine/src/settings.ts';
-import type { Segment } from '../engine/src/types.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import type { Segment } from '@gnomi/simulation/types.ts';
 import { gymAssets } from '../gym/assets.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-text-'));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent } from '@gnomi/engine/types.ts';
+import type { EventPayloads, EventType, GnomiEvent } from '@gnomi/simulation/types.ts';
 import { toRows } from './activity.ts';
 import { activityMoments, momentKind, pendingActivityCount } from './activityFeed.ts';
 

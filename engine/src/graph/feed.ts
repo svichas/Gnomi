@@ -1,4 +1,4 @@
-import type { EventOf, GnomiEvent } from '../types.ts';
+import type { EventOf, GnomiEvent } from '@gnomi/simulation/types.ts';
 
 // The swarm feed and each persona's social memory (tech.md §6.5, §6.6), folded from the log.
 

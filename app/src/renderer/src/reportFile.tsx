@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { Report as ReportData } from '@gnomi/engine/types.ts';
-import { reportToMarkdown } from '@gnomi/engine/report/markdown.ts';
+import type { Report as ReportData } from '@gnomi/simulation/types.ts';
+import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import type { ReportFormat } from '../../reports.ts';
 import { InFile, Report } from './Report.tsx';
 import { when } from './ui.tsx';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { DiversityReport, Persona, PersonaSchema, Segment } from '@gnomi/engine/types.ts';
-import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/engine/profile/schema.ts';
-import { countryName } from '@gnomi/engine/audience/locations.ts';
+import type { DiversityReport, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
+import { countryName } from '@gnomi/simulation/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
 import { PersonaHeader, ProfileFields, personaLabel } from './ProfileFields.tsx';
 import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';

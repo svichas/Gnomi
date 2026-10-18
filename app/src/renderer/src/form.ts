@@ -1,6 +1,6 @@
-import { logsIn, withPois } from '@gnomi/engine/poi/pois.ts';
-import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/engine/settings.ts';
-import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/engine/types.ts';
+import { logsIn, withPois } from '@gnomi/simulation/poi/pois.ts';
+import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/simulation/settings.ts';
+import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
 import { draftOf, poiOf, poiTitle, POI_KINDS, type PoiDraft } from './poi/index.ts';
 import { profileProblem } from './profile.ts';

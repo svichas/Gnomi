@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
-import { loginPoi, webPois } from '@gnomi/engine/poi/pois.ts';
-import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/engine/types.ts';
-import { socialRounds } from '@gnomi/engine/settings.ts';
+import { loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
+import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
+import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';

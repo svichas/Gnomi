@@ -1,6 +1,6 @@
-import { countryName } from '@gnomi/engine/audience/locations.ts';
-import { getPersonaSchema, validatePersonaSchema } from '@gnomi/engine/profile/schema.ts';
-import type { AttributeSamplingRule, AttributeValue, PersonaSchema, ProfileAttribute, ProfileGroup } from '@gnomi/engine/types.ts';
+import { countryName } from '@gnomi/simulation/audience/locations.ts';
+import { getPersonaSchema, validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import type { AttributeSamplingRule, AttributeValue, PersonaSchema, ProfileAttribute, ProfileGroup } from '@gnomi/simulation/types.ts';
 
 export const PROFILE_GROUPS: Record<ProfileGroup, string> = {
   identity: 'Identity', work: 'Work', capability: 'Capability', context: 'Context', psychology: 'Psychology', intent: 'Intent', voice: 'Voice', biography: 'Biography',

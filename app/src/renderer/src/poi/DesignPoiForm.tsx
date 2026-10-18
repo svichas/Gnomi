@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { DesignPoi } from '@gnomi/engine/types.ts';
+import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call, errorText } from '../engine.ts';
 import { Button, Field, inputClass, Note, Screenshot } from '../ui.tsx';
 import { FRAME_TYPES, moveFrame } from './design.ts';

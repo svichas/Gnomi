@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, GnomiEvent } from '@gnomi/engine/types.ts';
+import type { EventPayloads, GnomiEvent } from '@gnomi/simulation/types.ts';
 import { missingUsageText, recordedCost } from './cost.ts';
 
 const call = (seq: number, cost_usd: number, extra: Partial<EventPayloads['llm.call']> = {}): GnomiEvent => ({
