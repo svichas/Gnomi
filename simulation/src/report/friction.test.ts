@@ -22,11 +22,12 @@ function step(step_no: number, url = JOBS, target: { role: string; name: string 
     snapshot_hash: 'h',
     screenshot: `shots/${step_no}.jpg`,
     duration_ms: 1,
+    heard_post_ids: [],
   };
 }
 
 const friction = (step_no: number, what: string, severity = 2, url = JOBS): EventPayloads['persona.friction_reported'] => ({
-  step_no, severity, what, expected: 'Clearer.', where: { url, ref: 'e1' },
+  step_no, severity, what, expected: 'Clearer.', where: { url, ref: 'e1' }, heard_post_ids: [],
 });
 const failed = (step_no: number, url = JOBS): EventPayloads['signal.failed_action'] => ({ step_no, url, ref: 'e1', action: 'click', error: 'no_effect' });
 

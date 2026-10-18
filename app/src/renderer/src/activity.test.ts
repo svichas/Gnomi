@@ -186,8 +186,8 @@ test('each persona is waiting, working, blocked, done or gave up, and a run that
 
 test('the activity filters keep one persona, one segment or one kind of event', () => {
   const people = new Map([person('a1', 'seg-1'), person('a2', 'seg-1'), person('b1', 'seg-2')].map((p) => [p.id, p]));
-  const step = (seq: number, who: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1 }, who);
-  const friction = (seq: number, who: string) => event(seq, 'persona.friction_reported', { step_no: 1, severity: 2, what: 'w', expected: 'e', where: { url: '', ref: null } }, who);
+  const step = (seq: number, who: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] }, who);
+  const friction = (seq: number, who: string) => event(seq, 'persona.friction_reported', { step_no: 1, severity: 2, what: 'w', expected: 'e', where: { url: '', ref: null }, heard_post_ids: [] }, who);
   const events = [step(1, 'a1'), step(2, 'a2'), step(3, 'b1'), friction(4, 'b1'), event(5, 'run.stopped', { reason: 'user', detail: null }, null)];
   const seqs = (filters: Partial<Parameters<typeof filterEvents>[1]>) => filterEvents(events, { persona: '', segment: '', category: '', ...filters }, people).map((e) => e.seq);
   assert.deepEqual(seqs({}), [1, 2, 3, 4, 5]);
@@ -272,7 +272,7 @@ test('in a run with an audience each persona logs in as her segment, and a logge
 
 test('steps taken and the latest feeling are counted per persona', () => {
   const step = (seq: number, who: string, step_no: number, feeling: number) =>
-    event(seq, 'persona.step', { step_no, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling, snapshot_hash: '', screenshot: null, duration_ms: 1 }, who);
+    event(seq, 'persona.step', { step_no, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] }, who);
   const progress = personaProgress([step(1, 'a', 1, 0), step(2, 'b', 1, -2), step(3, 'a', 2, 1), event(4, 'run.finished', {}, null)]);
   assert.deepEqual([...progress], [['a', { steps: 2, feeling: 1 }], ['b', { steps: 1, feeling: -2 }]]);
 });

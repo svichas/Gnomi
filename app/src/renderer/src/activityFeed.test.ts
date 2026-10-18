@@ -16,7 +16,7 @@ const step = (seq: number, persona = 'p-1', round = 1, poi = 'poi-1') => event(s
 test('highlights group a thought, action and its detected friction despite concurrent participants', () => {
   const rows = toRows([
     step(1), step(2, 'p-2'),
-    event(3, 'persona.friction_reported', { step_no: 2, severity: 3, what: 'Nothing happened.', expected: 'A confirmation.', where: { url: 'https://example.test/', ref: 'next' } }),
+    event(3, 'persona.friction_reported', { step_no: 2, severity: 3, what: 'Nothing happened.', expected: 'A confirmation.', where: { url: 'https://example.test/', ref: 'next' }, heard_post_ids: [] }),
     event(4, 'signal.failed_action', { step_no: 2, action: 'click', error: 'no_effect', url: 'https://example.test/', ref: 'next' }),
   ]);
   const moments = activityMoments(rows);

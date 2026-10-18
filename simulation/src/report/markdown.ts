@@ -104,7 +104,7 @@ function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
-    ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}`] : []),
+    ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
     `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected by segment: ${affected.join('; ') || 'none'}`,

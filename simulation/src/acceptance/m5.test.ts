@@ -19,7 +19,7 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 let seq = 0;
 const ev = (type: string, payload: object, persona_id: string | null = null) => ({ run_id: 'r-1', seq: ++seq, ts: 0, round: 1, persona_id, poi_id: 'poi-checkout', type, payload }) as GnomiEvent;
 const step = (persona: string, frame: number) => ev('persona.step', { step_no: frame + 1, frame }, persona);
-const friction = (persona: string, frame: number, what = 'Expected a confirmation, saw a sign-in prompt') => ev('persona.friction_reported', { step_no: frame + 1, severity: 3, what, expected: 'A confirmation', where: { url: 'asset:x.png', ref: null }, frame }, persona);
+const friction = (persona: string, frame: number, what = 'Expected a confirmation, saw a sign-in prompt') => ev('persona.friction_reported', { step_no: frame + 1, severity: 3, what, expected: 'A confirmation', where: { url: 'asset:x.png', ref: null }, frame, heard_post_ids: [] }, persona);
 function design(reached: number, flagged: number, finished = true): GnomiEvent[] {
   seq = 0;
   const people = Array.from({ length: reached }, (_, i) => `p${i + 1}`);

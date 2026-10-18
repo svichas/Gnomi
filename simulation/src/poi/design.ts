@@ -71,6 +71,7 @@ export const design: PoiRunner<DesignPoi> = {
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
+      const heard_post_ids = heard.map((h) => h.post_id);
       let output: DesignOutput | null;
       try {
         const [previous, current] = await Promise.all([index > 0 ? modelFrame(blobs, poi, index - 1) : null, modelFrame(blobs, poi, index)]);
@@ -104,6 +105,7 @@ export const design: PoiRunner<DesignPoi> = {
         screenshot: assetPath(asset), // the frame itself is the evidence: the report and its exports show it like a screenshot
         duration_ms: Date.now() - started,
         frame: index,
+        heard_post_ids,
       });
       if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
         const after = structuredClone(output.opinion);
@@ -112,7 +114,7 @@ export const design: PoiRunner<DesignPoi> = {
       }
       // A mismatch is always a friction on this frame, in the persona's words where it gave them, else from what it said it expected.
       const friction = output?.friction ?? (output?.matched === false ? { severity: 2, what: output.sees, expected: said?.expects_next ?? '' } : null);
-      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url, ref: null }, frame: index });
+      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url, ref: null }, frame: index, heard_post_ids });
 
       if (end === 'abandon') {
         emit('persona.abandoned', { step_no, reason: action.text ?? '' });

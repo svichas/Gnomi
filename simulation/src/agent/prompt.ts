@@ -267,6 +267,7 @@ function remember(m: StepMemory, last: boolean, p: string): string {
 
 /** A post the persona read in its last social phase, carried into its next stretch of use (tech.md §6.1, item 10). */
 export interface HeardPost {
+  post_id: string;
   author: string; // a name
   text: string;
   about: string | null; // the name of the POI it is about

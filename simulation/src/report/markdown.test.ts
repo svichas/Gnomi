@@ -282,7 +282,10 @@ test('themes carry rank, trust, affected share, evidence with event links and la
     assert.ok(md.includes(expected), expected);
   }
   assert.ok(md.indexOf('## Themes') < md.indexOf('## Frictions'));
-  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No frictions to group into themes.'));
+  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No frictions to group into themes.'));  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
+  const echoed = (heard_first: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first }], sentiment: [], went_well: [] });
+  assert.ok(echoed(1).includes('95% range 9%–91%); 1 more reported it only after reading about it in the feed'), 'heard-first personas sit beside the share');
+  assert.ok(!echoed(0).includes('reading about it in the feed'));
 });
 
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {

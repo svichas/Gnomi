@@ -149,6 +149,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
+      const heard_post_ids = heard.map((h) => h.post_id); // look() hands them to the prompt and clears them
       let looked: Awaited<ReturnType<typeof look>>;
       try {
         looked = await look(step_no);
@@ -168,7 +169,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
           : await page.act(action);
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
-      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started });
+      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started, heard_post_ids });
       // Objective signals right after their step (tech.md §8.1); a submit needs one more look to see what it made appear.
       const step: Step = { step_no, action, target, result, snapshot_hash: snapshot.hash };
       const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
@@ -180,7 +181,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         opinion = structuredClone(after);
       }
       const friction = output?.friction ?? null;
-      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url: snapshot.url, ref: action.ref } });
+      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url: snapshot.url, ref: action.ref }, heard_post_ids });
 
       if (action.type === 'done') {
         emit('persona.goal_done', { step_no, summary: action.text ?? '' });

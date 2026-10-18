@@ -84,6 +84,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     if (!deps.beginStep()) return 'stopped';
     const started = Date.now();
     const part = parts[index];
+    const heard_post_ids = heard.map((h) => h.post_id);
     let output: ReadOutput;
     try {
       const shared = readShared({ poi, text, part, index, parts: parts.length });
@@ -104,7 +105,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     const action: Action = { type: output.action.type === 'read_on' ? 'read' : output.action.type, ref: null, text: output.action.text };
     const result = { ok: true, error: null, url_before: where, url_after: where, dom_changed: false };
     const snapshot_hash = fnv1a(text.slice(part.start, part.end)).toString(16);
-    const step = emit('persona.step', { step_no, action, target: null, result, thought: output.thought, feeling: output.feeling, snapshot_hash, screenshot: null, duration_ms: Date.now() - started, passage: part });
+    const step = emit('persona.step', { step_no, action, target: null, result, thought: output.thought, feeling: output.feeling, snapshot_hash, screenshot: null, duration_ms: Date.now() - started, passage: part, heard_post_ids });
     if (!sameOpinion(opinion, output.opinion)) {
       emit('persona.opinion_changed', { poi_id: poi.id, before: opinion, after: structuredClone(output.opinion), cause: { step_ids: [step.seq], post_ids: [] } });
       opinion = structuredClone(output.opinion);
@@ -113,7 +114,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     const read = text.slice(0, part.end);
     for (const c of output.confusions) {
       const passage = locatePassage(read, c.quote, c.start, c.end);
-      emit('persona.friction_reported', { step_no, severity: c.severity, what: c.what, expected: c.expected, where: { url: where, ref: null }, ...(passage && { passage }) });
+      emit('persona.friction_reported', { step_no, severity: c.severity, what: c.what, expected: c.expected, where: { url: where, ref: null }, heard_post_ids, ...(passage && { passage }) });
     }
     if (action.type === 'done') {
       emit('persona.goal_done', { step_no, summary: action.text ?? '' });

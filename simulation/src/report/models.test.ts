@@ -35,8 +35,8 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: N
   };
   record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config } });
   record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
-  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 1, severity: 3, what: 'Save does nothing', expected: 'Saved', where: where(JOBS) } });
-  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 4, severity: 2, what: 'Home is empty', expected: 'Jobs', where: where('http://gym.test/') } });
+  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 1, severity: 3, what: 'Save does nothing', expected: 'Saved', where: where(JOBS), heard_post_ids: [] } });
+  record({ ...who, type: 'persona.friction_reported', payload: { step_no: 4, severity: 2, what: 'Home is empty', expected: 'Jobs', where: where('http://gym.test/'), heard_post_ids: [] } });
   for (const event of extra) record(event);
   const requests: { role: LlmRole; user: string }[] = [];
   const llm = createScriptedGateway(
@@ -104,8 +104,8 @@ test('every POI is judged at once, and the author writes in parallel batches of 
   record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config: two } });
   record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
   for (const [i, page] of ['jobs', 'candidates', 'settings', 'reviews'].entries())
-    record({ ...who, type: 'persona.friction_reported', payload: { step_no: i + 1, severity: 2, what: `Trouble on ${page}`, expected: 'It works', where: where(`http://gym.test/${page}`) } });
-  record({ ...who, poi_id: 'poi-b', type: 'persona.friction_reported', payload: { step_no: 9, severity: 2, what: 'Pricing is unclear', expected: 'Clear tiers', where: where('http://other.test/pricing') } });
+    record({ ...who, type: 'persona.friction_reported', payload: { step_no: i + 1, severity: 2, what: `Trouble on ${page}`, expected: 'It works', where: where(`http://gym.test/${page}`), heard_post_ids: [] } });
+  record({ ...who, poi_id: 'poi-b', type: 'persona.friction_reported', payload: { step_no: 9, severity: 2, what: 'Pricing is unclear', expected: 'Clear tiers', where: where('http://other.test/pricing'), heard_post_ids: [] } });
 
   let inFlight = 0;
   let peakJudges = 0;

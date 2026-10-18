@@ -328,7 +328,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       const name = (id: string) => names.get(id) ?? id;
       const about = (poi_id: string | null) => (poi_id ? (poiNames.get(poi_id) ?? null) : null);
       const steps = own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output');
-      heard.set(persona.id, feed.slice(0, HEARD_POSTS).map((p) => ({ author: name(p.author), text: p.text, about: about(p.about_poi_id) })));
+      heard.set(persona.id, feed.slice(0, HEARD_POSTS).map((p) => ({ post_id: p.post_id, author: name(p.author), text: p.text, about: about(p.about_poi_id) })));
       const { object } = await budgetedLlm.call({
         role: 'socialiser',
         model: settings.routing.socialiser,

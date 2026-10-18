@@ -72,6 +72,7 @@ function stepPayload(step_no: number, thought: string, screenshot: string | null
     snapshot_hash: 'h',
     screenshot,
     duration_ms: 10,
+    heard_post_ids: [],
   };
 }
 
@@ -92,7 +93,7 @@ function llmCall(cost_usd: number, input_tokens: number, output_tokens: number):
 }
 
 function friction(step_no: number, what: string, severity = 2): EventPayloads['persona.friction_reported'] {
-  return { step_no, severity, what, expected: 'Something clearer.', where: { url, ref: null } };
+  return { step_no, severity, what, expected: 'Something clearer.', where: { url, ref: null }, heard_post_ids: [] };
 }
 
 // Each entry is [ts, event], in the order the engine would append them.
@@ -218,6 +219,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         category: 'friction',
         // One persona of one: the share's 95% range runs from 21% to 100%, and the score uses its low end.
         prevalence: { personas: 1, exposed: 1, share: 1, low: 0.2065, high: 1, level: 'single' },
+        heard_first: 0,
         trust: 'reported',
         severity: 2.5,
         impact: 1,

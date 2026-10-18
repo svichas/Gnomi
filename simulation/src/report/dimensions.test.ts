@@ -40,7 +40,7 @@ function fixture(personaSchema: PersonaSchema | undefined = schema()) {
   const step = (id: string, feeling: number) => add({ type: 'persona.step', payload: {
     step_no: events.length, thought: 'Thought', feeling, action: { type: 'done', ref: null, text: null }, target: null,
     result: { ok: true, error: null, url_before: 'http://localhost', url_after: 'http://localhost', dom_changed: false },
-    screenshot: null, snapshot_hash: 'hash', duration_ms: 1,
+    screenshot: null, snapshot_hash: 'hash', duration_ms: 1, heard_post_ids: [],
   } }, id);
   step('p1', -2);
   step('p1', 2);
@@ -48,7 +48,7 @@ function fixture(personaSchema: PersonaSchema | undefined = schema()) {
   add({ type: 'persona.goal_done', payload: { step_no: 2, summary: 'Done' } }, 'p1');
   add({ type: 'persona.abandoned', payload: { step_no: 1, reason: 'Left' } }, 'p2');
   add({ type: 'persona.goal_done', payload: { step_no: 1, summary: 'Done' } }, 'p3');
-  add({ type: 'persona.friction_reported', payload: { step_no: 2, severity: 2, what: 'Problem', expected: 'Clear wording', where: { url: 'http://localhost', ref: null } } }, 'p1');
+  add({ type: 'persona.friction_reported', payload: { step_no: 2, severity: 2, what: 'Problem', expected: 'Clear wording', where: { url: 'http://localhost', ref: null }, heard_post_ids: [] } }, 'p1');
   add({ type: 'run.finished', payload: {} });
   return { config, events };
 }

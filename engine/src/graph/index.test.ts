@@ -16,7 +16,7 @@ function logOf() {
   const created = (id: string, segment_id: string | null) => add('persona.created', { persona: { id, name: `Name ${id}`, segment_id } as Persona }, { persona_id: id });
   const step = (persona_id: string, poi_id: string, round = 1) => add('persona.step', {
     step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: true, error: null },
-    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 0,
+    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 0, heard_post_ids: [],
   }, { persona_id, poi_id, round });
   const post = (persona_id: string, post_id: string, parent_id: string | null = null, round = 1) => add('social.post', { post_id, parent_id, text: 'Hard to find', about_poi_id: 'poi-1' }, { persona_id, round });
   return { events, add, created, step, post };
@@ -40,7 +40,7 @@ test('used: the first step on a POI draws the edge; its weight counts steps and 
 test('friction: weight is the summed severity, and both the persona and the POI count frictions', () => {
   const { events, created, add } = logOf();
   created('a', 'seg-1');
-  for (const severity of [2, 3]) add('persona.friction_reported', { step_no: 1, severity, what: 'x', expected: 'y', where: { url: '', ref: null } }, { persona_id: 'a', poi_id: 'poi-1' });
+  for (const severity of [2, 3]) add('persona.friction_reported', { step_no: 1, severity, what: 'x', expected: 'y', where: { url: '', ref: null }, heard_post_ids: [] }, { persona_id: 'a', poi_id: 'poi-1' });
   assert.equal(edgesOf(events, 'friction')[0].weight, 5);
   const graph = buildGraph(events);
   assert.equal((graph.nodes.get('persona:a') as PersonaNode).friction_count, 2);

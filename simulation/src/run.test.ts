@@ -337,7 +337,7 @@ test('a run logs its lifecycle in seq order, keeps the evidence and writes repor
   assert.deepEqual([first.persona_id, first.poi_id], ['p-001', 'poi-1']);
   assert.equal(first.payload.screenshot, 'runs/r-0001/shots/p-001-0001.jpg');
   assert.ok(r.files.has('runs/r-0001/shots/p-001-0001.jpg'));
-  assert.deepEqual(of(r.events, 'persona.friction_reported')[0].payload, { step_no: 1, ...friction, where: { url: 'http://gym.test/', ref: 'e1' } });
+  assert.deepEqual(of(r.events, 'persona.friction_reported')[0].payload, { step_no: 1, ...friction, where: { url: 'http://gym.test/', ref: 'e1' }, heard_post_ids: [] });
 
   assert.equal(report.status, 'finished');
   assert.deepEqual([report.personas[0].outcome, report.personas[0].outcome_text], ['done', 'Posted the job']);
@@ -1129,6 +1129,8 @@ test('an opinion the feed changes cites its posts, an unchanged one records noth
   assert.match(prompt(7), /Since Persona last looked, Persona read this in a feed where other people talk about it[^\n]*\\n- Persona p-0 about Gym ATS: \\"Lost my draft twice today\.\\"/, 'the next slice starts with what it read there');
   assert.doesNotMatch(prompt(4), /Since Persona last looked/, 'an empty feed adds nothing');
   assert.doesNotMatch(prompt(8), /Since Persona last looked/, 'only the first step after the feed hears it');
+  const heardAt = (n: number) => of(r.events, 'persona.step').find((e) => e.persona_id === 'p-1' && e.payload.step_no === n)?.payload.heard_post_ids;
+  assert.deepEqual([heardAt(4), heardAt(7), heardAt(8)], [[], ['r1-p-0'], []], 'the step records the posts its prompt was handed');
 });
 
 test('two invalid socialiser answers leave the persona silent for that phase, and the run goes on', async () => {

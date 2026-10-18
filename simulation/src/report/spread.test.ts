@@ -40,7 +40,7 @@ const config: RunConfig = {
 };
 
 const at = (round: number, persona_id: string | null) => ({ run_id: 'r-1', round, persona_id, poi_id: 'poi' });
-const friction = (what: string, url: string): EventPayloads['persona.friction_reported'] => ({ step_no: 1, severity: 3, what, expected: 'It works.', where: { url, ref: null } });
+const friction = (what: string, url: string): EventPayloads['persona.friction_reported'] => ({ step_no: 1, severity: 3, what, expected: 'It works.', where: { url, ref: null }, heard_post_ids: [] });
 const post = (post_id: string, text: string, about_poi_id: string | null = 'poi', injected = false): EventPayloads['social.post'] => ({
   post_id, parent_id: null, text, about_poi_id, ...(injected ? { injected } : {}),
 });

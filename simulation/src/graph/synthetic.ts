@@ -51,9 +51,9 @@ export function syntheticRun({ personas: size = 200, pois = 10, rounds = 5, seed
         log(round, persona.id, poi, 'persona.step', {
           step_no, action: { type: 'click', ref: 'e1', text: null }, target: { role: 'button', name: 'Next', box: null },
           result: { ok: true, url_before: url, url_after: url, dom_changed: true, error: null },
-          thought: 'Looking for the next step.', feeling: 0, snapshot_hash: `h${step_no}`, screenshot: null, duration_ms: 100,
+          thought: 'Looking for the next step.', feeling: 0, snapshot_hash: `h${step_no}`, screenshot: null, duration_ms: 100, heard_post_ids: [],
         });
-        if (random() < 0.12) log(round, persona.id, poi, 'persona.friction_reported', { step_no, severity: 1 + Math.floor(random() * 4), what: pick(SAYS), expected: 'A clear next step', where: { url, ref: 'e1' } });
+        if (random() < 0.12) log(round, persona.id, poi, 'persona.friction_reported', { step_no, severity: 1 + Math.floor(random() * 4), what: pick(SAYS), expected: 'A clear next step', where: { url, ref: 'e1' }, heard_post_ids: [] });
       }
     }
     for (const persona of personas) {

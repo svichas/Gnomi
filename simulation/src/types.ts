@@ -344,6 +344,7 @@ export interface EventPayloads {
     snapshot_hash: string;
     screenshot: string | null; // blob path, relative to the project folder
     duration_ms: number;
+    heard_post_ids: string[]; // the feed posts handed to this step's prompt; empty when none
   } & StepEvidence;
   'persona.friction_reported': {
     step_no: number;
@@ -351,6 +352,7 @@ export interface EventPayloads {
     what: string;
     expected: string;
     where: { url: string; ref: string | null };
+    heard_post_ids: string[]; // the feed posts handed to the step it was raised in
   } & StepEvidence;
   'persona.opinion_changed': {
     poi_id: string;
@@ -559,7 +561,8 @@ export interface ReportTheme {
   description: string;
   named_by: 'judge' | 'rules'; // rules: the judge did not run, failed or left the group out
   category?: 'friction' | 'objection'; // objection: a reason not to adopt, from the survey; absent before structured surveys
-  prevalence?: Prevalence; // absent in reports written before it
+  prevalence?: Prevalence; // first-hand personas only (new_simulation.md §4); absent in reports written before it
+  heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
   trust: Trust; // the highest among member frictions
   severity: number; // median member severity, 1–4
   impact: number; // Σ share_s × affected_s

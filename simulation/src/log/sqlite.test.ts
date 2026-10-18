@@ -81,6 +81,7 @@ function step(run_id: string, step_no: number, persona_id = 'p-001'): NewEvent {
       snapshot_hash: 'h',
       screenshot: null,
       duration_ms: 10,
+      heard_post_ids: [],
     },
   };
 }

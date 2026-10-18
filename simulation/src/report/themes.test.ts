@@ -20,9 +20,10 @@ const step = (step_no: number, url = JOBS): EventPayloads['persona.step'] => ({
   snapshot_hash: 'h',
   screenshot: `shots/${step_no}.jpg`,
   duration_ms: 1,
+  heard_post_ids: [],
 });
 const friction = (step_no: number, severity: number, what = 'Save does nothing'): EventPayloads['persona.friction_reported'] => ({
-  step_no, severity, what, expected: 'A saved job.', where: { url: JOBS, ref: 'e1' },
+  step_no, severity, what, expected: 'A saved job.', where: { url: JOBS, ref: 'e1' }, heard_post_ids: [],
 });
 const survey = (frictions: string[], likes: string[], sentiment = 0, would_continue = true): EventPayloads['persona.survey'] => ({
   poi_id: 'poi', sentiment, confidence: 0.5, likes, frictions, would_continue, reason: 'Because.',
@@ -189,6 +190,31 @@ const structured = (items: EventPayloads['persona.survey']['items'] & object, se
   items,
 });
 const item = (kind: 'friction' | 'objection' | 'like', where: string, what: string, severity: number | null = kind === 'like' ? null : 2) => ({ kind, where, what, severity });
+
+test('echoes: a report after a feed showed a post about the theme is heard first, unless a browser signal backs it', () => {
+  const heard = (step_no: number, ids: string[]) => ({ ...step(step_no), heard_post_ids: ids });
+  const social = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)], // before any feed: first-hand
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['social.feed_viewed', 'a2', { post_ids: ['p1'] }],
+    ['social.feed_viewed', 'a3', { post_ids: ['p1'] }],
+    ['persona.step', 'a2', heard(2, ['p1'])],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }], // after reading it: heard first
+    ['persona.step', 'a3', heard(2, ['p1'])],
+    ['persona.friction_reported', 'a3', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+    ['signal.failed_action', 'a3', { step_no: 2, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' }], // confirmed: first-hand
+  );
+  const judged = { ...social[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Save', description: 'd', group_ids: ['g1'] }], posts: [{ post_id: 'p1', group_ids: ['g1'] }] } } as GnomiEvent;
+  const counts = (events: GnomiEvent[]) => {
+    const { themes: [theme], limitations } = analyseFrictions(events, ctx);
+    return [theme.personas, theme.prevalence?.personas, theme.heard_first, theme.prevalence?.level, limitations.some((l) => l.includes('could not be separated'))];
+  };
+  assert.deepEqual(counts([...social, judged]), [3, 2, 1, 'some', false], 'by the judge’s tags');
+  assert.deepEqual(counts(social), [3, 2, 1, 'some', false], 'by the heard ids, without the judge');
+  const unrecorded = social.map((e) => (e.type === 'persona.step' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
+  assert.deepEqual(counts(unrecorded), [3, 3, 0, 'strong', true], 'neither: every report counts, and the report says so');
+});
 
 test('structured survey answers group by the part of the product they name, and objections stay apart from frictions', () => {
   const events = log(
