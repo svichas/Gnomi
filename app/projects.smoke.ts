@@ -239,12 +239,18 @@ try {
   await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor({ timeout: 60_000 });
   await home();
-  await page.getByRole('status').locator('.pill').filter({ hasText: 'Stop the run to leave this page.' }).waitFor();
-  assert.ok(await page.locator('#panel-run').isVisible(), 'the projects page stays closed during the run');
-  // The engine refuses the switch on its own too.
-  const refused = await page.evaluate((id) => window.gnomi.projectAction({ action: 'open', id }).then(() => '', String), before.projects.find((entry) => entry.name === 'Second app')!.id);
-  assert.match(refused, /Stop the current run/);
-  assert.equal((await page.evaluate(() => window.gnomi.listProjects())).currentId, before.projects.find((entry) => entry.name === 'Hiring team')?.id);
+  await page.getByRole('heading', { name: 'Your projects.', exact: true }).waitFor();
+  await card('Second app').getByRole('button', { name: 'Open Second app', exact: true }).click();
+  await page.getByRole('heading', { name: 'What to test' }).waitFor();
+  const dock = page.getByRole('complementary', { name: 'Session simulations' });
+  const toggle = dock.getByRole('button', { name: 'Simulations', exact: true });
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  await toggle.click();
+  await dock.getByText('Needs your attention', { exact: true }).waitFor();
+  const hiringRun = dock.getByRole('button', { name: /^Open Hiring team simulation / });
+  await hiringRun.click();
+  await page.getByRole('alert', { name: 'Personas are waiting for you' }).waitFor();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
   await page.getByRole('button', { name: 'End run', exact: true }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click();
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
@@ -252,7 +258,7 @@ try {
   await card('Second app').getByRole('button', { name: 'Open Second app', exact: true }).click();
   await page.getByRole('heading', { name: 'What to test' }).waitFor();
   assert.equal(await page.getByLabel('Project name', { exact: true }).inputValue(), 'Second app');
-  console.log('ok    a live run refuses project switching; switching works after the run ends');
+  console.log('ok    a live run continues across project switches and reopens from the session pill');
 
   await page.reload();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();

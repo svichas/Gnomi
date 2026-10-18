@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { ProjectInfo, SessionRun } from '@gnomi/engine/protocol.ts';
 import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { AudienceTab } from './Audience.tsx';
-import { call, connected, errorText, onEvent, stopped } from './engine.ts';
+import { call, connected, errorText, onEvent, setEventProject, stopped } from './engine.ts';
 import { isEnd } from './activity.ts';
 import { initialDraft, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
@@ -14,7 +14,8 @@ import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Button, Note, usePills } from './ui.tsx';
+import { Button, Note } from './ui.tsx';
+import { SimulationDock } from './SimulationDock.tsx';
 import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
 
@@ -32,7 +33,7 @@ function rememberedProject(): string | null {
 function rememberProject(id: string) {
   try { localStorage.setItem('gnomi.open-project', id); } catch { /* The main process still remembers the current project. */ }
 }
-/** The run in progress: the engine refuses to switch projects while it lasts, and the app keeps the user on its page. */
+/** Prefer the live run when revisiting a project. */
 const liveRun = (project: ProjectInfo | null) => project?.runs.find((run) => run.status === 'running');
 
 export function App() {
@@ -50,6 +51,7 @@ export function App() {
   const [providers, setProviders] = useState<ProviderList | null>(null);
   const [revision, setRevision] = useState(0);
   const baseline = useRef('');
+  const projectDir = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -61,6 +63,8 @@ export function App() {
 
   async function loadProject(project: ProjectInfo, projects: ProjectCatalog) {
     const available = await window.gnomi.listProviders();
+    projectDir.current = project.dir;
+    setEventProject(project.dir);
     const next = initialDraft(project.project);
     next.settings = withAvailableProvider(next.settings, available.keys);
     if (!project.project) next.form.name = projects.projects.find((entry) => entry.id === projects.currentId)?.name ?? '';
@@ -74,10 +78,11 @@ export function App() {
     setRevision((was) => was + 1);
   }
 
-  const refresh = useCallback(async () => setInfo(await call('get_project', {})), []);
-  // Any run's end, shown or not, so a run that ends while another is on screen stops holding the user on this page.
-  useEffect(() => onEvent((event) => { if (isEnd(event)) void refresh(); }), [refresh]);
-  const pills = usePills();
+  const refresh = useCallback(async () => {
+    const project = await call('get_project', {});
+    if (project.dir === projectDir.current) setInfo(project);
+  }, []);
+  useEffect(() => onEvent((event) => { if (isEnd(event)) void refresh().catch((err) => setProblem(errorText(err))); }, info?.dir), [refresh, info?.dir]);
   const refreshProviders = useCallback(async () => {
     const available = await window.gnomi.listProviders();
     setProviders(available);
@@ -168,14 +173,7 @@ export function App() {
     try { config = await save(settings); } catch (err) { config = errorText(err); }
     setReview({ key: ++reviews.current, config });
   }
-  // A live run holds the user on its page, which shows its progress and its Stop button; a pill says why.
-  const leaveBlocked = () => {
-    if (!liveRun(info)) return false;
-    pills.notify('Stop the run to leave this page.');
-    return true;
-  };
   const go = (to: Tab) => {
-    if (to !== 'run' && leaveBlocked()) return;
     if (to === 'review') void openReview();
     else setTab(to);
   };
@@ -191,10 +189,20 @@ export function App() {
 
   const currentProject = catalog?.projects.find((entry) => entry.id === catalog.currentId);
   const showHome = () => {
-    if (leaveBlocked()) return;
     setHome(true);
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
   };
+  async function openSessionRun(run: SessionRun): Promise<boolean> {
+    if (!run.project_id || !catalog?.projects.some((project) => project.id === run.project_id)) throw new Error('This project is no longer in your workspace.');
+    if (catalog.currentId !== run.project_id) {
+      if (await projectAction({ action: 'open', id: run.project_id }) === null) return false;
+    }
+    setRunId(run.run_id);
+    setHome(false);
+    setTab('run');
+    requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }));
+    return true;
+  }
   const back = () => {
     if (tab === 'settings') go(returnTab);
     else if (tab === 'run') go('review');
@@ -216,7 +224,7 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else if (!leaveBlocked()) { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
+        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
       </header>
 
       <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
@@ -296,7 +304,7 @@ export function App() {
           </div>
         </ProjectDialog>}
       </main>
-      {pills.view}
+      <SimulationDock onOpen={openSessionRun} projects={catalog?.projects ?? []} />
     </div>
   );
 }

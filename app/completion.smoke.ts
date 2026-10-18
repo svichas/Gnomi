@@ -156,36 +156,17 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   console.log('ok    graph visible by default, report absent during run, progress advances with events, responsive at 320–1440px');
 
-  // Still live while the report is prepared: each way off the Activity step raises a centered pill instead.
-  const pill = page.getByRole('status').locator('.pill').filter({ hasText: 'Stop the run to leave this page.' });
-  for (const leave of [page.locator('#tab-project'), page.locator('#tab-settings'), page.getByRole('button', { name: 'New run', exact: true })]) {
-    await leave.click();
-    await pill.waitFor();
-    assert.ok(await page.locator('#panel-run').isVisible(), 'the Activity step stays on screen');
+  // A live run no longer traps navigation; its mounted detail keeps receiving completion events.
+  for (const [target, panel] of [['#tab-project', '#panel-project'], ['#tab-settings', '#panel-settings']] as const) {
+    await page.locator(target).click();
+    await page.locator(panel).waitFor();
+    await page.locator('#tab-run').click();
   }
-  assert.equal(await pill.count(), 1, 'a repeated notice restarts rather than stacks');
-  const pillBox = async (width: number) => {
-    await pill.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
-    const box = (await pill.boundingBox())!;
-    width = await page.evaluate(() => document.documentElement.clientWidth);
-    assert.ok(Math.abs(box.x + box.width / 2 - width / 2) <= 1, `the pill is centered at ${width}px`);
-    assert.ok(box.x >= 16 && box.x + box.width <= width - 16, `the pill fits ${width}px`);
-  };
-  await pillBox(1280);
-  await page.screenshot({ path: join(shots, 'run-leave-pill.png') });
-  await pill.getByRole('button', { name: 'Dismiss', exact: true }).click();
-  await pill.waitFor({ state: 'detached' });
-  await page.setViewportSize({ width: 375, height: 800 });
-  await page.locator('#tab-review').click();
-  await pill.waitFor();
-  await pillBox(375);
-  await page.screenshot({ path: join(shots, 'run-leave-pill-375.png') });
-  await page.setViewportSize({ width: 320, height: 800 });
-  await pillBox(320);
-  await pill.waitFor({ state: 'detached', timeout: 7_000 });
-  await page.setViewportSize({ width: 1280, height: 900 });
-  assert.ok(await page.locator('#panel-run').isVisible());
-  console.log('ok    a live run keeps the Activity step: steps, Settings and New run raise a centered pill that leaves by hand or on its own');
+  await page.getByRole('button', { name: 'New run', exact: true }).click();
+  await page.locator('#panel-project').waitFor();
+  await page.locator('#tab-run').click();
+  assert.equal(await page.getByRole('button', { name: 'Simulations', exact: true }).getAttribute('aria-expanded'), 'false');
+  console.log('ok    setup, Settings and New run remain available while the simulation continues');
 
   await page.evaluate(() => window.completionSmoke.finish());
   await status.getByRole('button', { name: 'Stop run', exact: true }).waitFor({ state: 'detached' });
@@ -200,7 +181,6 @@ try {
   await page.locator('#tab-settings').click();
   await page.locator('#panel-settings').waitFor();
   await page.locator('#tab-run').click();
-  assert.equal(await pill.count(), 0, 'an ended run lets the user leave');
   console.log('ok    once the run ends the steps and Settings navigate again');
   await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
   assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true', 'The timeline remains available after the report opens.');

@@ -95,6 +95,7 @@ export function Review(props: {
 
   // Blocking issues first: each says what is wrong and offers the way to fix it. Start stays off while any remain, as the engine would refuse.
   const issues: { text: string; blocking: boolean; action: ReactNode }[] = [];
+  if (info?.runs.some((run) => run.status === 'running')) issues.push({ text: 'A simulation is already running for this project. Follow it in the Simulations pill, or start a simulation in another project.', blocking: true, action: null });
   if (typeof config === 'string') {
     const screen: ReviewScreen = config.startsWith('Settings: ') ? 'settings' : config.startsWith('Audience: ') ? 'audience' : 'project';
     issues.push({ text: problemFor(config, screen), blocking: true, action: fix(screen, { project: 'Fix in Setup', audience: 'Fix in Audience', settings: 'Fix in Settings' }[screen]) });

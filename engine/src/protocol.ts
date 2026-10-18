@@ -30,11 +30,26 @@ export interface ProjectInfo {
   setup_calls?: SetupCall[];
 }
 
+/** Lightweight, in-memory history for this engine session. Run IDs are only unique within a project. */
+export interface SessionRun {
+  project_id?: string;
+  project_dir: string;
+  project_name: string;
+  run_id: string;
+  started_at: number;
+  ended_at: number | null;
+  status: RunRow['status'];
+  phase: 'starting' | 'exploring' | 'discussing' | 'reporting' | 'saving';
+  waiting: number;
+  stop_reason: string | null;
+}
+
 export interface Api {
   set_secret: { params: { name: SecretName; value: string | null }; result: null };
-  open_project: { params: { dir: string }; result: ProjectInfo };
-  /** Closes the project for folder operations. Refuses active runs, recordings and pending project requests. */
-  close_project: { params: Record<string, never>; result: null };
+  open_project: { params: { dir: string; project_id?: string }; result: ProjectInfo };
+  /** Detaches the current project for folder operations. Refuses work on the target directory. */
+  close_project: { params: { dir?: string }; result: null };
+  get_session_runs: { params: Record<string, never>; result: SessionRun[] };
   get_project: { params: Record<string, never>; result: ProjectInfo };
   save_project: { params: { project: ProjectConfig }; result: null };
   /** Checks the provider's saved key, or for 'openai_compatible' that the project's local endpoint answers. */
@@ -68,7 +83,7 @@ export interface Api {
   estimate_run: { params: Record<string, never>; result: RunEstimate };
   /** Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use. */
   start_run: { params: { reset: boolean }; result: { run_id: string } };
-  stop_run: { params: { run_id: string }; result: null };
+  stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */
   resume_personas: { params: { run_id: string; persona_ids: string[] }; result: null };
   get_events: { params: { run_id: string; after_seq: number | null; persona_id: string | null }; result: GnomiEvent[] };
@@ -86,7 +101,8 @@ export type ClientToEngine = {
 export type EngineToClient =
   | { kind: 'response'; id: number; ok: true; result: unknown }
   | { kind: 'response'; id: number; ok: false; error: string }
-  | { kind: 'event'; event: GnomiEvent }
+  | { kind: 'event'; event: GnomiEvent; project_dir?: string }
+  | { kind: 'session_run'; run: SessionRun }
   | ({ kind: 'progress'; task: 'generate_personas' } & PersonaProgress);
 
 export interface Transport {

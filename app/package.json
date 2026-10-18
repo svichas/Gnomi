@@ -20,7 +20,8 @@
     "smoke:providers": "electron-vite build && node providers.smoke.ts",
     "smoke:figma": "electron-vite build && node figma.smoke.ts",
     "smoke:audience": "electron-vite build && node audience.smoke.ts",
-    "smoke:completion": "electron-vite build && node completion.smoke.ts"
+    "smoke:completion": "electron-vite build && node completion.smoke.ts",
+    "smoke:background": "electron-vite build && node background.smoke.ts"
   },
   "dependencies": {
     "@gnomi/engine": "0.0.0",

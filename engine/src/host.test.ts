@@ -26,7 +26,7 @@ const events: GnomiEvent[] = [];
   postMessage(msg: EngineToClient) {
     if (msg.kind === 'response') replies.get(msg.id)?.(msg);
     else if (msg.kind === 'event') events.push(msg.event);
-    else progress.push(msg);
+    else if (msg.kind === 'progress') progress.push(msg);
   },
 };
 process.env.GNOMI_FAKE_LLM = '1';
@@ -211,6 +211,50 @@ test('project closing and switching refuse an in-flight persona write, then clos
   assert.equal(await call('close_project', {}), null);
   await assert.rejects(call('get_project', {}), /No project/);
   assert.equal((await call('open_project', { dir })).personas.length, 3);
+});
+
+test('runs keep their own project across switches, overlapping IDs and targeted stops', async (t) => {
+  const gym = await startGym({ port: 0, captcha: true });
+  t.after(() => gym.close());
+  const first = join(dir, 'background-a');
+  const second = join(dir, 'background-b');
+  const waitFor = async (check: () => Promise<boolean>) => {
+    for (let attempt = 0; attempt < 600; attempt++) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.fail('Background simulation did not reach the expected state');
+  };
+  await call('open_project', { dir: first });
+  await call('save_project', { project: project({ start_url: `${gym.url}/candidates` }, { name: 'First project' }) });
+  const a = await call('start_run', { reset: false });
+  try {
+    await call('open_project', { dir: second });
+    await call('save_project', { project: project({ start_url: `${gym.url}/candidates` }, { name: 'Second project', audience: audience([segment('seg-bg', { share: 100 })], 1) }) });
+    await call('generate_personas', {}); // a run elsewhere must not lock this project's setup
+    const b = await call('start_run', { reset: false });
+    assert.equal(a.run_id, b.run_id, 'run IDs are local to each project');
+    await waitFor(async () => (await call('get_session_runs', {})).filter((run) => run.waiting > 0).length === 2);
+    await assert.rejects(call('close_project', { dir: first }), /Stop.*run/i);
+    assert.equal((await call('get_project', {})).dir, second, 'a refused folder operation preserves selection');
+    await call('open_project', { dir: first });
+    assert.equal((await call('get_project', {})).runs[0].status, 'running', 'reopening must not mark a live run interrupted');
+    await call('open_project', { dir: second });
+    await call('stop_run', { run_id: a.run_id, project_dir: first });
+    await waitFor(async () => (await call('get_session_runs', {})).some((run) => run.project_dir === first && run.status === 'stopped'));
+    assert.equal((await call('get_project', {})).runs[0].status, 'running', 'stopping the background project does not stop the foreground run');
+    await call('stop_run', { run_id: b.run_id });
+    await waitFor(async () => (await call('get_session_runs', {})).some((run) => run.project_dir === second && run.status === 'stopped'));
+    const session = await call('get_session_runs', {});
+    assert.deepEqual(session.filter((run) => [first, second].includes(run.project_dir)).map((run) => run.project_name).sort(), ['First project', 'Second project']);
+    await call('open_project', { dir: first });
+    assert.equal((await call('get_report', { run_id: a.run_id })).status, 'stopped');
+  } finally {
+    await call('stop_run', { run_id: a.run_id, project_dir: first });
+    await call('stop_run', { run_id: a.run_id, project_dir: second });
+    await waitFor(async () => (await call('get_session_runs', {})).filter((run) => [first, second].includes(run.project_dir)).every((run) => run.status !== 'running'));
+    await call('open_project', { dir });
+  }
 });
 
 test('opening an invalid project path leaves the previous project available', async () => {
