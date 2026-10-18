@@ -111,9 +111,13 @@ function gateway(record: Recorder, onThrottle?: (provider: ProviderId) => void):
   return createGateway({ secrets: { get: (name) => secrets.get(name) ?? null }, localBaseUrl: project().settings.local_base_url, record, onThrottle });
 }
 
-/** Who runs: the generated population, or the built-in persona when the project has no audience. */
+/** Shared research only needs identities for source eligibility, never generated biographies. */
 function population(config: ProjectConfig): Persona[] {
-  return config.audience ? current().store.listPersonas() : [BUILTIN_PERSONA];
+  if (!config.audience) return [BUILTIN_PERSONA];
+  const saved = current().store.listPersonas();
+  if (config.comparison?.execution.collection !== 'shared_research') return saved;
+  const missing = config.audience.segments.filter((segment) => !saved.some((person) => person.segment_id === segment.id));
+  return [...saved, ...missing.map((segment) => ({ ...BUILTIN_PERSONA, id: `research-${segment.id}`, segment_id: segment.id, name: 'Research collector' }))];
 }
 
 function withAudience(): { config: ProjectConfig; audience: Audience } {
@@ -365,12 +369,13 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (refusal) throw new Error(refusal);
     if (reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
     const personas = population(config);
+    const sharedResearch = config.comparison?.execution.collection === 'shared_research';
     if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
     const generatedCount = store.getGeneratedPersonaCount();
-    if (config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
+    if (!sharedResearch && config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
     if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
-    if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
-    if (config.audience && personas.some((person) =>
+    if (!sharedResearch && config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
+    if (!sharedResearch && config.audience && personas.some((person) =>
       // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
       !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
     )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');

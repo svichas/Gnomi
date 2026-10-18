@@ -26,6 +26,33 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 
 const done = (seq: number, who = 'p-1', where = 'poi-1') => event(seq, 'persona.goal_done', { step_no: 3, summary: 'Understood the product' }, who, where);
 
+test('shared research progress counts source reviews rather than all audience members', () => {
+  const planned = config({ people: 20, places: 2 });
+  const study = draftComparison(planned.project);
+  study.execution.collection = 'shared_research';
+  study.execution.research_environment = { locale: 'en-US', timezone: 'UTC' };
+  study.targets.forEach((target) => { target.access_scope = 'documentation'; });
+  planned.project.comparison = study;
+  const events = [event(1, 'run.started', { config: planned })];
+  assert.deepEqual(runProgress(events).sessions, { done: 0, total: 2 });
+  assert.match(runProgress(events).detail, /source review/i);
+  assert.doesNotMatch(runProgress(events).detail, /20 people/);
+  for (const [index, target] of study.targets.entries()) {
+    events.push(event(2 + index, 'comparison.episode_finished', {
+      episode_id: JSON.stringify([study.execution.replicate_id, 'shared-research', study.scenarios[0].id, study.tasks[0].id, target.id]),
+      target_id: target.id, scenario_id: study.scenarios[0].id, task_id: study.tasks[0].id, segment_id: null,
+      access_scope: target.access_scope, replicate_id: study.execution.replicate_id,
+      outcome: 'completed', reason: 'Source review completed', evidence_seqs: [],
+    }, 'p-1', target.poi_ids[0]));
+  }
+  assert.deepEqual(runProgress(events).sessions, { done: 2, total: 2 });
+  events.push(event(4, 'run.finished', {}), event(5, 'report.generated', { path: 'report.json', friction_count: 0 }));
+  assert.equal(runProgress(events).percent, 100);
+  const states = personaStates(events, planned.personas);
+  assert.equal(states.get('p-1'), 'done');
+  assert.equal(states.has('p-2'), false, 'unassigned audience members are not recorded as abandoned or incomplete');
+});
+
 test('comparison progress waits for assessed tool/tasks, ignores legacy social settings and never requests a resume', () => {
   const planned = config({ people: 1, places: 2, social: true });
   const study = draftComparison(planned.project);

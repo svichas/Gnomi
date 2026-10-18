@@ -1,7 +1,7 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { balancedTargetOrder, terminalOutcome } from './runtime.ts';
+import { balancedTargetOrder, terminalDetail, terminalOutcome } from './runtime.ts';
 
 test('target positions are balanced within each segment and stable under population reordering', () => {
   const people = Array.from({ length: 12 }, (_, i) => ({ id: `person-${i}`, segment_id: i < 6 ? 'buyer' : 'reviewer' }));
@@ -23,6 +23,19 @@ test('effort exhaustion stays a valid failure while global interruption and unsu
   assert.equal(terminalOutcome('done'), 'incomplete');
 });
 
+test('terminal details retain actual blocked, failed and completion causes with their event references', () => {
+  const base = { run_id: 'r', round: 1, persona_id: 'p', poi_id: 'target', ts: 1 };
+  const events: GnomiEvent[] = [
+    { ...base, seq: 1, type: 'persona.goal_done', payload: { step_no: 1, summary: 'The published minimum contract is USD 900 yearly.' } },
+    { ...base, seq: 2, type: 'persona.blocked', payload: { step_no: 2, reason: 'captcha', detail: 'A Cloudflare challenge prevents reading pricing.' } },
+    { ...base, seq: 3, type: 'signal.repeated_failure', payload: { step_no: 5, action: 'click', error: 'host_not_allowed' } },
+  ];
+  assert.deepEqual(terminalDetail('done', events), { reason: 'The published minimum contract is USD 900 yearly.', evidence_seqs: [1] });
+  assert.deepEqual(terminalDetail('blocked', events), { reason: 'A Cloudflare challenge prevents reading pricing.', evidence_seqs: [2] });
+  assert.deepEqual(terminalDetail('repeated_failure', events), { reason: 'Repeated click action failed: host_not_allowed.', evidence_seqs: [3] });
+  assert.equal(terminalDetail('abandoned', events), null);
+});
+
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { draftComparison } from './config.ts';
@@ -31,7 +44,7 @@ import type { GnomiEvent, NewEvent, PageSnapshot, ProjectConfig, RunConfig } fro
 import type { ComparisonStudy } from './types.ts';
 import type { LlmGateway, LlmRequest, PageDriver } from '../seams.ts';
 
-function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boolean; exhausted?: boolean; blocked?: boolean; interrupted?: boolean; fixtureMissing?: boolean; judgeFailure?: boolean; invalidNavigator?: boolean } = {}) {
+function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boolean; exhausted?: boolean; blocked?: boolean; interrupted?: boolean; fixtureMissing?: boolean; judgeFailure?: boolean; invalidNavigator?: boolean; sharedResearch?: boolean; abandon?: string } = {}) {
   const project: ProjectConfig = { name: 'Compare ATS tools', description: '', goal: 'Choose an ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
     pois: ['Alpha', 'Beta'].map((name) => ({ id: name, name, type: 'web', start_url: `https://${name.toLowerCase()}.example/`, mode: 'observe_only', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
   const study = draftComparison(project);
@@ -40,8 +53,9 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
   study.criteria = [study.criteria[1]];
   study.tasks[0].criterion_ids = ['cost'];
   project.comparison = study;
+  if (options.sharedResearch) { study.execution.collection = 'shared_research'; study.execution.research_environment = { locale: 'el-GR', timezone: 'Europe/Athens' }; }
   const person = { ...BUILTIN_PERSONA, id: 'buyer', goal_interpretation: 'Review the candidate in the incoming invitation.', context_of_use: 'Inbox invitation' };
-  const config: RunConfig = { run_id: 'r-comparison', seed: 20, project, personas: [person], sessions: [], reset: false, pause_timeout_ms: 1, app_version: 'test' };
+  const config: RunConfig = { run_id: 'r-comparison', seed: 20, project, personas: options.sharedResearch ? Array.from({ length: 20 }, (_, i) => ({ ...person, id: `buyer-${i}` })) : [person], sessions: [], reset: false, pause_timeout_ms: 1, app_version: 'test' };
   const events: GnomiEvent[] = [];
   const requests: LlmRequest<unknown>[] = [];
   const record = (event: NewEvent) => { const saved = { ...event, seq: events.length + 1, ts: events.length + 1 } as GnomiEvent; events.push(saved); return saved; };
@@ -58,7 +72,7 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
         criteria: [{ criterion_id: 'cost', assessment: 'meets', basis: 'vendor_claim', summary: 'The team plan is USD 100 monthly for 20 seats.', evidence: [cite] }] };
     } else if (req.purpose === 'comparison_verification') {
       output = { outcome_supported: !options.reject, outcome_reason: options.reject ? 'The source is unrelated to pricing.' : 'The frozen success rule is supported.', criteria: [{ criterion_id: 'cost', supported: !options.reject, reason: options.reject ? 'Candidate profile is not pricing evidence.' : 'The quoted plan terms support the criterion.' }] };
-    } else output = { thought: options.invalid ? 'I need the candidate invitation instead.' : 'The pricing terms are visible.', feeling: 1, action: { type: options.exhausted || options.interrupted || options.blocked ? 'read' : 'done', ref: null, text: options.invalid ? 'The invitation is missing.' : 'Found the applicable plan terms.' }, friction: null };
+    } else output = { thought: options.invalid ? 'I need the candidate invitation instead.' : 'The pricing terms are visible.', feeling: 1, action: { type: options.abandon ? 'abandon' : options.exhausted || options.interrupted || options.blocked ? 'read' : 'done', ref: null, text: options.abandon ?? (options.invalid ? 'The invitation is missing.' : 'Found the applicable plan terms.') }, friction: null };
     return { object: req.schema.parse(output), cost_usd: 0 };
   } };
   const navigations: string[] = [];
@@ -82,6 +96,39 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
   });
   return { runtime, config, study, person, events, requests, navigations, pages, modes, ended: () => ended };
 }
+
+test('shared research collects once per target and never manufactures twenty persona observations', async () => {
+  const f = fixture({ sharedResearch: true });
+  for (const block of f.runtime.plan.blocks) await f.runtime.runBlock(block);
+  f.runtime.finishUnscheduled();
+  assert.equal(f.pages.length, 2);
+  assert.equal(f.requests.length, 6);
+  const outcomes = f.events.filter((e) => e.type === 'comparison.episode_finished');
+  assert.equal(outcomes.length, 2);
+  assert.ok(outcomes.every((e) => e.payload.segment_id === null && e.payload.outcome === 'completed'));
+  const prompt = f.requests.find((req) => req.role === 'navigator')!.system;
+  assert.match(prompt, /research collector/i);
+  assert.doesNotMatch(prompt, /Priya|240|incoming invitation|not a tester|gives up after/);
+  const starts = f.events.filter((e) => e.type === 'persona.episode_started');
+  assert.ok(starts.every((e) => e.payload.locale === 'el-GR' && e.payload.timezone === 'Europe/Athens'));
+});
+
+test('shared source-review abandonment retains the exact reason and its own terminal event citation', async () => {
+  const reason = 'Pricing requires a sales call; no permitted page states the minimum contract.';
+  const f = fixture({ sharedResearch: true, abandon: reason });
+  for (const block of f.runtime.plan.blocks) await f.runtime.runBlock(block);
+  const finished = f.events.filter((event) => event.type === 'comparison.episode_finished');
+  assert.equal(finished.length, 2);
+  for (const event of finished) {
+    assert.equal(event.payload.outcome, 'abandoned');
+    assert.equal(event.payload.reason, reason);
+    assert.equal(event.payload.evidence_seqs.length, 1);
+    const cited = f.events.find((item) => item.seq === event.payload.evidence_seqs[0]);
+    assert.equal(cited?.type, 'persona.abandoned');
+    assert.equal(cited?.persona_id, event.persona_id);
+    assert.equal(cited?.poi_id, event.poi_id);
+  }
+});
 
 test('independent episodes collect positive pricing sources and verified task results for every public target', async () => {
   const f = fixture();
@@ -223,6 +270,23 @@ test('semantic packets bound long captures and disclose omitted coverage while r
   assert.equal(packet.sources.at(-1)?.seq, 100);
   assert.match(packet.limit ?? '', /76 distinct sources omitted/);
   assert.match(packet.limit ?? '', /24 source captures shortened/);
+});
+
+test('criterion evidence selection keeps late pricing caveats and conflicting claims instead of only page openings', async () => {
+  const f = fixture();
+  await f.runtime.runPersona(f.person);
+  const original = f.events.find((event) => event.type === 'comparison.source')!;
+  assert.ok(original.type === 'comparison.source');
+  const sources = Array.from({ length: 40 }, (_, i) => ({ ...original, seq: i + 1, payload: { ...original.payload, source_id: `page-${i}`, text: `Unrelated navigation ${i}. `.repeat(500) } }));
+  sources[17].payload.text = `${'Navigation links. '.repeat(1000)}Pricing: USD 100 per month. Enterprise integration is excluded.`;
+  sources[18].payload.text = `${'Navigation links. '.repeat(1000)}Pricing: USD 300 per month for the same team plan.`;
+  const packet = comparisonPacket(sources, [], f.study.criteria);
+  const supplied = packet.sources.map((source) => source.payload.text).join('\n');
+  assert.match(supplied, /USD 100 per month/);
+  assert.match(supplied, /integration is excluded/);
+  assert.match(supplied, /USD 300 per month/);
+  assert.ok(supplied.length < 75_000);
+  assert.match(packet.limit ?? '', /excerpt|omitted|shortened/);
 });
 
 

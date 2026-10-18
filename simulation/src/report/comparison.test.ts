@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { draftComparison } from '../comparison/config.ts';
+import { comparisonPlan } from '../comparison/planning.ts';
+import { comparisonEvidenceCatalog } from './comparisonPresentation.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ComparisonAssessment, ComparisonOutcome, ComparisonScope } from '../comparison/types.ts';
@@ -13,6 +15,7 @@ function fixture() {
   const project: ProjectConfig = { name: 'Tools', description: 'tools', goal: 'Choose ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
     pois: ['Alpha', 'Beta'].map((name, i) => ({ id: `poi-${i}`, name, type: 'web', mode: 'observe_only', segments: null, start_url: `https://v${i}.example/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
   const study = draftComparison(project);
+  study.execution.collection = 'persona_tasks';
   study.criteria = [study.criteria[0], study.criteria[1]];
   study.tasks[0].criterion_ids = study.criteria.map((c) => c.id);
   project.comparison = study;
@@ -118,7 +121,7 @@ test('report rebuilding and Markdown lead with comparison decisions and preserve
   assert.ok(!markdown.includes('## Sentiment'));
   assert.match(markdown, /supports hiring teams/);
   assert.match(markdown, /Contact sales for a quote/);
-  assert.match(markdown, /\(#comparison-source-\d+\)/);
+  assert.match(markdown, /\(#comparison-evidence-\d+\)/);
 });
 
 test('different access scopes and unavailable evidence do not create focal superiority', () => {
@@ -187,4 +190,132 @@ test('unattempted reasons require the frozen assignment identity before appearin
   const report = buildComparison(f.events)!;
   assert.ok(report.limitations.some((item) => /Matched block cannot fit/.test(item)));
   assert.ok(report.limitations.every((item) => !item.includes('Forged limitation')));
+});
+
+test('blocked and invalid episode reasons survive projection with inspectable trace references', () => {
+  const f = fixture(); f.episode(0, 0, 'blocked_environment'); f.episode(1, 0, 'invalid_task');
+  const finishes = f.events.filter((event) => event.type === 'comparison.episode_finished');
+  finishes[0].payload.reason = 'The required pricing API api.example.test was denied by the configured host policy.';
+  finishes[1].payload.reason = 'Invented a candidate-review assignment instead of researching plans.';
+  const row = buildComparison(f.events)!.coverage[0];
+  assert.deepEqual(row.episodes?.map((episode) => episode.reason), finishes.map((event) => event.payload.reason));
+  assert.ok(row.episodes?.every((episode) => episode.start_seq && episode.finish_seq && episode.persona_id));
+  const markdown = reportToMarkdown(buildReport(f.events));
+  assert.ok(markdown.includes(finishes[0].payload.reason));
+  assert.ok(markdown.includes(finishes[1].payload.reason));
+});
+
+test('buyer decisions explain a supported leader and the must-have that excludes its alternative', () => {
+  const f = fixture();
+  for (const person of [0, 1]) { f.episode(person, 0, 'completed', 'meets', 'meets'); f.episode(person, 1, 'completed', 'meets', 'does_not_meet'); }
+  const report = buildComparison(f.events)!;
+  const decision = report.decision.scenarios?.[0];
+  assert.equal(decision?.status, 'leading_candidate');
+  assert.equal(decision?.leading_target_id, f.study.targets[0].id);
+  assert.ok(decision?.reasons.some((reason) => reason.criterion_ids.includes('cost') && reason.evidence_seqs.length >= 2));
+  assert.ok(decision?.alternatives.some((alternative) => alternative.target_id === f.study.targets[1].id && /must-have/i.test(alternative.condition)));
+  assert.ok(report.tradeoffs.length > 0, 'buyer tradeoffs do not require a focal target');
+});
+
+test('equal complete evidence produces parity; a decisive unknown prevents a leading candidate', () => {
+  const f = fixture();
+  for (const person of [0, 1]) for (const target of [0, 1]) f.episode(person, target, 'completed', 'meets', 'meets');
+  assert.equal(buildComparison(f.events)!.decision.scenarios?.[0].status, 'parity');
+  for (const event of f.events) if (event.type === 'comparison.assessment' && event.payload.target_id === f.study.targets[1].id && event.payload.criterion_id === 'cost') event.payload.assessment = 'unknown';
+  const decision = buildComparison(f.events)!.decision.scenarios?.[0];
+  assert.equal(decision?.leading_target_id, null);
+  assert.ok(decision?.unresolved.some((item) => item.criterion_id === 'cost' && item.changes_choice.length > 0));
+});
+
+test('next checks group the same requirement across targets and compact cells retain full observations', () => {
+  const f = fixture();
+  for (const person of [0, 1]) for (const target of [0, 1]) f.episode(person, target);
+  const assessment = f.events.find((event) => event.type === 'comparison.assessment')!;
+  assessment.payload.summary = 'A captured supported fact. '.repeat(50);
+  const report = buildComparison(f.events)!;
+  assert.equal(report.actions.filter((action) => action.criterion_id === 'cost').length, 1);
+  assert.deepEqual(report.actions.find((action) => action.criterion_id === 'cost')?.target_ids, f.study.targets.map((target) => target.id));
+  assert.ok(report.cells.every((cell) => cell.summary.length <= 280));
+  assert.ok(report.cells[0].observations?.some((observation) => observation.summary.length > 280));
+});
+
+test('inferred positive and negative assessments still produce verification checks', () => {
+  const f = fixture();
+  for (const person of [0, 1]) for (const target of [0, 1]) f.episode(person, target, 'completed', 'meets', 'does_not_meet');
+  for (const event of f.events) if (event.type === 'comparison.assessment') event.payload.basis = 'simulated_inference';
+  const report = buildComparison(f.events)!;
+  assert.equal(report.decision.scenarios?.[0].leading_target_id, null);
+  assert.deepEqual(new Set(report.actions.map((action) => action.criterion_id)), new Set(['fit', 'cost']));
+  assert.ok(report.actions.every((action) => action.owner === 'buyer' && action.validation.length > 0));
+  assert.ok(report.fits.every((fit) => fit.status !== 'not_suitable'), 'an inferred mismatch cannot disqualify a tool');
+  assert.ok(report.fits.every((fit) => fit.strengths.length === 0 && fit.gaps.length === 0 && fit.unknowns.length === 2), 'the fit audit also keeps inferred claims unresolved');
+});
+
+test('a preference-only rubric can establish scoped parity or a supported lead without inventing must-haves', () => {
+  const f = fixture();
+  for (const criterion of f.study.criteria) criterion.importance = 'preference';
+  for (const person of [0, 1]) for (const target of [0, 1]) f.episode(person, target, 'completed', 'meets', 'meets');
+  let decision = buildComparison(f.events)!.decision.scenarios![0];
+  assert.equal(decision.status, 'parity');
+  assert.doesNotMatch(decision.summary, /must-have|unknowns/);
+  for (const event of f.events) if (event.type === 'comparison.assessment' && event.payload.target_id === f.study.targets[1].id && event.payload.criterion_id === 'cost') event.payload.assessment = 'partially_meets';
+  decision = buildComparison(f.events)!.decision.scenarios![0];
+  assert.equal(decision.status, 'leading_candidate');
+  assert.equal(decision.leading_target_id, f.study.targets[0].id);
+  assert.doesNotMatch(decision.summary, /must-have/);
+});
+
+test('shared research counts only planned source reviews and keeps every duplicate capture', () => {
+  const f = fixture();
+  f.study.execution.collection = 'shared_research';
+  f.study.execution.research_environment = { locale: 'en-US', timezone: 'UTC' };
+  f.config.personas[0].segment_id = 'segment-a';
+  f.config.personas[1].segment_id = 'segment-b';
+  f.episode(0, 0); f.episode(0, 1);
+  const plan = comparisonPlan(f.config);
+  for (const event of f.events) if (event.type.startsWith('comparison.') && 'episode_id' in event.payload) {
+    const payload = event.payload;
+    const planned = plan.episodes.find((item) => item.target_id === payload.target_id)!;
+    event.payload.episode_id = planned.episode_id;
+    event.payload.segment_id = null;
+  }
+  const report = buildComparison(f.events)!;
+  assert.ok(report.coverage.every((row) => row.scheduled === 1 && row.attempted === 1 && row.unit === 'source_review' && row.segment_id === null));
+  assert.equal(report.pairs.length, 0, 'source reviews are not paired persona performance');
+  assert.ok(report.cells.every((cell) => cell.eligible === 1 && cell.assessed === 1));
+  assert.match(reportToMarkdown(buildReport(f.events)), /shared source reviews, not independent personas/);
+  const cell = report.cells[0];
+  cell.evidence.push({ ...cell.evidence[0], event_seq: 900, assessment_seq: 901, episode_id: 'another-capture', captured_at: 999 });
+  const catalog = comparisonEvidenceCatalog(report.cells);
+  assert.equal(catalog.filter((item) => item.cell === cell).length, 1);
+  assert.equal(catalog.find((item) => item.cell === cell)!.captures.length, 2);
+});
+
+test('different access, unequal coverage and unknown evidence never create a leading candidate', () => {
+  const f = fixture();
+  for (const person of [0, 1]) { f.episode(person, 0, 'completed', 'meets', 'meets'); f.episode(person, 1, 'completed', 'meets', 'does_not_meet'); }
+  const finish = f.events.filter((event) => event.type === 'comparison.episode_finished').find((event) => event.persona_id === 'p-1')!;
+  finish.payload.outcome = 'incomplete';
+  assert.equal(buildComparison(f.events)!.decision.scenarios?.[0].leading_target_id, null);
+  finish.payload.outcome = 'completed';
+  f.study.targets[1].access_scope = 'documentation';
+  for (const event of f.events) if (event.type.startsWith('comparison.') && 'target_id' in event.payload && event.payload.target_id === f.study.targets[1].id) event.payload.access_scope = 'documentation';
+  const report = buildReport(f.events);
+  assert.equal(report.comparison!.decision.scenarios?.[0].leading_target_id, null);
+  const markdown = reportToMarkdown(report);
+  assert.equal(markdown.split('| Criterion | Alpha | Beta |').length - 1, 2, 'every matrix preserves every target column');
+  assert.match(markdown, /Different access scope/);
+});
+
+test('Markdown claim anchors remain unique when one source supports multiple criteria', () => {
+  const f = fixture(); f.episode(0, 0); f.episode(0, 1);
+  const report = buildReport(f.events);
+  const markdown = reportToMarkdown(report);
+  const anchors = [...markdown.matchAll(/<a id="([^"]+)"><\/a>/g)].map((match) => match[1]);
+  assert.equal(anchors.length, new Set(anchors).size);
+  const catalog = comparisonEvidenceCatalog(report.comparison!.cells);
+  for (const criterion of f.study.criteria) {
+    const row = markdown.split('\n').find((line) => line.startsWith(`| ${criterion.name} (`))!;
+    for (const item of catalog) assert.equal(row.includes(`(#${item.id})`), item.cell.criterion_id === criterion.id, 'matrix links identify the criterion claim, not only its shared source event');
+  }
 });

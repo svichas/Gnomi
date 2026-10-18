@@ -91,10 +91,11 @@ export function Activity(props: {
   segments: Segment[];
   filters: Filters;
   live?: boolean;
+  research?: boolean;
   onFilters(filters: Filters): void;
   onOpen(personaId: string, seq: number | null): void;
 }) {
-  const { rows, total, personas, segments, filters, live = false, onFilters, onOpen } = props;
+  const { rows, total, personas, segments, filters, live = false, research = false, onFilters, onOpen } = props;
   const byId = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const [showFilters, setShowFilters] = useState(false);
   const [allEvents, setAllEvents] = useState(false);
@@ -114,7 +115,7 @@ export function Activity(props: {
       <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{moments.length}</span></h2><p>Follow each action, the thinking behind it, and what happened next.</p></div><div className="activity-toolbar-actions">{activeFilters && <Button variant="link" onClick={() => set({ persona: '', segment: '', category: '' })}>Clear filters</Button>}<Button variant="quiet" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</Button></div></div>
       <div id="activity-filters" hidden={!showFilters}>
       <div className="filter-bar grid gap-3 sm:grid-cols-3">
-        <Field label="Persona">
+        {!research && <Field label="Persona">
           <select value={filters.persona} onChange={(e) => set({ persona: e.target.value })} className={inputClass}>
             <option value="">Everyone</option>
             {personas.map((persona) => (
@@ -123,8 +124,8 @@ export function Activity(props: {
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="Segment">
+        </Field>}
+        {!research && <Field label="Segment">
           <select value={filters.segment} onChange={(e) => set({ segment: e.target.value })} className={inputClass}>
             <option value="">All segments</option>
             {segments.map((segment) => (
@@ -133,7 +134,7 @@ export function Activity(props: {
               </option>
             ))}
           </select>
-        </Field>
+        </Field>}
         <Field label="Kind of event">
           <select value={filters.category} onChange={(e) => set({ category: e.target.value as Category | '' })} className={inputClass}>
             <option value="">Everything</option>
@@ -160,7 +161,7 @@ export function Activity(props: {
             const persona = row.persona_id === null ? undefined : byId.get(row.persona_id);
             return (
               <div role="listitem" className="timeline-row">
-                <ActivityItem row={row} related={related} who={persona?.name ?? (row.persona_id ? 'Simulated user' : null)} onOpen={onOpen} onRead={pause} />
+                <ActivityItem row={row} related={related} who={research && row.persona_id ? 'Research collector' : persona?.name ?? (row.persona_id ? 'Simulated user' : null)} onOpen={onOpen} onRead={pause} />
               </div>
             );
           }}

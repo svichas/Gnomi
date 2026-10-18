@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { apportion } from '@gnomi/simulation/audience/sample.ts';
+import { decisionContextText } from '@gnomi/simulation/comparison/config.ts';
 
 // The line the demo writer reads the logins back from; keep it in step with DEMO_PERSONA_WRITER.
 export const LOGINS_LABEL = 'Recorded logins: ';
@@ -62,6 +63,7 @@ The fields of each segment:
 - goal_override: the task as this segment would really meet it, only when they would come to it differently from the team's goal (for example, a manager who gets an email asking them to review two candidates, when the team's goal is creating a job post); otherwise null.`;
 
 export function proposeUser(project: ProjectConfig, roles: string[]): string {
+  if (project.comparison) return [comparisonAudienceContext(project), `${LOGINS_LABEL}${JSON.stringify(roles)}`].join('\n');
   return [
     `The product: ${project.name}.${project.description ? ` ${project.description}` : ''}`,
     `What will be tested: ${project.pois.map((poi) => poi.name).join(', ')}`,
@@ -70,10 +72,30 @@ export function proposeUser(project: ProjectConfig, roles: string[]): string {
   ].join('\n');
 }
 
+export function proposalSystem(project: ProjectConfig): string {
+  if (!project.comparison) return PROPOSE_SYSTEM;
+  return `Propose 3 to 6 stakeholder groups for one tool-selection or product-evaluation decision. They are stakeholders of the same company, not different fictional companies or a representative market sample. Define groups by responsibilities and priorities, never by demographics. Shares allocate simulated perspectives only, not market statistics. Preserve the fixed company brief and every frozen task. No candidate inbox, incoming invitation, account, or work item exists unless explicitly supplied by the study. Do not assign operational tasks. goal_override must be null, entry must be direct, account_state must be empty, role must be null for public research. typical_goals describe evidence to evaluate and decision priorities, not new assignments. Use the requested segment fields; patience and tech_skill min/max are 1 to 5, mobile_share is 0 to 1, and shares are positive percentages. The written description must identify the stakeholder's decision responsibility within this company.`;
+}
+
+/** Model-visible decision context; navigation settings and login secrets never enter biographies. */
+export function comparisonAudienceContext(project: ProjectConfig): string {
+  const study = project.comparison!;
+  return [
+    `Decision: ${study.question}`,
+    `Purpose: ${study.purpose}`,
+    `The fixed company brief:\n${study.decision_context ? decisionContextText(study.decision_context) : 'Use only the supplied scenario facts; unspecified company facts stay unknown.'}`,
+    `Tools and evidence scopes: ${JSON.stringify(study.targets.map(({ name, access_scope }) => ({ name, access_scope })))}`,
+    `Scenarios: ${JSON.stringify(study.scenarios.map(({ name, context }) => ({ name, context })))}`,
+    `Frozen tasks: ${JSON.stringify(study.tasks.map(({ instruction, success_rule, prerequisites }) => ({ instruction, success_rule, prerequisites })))}`,
+    `Decision criteria: ${JSON.stringify(study.criteria.map(({ name, question, importance, decision_rule, evidence_required }) => ({ name, question, importance, decision_rule, evidence_required })))}`,
+    'All stakeholders evaluate this fixed company decision. No candidate inbox, invitation, existing account or operational task may be invented. Company facts and assigned tasks cannot vary with persona biography or sampled employer traits.',
+  ].join('\n');
+}
+
 const range = (a: number, b: number): [number, number] => [Math.min(a, b), Math.max(a, b)];
 
 /** Segments with ids 'seg-1'…, shares renormalised to whole percents summing to exactly 100, each at least 1. */
-export function toSegments(proposal: Proposal): Segment[] {
+export function toSegments(proposal: Proposal, project?: ProjectConfig): Segment[] {
   const shares = apportion(proposal.segments.map((s) => s.share), 100, 1);
   return proposal.segments.map((s, i) => ({
     id: `seg-${i + 1}`,
@@ -89,5 +111,6 @@ export function toSegments(proposal: Proposal): Segment[] {
     account_state: s.account_state,
     entry: s.entry,
     goal_override: s.goal_override || null,
+    ...(project?.comparison ? { goal_override: null, entry: 'direct' as const, account_state: 'empty' as const, ...(project.comparison.targets.every((target) => ['public_site', 'documentation'].includes(target.access_scope)) ? { role: null, kind: 'buyer' as const } : {}) } : {}),
   }));
 }

@@ -1,7 +1,10 @@
 import type { EventOf, GnomiEvent } from '../types.ts';
-import type { ComparisonAction, ComparisonCell, ComparisonCoverage, ComparisonEvidence, ComparisonFit, ComparisonOutcome, ComparisonReport, ComparisonScope } from '../comparison/types.ts';
+import type { ComparisonCell, ComparisonCoverage, ComparisonEpisodeResult, ComparisonEvidence, ComparisonFit, ComparisonOutcome, ComparisonReport, ComparisonScope } from '../comparison/types.ts';
 import { validateComparison } from '../comparison/config.ts';
+import { comparisonPlan } from '../comparison/planning.ts';
 import { isPriced } from '../llm/prices.ts';
+import { comparisonDecision } from './comparisonDecision.ts';
+export { comparisonEvidenceCatalog, comparisonEvidenceKey, comparisonDecisionLabels } from './comparisonPresentation.ts';
 
 const OUTCOMES: ComparisonOutcome[] = ['completed', 'task_failed', 'abandoned', 'blocked_environment', 'incomplete', 'invalid_task', 'not_applicable', 'not_attempted'];
 const VALID = new Set<ComparisonOutcome>(['completed', 'task_failed', 'abandoned']);
@@ -20,9 +23,11 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
   const ordered = events.filter((event) => event.run_id === config.run_id).toSorted((a, b) => a.seq - b.seq);
   const bySeq = new Map(ordered.map((event) => [event.seq, event]));
   const personas = new Map(config.personas.map((persona) => [persona.id, persona]));
+  const plan = comparisonPlan(config);
   const starts = new Map<string, EventOf<'comparison.episode_started'>>();
   const assignments = new Map<string, EventOf<'comparison.episode_started'>>();
   const finishes = new Map<string, EventOf<'comparison.episode_finished'>>();
+  const unstarted = new Map<string, EventOf<'comparison.episode_finished'>>();
   const sources = new Map<number, EventOf<'comparison.source'>>();
   const accepted: { event: EventOf<'comparison.assessment'>; evidence: ComparisonEvidence[] }[] = [];
   const rejected: ComparisonReport['rejected_assessments'] = [];
@@ -42,14 +47,8 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
   }))];
   if (unpriced.length) limitations.add(`Model pricing was unavailable for ${unpriced.join(', ')}. Initial matched-block admission cannot reserve their dollar cost; recorded charges and observed costs are used when available. Actual spend may exceed the estimate.`);
   const assignmentKey = (personaId: string, taskId: string, targetId: string) => key(personaId, taskId, targetId);
-  const eligible = (personaId: string, taskId: string, targetId: string) => {
-    const persona = personas.get(personaId);
-    const task = study.tasks.find((item) => item.id === taskId);
-    const scenario = study.scenarios.find((item) => item.id === task?.scenario_id);
-    const entry = task?.entries.find((item) => item.target_id === targetId);
-    const poi = config.project.pois.find((item) => item.id === entry?.poi_id);
-    return !!persona && !!scenario && !!poi && (scenario.segment_ids === null || scenario.segment_ids.includes(persona.segment_id ?? '')) && (poi.segments === null || poi.segments.includes(persona.segment_id ?? ''));
-  };
+  const planned = new Map(plan.episodes.map((episode) => [assignmentKey(episode.persona_id, episode.task_id, episode.target_id), episode]));
+  const eligible = (personaId: string, taskId: string, targetId: string) => planned.get(assignmentKey(personaId, taskId, targetId))?.eligible ?? false;
   for (const event of ordered) {
     if (event.type !== 'comparison.episode_started') continue;
     const scope = event.payload;
@@ -58,7 +57,8 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     const task = study.tasks.find((item) => item.id === scope.task_id);
     const entry = task?.entries.find((item) => item.target_id === scope.target_id);
     const assignment = assignmentKey(event.persona_id ?? '', scope.task_id, scope.target_id);
-    if (!persona || !target || task?.scenario_id !== scope.scenario_id || entry?.poi_id !== event.poi_id || scope.poi_id !== event.poi_id || scope.segment_id !== (persona.segment_id ?? null) || scope.access_scope !== target.access_scope || scope.replicate_id !== study.execution.replicate_id || starts.has(scope.episode_id) || assignments.has(assignment)) {
+    const job = planned.get(assignment);
+    if (!persona || !target || !job || (plan.collection === 'shared_research' && scope.episode_id !== job.episode_id) || task?.scenario_id !== scope.scenario_id || entry?.poi_id !== event.poi_id || scope.poi_id !== event.poi_id || scope.segment_id !== job.segment_id || scope.access_scope !== target.access_scope || scope.replicate_id !== study.execution.replicate_id || starts.has(scope.episode_id) || assignments.has(assignment)) {
       limitations.add(`Ignored invalid or duplicate comparison episode at event #${event.seq}.`);
       continue;
     }
@@ -80,13 +80,18 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     }
     if (event.type === 'comparison.episode_finished') {
       if (matches(event, starts.get(event.payload.episode_id)) && !finishes.has(event.payload.episode_id) && OUTCOMES.includes(event.payload.outcome)) finishes.set(event.payload.episode_id, event);
-      else if (!starts.has(event.payload.episode_id) && event.payload.outcome === 'not_attempted') {
+      else if (!starts.has(event.payload.episode_id) && ['not_attempted', 'not_applicable'].includes(event.payload.outcome)) {
         const scope = event.payload;
         const persona = personas.get(event.persona_id ?? '');
         const target = study.targets.find((item) => item.id === scope.target_id);
         const task = study.tasks.find((item) => item.id === scope.task_id);
         const entry = task?.entries.find((item) => item.target_id === scope.target_id);
-        if (persona && target && task && scope.scenario_id === task.scenario_id && scope.segment_id === (persona.segment_id ?? null) && scope.access_scope === target.access_scope && scope.replicate_id === study.execution.replicate_id && event.poi_id === entry?.poi_id && typeof scope.reason === 'string' && eligible(persona.id, task.id, target.id)) limitations.add(`Not attempted — ${target.name}, ${task.id}, segment ${scope.segment_id ?? 'built-in'}: ${scope.reason}`);
+        const assignment = assignmentKey(event.persona_id ?? '', scope.task_id, scope.target_id);
+        const job = planned.get(assignment);
+        if (persona && target && task && job && scope.scenario_id === task.scenario_id && scope.segment_id === job.segment_id && scope.access_scope === target.access_scope && scope.replicate_id === study.execution.replicate_id && event.poi_id === entry?.poi_id && typeof scope.reason === 'string' && (plan.collection !== 'shared_research' || scope.episode_id === job.episode_id)) {
+          if (!unstarted.has(assignment)) unstarted.set(assignment, event);
+          if (scope.outcome === 'not_attempted' && job.eligible) limitations.add(`Not attempted — ${target.name}, ${task.id}: ${scope.reason}`);
+        }
       }
     }
   }
@@ -137,25 +142,30 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     else { observedCriteria.add(ownKey); accepted.push({ event, evidence }); }
   }
   if (rejected.length) limitations.add(`${rejected.length} unsupported or invalid assessment(s) were excluded; inspect their recorded rejection reasons.`);
-  const segments = [...new Set(config.personas.map((persona) => persona.segment_id ?? null))];
+  const segments = [...new Set(plan.episodes.map((episode) => episode.segment_id))];
   const coverage: ComparisonCoverage[] = [];
   const cells: ComparisonCell[] = [];
   const fits: ComparisonFit[] = [];
   for (const task of study.tasks) for (const segment_id of segments) for (const target of study.targets) {
-    const members = config.personas.filter((persona) => (persona.segment_id ?? null) === segment_id);
+    const members = plan.episodes.filter((episode) => episode.task_id === task.id && episode.target_id === target.id && episode.segment_id === segment_id);
+    if (!members.length) continue;
     const outcomes = Object.fromEntries(OUTCOMES.map((outcome) => [outcome, 0])) as Record<ComparisonOutcome, number>;
+    const episodes: ComparisonEpisodeResult[] = [];
     let attempted = 0, scheduled = 0;
-    for (const persona of members) {
-      if (!eligible(persona.id, task.id, target.id)) { outcomes.not_applicable++; continue; }
-      scheduled++;
-      const start = assignments.get(assignmentKey(persona.id, task.id, target.id));
-      const outcome = start ? outcomeOf(start) : 'not_attempted';
+    for (const job of members) {
+      const assignment = assignmentKey(job.persona_id, task.id, target.id);
+      const start = assignments.get(assignment);
+      const finish = start ? finishes.get(start.payload.episode_id) : unstarted.get(assignment);
+      const outcome = !job.eligible ? 'not_applicable' : start ? outcomeOf(start) : 'not_attempted';
+      if (job.eligible) scheduled++;
       if (start && !['not_attempted', 'not_applicable'].includes(outcome)) attempted++;
       outcomes[outcome]++;
+      const reason = finish?.payload.outcome === 'completed' && outcome === 'incomplete' ? `Recorded completion lacked captured success evidence. ${finish.payload.reason}` : finish?.payload.reason ?? (!job.eligible ? 'Excluded by the frozen scenario or source eligibility.' : start ? 'No terminal outcome was recorded.' : 'The planned observation was not started.');
+      episodes.push({ episode_id: start?.payload.episode_id ?? job.episode_id, persona_id: job.persona_id, outcome, reason, start_seq: start?.seq ?? null, finish_seq: finish?.seq ?? null, evidence_seqs: finish?.payload.evidence_seqs ?? [] });
     }
     const valid_attempts = outcomes.completed + outcomes.task_failed + outcomes.abandoned;
     const scope = { target_id: target.id, scenario_id: task.scenario_id, task_id: task.id, segment_id, access_scope: target.access_scope };
-    coverage.push({ ...scope, scheduled, attempted, outcomes, valid_attempts, completion_rate: valid_attempts ? outcomes.completed / valid_attempts : null });
+    coverage.push({ ...scope, scheduled, attempted, outcomes, valid_attempts, completion_rate: valid_attempts ? outcomes.completed / valid_attempts : null, unit: plan.collection === 'shared_research' ? 'source_review' : 'persona_task', episodes });
     for (const criterion_id of task.criterion_ids) {
       const records = accepted.filter(({ event }) => event.payload.target_id === target.id && event.payload.task_id === task.id && event.payload.segment_id === segment_id && event.payload.criterion_id === criterion_id);
       const labels = new Set(records.map(({ event }) => event.payload.assessment).filter((assessment) => assessment !== 'unknown'));
@@ -168,18 +178,21 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
       if (records.some(({ event }) => event.payload.basis === 'simulated_inference')) notes.push('Includes simulated inference; this is not independently verified capability evidence.');
       const assessment = scheduled === 0 ? 'not_applicable' : labels.size === 1 ? [...labels][0] : 'unknown';
       const summaries = [...new Set(records.map(({ event }) => normalized(event.payload.summary)))];
-      const summary = summaries.slice(0, 3).join(' ').slice(0, 1200);
-      if (summaries.length > 3 || summaries.join(' ').length > 1200) notes.push('The concise summary is abbreviated; all accepted propositions remain in the evidence links.');
-      cells.push({ ...scope, criterion_id, assessment, summary: labels.size > 1 ? 'Evidence conflicts under the same task and scope.' : summary || (scheduled ? 'No accepted evidence for this criterion.' : 'The frozen eligibility rule excludes this group.'), bases: [...new Set(records.map(({ event }) => event.payload.basis))], eligible: scheduled, assessed: records.length, distinct_sources: new Set(evidence.map((item) => item.source)).size, evidence, limitations: notes });
+      const representative = records.find(({ event }) => event.payload.assessment === assessment)?.event.payload.summary ?? summaries[0] ?? '';
+      const summary = normalized(representative).length > 280 ? `${normalized(representative).slice(0, 279)}…` : normalized(representative);
+      cells.push({ ...scope, criterion_id, assessment, summary: labels.size > 1 ? 'Evidence conflicts under the same task and scope.' : summary || (scheduled ? 'No accepted evidence for this criterion.' : 'The frozen eligibility rule excludes this group.'), bases: [...new Set(records.map(({ event }) => event.payload.basis))], eligible: scheduled, assessed: records.length, distinct_sources: new Set(evidence.map((item) => item.source)).size, evidence, limitations: notes,
+        observations: records.map(({ event }) => ({ assessment_seq: event.seq, persona_id: event.persona_id!, assessment: event.payload.assessment, basis: event.payload.basis, summary: event.payload.summary, evidence_seqs: event.payload.evidence.map((item) => item.event_seq) })) });
     }
     const own = cells.filter((cell) => cell.target_id === target.id && cell.task_id === task.id && cell.segment_id === segment_id);
-    const criteria = (assessment: string[]) => own.filter((cell) => assessment.includes(cell.assessment)).map((cell) => study.criteria.find((criterion) => criterion.id === cell.criterion_id)!.name);
+    const supported = (cell: ComparisonCell) => cell.evidence.length > 0 && !cell.bases.includes('simulated_inference');
+    const criteria = (assessment: string[]) => own.filter((cell) => assessment.includes(cell.assessment) && supported(cell)).map((cell) => study.criteria.find((criterion) => criterion.id === cell.criterion_id)!.name);
     const must = own.filter((cell) => study.criteria.find((criterion) => criterion.id === cell.criterion_id)?.importance === 'must_have');
-    const fitStatus = must.some((cell) => cell.assessment === 'does_not_meet') ? 'not_suitable' : !own.some((cell) => cell.evidence.length && ['meets', 'partially_meets'].includes(cell.assessment)) ? 'insufficient_evidence' : must.every((cell) => cell.assessment === 'meets') && own.every((cell) => cell.assessed === cell.eligible && !cell.bases.includes('simulated_inference')) ? 'supported' : 'conditional';
-    fits.push({ target_id: target.id, scenario_id: task.scenario_id, task_id: task.id, segment_id, status: fitStatus, strengths: criteria(['meets']), gaps: criteria(['does_not_meet', 'partially_meets']), unknowns: criteria(['unknown']) });
+    const fitStatus = must.some((cell) => cell.assessment === 'does_not_meet' && supported(cell)) ? 'not_suitable' : !own.some((cell) => cell.evidence.length && ['meets', 'partially_meets'].includes(cell.assessment)) ? 'insufficient_evidence' : must.every((cell) => cell.assessment === 'meets') && own.every((cell) => cell.assessed === cell.eligible && !cell.bases.includes('simulated_inference')) ? 'supported' : 'conditional';
+    const unknowns = own.filter((cell) => cell.assessment === 'unknown' || (cell.assessment !== 'not_applicable' && !supported(cell))).map((cell) => study.criteria.find((criterion) => criterion.id === cell.criterion_id)!.name);
+    fits.push({ target_id: target.id, scenario_id: task.scenario_id, task_id: task.id, segment_id, status: fitStatus, strengths: criteria(['meets']), gaps: criteria(['does_not_meet', 'partially_meets']), unknowns });
   }
   const pairs: ComparisonReport['pairs'] = [];
-  for (const task of study.tasks) for (const segment_id of segments) for (let a = 0; a < study.targets.length; a++) for (let b = a + 1; b < study.targets.length; b++) {
+  if (plan.collection === 'persona_tasks') for (const task of study.tasks) for (const segment_id of segments) for (let a = 0; a < study.targets.length; a++) for (let b = a + 1; b < study.targets.length; b++) {
     const left = study.targets[a], right = study.targets[b];
     let matched = 0, difference = 0;
     if (left.access_scope === right.access_scope) for (const persona of config.personas.filter((item) => (item.segment_id ?? null) === segment_id)) {
@@ -198,53 +211,14 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     const id = key(start.persona_id, start.payload.task_id);
     if (!orderKeys.has(id)) { orderKeys.add(id); orders.push({ persona_id: start.persona_id!, task_id: start.payload.task_id, target_order: start.payload.target_order }); }
   }
-  for (const task of study.tasks) for (const segment of segments) {
+  if (plan.collection === 'persona_tasks') for (const task of study.tasks) for (const segment of segments) {
     const rows = orders.filter((order) => order.task_id === task.id && (personas.get(order.persona_id)?.segment_id ?? null) === segment);
     for (let position = 0; position < study.targets.length; position++) {
       const counts = study.targets.map((target) => rows.filter((order) => order.target_order[position] === target.id).length);
       if (Math.max(...counts) - Math.min(...counts) > 1) limitations.add(`Target order is imbalanced for task ${task.id}, segment ${segment ?? 'built-in'}, position ${position + 1}.`);
     }
   }
-  const name = (id: string) => study.targets.find((target) => target.id === id)!.name;
-  const tradeoffs: ComparisonReport['tradeoffs'] = [];
-  if (study.focal_target_id) for (const focal of cells.filter((cell) => cell.target_id === study.focal_target_id)) {
-    const criterion = study.criteria.find((item) => item.id === focal.criterion_id)!;
-    for (const other of cells.filter((cell) => cell.target_id !== focal.target_id && cell.scenario_id === focal.scenario_id && cell.task_id === focal.task_id && cell.segment_id === focal.segment_id && cell.criterion_id === focal.criterion_id)) {
-      const known = ['meets', 'partially_meets', 'does_not_meet'];
-      const comparable = focal.access_scope === other.access_scope && known.includes(focal.assessment) && known.includes(other.assessment) && !focal.bases.includes('simulated_inference') && !other.bases.includes('simulated_inference');
-      const result = !comparable ? 'unresolved' : focal.assessment === other.assessment ? 'parity' : known.indexOf(focal.assessment) < known.indexOf(other.assessment) ? 'advantage' : 'gap';
-      tradeoffs.push({ focal_target_id: focal.target_id, other_target_id: other.target_id, scenario_id: focal.scenario_id, task_id: focal.task_id, segment_id: focal.segment_id, criterion_id: focal.criterion_id, result,
-        summary: `${criterion.name}: ${name(focal.target_id)} — ${focal.summary} ${name(other.target_id)} — ${other.summary}${!comparable ? ' A comparative conclusion is unresolved.' : ' This contrast is limited to the tested scope and accepted evidence.'}`,
-        evidence_seqs: [...new Set([...focal.evidence, ...other.evidence].map((item) => item.event_seq))] });
-    }
-  }
-  // A favorable task cannot erase a failed must-have in another task of the same scenario/segment.
-  const fitGroups = [...new Set(fits.map((fit) => key(fit.target_id, fit.scenario_id, fit.segment_id)))].map((group) => fits.filter((fit) => key(fit.target_id, fit.scenario_id, fit.segment_id) === group && coverage.some((row) => row.target_id === fit.target_id && row.task_id === fit.task_id && row.segment_id === fit.segment_id && row.scheduled > 0))).filter((group) => group.length > 0);
-  const shortlistedGroups = fitGroups.filter((group) => group.every((fit) => ['supported', 'conditional'].includes(fit.status)));
-  const shortlist = [...new Set(shortlistedGroups.map((group) => group[0].target_id))];
-  const allRejected = fitGroups.length > 0 && fitGroups.every((group) => group.some((fit) => fit.status === 'not_suitable'));
-  const status = shortlist.length ? 'conditional_shortlist' : allRejected ? 'no_suitable_tool' : 'insufficient_evidence';
-  const scopeText = [...new Set(study.targets.map((target) => target.access_scope.replaceAll('_', ' ')))].join(', ');
-  const shortlistText = shortlistedGroups.map((group) => `${name(group[0].target_id)} (${study.scenarios.find((scenario) => scenario.id === group[0].scenario_id)!.name}; ${config.project.audience?.segments.find((segment) => segment.id === group[0].segment_id)?.name ?? group[0].segment_id ?? 'built-in persona'})`).join('; ');
-  const summary = shortlist.length ? `Conditional shortlist for ${scopeText}: ${shortlistText}. Suitability requires all tested tasks in each named scenario and segment; resolve unknown must-haves before choosing. Evidence does not establish an overall winner.` : allRejected ? `No tool meets all recorded must-have requirements in the tested ${scopeText} scopes. Inspect the evidenced gaps and validate alternatives.` : `The ${scopeText} study has insufficient accepted evidence to choose a tool. Complete the missing comparable observations and resolve must-have requirements before deciding.`;
-  const actions: ComparisonAction[] = [];
-  const actionPriority = (cell: ComparisonCell) => Number(study.criteria.find((criterion) => criterion.id === cell.criterion_id)?.importance === 'must_have') * 2 + Number(cell.target_id === study.focal_target_id) * 4 + Number(cell.assessment === 'does_not_meet' && cell.evidence.length > 0);
-  const candidates = cells.toSorted((a, b) => actionPriority(b) - actionPriority(a));
-  for (const cell of candidates) {
-    if (actions.length >= 3) break;
-    if (cell.assessment === 'meets' || cell.assessment === 'not_applicable') continue;
-    const criterion = study.criteria.find((item) => item.id === cell.criterion_id)!;
-    const rival = cells.find((other) => other.target_id !== cell.target_id && other.scenario_id === cell.scenario_id && other.task_id === cell.task_id && other.segment_id === cell.segment_id && other.access_scope === cell.access_scope && other.criterion_id === cell.criterion_id && other.assessment === 'meets');
-    const improve = study.purpose === 'improve_own_product' && cell.target_id === study.focal_target_id && ['does_not_meet', 'partially_meets'].includes(cell.assessment) && cell.evidence.length > 0;
-    // A competitor gap becomes diligence, never a request to edit the competitor's product.
-    const owner = improve ? 'product_team' : study.purpose === 'choose_tool' ? 'buyer' : 'study_owner';
-    const evidence_seqs = [...new Set([...cell.evidence, ...(improve && rival ? rival.evidence : [])].map((item) => item.event_seq))];
-    actions.push({ owner, target_id: cell.target_id, scenario_id: cell.scenario_id, task_id: cell.task_id, segment_id: cell.segment_id, criterion_id: cell.criterion_id,
-      action: improve ? `Improve ${criterion.name.toLowerCase()} in ${name(cell.target_id)} for this task and segment.` : `Verify ${criterion.name.toLowerCase()} for ${name(cell.target_id)} under the stated scenario.`,
-      rationale: improve ? `${cell.summary}${rival ? ` Comparable evidence for ${name(rival.target_id)}: ${rival.summary}` : ' No supported competitor advantage is inferred.'}` : `${cell.summary} ${cell.limitations.join(' ')}`.trim(),
-      expected_benefit: improve ? 'Hypothesis: addressing this evidenced gap will improve suitability for the stated requirement.' : 'Hypothesis: comparable evidence will resolve this decision uncertainty.',
-      validation: `Repeat the same task with valid access and fixtures, then check: ${criterion.question} Use the frozen rule: ${criterion.decision_rule}`,
-      evidence_seqs });
-  }
-  return { version: 1, study, decision: { status, summary, shortlist }, cells, coverage, fits, tradeoffs, actions, pairs, orders, limitations: [...limitations], rejected_assessments: rejected };
+  if (plan.collection === 'shared_research') limitations.add('Public information was collected once per target and assigned research task. Source reviews are shared company evidence, not independent persona attempts or human preference votes.');
+  const { decision, tradeoffs, actions } = comparisonDecision(study, cells, coverage, fits);
+  return { version: 1, study, decision, cells, coverage, fits, tradeoffs, actions, pairs, orders, limitations: [...limitations], rejected_assessments: rejected };
 }

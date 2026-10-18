@@ -1,6 +1,6 @@
 import { logsIn, withPois } from '@gnomi/simulation/poi/pois.ts';
-import { validateComparison } from '@gnomi/simulation/comparison/config.ts';
-import type { ComparisonStudy } from '@gnomi/simulation/comparison/types.ts';
+import { applyDecisionBrief, cleanDecisionContext, draftComparison, emptyDecisionContext, validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import type { ComparisonDecisionContext, ComparisonStudy } from '@gnomi/simulation/comparison/types.ts';
 import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/simulation/settings.ts';
 import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
@@ -14,6 +14,9 @@ export { hostOf, hostToConfirm, offeredHosts, startHost } from './poi/web.ts';
 // The Project screen's form and its rules, kept free of React so they can be tested on their own.
 
 export interface Form {
+  study_intent?: ProjectConfig['study_intent'];
+  /** Edited brief; applied explicitly before replacing a customized frozen rubric. */
+  decision_context?: ComparisonDecisionContext;
   name: string;
   description: string;
   goal: string;
@@ -32,6 +35,8 @@ export function initialForm(project: ProjectConfig | null | undefined): Form {
     // A new project starts with one web app to fill in.
     pois: pois.length ? pois.map(draftOf) : [POI_KINDS.web.blank('poi-1')],
     ...(project?.comparison !== undefined ? { comparison: structuredClone(project.comparison) } : {}),
+    ...(project?.study_intent ? { study_intent: project.study_intent } : {}),
+    ...(project?.comparison?.decision_context ? { decision_context: structuredClone(project.comparison.decision_context) } : {}),
   };
 }
 
@@ -46,6 +51,32 @@ export interface Draft {
 export function initialDraft(project: ProjectConfig | null | undefined): Draft {
   // Projects saved before M2 have no settings or audience.
   return { form: initialForm(project), settings: project?.settings ?? DEFAULT_SETTINGS, audience: project?.audience ?? null, ...(project?.persona_schema ? { persona_schema: project.persona_schema } : {}) };
+}
+
+function comparisonForIntent(study: ComparisonStudy, intent: Form['study_intent']): ComparisonStudy {
+  if (intent === 'choose_tool') return { ...study, purpose: 'choose_tool', focal_target_id: null };
+  if (intent === 'improve_product') return { ...study, purpose: 'improve_own_product', focal_target_id: study.focal_target_id ?? null };
+  if (intent === 'test_workflow') return { ...study, execution: { ...study.execution, collection: 'persona_tasks' } };
+  return study;
+}
+
+/** An explicit intent change adjusts study mode, preserving authored tasks and existing access. */
+export function withStudyIntent(form: Form, intent: Form['study_intent']): Form {
+  return { ...form, study_intent: intent,
+    ...(form.comparison ? { comparison: comparisonForIntent(form.comparison, intent) } : {}),
+    ...(intent === 'choose_tool' ? { pois: form.pois.map((poi) => poi.type === 'web' && !form.comparison?.targets.some((target) => target.poi_ids.includes(poi.id) && target.access_scope === 'authenticated_workflow') ? { ...poi, mode: 'observe_only' as const } : poi) } : {}),
+  };
+}
+
+export function decisionBriefChanged(form: Form): boolean {
+  const study = form.comparison;
+  return !!study && form.study_intent === 'choose_tool' && (form.goal.trim() !== study.question.trim() || JSON.stringify(cleanDecisionContext(form.decision_context ?? emptyDecisionContext())) !== JSON.stringify(cleanDecisionContext(study.decision_context ?? emptyDecisionContext())));
+}
+
+export function applyFormDecisionBrief(form: Form): Form {
+  if (!form.comparison) return form;
+  const comparison = applyDecisionBrief(form.comparison, form.goal.trim(), form.decision_context ?? emptyDecisionContext());
+  return { ...form, goal: comparison.question, decision_context: comparison.decision_context, comparison };
 }
 
 export const ROLES: LlmRole[] = ['navigator', 'socialiser', 'persona_writer', 'judge', 'author'];
@@ -77,12 +108,16 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
   if (form.pois.length === 0) return 'Add a point of interest for the personas to try.';
   const pois: Poi[] = [];
   for (const [i, draft] of form.pois.entries()) {
-    const poi = poiOf(draft);
+    const target = form.comparison?.targets.find((item) => item.poi_ids.includes(draft.id));
+    const publicBuyer = form.study_intent === 'choose_tool' && (!target || target.access_scope !== 'authenticated_workflow');
+    const poi = poiOf(publicBuyer && draft.type === 'web' ? { ...draft, mode: 'observe_only' } : draft);
     // With one POI the sentence stands alone; with several it says which one.
     if (typeof poi === 'string') return form.pois.length > 1 ? `${poiTitle(draft, i)}: ${poi}` : poi;
     pois.push(poi);
   }
   if (!goal) return 'Say what the persona should try to do.';
+  if (form.study_intent === 'choose_tool' && pois.length < 2) return 'Add at least two tools to choose between.';
+  if (decisionBriefChanged(form)) return 'Apply the decision brief to update its criteria and tasks before saving. Your custom tasks remain unchanged until you apply it.';
   const problem = settingsProblem(settings) ?? (audience && audienceProblem(audience));
   if (problem) return problem;
   const invalidProfile = profileProblem(persona_schema);
@@ -101,7 +136,10 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
       local_base_url: settings.local_base_url?.trim() || null,
       routing: Object.fromEntries(ROLES.map((role) => [role, { ...settings.routing[role], model: settings.routing[role].model.trim() }])) as RunSettings['routing'],
     },
+    ...(form.study_intent ? { study_intent: form.study_intent } : {}),
   };
+  if (form.study_intent === 'choose_tool' && !config.comparison) config.comparison = draftComparison(config, form.decision_context ?? emptyDecisionContext());
+  if (config.comparison) config.comparison = comparisonForIntent(config.comparison, form.study_intent);
   if (config.comparison) {
     config.comparison.assumptions = config.comparison.assumptions.map((s) => s.trim()).filter(Boolean);
     config.comparison.tasks = config.comparison.tasks.map((task) => ({ ...task, prerequisites: task.prerequisites.map((s) => s.trim()).filter(Boolean) }));

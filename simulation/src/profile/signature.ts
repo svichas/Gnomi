@@ -19,6 +19,15 @@ export function profileSignature(project: ProjectConfig, segment: Segment, seed:
   const input = stable({
     version: 1, seed, schema: promptSchema, traits: Object.fromEntries(visible.map(({ attribute, value }) => [attribute.id, value])),
     product: { name: project.name, description: project.description, goal: segment.goal_override ?? project.goal },
+    ...(project.comparison ? { comparison: {
+      purpose: project.comparison.purpose,
+      question: project.comparison.question,
+      decision_context: project.comparison.decision_context,
+      scenarios: project.comparison.scenarios,
+      criteria: project.comparison.criteria,
+      tasks: project.comparison.tasks.map(({ id, scenario_id, instruction, success_rule, prerequisites, criterion_ids }) => ({ id, scenario_id, instruction, success_rule, prerequisites, criterion_ids })),
+      targets: project.comparison.targets.map(({ id, name, access_scope }) => ({ id, name, access_scope })),
+    } } : {}),
     segment: { id: segment.id, name: segment.name, description: segment.description, usage_frequency: segment.usage_frequency, entry: segment.entry, account_state: segment.account_state, typical_goals: segment.typical_goals },
   });
   return `p1-${fnv1a(input).toString(16).padStart(8, '0')}${fnv1a(`profile-input/${input}`).toString(16).padStart(8, '0')}-${input.length}`;

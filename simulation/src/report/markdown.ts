@@ -1,3 +1,4 @@
+import { comparisonMarkdown } from './comparisonMarkdown.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportSegment, ReportTheme, SpreadStats, StepEvidence } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
@@ -63,78 +64,9 @@ export function reportToMarkdown(report: Report): string {
   ].join('\n');
 }
 
-/** Comparison studies lead with decisions and scoped evidence, never pooled legacy completion. */
+/** Comparison studies share the decision projection and source catalog with the interactive reader. */
 function comparisonToMarkdown(report: Report): string {
-  const comparison = report.comparison!;
-  const study = comparison.study;
-  const target = (id: string) => study.targets.find((item) => item.id === id)?.name ?? id;
-  const criterion = (id: string) => study.criteria.find((item) => item.id === id)?.name ?? id;
-  const scope = (item: { scenario_id: string; task_id: string; segment_id: string | null }) => `${study.scenarios.find((scenario) => scenario.id === item.scenario_id)?.name ?? item.scenario_id} / ${item.task_id} / ${report.segments.find((segment) => segment.id === item.segment_id)?.name ?? item.segment_id ?? 'Built-in persona'}`;
-  const label = (text: string) => text.replaceAll('_', ' ');
-  const cite = (seq: number) => `[#${seq}](#comparison-source-${seq})`;
-  const groups = [...new Set(comparison.cells.map((item) => JSON.stringify([item.scenario_id, item.task_id, item.segment_id, item.access_scope])))];
-  const evidence = new Map<number, typeof comparison.cells[number]['evidence']>();
-  for (const item of comparison.cells.flatMap((value) => value.evidence)) {
-    const existing = evidence.get(item.event_seq) ?? [];
-    if (!existing.some((prior) => prior.quote === item.quote && prior.assessment_seq === item.assessment_seq)) existing.push(item);
-    evidence.set(item.event_seq, existing);
-  }
-  return [
-    `# Gnomi comparison: ${line(study.question)}`, '', `> ${report.banner}`, '',
-    '## Decision and scope', '', line(comparison.decision.summary), '',
-    `- Purpose: ${label(study.purpose)}${study.focal_target_id ? `; focal tool: ${line(target(study.focal_target_id))}` : ''}`,
-    `- Mode: ${label(study.execution.mode)}; carryover: ${label(study.execution.carryover)}; social: ${study.execution.social}`,
-    `- Targets: ${study.targets.map((item) => `${line(item.name)} (${label(item.access_scope)})`).join('; ')}`,
-    `- Status: ${report.status}${report.stop_reason ? ` (${report.stop_reason})` : ''}`,
-    '', '## Side-by-side comparison', '',
-    ...groups.flatMap((group) => {
-      const [scenario_id, task_id, segment_id, access_scope] = JSON.parse(group) as [string, string, string | null, string];
-      const rows = comparison.cells.filter((item) => item.scenario_id === scenario_id && item.task_id === task_id && item.segment_id === segment_id && item.access_scope === access_scope);
-      const targets = study.targets.filter((item) => rows.some((row) => row.target_id === item.id));
-      return ['', `### ${line(scope({ scenario_id, task_id, segment_id }))} — ${label(access_scope)}`, '',
-        `| Criterion | ${targets.map((item) => cell(item.name)).join(' | ')} |`,
-        `| --- | ${targets.map(() => '---').join(' | ')} |`,
-        ...[...new Set(rows.map((item) => item.criterion_id))].map((criterion_id) => `| ${cell(criterion(criterion_id))}${study.criteria.find((item) => item.id === criterion_id)?.importance === 'must_have' ? ' (must-have)' : ''} | ${targets.map((item) => {
-          const value = rows.find((row) => row.target_id === item.id && row.criterion_id === criterion_id)!;
-          return `${label(value.assessment)}: ${cell(value.summary)}; basis: ${value.bases.map(label).join(', ') || 'none'}; ${value.assessed}/${value.eligible} assessed; ${value.distinct_sources} distinct source(s). ${[...new Set(value.evidence.map((entry) => entry.event_seq))].map(cite).join(' ')}${value.limitations.length ? ` Limits: ${cell(value.limitations.join(' '))}` : ''}`;
-        }).join(' | ')} |`),
-      ];
-    }),
-    '', '## Where each tool fits', '',
-    ...comparison.fits.flatMap((fit) => [
-      `### ${line(target(fit.target_id))}: ${label(fit.status)}`, '', `Scope: ${line(scope(fit))}`, '',
-      `- Supported strengths: ${fit.strengths.map(line).join('; ') || 'none established'}`,
-      `- Gaps: ${fit.gaps.map(line).join('; ') || 'none established'}`,
-      `- Unresolved: ${fit.unknowns.map(line).join('; ') || 'none in these criteria'}`, '',
-    ]),
-    ...(comparison.tradeoffs.length ? ['', '## Focal tool tradeoffs', '', ...comparison.tradeoffs.map((item) => `- **${label(item.result)}** (${line(scope(item))}): ${line(item.summary)} ${item.evidence_seqs.map(cite).join(' ')}`)] : []),
-    '', '## Next actions', '',
-    ...(comparison.actions.length ? comparison.actions.flatMap((action, i) => [
-      `${i + 1}. **${line(action.action)}**`, `   - Responsible: ${label(action.owner)}; ${line(scope(action))}`,
-      `   - Evidence: ${line(action.rationale)} ${action.evidence_seqs.map(cite).join(' ')}`,
-      `   - Expected benefit: ${line(action.expected_benefit)}`, `   - Validate: ${line(action.validation)}`, '',
-    ]) : ['No supported change is prioritized from the tested criteria. Validate the observed fit with real users.']),
-    '', '## Coverage and evidence', '',
-    'Completion = completed / (completed + task failed + abandoned). Blocked, incomplete, invalid, not applicable and not attempted are excluded and remain visible. Source counts describe distinct documents, not independent human verification.', '',
-    '| Tool / scope | Scheduled | Attempted | Completed | Failed | Abandoned | Blocked | Incomplete | Invalid task | Not applicable | Not attempted | Valid attempts | Completion |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-    ...comparison.coverage.map((row) => `| ${cell(target(row.target_id))} / ${cell(scope(row))} / ${label(row.access_scope)} | ${row.scheduled} | ${row.attempted} | ${row.outcomes.completed} | ${row.outcomes.task_failed} | ${row.outcomes.abandoned} | ${row.outcomes.blocked_environment} | ${row.outcomes.incomplete} | ${row.outcomes.invalid_task} | ${row.outcomes.not_applicable} | ${row.outcomes.not_attempted} | ${row.valid_attempts} | ${row.completion_rate === null ? 'Unavailable' : pct(row.completion_rate)} |`),
-    '', ...comparison.pairs.map((pair) => `- Comparable pairs, ${line(target(pair.target_ids[0]))} / ${line(target(pair.target_ids[1]))}, ${line(scope(pair))}: ${pair.matched}; completion difference ${pair.completion_difference === null ? 'unavailable' : `${(pair.completion_difference * 100).toFixed(1)} percentage points (first minus second)`}.`),
-    '', '### Captured sources', '',
-    ...[...evidence.entries()].flatMap(([seq, items]) => [
-      `<a id="comparison-source-${seq}"></a>`, `- Event #${seq}; persona ${line(items[0].persona_id)}; captured ${new Date(items[0].captured_at).toISOString()}`,
-      `  - Source: ${line(items[0].source)}`,
-      ...items.flatMap((item) => [`  - Excerpt: “${line(item.quote)}”`, `  - Proposition (${label(item.basis)}; assessment #${item.assessment_seq}): ${line(item.proposition)}`]),
-      `  - Screenshot: ${items[0].screenshot ?? 'none'}`, '',
-    ]),
-    '', '### Recorded target orders', '', ...comparison.orders.map((order) => `- ${line(order.persona_id)}, ${line(order.task_id)}: ${order.target_order.map(target).map(line).join(' → ')}`),
-    '', '### Limitations', '', ...comparison.limitations.map((item) => `- ${line(item)}`),
-    ...comparison.rejected_assessments.map((item) => `- Rejected assessment #${item.seq}: ${line(item.reason)}`),
-    '', '## Cost and methods', '', `- Recorded cost: $${report.cost_usd.toFixed(4)}`,
-    `- Model calls: ${report.llm_calls}; tokens: ${report.input_tokens} in / ${report.output_tokens} out`,
-    ...((report.unreported_usage_calls ?? 0) > 0 ? [`- ${report.unreported_usage_calls} calls did not report complete usage; actual charges may exceed recorded cost.`] : []),
-    ...methodsToMarkdown(report.methods), '',
-  ].join('\n');
+  return comparisonMarkdown(report, methodsToMarkdown(report.methods));
 }
 
 function dimensionLines(report: Report): string[] {

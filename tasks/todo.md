@@ -138,3 +138,18 @@ Still open for full acceptance: the 50-person M2 targets, M3 at 50 personas and 
 - Eight worktree sessions in three waves merged into `m5-more-pois`. Conflicts were only in docs/pois.md, one POI test and three smoke files (bridge method list, stage order); no product code collided.
 - `npm test`: 661 passing (515 engine, 71 Gym, 75 app). Typecheck passed. All ten app smokes passed: main, audience, projects, profiles, ui, providers, budget, completion, text and Figma (against the fixture API).
 - `--m5` scripted rehearsal: finished at $0 with every live criterion NOT_RUN. All model calls were scripted; nothing was run against a live provider or a real Figma file.
+
+
+## Decision-first simulation — 19 October 2026
+
+- [x] Confirm approved six-part scope, additive contracts, feature branch and agent ownership.
+- [x] Intent-first setup, fixed company requirements, canonical generated brief and comparison-aware audience prompts; focused config/form/writer regressions. Explicit apply preserves custom tasks until confirmed. Buyer/owner/workflow intent transitions update purpose or collection, require explicit ownership and preserve tasks/access.
+- [x] Shared public research planner, criterion evidence packets and truthful source-review counts; collection/estimate regressions and legacy defaults.
+- [x] Coverage-first scheduling, bounded complete-block reservations including one retry, outstanding-review protection and interruption/admission regressions.
+- [x] Scoped buyer decisions, alternative conditions, exact outcome causes and at most three deduplicated decision-changing actions; inference and preference-only regressions.
+- [x] Compact matrix, deduplicated source claims with complete provenance, and common Markdown/HTML/JSON decision projection; export citation regressions.
+- [x] Integrate source-review progress and comparison-aware biography freshness; add `npm run smoke:research -w @gnomi/app` for local fictional sites and scripted models.
+- [x] Update `docs/new_simulation.md` with setup, defaults/preservation, report reading, budgeting and limitations.
+- [x] Final integrated verification: 848 full-suite tests, 30 final config/form regressions, workspace typechecks, app build, `smoke:research`, `smoke:comparison`, desktop/narrow export screenshots and claim-anchor checks. Independent review findings were fixed with regressions. Shared fixture: 20 saved personas, 4 source reviews, 8 judge calls, 14 total scripted calls; no paid models.
+
+Branch: `codex/decision-first-simulation`. The earlier live-provider acceptance tasks above remain unchanged; scripted implementation checks do not establish live vendor performance or human purchasing validity.

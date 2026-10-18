@@ -16,6 +16,7 @@ import { Feed } from './Feed.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
 import { Swarm } from './Swarm.tsx';
+import { ResearchProgress } from './ResearchProgress.tsx';
 import { Button, Note, Screenshot } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 
@@ -67,6 +68,7 @@ function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segme
 function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefined; active: boolean }) {
   const [events, setEvents] = useState<GnomiEvent[]>([]);
   const frozenConfig = events.find((event) => event.type === 'run.started')?.payload.config ?? row?.config;
+  const research = frozenConfig?.project.comparison?.execution.collection === 'shared_research';
   const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +80,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const openPersona = useCallback((id: string, seq?: number) => setInspecting({ persona: id, seq: seq ?? null }), []);
   const [view, setView] = useState<'activity' | 'report'>('activity');
   const openedReport = useRef(false);
+  useEffect(() => { window.scrollTo(0, 0); }, [view]);
 
   useEffect(() => {
     let current = true;
@@ -193,29 +196,30 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
       </div>}
       {view === 'activity' && <div role={ended ? 'tabpanel' : undefined} id="run-panel-activity" aria-labelledby={ended ? 'run-tab-activity' : undefined} className="simulation-overview">
         <div className="simulation-workspace">
-          {active && <Swarm events={events} segments={segments} expectedPersonas={personas.length} onOpen={openPersona} />}
+          {research && frozenConfig ? <ResearchProgress config={frozenConfig} events={events} /> : active && <Swarm events={events} segments={segments} expectedPersonas={personas.length} onOpen={openPersona} />}
           {statusPanel}
         </div>
         <Activity
           rows={rows}
           total={events.length}
-          personas={shownPersonas}
-          segments={segments}
+          personas={research ? [] : shownPersonas}
+          segments={research ? [] : segments}
           filters={filters}
           live={!ended}
+          research={research}
           onFilters={setFilters}
           onOpen={(id, seq) => setInspecting({ persona: id, seq })}
         />
         <div className="simulation-explore-tools">
           {events.some((event) => event.type === 'social.post') && <details className="disclosure"><summary><Icon name="message" />Audience conversations<span>Explore full discussion threads</span></summary><div className="disclosure-body"><Feed events={events} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} /></div></details>}
-          <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={openPersona} />
-          {groups.length > 0 && <details className="disclosure profile-filter-disclosure"><summary><Icon name="filter" />Audience filters<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied to activity and people' : 'Explore a particular group'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} /></div></details>}
+          {!research && <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={openPersona} />}
+          {!research && groups.length > 0 && <details className="disclosure profile-filter-disclosure"><summary><Icon name="filter" />Audience filters<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied to activity and people' : 'Explore a particular group'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} /></div></details>}
         </div>
       </div>}
       {ended && view === 'report' && <div role="tabpanel" id="run-panel-report" aria-labelledby="run-tab-report" className="space-y-5">
-        {report ? <>{groups.length > 0 && <details className="disclosure"><summary><Icon name="filter" />Filter report by audience<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied' : 'All profiles'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /></div></details>}<ExportReport report={report} /><Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} /></> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
+        {report ? <>{!research && groups.length > 0 && <details className="disclosure"><summary><Icon name="filter" />Filter report by audience<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied' : 'All profiles'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /></div></details>}<ExportReport report={report} /><Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} /></> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
       </div>}
-      <p className="simulation-note">These are simulated experiences. Validate important findings with real people.</p>
+      <p className="simulation-note">{research ? 'Public sources support a buying shortlist. Confirm decisive claims and test the workflow before choosing.' : 'These are simulated experiences. Validate important findings with real people.'}</p>
       {inspected && inspecting && (
         <Inspector
           key={inspected.id}

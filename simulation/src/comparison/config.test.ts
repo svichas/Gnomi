@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ProjectConfig } from '../types.ts';
-import { draftComparison, effectiveComparisonPois, validateComparison } from './config.ts';
+import { applyDecisionBrief, decisionContextText, draftComparison, effectiveComparisonPois, validateComparison } from './config.ts';
 
 export const comparisonProject = (): ProjectConfig => ({
   name: 'ATS comparison', description: 'Compare hiring tools', goal: 'Choose an ATS for a hiring team',
@@ -89,4 +89,71 @@ test('malformed URLs return issues and session roles respect the shared storage 
   assert.ok(validateComparison(project).some((issue) => /URL/.test(issue)));
   project.comparison.targets[0].session_role = `a${'b'.repeat(40)}`;
   assert.ok(validateComparison(project).some((issue) => /session_role/.test(issue)));
+});
+
+test('a buyer brief creates atomic requirements for one company and public research without invented work', () => {
+  const project = { ...comparisonProject(), study_intent: 'choose_tool' as const };
+  const context = { company_size: '120 employees, 4 recruiter seats', hiring_volume: '30 hires per year', budget: 'EUR 500/month, annual billing allowed', required_integrations: ['Slack', 'Google Workspace'], requirements: ['Structured interview scorecards', 'Candidate data export'], switching_constraints: 'Import 2,000 records from CSV' };
+  const study = draftComparison(project, context);
+  assert.equal(study.execution.collection, 'shared_research');
+  assert.deepEqual(study.execution.research_environment, { locale: 'en-US', timezone: 'UTC' });
+  assert.deepEqual(study.decision_context, context);
+  assert.ok(study.criteria.some((item) => item.name === 'Slack integration'));
+  assert.ok(study.criteria.some((item) => item.name === 'Candidate data export'));
+  assert.ok(!study.criteria.some((item) => item.name === 'Capabilities and integrations'));
+  assert.match(study.scenarios[0].context, /120 employees/);
+  assert.match(study.tasks[0].instruction, /Do not create accounts/);
+  assert.equal(study.tasks[0].requires_fixture, false);
+  assert.deepEqual(validateComparison({ ...project, comparison: study }), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(study)), study);
+  assert.match(decisionContextText(context), /30 hires per year/);
+});
+
+test('unknown company inputs stay assumptions and do not create invented must-have requirements', () => {
+  const project = { ...comparisonProject(), study_intent: 'choose_tool' as const };
+  const study = draftComparison(project);
+  assert.ok(study.assumptions.some((item) => /Budget.*unspecified/.test(item)));
+  assert.equal(study.criteria.find((item) => item.id === 'cost')?.importance, 'preference');
+  assert.ok(study.criteria.every((item) => item.importance === 'preference'));
+  const changed = applyDecisionBrief(study, 'Choose a tool for a remote team', { ...study.decision_context!, requirements: ['Interview scorecards'] });
+  assert.match(changed.tasks[0].instruction, /remote team/);
+  assert.match(changed.scenarios[0].context, /remote team/);
+  assert.equal(study.question, project.goal);
+});
+
+test('shared research rejects authenticated targets, buyer carryover and workflow prerequisites', () => {
+  const project = { ...comparisonProject(), study_intent: 'choose_tool' as const };
+  project.comparison = draftComparison(project);
+  project.comparison.tasks[0].requires_fixture = true;
+  assert.ok(validateComparison(project).some((issue) => /prepared test data/.test(issue)));
+  project.comparison.tasks[0].requires_fixture = false;
+  project.comparison.execution.mode = 'buyer_journey';
+  project.comparison.execution.carryover = 'prior_observations';
+  assert.ok(validateComparison(project).some((issue) => /independent/.test(issue)));
+  project.comparison.targets[0].access_scope = 'prototype';
+  assert.ok(validateComparison(project).some((issue) => /public websites or documentation/.test(issue)));
+});
+
+test('choose-tool intent cannot silently run a legacy simulation', () => {
+  assert.ok(validateComparison({ ...comparisonProject(), study_intent: 'choose_tool' }).some((issue) => /comparison/.test(issue)));
+  assert.equal(draftComparison(comparisonProject()).execution.collection, undefined);
+});
+
+test('explicit intent cannot disagree with saved comparison purpose or workflow collection', () => {
+  const project = { ...comparisonProject(), study_intent: 'choose_tool' as const };
+  project.comparison = draftComparison(project);
+  assert.ok(validateComparison({ ...project, study_intent: 'improve_product' }).some((issue) => /intent/.test(issue)));
+  assert.ok(validateComparison({ ...project, study_intent: 'test_workflow' }).some((issue) => /persona tasks/.test(issue)));
+  assert.deepEqual(validateComparison({ ...project, study_intent: undefined }), [], 'absent intent preserves a saved shared study');
+  project.comparison.purpose = 'improve_own_product';
+  project.comparison.focal_target_id = project.comparison.targets[0].id;
+  assert.ok(validateComparison(project).some((issue) => /intent/.test(issue)));
+});
+
+test('enabling comparison for improve-product intent asks for ownership without guessing a focal tool', () => {
+  const project = { ...comparisonProject(), study_intent: 'improve_product' as const };
+  project.comparison = draftComparison(project);
+  assert.equal(project.comparison.purpose, 'improve_own_product');
+  assert.equal(project.comparison.focal_target_id, null);
+  assert.ok(validateComparison(project).some((issue) => /focal target/.test(issue)));
 });

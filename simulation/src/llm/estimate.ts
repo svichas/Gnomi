@@ -5,6 +5,8 @@ import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
 import { costUsd, isPriced } from './prices.ts';
+import { comparisonPlan } from '../comparison/planning.ts';
+import { comparisonBlockCost, COMPARISON_MAX_ATTEMPTS } from '../comparison/budget.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
 const STEP_SHARE = [0.4, 1] as const;
@@ -71,14 +73,10 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
 
 /** Comparison episodes collect evidence before two judge passes; legacy surveys and social calls are not used. */
 function estimateComparison({ personas, settings, pois, study, at }: { personas: Persona[]; settings: RunSettings; pois?: Poi[]; study: ComparisonStudy; at: Date }): RunEstimate {
-  const tasks = personas.flatMap((persona) => study.tasks.flatMap((task) => {
-    const scenario = study.scenarios.find((candidate) => candidate.id === task.scenario_id);
-    if (!scenario || (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? ''))) return [];
-    return task.entries.filter((entry) => {
-      const source = pois?.find((poi) => poi.id === entry.poi_id);
-      return !pois || (source && (source.segments === null || source.segments.includes(persona.segment_id ?? '')));
-    }).map(() => task);
-  }));
+  // The optional-source fallback preserves the standalone estimate API; actual setup passes every source.
+  const sources: Poi[] = pois ?? study.targets.flatMap((target) => target.poi_ids.map((id) => ({ id, name: id, type: 'text' as const, asset: `${id}.md`, segments: null })));
+  const plan = comparisonPlan({ personas, project: { comparison: study, pois: sources } });
+  const tasks = plan.episodes.filter((job) => job.eligible).map((job) => study.tasks.find((task) => task.id === job.task_id)!);
   const episodes = tasks.length;
   if (!episodes) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
   const steps = tasks.reduce((sum, task) => sum + task.max_steps, 0);
@@ -89,11 +87,12 @@ function estimateComparison({ personas, settings, pois, study, at }: { personas:
   const prompt = PROMPT_TOKENS + (settings.screenshots ? SCREENSHOT_TOKENS : 0);
   const lowSteps = steps * STEP_SHARE[0];
   const analyses = episodes * 2;
-  const parallel = Math.max(1, Math.min(settings.concurrency, personas.length));
+  const parallel = plan.collection === 'shared_research' ? 1 : Math.max(1, Math.min(settings.concurrency, personas.length));
+  const reservedCost = plan.blocks.reduce((sum, block) => sum + comparisonBlockCost(settings, block.episodes.filter((job) => job.eligible).length, study.tasks.find((task) => task.id === block.task_id)!.max_steps, at).total, 0);
   return {
     calls: Math.round((lowSteps + steps) / 2) + analyses,
-    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 4_000, 1_000), steps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 60_000, 6_000)],
-    minutes: [(lowSteps * 2 + analyses * 5) / parallel / 60 + OVERHEAD_MIN, (steps * 6 + analyses * 30) / parallel / 60 + OVERHEAD_MIN],
+    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 4_000, 1_000), reservedCost],
+    minutes: [(lowSteps * 2 + analyses * 5) / parallel / 60 + OVERHEAD_MIN, COMPARISON_MAX_ATTEMPTS * (steps * 6 + analyses * 30) / parallel / 60 + OVERHEAD_MIN],
     unpriced: [...new Set([navigator, judge].filter((model) => !isPriced(model)).map((model) => model.model))],
   };
 }

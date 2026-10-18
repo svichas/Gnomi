@@ -200,6 +200,8 @@ export type Poi = WebPoi | TextPoi | DesignPoi;
 export type PoiType = Poi['type'];
 
 export interface ProjectConfig {
+  /** Absent keeps the legacy project flow; new studies explicitly declare their purpose. */
+  study_intent?: 'choose_tool' | 'improve_product' | 'test_workflow';
   comparison?: import('./comparison/types.ts').ComparisonStudy | null;
   name: string;
   description: string; // one sentence about the product

@@ -33,4 +33,5 @@ export interface PoiFormProps<D extends PoiDraft> {
   draft: D;
   onChange(update: (draft: D) => D): void;
   sessions: SessionInfo[];
+  comparison?: boolean;
 }

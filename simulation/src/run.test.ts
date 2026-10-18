@@ -1,3 +1,4 @@
+import { comparisonBlockCost } from './comparison/budget.ts';
 import { draftComparison } from './comparison/config.ts';
 // startRun, the scheduler and the step loop over in-memory fakes of the store, blobs, sessions, browser and model.
 import assert from 'node:assert/strict';
@@ -1312,9 +1313,40 @@ test('explicit all-public comparison admits buyer web tasks and produces replaya
   assert.deepEqual(buildReport(r.events).comparison, report.comparison, 'replay only folds the accepted recorded judgments');
 });
 
+test('shared company research freezes the population but browses each tool only once in its declared environment', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const target = publicComparison();
+  target.comparison!.execution.collection = 'shared_research';
+  target.comparison!.execution.research_environment = { locale: 'el-GR', timezone: 'Europe/Athens' };
+  const people = Array.from({ length: 20 }, (_, i) => persona(`buyer-${i}`, { segment_id: 'buyers', device: 'mobile', language: 'de', languages: ['de-DE'], timezone: 'Europe/Berlin' }));
+  const r = begin(comparisonAnswer, { project: target, personas: people });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'persona.created').length, 20, 'the original frozen population remains intact');
+  assert.equal(of(r.events, 'comparison.episode_started').length, 4);
+  assert.equal(of(r.events, 'comparison.episode_finished').length, 4);
+  assert.equal(of(r.events, 'llm.call').length, 12);
+  assert.ok(r.pages.every((page) => page.options.device === 'desktop' && page.options.locale === 'el-GR' && page.options.timezone === 'Europe/Athens'));
+  assert.ok(report.comparison?.coverage.every((row) => row.scheduled === 1 && row.outcomes.completed === 1 && row.segment_id === null));
+});
+
+test('comparison scheduling gives every task and segment a first block before second representatives', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const target = publicComparison();
+  target.audience!.segments.push(segment('other', { kind: 'buyer' }));
+  target.comparison!.tasks.push({ ...target.comparison!.tasks[0], id: 'second-task' });
+  const people = ['buyers', 'other'].flatMap((segment_id) => [persona(`${segment_id}-a`, { segment_id }), persona(`${segment_id}-b`, { segment_id })]);
+  const r = begin(comparisonAnswer, { project: target, personas: people, settings: { concurrency: 1, cost_budget_usd: 20 } });
+  await r.run.done;
+  const starts = of(r.events, 'comparison.episode_started');
+  const blocks = starts.filter((_, i) => i % 4 === 0).map((event) => `${event.payload.task_id}/${event.payload.segment_id}/${event.persona_id}`);
+  assert.deepEqual(new Set(blocks.slice(0, 4)), new Set(['task-research/buyers/buyers-a', 'task-research/other/other-a', 'second-task/buyers/buyers-a', 'second-task/other/other-a']));
+  const steps = of(r.events, 'persona.step');
+  for (const person of people) assert.equal(new Set(steps.filter((event) => event.persona_id === person.id).map((event) => event.payload.step_no)).size, 8, 'task blocks keep unique persona step numbers');
+});
+
 test('comparison cost limits retain captured sources and export unknown cells for incomplete target coverage', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
-  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' })], cost: 0.1, settings: { cost_budget_usd: 0.25, concurrency: 1 } });
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' })], cost: 0.1, settings: { cost_budget_usd: comparisonBlockCost(DEFAULT_SETTINGS, 4, 2).total + 0.001, concurrency: 1 } });
   const report = await r.run.done;
   assert.match(report.stop_reason ?? '', /budget/);
   assert.ok(of(r.events, 'comparison.source').length > 0);
@@ -1328,7 +1360,7 @@ test('comparison analysis spending does not consume a separately declared naviga
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
   const target = publicComparison();
   target.comparison!.execution.analysis_reserve_fraction = 0.5;
-  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: 0.25, concurrency: 1 } });
+  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: comparisonBlockCost(DEFAULT_SETTINGS, 4, 2).total + 0.25, concurrency: 1 } });
   const report = await r.run.done;
   assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 2));
   assert.equal(report.comparison?.coverage.reduce((sum, row) => sum + row.outcomes.incomplete, 0), 0);
@@ -1336,12 +1368,25 @@ test('comparison analysis spending does not consume a separately declared naviga
 
 test('comparison admission keeps the next matched task block unattempted when its allowance will not fit', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
-  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: 0.2, concurrency: 1 } });
+  const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], cost: 0.01, settings: { cost_budget_usd: comparisonBlockCost(DEFAULT_SETTINGS, 4, 2).total + 0.01, concurrency: 1 } });
   const report = await r.run.done;
   assert.ok(report.comparison?.coverage.every((row) => row.outcomes.completed === 1 && row.outcomes.not_attempted === 1));
   assert.equal(of(r.events, 'comparison.episode_started').filter((event) => event.persona_id === 'buyer-b').length, 0);
   assert.match(report.stop_reason ?? '', /matched task block/);
   assert.ok(report.comparison?.limitations.some((item) => /Not attempted.*matched task block/.test(item)));
+});
+
+test('comparison concurrent admission waits for released reservations before skipping affordable blocks', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const results = [];
+  for (const concurrency of [1, 4]) {
+    const r = begin(comparisonAnswer, { project: publicComparison(), personas: Array.from({ length: 4 }, (_, i) => persona(`buyer-${i}`, { segment_id: 'buyers' })), cost: 0.01, settings: { cost_budget_usd: comparisonBlockCost(DEFAULT_SETTINGS, 4, 2).total + 0.5, concurrency } });
+    const report = await r.run.done;
+    results.push(report.comparison!.coverage.map((row) => row.outcomes));
+    assert.ok(report.comparison!.coverage.every((row) => row.outcomes.completed === 4 && row.outcomes.not_attempted === 0));
+    assert.equal(report.stop_reason, null);
+  }
+  assert.deepEqual(results[1], results[0]);
 });
 
 test('unpriced comparison routes stay usable while disclosing that initial admission has no dollar reservation', async (t) => {

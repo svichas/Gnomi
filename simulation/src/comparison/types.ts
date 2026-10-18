@@ -9,12 +9,18 @@ export interface ComparisonStudy {
   purpose: 'improve_own_product' | 'choose_tool';
   focal_target_id: string | null;
   question: string;
+  /** Fixed company requirements. Absent on saved studies authored before decision briefs. */
+  decision_context?: ComparisonDecisionContext;
   assumptions: string[];
   targets: ComparisonTarget[];
   scenarios: ComparisonScenario[];
   tasks: ComparisonTask[];
   criteria: ComparisonCriterion[];
   execution: {
+    /** Absent means the original independent persona-task collection. */
+    collection?: 'shared_research' | 'persona_tasks';
+    /** Shared research freezes one browsing environment rather than inheriting persona biographies. */
+    research_environment?: { locale: string; timezone: string };
     mode: 'independent' | 'buyer_journey';
     carryover: 'none' | 'prior_observations';
     social: 'off';
@@ -22,6 +28,15 @@ export interface ComparisonStudy {
     replicate_id: string;
     analysis_reserve_fraction: number;
   };
+}
+
+export interface ComparisonDecisionContext {
+  company_size: string;
+  hiring_volume: string;
+  budget: string;
+  required_integrations: string[];
+  requirements: string[];
+  switching_constraints: string;
 }
 
 export interface ComparisonTarget {
@@ -129,6 +144,17 @@ export interface ComparisonCell {
   distinct_sources: number;
   evidence: ComparisonEvidence[];
   limitations: string[];
+  /** Complete accepted judgments, including unknowns without citations. The matrix shows one concise fact. */
+  observations?: { assessment_seq: number; persona_id: string; assessment: ComparisonAssessment; basis: ComparisonBasis; summary: string; evidence_seqs: number[] }[];
+}
+export interface ComparisonEpisodeResult {
+  episode_id: string;
+  persona_id: string;
+  outcome: ComparisonOutcome;
+  reason: string;
+  start_seq: number | null;
+  finish_seq: number | null;
+  evidence_seqs: number[];
 }
 export interface ComparisonCoverage {
   target_id: string;
@@ -141,6 +167,8 @@ export interface ComparisonCoverage {
   outcomes: Record<ComparisonOutcome, number>;
   valid_attempts: number;
   completion_rate: number | null;
+  unit?: 'source_review' | 'persona_task';
+  episodes?: ComparisonEpisodeResult[];
 }
 export interface ComparisonFit {
   target_id: string;
@@ -164,11 +192,27 @@ export interface ComparisonAction {
   expected_benefit: string;
   validation: string;
   evidence_seqs: number[];
+  /** Group repeated checks across targets/segments without erasing their original scopes. */
+  target_ids?: string[];
+  scopes?: { scenario_id: string; task_id: string; segment_id: string | null }[];
+  changes_choice?: string;
+}
+export type ComparisonDecisionStatus = 'leading_candidate' | 'parity' | 'conditional_shortlist' | 'insufficient_evidence' | 'no_suitable_tool';
+export interface ComparisonScenarioDecision {
+  scenario_id: string;
+  segment_id: string | null;
+  status: ComparisonDecisionStatus;
+  summary: string;
+  leading_target_id: string | null;
+  shortlist: string[];
+  reasons: { text: string; criterion_ids: string[]; target_ids: string[]; evidence_seqs: number[] }[];
+  alternatives: { target_id: string; condition: string; evidence_seqs: number[] }[];
+  unresolved: { criterion_id: string; target_ids: string[]; summary: string; changes_choice: string }[];
 }
 export interface ComparisonReport {
   version: 1;
   study: ComparisonStudy;
-  decision: { status: 'conditional_shortlist' | 'insufficient_evidence' | 'no_suitable_tool'; summary: string; shortlist: string[] };
+  decision: { status: ComparisonDecisionStatus; summary: string; shortlist: string[]; scenarios?: ComparisonScenarioDecision[] };
   cells: ComparisonCell[];
   coverage: ComparisonCoverage[];
   fits: ComparisonFit[];

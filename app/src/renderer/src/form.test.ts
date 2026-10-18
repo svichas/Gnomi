@@ -5,7 +5,7 @@ import type { ProjectConfig, RunSettings, SessionInfo, WebPoi } from '@gnomi/sim
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import { blankAudience } from './audience.ts';
-import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, rolesInUse, startHost, toConfig } from './form.ts';
+import { applyFormDecisionBrief, hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, rolesInUse, startHost, toConfig, withStudyIntent } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { nextPoiId, POI_KINDS, type PoiDraft } from './poi/index.ts';
 import type { WebDraft } from './poi/web.ts';
@@ -43,6 +43,85 @@ test('comparison uses only target-bound sessions, independently of audience role
   config.comparison.targets[1]!.access_scope = 'authenticated_workflow';
   config.comparison.targets[1]!.session_role = 'alternative-admin';
   assert.deepEqual(rolesInUse(config), ['alternative-admin']);
+});
+
+test('choose-tool setup automatically creates a public comparison and survives save/reload', () => {
+  const draft = form({ study_intent: 'choose_tool', url: 'https://one.example/', goal: 'Choose our ATS', decision_context: { company_size: '120 employees', hiring_volume: '', budget: '', requirements: ['Scorecards'], required_integrations: ['Slack'], switching_constraints: '' } });
+  assert.match(String(toConfig(draft)), /at least two/);
+  draft.form.pois.push({ ...draft.form.pois[0]!, id: 'poi-2', name: 'Two', url: 'https://two.example/' } as WebDraft);
+  const config = toConfig(draft);
+  assert.ok(typeof config !== 'string', String(config));
+  assert.equal(config.study_intent, 'choose_tool');
+  assert.equal(config.comparison?.execution.collection, 'shared_research');
+  assert.equal((config.pois[0] as WebPoi).mode, 'observe_only');
+  assert.equal(config.comparison?.decision_context?.company_size, '120 employees');
+  assert.deepEqual(toConfig(initialDraft(JSON.parse(JSON.stringify(config)))), config);
+});
+
+test('a changed canonical buyer brief cannot save stale tasks or silently erase customized tasks', () => {
+  const source = form({ study_intent: 'choose_tool', goal: 'Choose our ATS' });
+  source.form.pois.push({ ...source.form.pois[0]!, id: 'poi-2' });
+  const config = toConfig(source);
+  assert.ok(typeof config !== 'string');
+  const draft = initialDraft(config);
+  draft.form.comparison!.tasks[0]!.instruction = 'Custom research task';
+  draft.form.goal = 'Choose for our remote team';
+  assert.match(String(toConfig(draft)), /Apply the decision brief/);
+  assert.equal(draft.form.comparison!.tasks[0]!.instruction, 'Custom research task');
+  draft.form = applyFormDecisionBrief(draft.form);
+  const updated = toConfig(draft);
+  assert.ok(typeof updated !== 'string');
+  assert.match(updated.comparison!.tasks[0]!.instruction, /remote team/);
+  assert.match(updated.comparison!.scenarios[0]!.context, /remote team/);
+});
+
+test('choose-tool intent converts an existing owner study to neutral peers without losing custom tasks', () => {
+  const source = form();
+  source.form.pois.push({ ...source.form.pois[0]!, id: 'poi-2' });
+  const config = toConfig(source);
+  assert.ok(typeof config !== 'string');
+  config.comparison = draftComparison(config);
+  config.comparison.purpose = 'improve_own_product';
+  config.comparison.focal_target_id = config.comparison.targets[0].id;
+  config.comparison.tasks[0].instruction = 'Custom evidence research';
+  const draft = initialDraft(config);
+  draft.form.study_intent = 'choose_tool';
+  const chosen = toConfig(draft);
+  assert.ok(typeof chosen !== 'string', String(chosen));
+  assert.equal(chosen.comparison!.purpose, 'choose_tool');
+  assert.equal(chosen.comparison!.focal_target_id, null);
+  assert.equal(chosen.comparison!.tasks[0].instruction, 'Custom evidence research');
+});
+
+test('changing buyer intent requires an explicit owner or switches to persona tasks while preserving work and access', () => {
+  const source = form({ study_intent: 'choose_tool', goal: 'Choose our ATS' });
+  source.form.pois.push({ ...source.form.pois[0]!, id: 'poi-2' });
+  const config = toConfig(source);
+  assert.ok(typeof config !== 'string');
+  config.comparison!.tasks[0].instruction = 'Custom recorded evaluation task';
+  const owner = initialDraft(config);
+  assert.equal(withStudyIntent(owner.form, 'improve_product').comparison!.purpose, 'improve_own_product', 'the selector immediately exposes owner selection');
+  owner.form.study_intent = 'improve_product';
+  assert.match(String(toConfig(owner)), /focal target|your product/i);
+  owner.form.comparison!.focal_target_id = config.comparison!.targets[1].id;
+  const improvement = toConfig(owner);
+  assert.ok(typeof improvement !== 'string', String(improvement));
+  assert.equal(improvement.comparison!.purpose, 'improve_own_product');
+  assert.equal(improvement.comparison!.focal_target_id, config.comparison!.targets[1].id);
+  assert.deepEqual(improvement.comparison!.tasks, config.comparison!.tasks);
+  assert.deepEqual(improvement.pois, config.pois);
+
+  const workflow = initialDraft(config);
+  assert.equal(withStudyIntent(workflow.form, 'test_workflow').comparison!.execution.collection, 'persona_tasks', 'the selector immediately restores the audience workflow');
+  workflow.form.study_intent = 'test_workflow';
+  const test = toConfig(workflow);
+  assert.ok(typeof test !== 'string', String(test));
+  assert.equal(test.comparison!.execution.collection, 'persona_tasks');
+  assert.deepEqual(test.comparison!.tasks, config.comparison!.tasks);
+  assert.deepEqual(test.comparison!.targets, config.comparison!.targets);
+  assert.deepEqual(test.pois, config.pois, 'selecting workflow never widens public access');
+  assert.deepEqual(toConfig(initialDraft(test)), test);
+  assert.equal(config.comparison!.execution.collection, 'shared_research', 'the saved source is immutable');
 });
 
 test('hostOf takes a bare host, a host with a port, or a whole address, and refuses anything else', () => {

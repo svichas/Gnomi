@@ -1,4 +1,4 @@
-import { fnv1a, mulberry32 } from '../audience/sample.ts';
+import { fnv1a } from '../audience/sample.ts';
 import type { EpisodeEnd } from '../agent/loop.ts';
 import { readAsset } from '../assets.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
@@ -6,32 +6,12 @@ import { effectiveComparisonPoi } from './config.ts';
 import { runnerFor } from '../poi/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent, PageSnapshot, Persona, Poi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
-import type { ComparisonCitation, ComparisonEpisodeFinished, ComparisonScope, ComparisonStudy, ComparisonTarget, ComparisonTask } from './types.ts';
+import type { ComparisonCitation, ComparisonCriterion, ComparisonEpisodeFinished, ComparisonScope, ComparisonStudy, ComparisonTarget, ComparisonTask } from './types.ts';
+import { criterionExcerpt, criterionSources } from './evidence.ts';
 import { ASSESSMENT_PROMPT_VERSION, ASSESSMENT_SYSTEM, comparisonAssessmentSchema, comparisonVerificationSchema, RUBRIC_VERSION, VERIFICATION_SYSTEM } from './prompts.ts';
 
-/** A seeded cyclic allocation: every complete segment block puts each target in each position once. */
-export function balancedTargetOrder(personas: { id: string; segment_id: string | null }[], targetIds: string[], seed: number): Map<string, string[]> {
-  const groups = new Map<string, string[]>();
-  for (const p of personas) {
-    const segment = p.segment_id ?? '';
-    const group = groups.get(segment) ?? [];
-    group.push(p.id);
-    groups.set(segment, group);
-  }
-  const orders = new Map<string, string[]>();
-  for (const segment of [...groups.keys()].sort()) {
-    const random = mulberry32(fnv1a(`comparison-order/${seed}/${segment}`));
-    const targets = [...targetIds].sort();
-    for (let i = targets.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [targets[i], targets[j]] = [targets[j], targets[i]];
-    }
-    groups.get(segment)!.sort().forEach((personaId, index) => {
-      orders.set(personaId, targets.map((_, offset) => targets[(index + offset) % targets.length]));
-    });
-  }
-  return orders;
-}
+export { balancedTargetOrder } from './planning.ts';
+import { comparisonPlan, researchCollector, type ComparisonBlock, type ComparisonPlannedEpisode } from './planning.ts';
 
 /** A navigator's "done" still needs success evidence. The judge may resolve it after the trace is frozen. */
 export function terminalOutcome(end: EpisodeEnd) {
@@ -41,6 +21,20 @@ export function terminalOutcome(end: EpisodeEnd) {
     case 'blocked': return 'blocked_environment' as const;
     case 'abandoned': return 'abandoned' as const;
   }
+}
+
+/** Callers supply only this episode's events, so a prior target's terminal reason cannot leak into this one. */
+export function terminalDetail(end: EpisodeEnd, events: GnomiEvent[]): Pick<ComparisonEpisodeFinished, 'reason' | 'evidence_seqs'> | null {
+  for (const event of [...events].reverse()) {
+    let reason: string | null = null;
+    if (end === 'abandoned' && event.type === 'persona.abandoned') reason = event.payload.reason;
+    if (end === 'done' && event.type === 'persona.goal_done') reason = event.payload.summary;
+    if (end === 'blocked' && event.type === 'persona.blocked') reason = event.payload.detail;
+    if (end === 'repeated_failure' && event.type === 'signal.repeated_failure') reason = `Repeated ${event.payload.action} action failed: ${event.payload.error}.`;
+    if (end === 'budget_exceeded' && event.type === 'signal.budget_exceeded') reason = `The declared ${event.payload.budget}-action task allowance was exhausted at step ${event.payload.step_no}.`;
+    if (reason?.trim()) return { reason, evidence_seqs: [event.seq] };
+  }
+  return null;
 }
 
 
@@ -54,10 +48,11 @@ export interface ComparisonRuntimeDeps {
   events(): GnomiEvent[];
   signal: AbortSignal;
   openPage(persona: Persona, target: ComparisonTarget, poi: WebPoi): Promise<PageDriver>;
-  beginBlock?(persona: Persona, task: ComparisonTask): boolean;
-  endBlock?(persona: Persona): void;
-  beginUsageStep(): boolean;
-  beginAnalysisStep(): boolean;
+  beginBlock?(block: ComparisonBlock): boolean;
+  endBlock?(block: ComparisonBlock): void;
+  llmForBlock?(blockId: string): LlmGateway;
+  beginUsageStep(blockId?: string): boolean;
+  beginAnalysisStep(blockId?: string): boolean;
   endStep(): void;
   stopped(): boolean;
   stopReason(): string;
@@ -110,11 +105,11 @@ function taskContext(config: RunConfig, persona: Persona, target: ComparisonTarg
 }
 
 /** Bounded evidence packet; stable chronological sampling and explicit omissions avoid unbounded judge requests. */
-export function comparisonPacket(sources: SourceEvent[], events: GnomiEvent[]) {
+export function comparisonPacket(sources: SourceEvent[], events: GnomiEvent[], criteria: ComparisonCriterion[] = []) {
   const unique = [...new Map(sources.map((source) => [source.payload.source_id, source])).values()].sort((a, b) => a.seq - b.seq);
-  const chosen = unique.length <= 24 ? unique : Array.from({ length: 24 }, (_, i) => unique[Math.round(i * (unique.length - 1) / 23)]);
+  const chosen = criteria.length ? criterionSources(unique, criteria) : unique.length <= 24 ? unique : Array.from({ length: 24 }, (_, i) => unique[Math.round(i * (unique.length - 1) / 23)]);
   const perSource = Math.min(8000, Math.floor(72_000 / Math.max(1, chosen.length)));
-  const supplied = chosen.map((source) => ({ ...source, payload: { ...source.payload, text: clip(source.payload.text, perSource) } }));
+  const supplied = chosen.map((source) => ({ ...source, payload: { ...source.payload, text: criteria.length ? criterionExcerpt(source.payload.text, perSource, criteria) : clip(source.payload.text, perSource) } }));
   const relevant = events.filter((e) => ['persona.step', 'persona.goal_done', 'persona.abandoned', 'persona.friction_reported', 'persona.blocked', 'containment.blocked_request'].includes(e.type));
   const traceEvents = relevant.length <= 24 ? relevant : Array.from({ length: 24 }, (_, i) => relevant[Math.round(i * (relevant.length - 1) / 23)]);
   const trace = traceEvents.map((e) => ({ seq: e.seq, type: e.type, detail: clip(JSON.stringify(e.payload), 800) }));
@@ -133,7 +128,7 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
   const criteria = study.criteria.filter((c) => task.criterion_ids.includes(c.id));
   const base = { run_id: config.run_id, round: 1, persona_id: persona.id, poi_id: task.entries.find((entry) => entry.target_id === scope.target_id)!.poi_id };
   const provenance = { provider: config.project.settings.routing.judge.provider, model: config.project.settings.routing.judge.model, prompt_version: ASSESSMENT_PROMPT_VERSION, rubric_version: RUBRIC_VERSION };
-  const packet = comparisonPacket(sources, own);
+  const packet = comparisonPacket(sources, own, criteria);
   const suppliedSources = packet.sources;
   const input = {
     target: study.targets.find((t) => t.id === scope.target_id),
@@ -199,26 +194,28 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
 export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
   const { config, record, blobs } = deps;
   const study: ComparisonStudy = config.project.comparison!;
-  const orders = balancedTargetOrder(config.personas, study.targets.map((t) => t.id), config.seed);
+  const plan = comparisonPlan(config);
+  const stepsTaken = new Map<string, number>();
+  const personFor = (job: ComparisonPlannedEpisode) => {
+    const identity = config.personas.find((p) => p.id === job.persona_id)!;
+    return plan.collection === 'shared_research' ? researchCollector(identity, study.execution.research_environment) : identity;
+  };
   const completed = new Set<string>();
   type Pending = { persona: Persona; task: ComparisonTask; scope: ComparisonScope; outcome: ComparisonEpisodeFinished; end: EpisodeEnd; startSeq: number; endSeq: number };
   const pendingEpisodes = new Map<string, Pending>();
-  const episodeId = (p: Persona, task: ComparisonTask, target: ComparisonTarget) => JSON.stringify([study.execution.replicate_id, p.id, task.scenario_id, task.id, target.id]);
-  const scopeFor = (p: Persona, task: ComparisonTask, target: ComparisonTarget): ComparisonScope => ({ episode_id: episodeId(p, task, target), replicate_id: study.execution.replicate_id, target_id: target.id, scenario_id: task.scenario_id, task_id: task.id, segment_id: p.segment_id, access_scope: target.access_scope });
-  const eligible = (p: Persona, task: ComparisonTask) => {
-    const scenario = study.scenarios.find((s) => s.id === task.scenario_id)!;
-    return scenario.segment_ids === null || (p.segment_id !== null && scenario.segment_ids.includes(p.segment_id));
-  };
+  const scopeFor = (job: ComparisonPlannedEpisode): ComparisonScope => ({ episode_id: job.episode_id, replicate_id: study.execution.replicate_id, target_id: job.target_id, scenario_id: job.scenario_id, task_id: job.task_id, segment_id: job.segment_id, access_scope: study.targets.find((t) => t.id === job.target_id)!.access_scope });
   const finish = (persona: Persona, payload: ComparisonEpisodeFinished) => {
     completed.add(payload.episode_id);
     record({ run_id: config.run_id, round: 1, persona_id: persona.id, poi_id: study.tasks.find((task) => task.id === payload.task_id)?.entries.find((entry) => entry.target_id === payload.target_id)?.poi_id ?? null, type: 'comparison.episode_finished', payload });
   };
 
-  async function episode(persona: Persona, task: ComparisonTask, target: ComparisonTarget, targetOrder: string[], stepsBefore: number, prior: string[]): Promise<number> {
-    const scope = scopeFor(persona, task, target);
+  async function episode(job: ComparisonPlannedEpisode, task: ComparisonTask, target: ComparisonTarget, targetOrder: string[], stepsBefore: number, prior: string[], episodeDeps: ComparisonRuntimeDeps): Promise<number> {
+    const deps = episodeDeps;
+    const persona = personFor(job);
+    const scope = scopeFor(job);
     const base = { run_id: config.run_id, round: 1, persona_id: persona.id, poi_id: null };
     const entry = task.entries.find((e) => e.target_id === target.id);
-    if (!eligible(persona, task)) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'The frozen scenario excludes this segment.', evidence_seqs: [] }); return stepsBefore; }
+    if (!job.eligible) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'The frozen scenario or source eligibility excludes this assignment.', evidence_seqs: [] }); return stepsBefore; }
     if (!entry) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'No target entry is assigned for this task.', evidence_seqs: [] }); return stepsBefore; }
     if (deps.stopped()) { finish(persona, { ...scope, outcome: 'not_attempted', reason: deps.stopReason(), evidence_seqs: [] }); return stepsBefore; }
     const entryPoi = config.project.pois.find((poi) => poi.id === entry.poi_id)!;
@@ -231,7 +228,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
     }
     const segment = config.project.audience?.segments.find((s) => s.id === persona.segment_id) ?? null;
     const context = taskContext(config, persona, target, task, segment, prior);
-    const orderedPois = [entry.poi_id, ...target.poi_ids.filter((id) => id !== entry.poi_id)].map((id) => config.project.pois.find((poi) => poi.id === id)!).filter((poi) => poi.segments === null || poi.segments.includes(persona.segment_id ?? ''));
+    const orderedPois = [entry.poi_id, ...job.poi_ids.filter((id) => id !== entry.poi_id)].map((id) => config.project.pois.find((poi) => poi.id === id)!);
     let end: EpisodeEnd = 'done';
     let failure: string | null = null;
     let environmentFailure = false;
@@ -317,13 +314,15 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
       }
       if (end !== 'done') break;
     }
+    const endSeq = deps.events().at(-1)?.seq ?? started.seq;
+    const terminal = terminalDetail(end, deps.events().filter((event) => event.seq > started.seq && event.seq <= endSeq && event.persona_id === persona.id));
     const outcome: ComparisonEpisodeFinished = { ...scope, outcome: environmentFailure ? 'blocked_environment' : terminalOutcome(end), reason: failure ? `Episode interrupted: ${failure}`
-      : end === 'done' ? 'The navigator ended; the declared success rule requires evidence.'
+      : terminal?.reason
+      ?? (end === 'done' ? 'The navigator ended; the declared success rule requires evidence.'
       : end === 'stopped' ? deps.stopReason()
       : end === 'budget_exceeded' ? 'The predeclared task-effort limit was exhausted.'
       : end === 'repeated_failure' ? 'The accessible task ended after repeated action failures.'
-      : end === 'blocked' ? 'The session or challenge prevented this task.' : 'The persona chose to abandon the assigned task.', evidence_seqs: [] };
-    const endSeq = deps.events().at(-1)?.seq ?? started.seq;
+      : end === 'blocked' ? 'The session or challenge prevented this task.' : 'The assigned task was abandoned.'), evidence_seqs: failure ? [] : terminal?.evidence_seqs ?? [] };
     pendingEpisodes.set(scope.episode_id, { persona, task, scope, outcome, end, startSeq: started.seq, endSeq });
     if (study.execution.mode === 'buyer_journey' && study.execution.carryover === 'prior_observations') {
       const captured = deps.events().filter((event): event is SourceEvent => event.type === 'comparison.source' && event.persona_id === persona.id && event.payload.episode_id === scope.episode_id);
@@ -333,35 +332,42 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
     return currentStep;
   }
 
-  return {
-    async runPersona(persona: Persona) {
-      let steps = 0;
-      for (const task of study.tasks) {
-        if (deps.beginBlock && !deps.beginBlock(persona, task)) return;
-        try {
-          const prior: string[] = [];
-          const targetOrder = orders.get(persona.id)!;
-          // Admit and collect the matched block before any of its judges can consume the study allowance.
-          for (const id of targetOrder) steps = await episode(persona, task, study.targets.find((t) => t.id === id)!, targetOrder, steps, prior);
-          for (const targetId of targetOrder) {
-            const target = study.targets.find((item) => item.id === targetId)!;
-            const id = episodeId(persona, task, target);
-            const pending = pendingEpisodes.get(id);
-            if (!pending) continue;
-            const result = await assessEpisode(deps, pending.scope, persona, task, pending.outcome, pending.end, pending.startSeq, pending.endSeq);
-            finish(persona, result);
-            pendingEpisodes.delete(id);
-          }
-        } finally { deps.endBlock?.(persona); }
+  async function runBlock(block: ComparisonBlock) {
+    const task = study.tasks.find((item) => item.id === block.task_id)!;
+    if (deps.beginBlock && !deps.beginBlock(block)) return;
+    const scoped: ComparisonRuntimeDeps = { ...deps, llm: deps.llmForBlock?.(block.id) ?? deps.llm,
+      beginUsageStep: () => deps.beginUsageStep(block.id), beginAnalysisStep: () => deps.beginAnalysisStep(block.id) };
+    try {
+      const prior: string[] = [];
+      // Collect the complete matched block before its judges use their reserved allowance.
+      for (const job of block.episodes) {
+        const steps = await episode(job, task, study.targets.find((target) => target.id === job.target_id)!, block.target_order, stepsTaken.get(job.persona_id) ?? 0, prior, scoped);
+        stepsTaken.set(job.persona_id, steps);
       }
+      for (const job of block.episodes) {
+        const pending = pendingEpisodes.get(job.episode_id);
+        if (!pending) continue;
+        const result = await assessEpisode(scoped, pending.scope, pending.persona, task, pending.outcome, pending.end, pending.startSeq, pending.endSeq);
+        finish(pending.persona, result);
+        pendingEpisodes.delete(job.episode_id);
+      }
+    } finally { deps.endBlock?.(block); }
+  }
+  return {
+    plan,
+    runBlock,
+    /** Compatibility for recorded fixtures and callers that explicitly run one persona. */
+    async runPersona(persona: Persona) {
+      for (const block of plan.blocks.filter((item) => item.persona_id === persona.id)) await runBlock(block);
     },
-    /** Explicit exclusions survive interrupted admission; absent events never masquerade as successful attempts. */
+    /** Omitted personas in shared research are not scheduled observations. */
     finishUnscheduled() {
-      for (const persona of config.personas) for (const task of study.tasks) for (const target of study.targets) {
-        const scope = scopeFor(persona, task, target);
-        const pending = pendingEpisodes.get(scope.episode_id);
-        if (pending && !completed.has(scope.episode_id)) { finish(persona, pending.outcome); continue; }
-        if (!completed.has(scope.episode_id)) finish(persona, { ...scope, outcome: eligible(persona, task) ? 'not_attempted' : 'not_applicable', reason: eligible(persona, task) ? deps.stopReason() : 'The frozen scenario excludes this segment.', evidence_seqs: [] });
+      for (const job of plan.episodes) {
+        const scope = scopeFor(job);
+        const persona = personFor(job);
+        const pending = pendingEpisodes.get(job.episode_id);
+        if (pending && !completed.has(job.episode_id)) { finish(persona, pending.outcome); continue; }
+        if (!completed.has(job.episode_id)) finish(persona, { ...scope, outcome: job.eligible ? 'not_attempted' : 'not_applicable', reason: job.eligible ? deps.stopReason() : 'The frozen scenario or source eligibility excludes this assignment.', evidence_seqs: [] });
       }
     },
   };

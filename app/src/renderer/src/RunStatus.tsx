@@ -23,6 +23,7 @@ export function RunStatus({ events, config, row, reportAvailable, waiting, stopp
 }) {
   const progress = useMemo(() => runProgress(events, config, row?.status, reportAvailable), [events, config, row?.status, reportAvailable]);
   const usage = useMemo(() => recordedCost(events), [events]);
+  const research = config?.project.comparison?.execution.collection === 'shared_research';
   const budget = config?.project.settings?.cost_budget_usd;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -44,8 +45,8 @@ export function RunStatus({ events, config, row, reportAvailable, waiting, stopp
     <div className="simulation-status-heading">
       <div className="simulation-status-copy">
         <p className="simulation-state" role="status"><span className="simulation-state-dot" />{status}</p>
-        <h2 className="run-title">{progress.complete ? 'Your findings are ready.' : partial ? 'This simulation has ended.' : attention ? 'Help your audience continue.' : progress.phase === 'reporting' || progress.phase === 'saving' ? 'Bringing the findings together.' : 'A closer look at their experience.'}</h2>
-        {config && <p className="simulation-goal"><span>Goal</span>{config.project.goal}</p>}
+        <h2 className="run-title">{progress.complete ? 'Your findings are ready.' : partial ? 'This simulation has ended.' : attention ? 'Help your audience continue.' : progress.phase === 'reporting' || progress.phase === 'saving' ? 'Bringing the findings together.' : research ? 'Finding evidence for your decision.' : 'A closer look at their experience.'}</h2>
+        {config && <p className="simulation-goal"><span>Goal</span>{config.project.comparison?.question ?? config.project.goal}</p>}
       </div>
       {!progress.ended && <Button variant="quiet" className="simulation-stop" onClick={onStop} disabled={stopping}><span aria-hidden="true" className="stop-symbol" />{stopping ? 'Stopping…' : 'Stop run'}</Button>}
     </div>
@@ -61,7 +62,7 @@ export function RunStatus({ events, config, row, reportAvailable, waiting, stopp
     </ol>
     <div className="simulation-metadata">
       <span><Icon name="clock" size={14} />{elapsed} {progress.ended ? 'duration' : 'elapsed'}</span>
-      <span><Icon name="people" size={14} />{runSetup(config).personas.length} simulated people</span>
+      <span><Icon name={research ? 'report' : 'people'} size={14} />{research ? `${progress.sessions.total} source reviews` : `${runSetup(config).personas.length} simulated people`}</span>
       <span className="simulation-cost">{usd(usage.cost_usd)} recorded{budget != null && ` · ${usd(budget)} limit`}</span>
     </div>
     {issue && <p className="simulation-usage-note" role="status">{issue}</p>}

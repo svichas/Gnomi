@@ -52,6 +52,7 @@ export function Review(props: {
 }) {
   const { config, info, onFix, onBack, onRecheck, onChecked, onStarted, onSocial } = props;
   const saved = typeof config === 'string' ? null : config;
+  const sharedResearch = saved?.comparison?.execution.collection === 'shared_research';
   const sources = saved ? effectiveComparisonPois(saved) : [];
   const roles = saved ? rolesInUse(saved) : [];
   const [reset, setReset] = useState(false);
@@ -102,8 +103,8 @@ export function Review(props: {
     const screen: ReviewScreen = config.startsWith('Settings: ') ? 'settings' : config.startsWith('Audience: ') ? 'audience' : 'project';
     issues.push({ text: problemFor(config, screen), blocking: true, action: fix(screen, { project: 'Fix in Setup', audience: 'Fix in Audience', settings: 'Fix in Settings' }[screen]) });
   }
-  if (saved?.audience && personas.length === 0) issues.push({ text: 'Your audience has no personas yet. Generate them before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
-  if (saved?.audience && personas.length > 0 && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count)) issues.push({ text: 'The persona count has changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
+  if (!sharedResearch && saved?.audience && personas.length === 0) issues.push({ text: 'Your audience has no personas yet. Generate them before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
+  if (!sharedResearch && saved?.audience && personas.length > 0 && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count)) issues.push({ text: 'The persona count has changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
   for (const role of roles) {
     const login = logins[role];
     if (login === 'checking' || login === undefined || login.ok) continue;
@@ -123,7 +124,7 @@ export function Review(props: {
 
   return (
     <div className="review-page">
-      {saved?.audience && <AudienceSteps stage={3} />}
+      {saved?.audience && !sharedResearch && <AudienceSteps stage={3} />}
       {issues.length > 0 && (
         <section aria-labelledby="review-issues-title" className="review-issues" data-blocking={blocking > 0 || undefined}>
           <h2 id="review-issues-title">{blocking ? 'Fix before you start' : 'Worth a look'}</h2>
@@ -143,7 +144,7 @@ export function Review(props: {
       {ready && (
         <div className="review-ready">
           <span className="audience-next-icon"><Icon name="check" size={24} /></span>
-          <div><h2>Ready when you are.</h2><p>Your simulated users will try {new Intl.ListFormat('en').format(saved.pois.map((poi) => poi.name))}. Start the run, then follow their experience as it unfolds.</p></div>
+          <div><h2>Ready when you are.</h2><p>{sharedResearch ? 'Gnomi will research public evidence from' : 'Your simulated users will try'} {new Intl.ListFormat('en').format(saved.pois.map((poi) => poi.name))}. {sharedResearch ? 'Compare the findings against your company requirements after collection.' : 'Start the run, then follow their experience as it unfolds.'}</p></div>
         </div>
       )}
 
@@ -162,7 +163,8 @@ export function Review(props: {
         {saved.comparison && <Section title="Comparison brief" edit={fix('project', 'Edit comparison')} wide>
           <Fact label="Decision">{saved.comparison.question}</Fact>
           <Fact label="Purpose">{saved.comparison.purpose === 'choose_tool' ? 'Choose a tool' : `Improve ${saved.comparison.targets.find((target) => target.id === saved.comparison!.focal_target_id)?.name ?? 'your product'}`}</Fact>
-          <Fact label="Approach">{saved.comparison.execution.mode === 'independent' ? 'Independent tasks; no memory shared between tools.' : 'Buyer journey; prior observations are carried forward.'} Tool order is balanced within segments.</Fact>
+          <Fact label="Approach">{sharedResearch ? 'Shared public research: one evidence collection per company scenario. Persona count does not multiply this research or measure buyer behavior.' : `${saved.comparison.execution.mode === 'independent' ? 'Independent tasks; no memory shared between tools.' : 'Buyer journey; prior observations are carried forward.'} Tool order is balanced within segments.`}</Fact>
+          {saved.comparison.decision_context && <Fact label="Company brief">{Object.entries(saved.comparison.decision_context).map(([key, value]) => <span className="block" key={key}>{key.replaceAll('_', ' ')}: {Array.isArray(value) ? value.join('; ') || 'Unspecified' : value || 'Unspecified'}</span>)}</Fact>}
           <Fact label="Criteria">{saved.comparison.criteria.map((criterion) => <span className="block" key={criterion.id}>{criterion.name} · {criterion.importance === 'must_have' ? 'must have' : 'preference'}</span>)}</Fact>
           <Fact label="Shared tasks">{saved.comparison.tasks.map((task, i) => <span className="block" key={task.id}>{i + 1}. {task.instruction} · Up to {task.max_steps} steps per tool.</span>)}</Fact>
           <Fact label="Tool access">{saved.comparison.targets.map((target) => <span className="block" key={target.id}>{target.name} · {target.access_scope.replaceAll('_', ' ')} · {target.session_role ? `${target.session_role} login` : 'no login'}</span>)}</Fact>
@@ -170,8 +172,12 @@ export function Review(props: {
           <p className="review-note">The report compares captured evidence. Unavailable access or unresolved requirements stay visible. It does not infer missing features from pages it could not inspect.</p>
         </Section>}
 
-        <Section title="Who will browse" edit={fix('audience', 'Edit audience')}>
-          {saved.audience ? (
+        <Section title={sharedResearch ? 'Research environment' : 'Who will browse'} edit={sharedResearch ? fix('project', 'Edit research') : fix('audience', 'Edit audience')}>
+          {sharedResearch ? <>
+            <Fact label="Locale">{saved.comparison?.execution.research_environment?.locale}</Fact>
+            <Fact label="Timezone">{saved.comparison?.execution.research_environment?.timezone}</Fact>
+            <Fact label="Audience">Stakeholders share the company brief. Generating personas is optional for this research; no simulated population success or purchase rate is measured.</Fact>
+          </> : saved.audience ? (
             <>
               <Fact label="People">{personas.length} simulated {personas.length === 1 ? 'person' : 'people'}</Fact>
               <Fact label="Segments">
@@ -215,7 +221,7 @@ export function Review(props: {
             <Fact label="Browsers at once">{saved.settings.concurrency}</Fact>
           </div>
           <p className="review-note">At the cost limit, new work stops and outstanding model requests are canceled. Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed the limit. Persona generation is charged separately.</p>
-          {saved.comparison && <p className="review-note">The estimate includes evidence assessment and verification for each tool/task. {Math.round(saved.comparison.execution.analysis_reserve_fraction * 100)}% of the allowance is reserved for analysis; incomplete coverage is reported if the run stops early.</p>}
+          {saved.comparison && <p className="review-note">Each admitted task block budgets for navigation, evidence assessment and verification, including one retry. Outstanding evidence reviews keep their allowance; incomplete coverage remains visible if the run stops early.</p>}
         </Section>
 
         <Section title="Models" edit={fix('settings', 'Edit models')}>
@@ -227,7 +233,7 @@ export function Review(props: {
         <Section title="Where they can go" edit={fix('project', 'Edit access')} wide>
           <div className="review-fact-row">
             <Fact label="Logins">
-              {roles.length === 0 && 'None: the personas browse logged out.'}
+              {roles.length === 0 && (sharedResearch ? 'None: public research browses logged out.' : 'None: the personas browse logged out.')}
               {roles.map((role) => {
                 const login = logins[role];
                 return <span key={role} className="block">{login === 'checking' || login === undefined ? `Checking the recorded ${role} login…` : login.ok ? `The recorded ${role} login works.` : `${role} login is unavailable.${saved.comparison ? ' Affected tasks remain access-limited.' : ''}`}</span>;

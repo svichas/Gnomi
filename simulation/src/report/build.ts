@@ -270,7 +270,9 @@ export function buildReport(events: GnomiEvent[]): Report {
     started_at: started.ts,
     ended_at: endedAt,
     duration_ms: endedAt === null ? null : endedAt - started.ts,
-    banner: HYPOTHESIS_BANNER,
+    banner: config.project.comparison?.execution.collection === 'shared_research'
+      ? 'These findings compare captured public sources against your company requirements. Vendor claims are not verified workflow or purchase evidence. Confirm decisive claims and test the workflow before choosing.'
+      : HYPOTHESIS_BANNER,
     methods: {
       seed: audience?.seed ?? config.seed,
       roles,

@@ -6,6 +6,7 @@
   "exports": {
     "./comparison/types.ts": "./src/comparison/types.ts",
     "./comparison/config.ts": "./src/comparison/config.ts",
+    "./comparison/planning.ts": "./src/comparison/planning.ts",
     "./report/comparison.ts": "./src/report/comparison.ts",
     "./assets.ts": "./src/assets.ts",
     "./audience/locations.ts": "./src/audience/locations.ts",

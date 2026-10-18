@@ -915,7 +915,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
   const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
   const themes = [...(report.themes ?? [])].sort(byPriority);
   const facts = [
-    ['Personas', String(report.personas.length)],
+    report.comparison?.study.execution.collection === 'shared_research' ? ['Source reviews', String(report.comparison.coverage.reduce((sum, row) => sum + row.scheduled, 0))] : ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
     ['Recorded cost', usd(report.cost_usd)],
     ['Duration', duration(report.duration_ms)],

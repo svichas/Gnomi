@@ -12,19 +12,42 @@ const OUTCOME_LABELS: Record<ComparisonOutcome, string> = {
 };
 const outcomes = Object.keys(OUTCOME_LABELS) as ComparisonOutcome[];
 
-export function ComparisonCoverage({ comparison, targetName, scopeName, personaName, taskName, inFile }: {
+export function ComparisonCoverage({ comparison, targetName, scopeName, personaName, taskName, inFile, onInspect }: {
   comparison: ComparisonReport;
   targetName: (id: string) => string;
   scopeName: (scope: { scenario_id: string; task_id: string; segment_id: string | null }) => string;
   personaName: (id: string) => string;
   taskName: (id: string) => string;
   inFile: boolean;
+  onInspect: (personaId: string, seq?: number) => void;
 }) {
-  return <section aria-labelledby="comparison-coverage-title" className="space-y-4">
+  const shared = comparison.study.execution.collection === 'shared_research';
+  return <section aria-labelledby="comparison-coverage-title" className="space-y-4"><details className="report-more" open={inFile}>
+    <summary><h3 id="comparison-coverage-title" className="inline text-base font-semibold text-stone-900">Coverage and limitations</h3><span className="ml-2 text-xs text-stone-600">Outcomes, exact causes and task traces</span></summary>
+    <div className="mt-3 space-y-4">
     <div className="space-y-1">
-      <h3 id="comparison-coverage-title" className="text-base font-semibold text-stone-900">Coverage and limitations</h3>
+      {shared && <p className="text-sm text-stone-700">Counts describe shared source reviews: one assigned research task per target. The collector’s identity does not represent independent persona behavior.</p>}
       <p className="text-sm text-stone-600">Completion uses completed, failed and abandoned valid attempts. Environment blocks, incomplete or invalid tasks and unattempted work are excluded and remain visible below.</p>
     </div>
+    {comparison.coverage.some((row) => row.episodes?.length) && <section className="space-y-3" aria-label="Recorded outcome causes">
+      <h4 className="text-sm font-medium text-stone-900">What prevented a complete observation</h4>
+      {comparison.coverage.map((row) => {
+        const groups = new Map<string, NonNullable<typeof row.episodes>>();
+        for (const episode of row.episodes ?? []) {
+          if (episode.outcome === 'completed') continue;
+          const id = JSON.stringify([episode.outcome, episode.reason]);
+          groups.set(id, [...(groups.get(id) ?? []), episode]);
+        }
+        return [...groups.entries()].map(([id, episodes]) => <div key={`${row.target_id}-${row.task_id}-${row.segment_id}-${id}`} className="space-y-1 border-l-2 border-stone-200 pl-3 text-sm">
+          <p className="font-medium text-stone-900">{targetName(row.target_id)} · {OUTCOME_LABELS[episodes[0].outcome]} · {episodes.length} {shared ? 'source review' : 'episode'}{episodes.length === 1 ? '' : 's'}</p>
+          <p className="text-stone-700">{episodes[0].reason}</p><p className="text-xs text-stone-600">{scopeName(row)}</p>
+          <ul className="text-xs text-stone-600">{episodes.map((episode) => <li key={episode.episode_id}>
+            {personaName(episode.persona_id)} · start {episode.start_seq ?? 'not recorded'} · finish {episode.finish_seq ?? 'not recorded'} · {episode.episode_id}
+            {!inFile && (episode.start_seq || episode.finish_seq) && <> · <button type="button" className="text-link" onClick={() => onInspect(episode.persona_id, episode.finish_seq ?? episode.start_seq ?? undefined)}>Inspect task trace</button></>}
+          </li>)}</ul>
+        </div>);
+      })}
+    </section>}
     <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label="Task coverage by target" tabIndex={0}>
       <table className="w-full min-w-160 text-left text-sm">
         <thead className="bg-stone-50 text-xs text-stone-600"><tr>
@@ -55,11 +78,11 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
     <details className="report-more" open={inFile}>
       <summary>Task order and execution scope</summary>
       <div className="mt-3 space-y-2 text-sm text-stone-700">
-        <p>{comparison.study.execution.mode === 'independent' ? 'Independent benchmark. Each target starts with isolated task context.' : 'Buyer journey. Results reflect the recorded sequence and prior observations.'} Social interaction is off.</p>
+        <p>{shared ? 'Shared source research. Each target starts with isolated company requirements.' : comparison.study.execution.mode === 'independent' ? 'Independent benchmark. Each target starts with isolated task context.' : 'Buyer journey. Results reflect the recorded sequence and prior observations.'} Social interaction is off.</p>
         {comparison.orders.length === 0 && <p>No task order was recorded.</p>}
         <ul className="space-y-1">{comparison.orders.map((order, i) => <li key={i}>{personaName(order.persona_id)} · {taskName(order.task_id)}: {order.target_order.map(targetName).join(' → ')}</li>)}</ul>
         {comparison.study.assumptions.length > 0 && <><h4 className="font-medium">Frozen assumptions</h4><ul className="list-disc space-y-1 pl-5">{comparison.study.assumptions.map((assumption, i) => <li key={i}>{assumption}</li>)}</ul></>}
       </div>
     </details>
-  </section>;
+    </div></details></section>;
 }

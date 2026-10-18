@@ -17,7 +17,17 @@ export function comparisonFixture(): ComparisonReport {
       ],
       execution: { mode: 'independent', carryover: 'none', social: 'off', order: 'balanced', replicate_id: 'replicate-1', analysis_reserve_fraction: 0.2 },
     },
-    decision: { status: 'conditional_shortlist', summary: 'Harbor is a conditional candidate for the 25-person scenario. Verify integrations and resolve the other tools’ applicable prices before choosing.', shortlist: ['target-0'] },
+    decision: { status: 'conditional_shortlist', summary: 'Harbor is a conditional candidate for the 25-person scenario. Verify integrations and resolve the other tools’ applicable prices before choosing.', shortlist: ['target-0'], scenarios: [{
+      scenario_id: 'small-team', segment_id: 'seg-a', status: 'conditional_shortlist', leading_target_id: null, shortlist: ['target-0'], summary: 'Harbor remains conditional until integrations and comparable alternative costs are resolved.',
+      reasons: [{ text: 'Harbor’s displayed $300/month plan meets the $400 budget; Northstar’s applicable $600/month plan exceeds that must-have.', criterion_ids: ['price'], target_ids: ['target-0', 'target-2'], evidence_seqs: [100, 102] }],
+      alternatives: [
+        { target_id: 'target-0', condition: 'Keep as a conditional candidate if the required HR integration is included.', evidence_seqs: [100] },
+        { target_id: 'target-1', condition: 'Consider Orbit if an applicable quote meets the same $400 monthly budget.', evidence_seqs: [101] },
+        { target_id: 'target-2', condition: 'Excluded by the monthly-budget must-have. Reconsider only if applicable terms change.', evidence_seqs: [102] },
+        { target_id: 'target-3', condition: 'Collect permitted pricing evidence before considering Sprout; blocked access does not prove poor fit.', evidence_seqs: [] },
+      ],
+      unresolved: [{ criterion_id: 'price', target_ids: ['target-1', 'target-3'], summary: 'Orbit requires a quote; Sprout’s pricing host was blocked.', changes_choice: 'A comparable price at or below $400 keeps the tool eligible; a higher applicable price excludes it.' }],
+    }] },
     cells: targets.flatMap((target, i) => [
       { ...scope, target_id: target.id, criterion_id: 'price', assessment: i === 0 ? 'meets' as const : i === 2 ? 'does_not_meet' as const : 'unknown' as const,
         summary: ['The displayed plan is $300/month for up to 50 employees.', 'The applicable plan requires a quote; total cost is unknown.', 'The displayed plan is $600/month for this company size.', 'Pricing could not be observed because the pricing host was blocked.'][i],

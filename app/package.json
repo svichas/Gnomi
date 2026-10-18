@@ -22,6 +22,7 @@
     "smoke:audience": "electron-vite build && node audience.smoke.ts",
     "smoke:completion": "electron-vite build && node completion.smoke.ts",
     "smoke:comparison": "electron-vite build && node comparison.smoke.ts",
+    "smoke:research": "electron-vite build && node research.smoke.ts",
     "smoke:background": "electron-vite build && node background.smoke.ts"
   },
   "dependencies": {

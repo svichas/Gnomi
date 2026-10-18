@@ -1,6 +1,6 @@
 import type { LlmAttempt, LlmGateway, LlmRequest } from '@gnomi/simulation/seams.ts';
 import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
-import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
+import { proposalSystem, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { nameKey, writePersonas } from './write.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
@@ -36,9 +36,11 @@ const ACCESSIBILITY: Record<AccessibilityNeed, number> = { none: 0.86, low_visio
 
 /** A deterministic starting point with no model call: one segment holding the whole population. */
 export function defaultAudience(project: ProjectConfig): Audience {
+  const comparison = project.comparison;
+  const publicBuyer = comparison?.targets.every((target) => ['public_site', 'documentation'].includes(target.access_scope));
   return {
     seed: 1,
-    persona_count: 50,
+    persona_count: comparison ? 3 : 50,
     segments: [
       {
         id: 'seg-1',
@@ -54,6 +56,7 @@ export function defaultAudience(project: ProjectConfig): Audience {
         account_state: 'populated',
         entry: 'direct',
         goal_override: null,
+        ...(comparison ? { name: 'Decision stakeholders', description: 'Stakeholders of the same company evaluating the fixed requirements from different decision responsibilities.', role: null, account_state: 'empty' as const, typical_goals: [comparison.question], ...(publicBuyer ? { kind: 'buyer' as const } : {}) } : {}),
       },
     ],
     company_size: [50, 2000],
@@ -73,7 +76,7 @@ export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: A
       persona_id: null,
       round: 0,
       purpose: 'propose_audience',
-      system: PROPOSE_SYSTEM,
+      system: proposalSystem(deps.project),
       user: [{ type: 'text', text: proposeUser(deps.project, roles) }],
       schema: proposalSchema(roles),
       max_output_tokens: 4096,
@@ -82,7 +85,7 @@ export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: A
       signal: deps.signal,
     };
     const { object, cost_usd } = await deps.llm.call(request);
-    return { audience: { ...defaultAudience(deps.project), segments: toSegments(object) }, cost_usd };
+    return { audience: { ...defaultAudience(deps.project), segments: toSegments(object, deps.project) }, cost_usd };
   } catch (err) {
     if (deps.signal?.aborted) throw err;
     throw new Error(`The persona writer could not propose an audience: ${err instanceof Error ? err.message : String(err)}`, { cause: err });

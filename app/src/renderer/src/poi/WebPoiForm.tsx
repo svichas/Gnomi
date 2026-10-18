@@ -64,7 +64,7 @@ function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string
 }
 
 /** A web app: whose it is, its start page, the production guard, and what personas may reach. */
-export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>) {
+export function WebPoiForm({ draft, onChange, sessions, comparison }: PoiFormProps<WebDraft>) {
   const set = <K extends keyof WebDraft>(key: K, value: WebDraft[K]) => onChange((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
   const observing = draft.mode === 'observe_only';
@@ -73,21 +73,21 @@ export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <div role="group" aria-label="Whose site this is" className="poi-site-modes">
-          <button type="button" className="poi-site-mode" aria-label="Our product" aria-pressed={!observing} onClick={() => set('mode', 'full')}>
-            <Icon name={observing ? 'globe' : 'check'} size={18} /><span><strong>Our product</strong><small>Explore, click, and complete tasks</small></span>
+        <div role="group" aria-label={comparison ? 'Source access' : 'Whose site this is'} className="poi-site-modes">
+          <button type="button" className="poi-site-mode" aria-label={comparison ? 'Workflow test access' : 'Our product'} aria-pressed={!observing} onClick={() => set('mode', 'full')}>
+            <Icon name={observing ? 'globe' : 'check'} size={18} /><span><strong>{comparison ? 'Workflow test access' : 'Our product'}</strong><small>Explore, click, and complete tasks</small></span>
           </button>
-          <button type="button" className="poi-site-mode" aria-label="Competitor, observe only" aria-pressed={observing} onClick={() => set('mode', 'observe_only')}>
-            <Icon name={observing ? 'check' : 'globe'} size={18} /><span><strong>Competitor, observe only</strong><small>Browse and compare, without submitting</small></span>
+          <button type="button" className="poi-site-mode" aria-label={comparison ? 'Read-only source' : 'Competitor, observe only'} aria-pressed={observing} onClick={() => set('mode', 'observe_only')}>
+            <Icon name={observing ? 'check' : 'globe'} size={18} /><span><strong>{comparison ? 'Read-only source' : 'Competitor, observe only'}</strong><small>Browse and compare, without submitting</small></span>
           </button>
         </div>
         <p className="text-xs leading-relaxed text-stone-600">
-          {observing
+          {comparison ? 'Set the evaluation scope under Tools and access below. Public sources are read only: no form submissions or recorded logins. Workflow tests require permitted test access.' : observing
             ? 'Personas browse and read but never send anything: Gnomi blocks every form submission and other write, opens at most one page every two seconds, follows the site’s robots.txt and never uses a recorded login. Afterwards the survey asks them to compare it with your product.'
             : 'Personas use it as your users would: they click, type and submit, and can log in with a recorded login.'}
         </p>
       </div>
-      <Field label="Start page URL" hint={observing ? 'The persona starts here and can reach this host.' : 'The persona starts here and can reach this host. Use your staging address.'}>
+      <Field label="Start page URL" hint={comparison ? 'Evidence collection starts here. Add other required hosts under Website access & safety.' : observing ? 'The persona starts here and can reach this host.' : 'The persona starts here and can reach this host. Use your staging address.'}>
         <input type="url" value={draft.url} onChange={(e) => set('url', e.target.value)} placeholder={observing ? 'https://competitor.example.com' : 'https://staging.example.com'} spellCheck={false} className={inputClass} />
       </Field>
       {confirmHost !== null && (

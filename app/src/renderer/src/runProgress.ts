@@ -1,6 +1,7 @@
 import type { GnomiEvent, RunConfig, RunStatus } from '@gnomi/simulation/types.ts';
 import { poisFor, withPois } from '@gnomi/simulation/poi/pois.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
+import { comparisonPlan } from '@gnomi/simulation/comparison/planning.ts';
 import { runSetup } from './activity.ts';
 
 export type RunPhase = 'starting' | 'exploring' | 'discussing' | 'reporting' | 'saving' | 'complete' | 'stopped' | 'interrupted';
@@ -43,22 +44,15 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   const setup = runSetup(frozen);
   const pois = frozen?.project ? withPois(frozen.project).pois : [];
   const comparison = frozen?.project.comparison;
+  const research = comparison?.execution.collection === 'shared_research';
   const taskKey = (persona: string, task: string, target: string) => JSON.stringify([persona, task, target]);
   const planned = new Set<string>();
   const assigned = new Map<string, string[]>();
+  if (comparison && frozen) for (const episode of comparisonPlan(frozen).episodes) {
+    if (episode.eligible) planned.add(taskKey(episode.persona_id, episode.task_id, episode.target_id));
+  }
   for (const persona of setup.personas) {
-    if (comparison) {
-      for (const task of comparison.tasks) {
-        const scenario = comparison.scenarios.find((item) => item.id === task.scenario_id);
-        if (scenario?.segment_ids && !scenario.segment_ids.includes(persona.segment_id ?? '')) continue;
-        for (const entry of task.entries) {
-          const poi = pois.find((item) => item.id === entry.poi_id);
-          if (!poi || (poi.segments && !poi.segments.includes(persona.segment_id ?? ''))) continue;
-          planned.add(taskKey(persona.id, task.id, entry.target_id));
-        }
-      }
-      continue;
-    }
+    if (comparison) continue;
     const segment = setup.segments.find((candidate) => candidate.id === persona.segment_id) ?? null;
     const ids = poisFor(pois, segment).map((poi) => poi.id);
     // Early logs have no POI envelope. They still contain one experience per persona.
@@ -148,12 +142,12 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   else if (beganExploring || currentRound > 0) phase = 'exploring';
   else phase = 'starting';
 
-  const sessionDetail = `${sessions.done} of ${sessions.total} ${comparison ? 'tool/task outcomes recorded' : 'sessions concluded'}`;
+  const sessionDetail = `${sessions.done} of ${sessions.total} ${research ? 'source reviews recorded' : comparison ? 'tool/task outcomes recorded' : 'sessions concluded'}`;
   const roundDetail = researchDone ? `${plural(rounds.done, 'round')} concluded` : `Round ${rounds.current || 1} of up to ${rounds.total}`;
   const reportDetail = reportReady ? successful ? 'Report ready to explore' : 'Partial report ready' : successful ? 'Saving the final report' : reportPois !== null ? reportPois.length === 0 ? 'Preparing the final report' : reportPois.every((poi) => themed.has(poi)) ? 'Writing suggested improvements' : 'Grouping feedback into findings' : 'Available after the simulation';
   const labels: Record<RunPhase, string> = {
-    starting: 'Getting your audience ready',
-    exploring: 'Your audience is exploring',
+    starting: research ? 'Preparing the company research' : 'Getting your audience ready',
+    exploring: research ? 'Collecting and reviewing sources' : 'Your audience is exploring',
     discussing: 'Your audience is exchanging perspectives',
     reporting: 'Turning experiences into findings',
     saving: 'Saving your report',
@@ -162,7 +156,7 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
     interrupted: 'Simulation interrupted',
   };
   const details: Record<RunPhase, string> = {
-    starting: comparison ? `${plural(setup.personas.length, 'person')} will compare ${plural(comparison.targets.length, 'tool')} using ${plural(comparison.tasks.length, 'shared task')}.` : `${plural(setup.personas.length, 'person')} will explore ${plural(pois.length, 'point of interest')}.`,
+    starting: research ? `${plural(planned.size, 'source review')} planned across ${plural(comparison!.targets.length, 'tool')}. Company requirements and the research environment are fixed.` : comparison ? `${plural(setup.personas.length, 'person')} will compare ${plural(comparison.targets.length, 'tool')} using ${plural(comparison.tasks.length, 'shared task')}.` : `${plural(setup.personas.length, 'person')} will explore ${plural(pois.length, 'point of interest')}.`,
     exploring: comparison ? `${sessionDetail}. Evidence is assessed after each task.` : sessions.done === sessions.total && sessions.total > 0 ? 'Collecting final feedback from your audience.' : sessionDetail,
     discussing: `${roundDetail} · People are sharing and responding to their experiences.`,
     reporting: reportDetail,

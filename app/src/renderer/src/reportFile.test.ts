@@ -221,6 +221,23 @@ test('the app comparison exposes transcript inspection while keeping the same de
   assert.doesNotMatch(html, /At a glance|What to fix first/);
 });
 
+test('comparison exports deduplicate source claims while retaining every capture and precise blocked cause', async () => {
+  const report = fixture(2, 0);
+  report.comparison = comparisonFixture();
+  const cell = report.comparison.cells[0];
+  cell.evidence.push({ ...cell.evidence[0], event_seq: 400, assessment_seq: 401, episode_id: 'repeated-episode', persona_id: 'p-1-1', captured_at: 1000 });
+  report.comparison.coverage[0].episodes = [{ episode_id: 'blocked-episode', persona_id: 'p-1-1', outcome: 'blocked_environment', reason: 'Pricing API api.example.test is denied by the configured host policy.', start_seq: 500, finish_seq: 510, evidence_seqs: [] }];
+  for (const format of ['html', 'md'] as const) {
+    const output = await reportFile(report, format, thumbnails());
+    assert.ok(output.includes('Pricing API api.example.test is denied by the configured host policy.'));
+    assert.ok(output.includes('400'), 'repeated capture reference survives');
+    assert.ok(output.includes('Applicable monthly plan is at most $400.'), 'frozen rubric is exported');
+    assert.ok(output.includes('Find the applicable plan, price and supported integrations.'), 'task is exported');
+  }
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.equal(html.split('src="data:image/jpeg;base64,' + btoa(cell.evidence[0].screenshot!)).length - 1, 1, 'the same claim screenshot is shown once');
+});
+
 test('owner studies label the focal tool and action owner; legacy comparison votes remain explicitly legacy', async () => {
   const report = fixture(1, 0);
   report.comparison = comparisonFixture();

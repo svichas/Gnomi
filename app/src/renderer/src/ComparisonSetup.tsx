@@ -27,6 +27,8 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
   saveFirst(): Promise<string | null>;
 }) {
   const study = draft.form.comparison;
+  const choosing = draft.form.study_intent === 'choose_tool';
+  const sharedResearch = study?.execution.collection === 'shared_research';
   const [problem, setProblem] = useState<string | null>(null);
   const pois = draft.form.pois.map(poiOf).filter((poi): poi is Poi => typeof poi !== 'string');
   const enable = (enabled: boolean) => {
@@ -41,36 +43,48 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
 
   return <Card title="Compare tools">
     <div className="space-y-4">
-      <Check checked={!!study} onChange={enable}>Evaluate tools against shared tasks and requirements</Check>
-      <p className="text-sm text-stone-600">Get a side-by-side comparison with evidence, tradeoffs and next steps. Choose what matters before the personas begin.</p>
+      {choosing ? <p className="text-sm font-medium text-stone-900">{study ? 'Your tool-selection study is ready to review.' : 'Add at least two valid tool sources and a decision above. Gnomi will create the comparison automatically.'}</p> : <Check checked={!!study} onChange={enable}>Evaluate tools against shared tasks and requirements</Check>}
+      <p className="text-sm text-stone-600">Get a side-by-side comparison with evidence, tradeoffs and next steps. Choose what matters before collection begins.</p>
       {problem && <Note tone="error">{problem}</Note>}
       {study && <>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="What is this comparison for?">
+          {!choosing && draft.form.study_intent !== 'improve_product' && <Field label="What is this comparison for?">
             <select className={inputClass} value={study.purpose} onChange={(e) => update({ purpose: e.target.value as ComparisonStudy['purpose'], focal_target_id: e.target.value === 'choose_tool' ? null : study.focal_target_id })}>
               <option value="choose_tool">Choose a tool</option><option value="improve_own_product">Improve my own product</option>
             </select>
-          </Field>
+          </Field>}
           {study.purpose === 'improve_own_product' && <Field label="Your product">
             <select className={inputClass} value={study.focal_target_id ?? ''} onChange={(e) => update({ focal_target_id: e.target.value || null })}>
               <option value="">Choose your product</option>{study.targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
             </select>
           </Field>}
-          <Field label="How should personas compare?">
+          <Field label="How should evidence be collected?">
+            <select className={inputClass} value={study.execution.collection ?? 'persona_tasks'} onChange={(e) => update({ execution: { ...study.execution, collection: e.target.value as 'shared_research' | 'persona_tasks', ...(e.target.value === 'shared_research' ? { mode: 'independent', carryover: 'none', research_environment: study.execution.research_environment ?? { locale: 'en-US', timezone: 'UTC' } } : {}) } })}>
+              <option value="shared_research" disabled={study.targets.some((target) => !['public_site', 'documentation'].includes(target.access_scope))}>Research public evidence once per company scenario</option>
+              <option value="persona_tasks">Let personas attempt the tasks</option>
+            </select>
+          </Field>
+          {!sharedResearch && <Field label="How should personas compare?">
             <select className={inputClass} value={study.execution.mode} onChange={(e) => update({ execution: { ...study.execution, mode: e.target.value as ComparisonStudy['execution']['mode'], carryover: e.target.value === 'independent' ? 'none' : 'prior_observations' } })}>
               <option value="independent">Try each tool independently</option><option value="buyer_journey">Remember tools while choosing</option>
             </select>
-          </Field>
+          </Field>}
         </div>
-        <Field label="Decision to make"><textarea className={inputClass} rows={2} value={study.question} onChange={(e) => update({ question: e.target.value })} /></Field>
-        <p className="text-xs text-stone-600">Every persona gets the same task for each tool. Tool order is balanced; shared social feeds are off for comparisons.</p>
+        {!choosing && <Field label="Decision to make" hint="This updates the report question. Review the frozen tasks below when changing the study."><textarea className={inputClass} rows={2} value={study.question} onChange={(e) => update({ question: e.target.value })} /></Field>}
+        {sharedResearch ? <>
+          <p className="text-sm text-stone-600">Each tool is researched once for the company scenario in a fixed browser environment. This collects public claims; it does not measure how many people would succeed or buy.</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Research language and locale"><input className={inputClass} value={study.execution.research_environment?.locale ?? 'en-US'} onChange={(e) => update({ execution: { ...study.execution, research_environment: { timezone: study.execution.research_environment?.timezone ?? 'UTC', locale: e.target.value } } })} /></Field>
+            <Field label="Research timezone"><input className={inputClass} value={study.execution.research_environment?.timezone ?? 'UTC'} onChange={(e) => update({ execution: { ...study.execution, research_environment: { locale: study.execution.research_environment?.locale ?? 'en-US', timezone: e.target.value } } })} /></Field>
+          </div>
+        </> : <p className="text-xs text-stone-600">Every persona gets the same task for each tool. Tool order is balanced; shared social feeds are off for comparisons.</p>}
         <section aria-labelledby="comparison-brief-title" className="space-y-2 rounded-lg bg-stone-50 p-3 text-sm">
           <h3 id="comparison-brief-title" className="font-medium text-stone-900">The comparison you will run</h3>
           <p className="text-stone-700">{study.targets.length} tools · {study.tasks.length} shared {study.tasks.length === 1 ? 'task' : 'tasks'} · {study.scenarios.length} {study.scenarios.length === 1 ? 'scenario' : 'scenarios'} · {study.criteria.length} decision criteria</p>
           <ul className="space-y-1 text-xs text-stone-600">{study.targets.map((target) => <li key={target.id}>{target.name}: {scopes[target.access_scope]}</li>)}</ul>
           <ol className="list-decimal space-y-2 pl-5 text-stone-700">{study.tasks.slice(0, 3).map((task) => <li key={task.id}>{task.instruction || 'Task instructions still need to be supplied.'}</li>)}</ol>
           {study.tasks.length > 3 && <p className="text-xs text-stone-600">Review the other {study.tasks.length - 3} tasks under Scenarios and shared tasks.</p>}
-          <p className="text-xs text-stone-600">{Math.round(study.execution.analysis_reserve_fraction * 100)}% of the model allowance is reserved for evidence analysis. The report keeps unknowns and access limits visible.</p>
+          <p className="text-xs text-stone-600">Each task block budgets for collection and evidence review before it starts. The report keeps unknowns and access limits visible.</p>
         </section>
         {!sessionsPersist && study.targets.some((target) => target.access_scope === 'authenticated_workflow') && <Note tone="info">This computer has no secure key storage, so recorded logins will not survive a restart of Gnomi.</Note>}
 
@@ -78,7 +92,7 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
           <summary>Tools and access<span>What evidence can each tool provide?</span></summary>
           <div className="disclosure-body space-y-4">
             {study.targets.map((target) => {
-              const change = (patch: Partial<typeof target>) => update({ targets: study.targets.map((t) => t.id === target.id ? { ...t, ...patch } : t) });
+              const change = (patch: Partial<typeof target>) => update({ targets: study.targets.map((t) => t.id === target.id ? { ...t, ...patch } : t), ...(patch.access_scope && !['public_site', 'documentation'].includes(patch.access_scope) ? { execution: { ...study.execution, collection: 'persona_tasks' } } : {}) });
               const session = sessions.find((s) => s.role === target.session_role && s.target_id === target.id);
               return <fieldset key={target.id} className="space-y-3 rounded-lg border border-stone-200 p-3">
                 <legend className="px-1 text-sm font-medium">{target.name}</legend>
@@ -105,12 +119,12 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
               const poi = pois.find((p) => !study.targets.some((t) => t.poi_ids.includes(p.id)));
               if (!poi) return setProblem('Add a new page or material above, then add it as a tool. To combine materials, select them under the same tool.');
               const id = nextId('target', study.targets);
-              update({ targets: [...study.targets, { id, name: poi.name, poi_ids: [poi.id], access_scope: poi.type === 'web' ? 'public_site' : 'prototype', session_role: null }], tasks: study.tasks.map((task) => ({ ...task, entries: [...task.entries, { target_id: id, poi_id: poi.id }] })) });
+              update({ targets: [...study.targets, { id, name: poi.name, poi_ids: [poi.id], access_scope: poi.type === 'web' ? 'public_site' : 'prototype', session_role: null }], tasks: study.tasks.map((task) => ({ ...task, entries: [...task.entries, { target_id: id, poi_id: poi.id }] })), ...(poi.type !== 'web' ? { execution: { ...study.execution, collection: 'persona_tasks' } } : {}) });
             }}>Add another tool</Button>
           </div>
         </details>
 
-        <details className="disclosure" open>
+        <details className="disclosure">
           <summary>Decision criteria<span>Evidence the report must compare</span></summary>
           <div className="disclosure-body space-y-3">
             {study.criteria.map((criterion) => {

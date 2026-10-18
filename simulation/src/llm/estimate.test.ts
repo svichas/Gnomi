@@ -28,6 +28,17 @@ test('comparison estimate follows shared tasks, includes both judges, and exclud
   assert.equal(estimateRun({ personas: [persona(1)], settings, comparison }).calls, 0, 'ineligible tasks do not inflate the estimate');
 });
 
+test('shared research estimates the actual collection plan, independent of the number of saved personas', () => {
+  const pois = ['a', 'b'].map((id) => ({ id, name: id, type: 'web' as const, start_url: `https://${id}.example`, mode: 'observe_only' as const, segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }));
+  const comparison = draftComparison({ name: 'Tools', description: '', goal: 'Choose', role: null, audience: null, settings: DEFAULT_SETTINGS, pois });
+  comparison.execution.collection = 'shared_research';
+  const one = estimateRun({ personas: [persona(3)], settings: DEFAULT_SETTINGS, comparison, pois });
+  const twenty = estimateRun({ personas: Array.from({ length: 20 }, (_, i) => ({ ...persona(3), id: `person-${i}` })), settings: DEFAULT_SETTINGS, comparison, pois });
+  assert.deepEqual(twenty, one);
+  comparison.execution.collection = 'persona_tasks';
+  assert.ok(estimateRun({ personas: Array.from({ length: 20 }, (_, i) => ({ ...persona(3), id: `person-${i}` })), settings: DEFAULT_SETTINGS, comparison, pois }).calls > twenty.calls * 10);
+});
+
 test('three personas on Haiku with screenshots match the hand-computed range', () => {
   // Step budgets 12 + 30 + 60 = 102: between 40% (40.8 steps) and all of it, so 71.4 expected calls.
   // A step is 5,000 + 1,200 tokens in and 200 out. Priced per call:

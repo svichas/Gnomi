@@ -3,6 +3,8 @@ import type { Report } from '@gnomi/simulation/types.ts';
 import type { ComparisonAssessment, ComparisonCell, ComparisonReport as ComparisonData } from '@gnomi/simulation/comparison/types.ts';
 import { BASIS_LABELS, ComparisonEvidence, EvidenceLinks, evidenceCatalog } from './ComparisonEvidence.tsx';
 import { ACCESS_LABELS, ComparisonCoverage } from './ComparisonCoverage.tsx';
+import { comparisonDecisionLabels } from '@gnomi/simulation/report/comparison.ts';
+import { ComparisonDecision } from './ComparisonDecision.tsx';
 
 const ASSESSMENTS: Record<ComparisonAssessment, { label: string; tone: string }> = {
   meets: { label: 'Meets', tone: 'good' }, partially_meets: { label: 'Partially meets', tone: 'warn' },
@@ -23,12 +25,13 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
   renderScreenshot: (path: string, alt: string) => ReactNode;
 }) {
   const { study } = comparison;
+  const shared = study.execution.collection === 'shared_research';
   const targetName = (id: string) => study.targets.find((target) => target.id === id)?.name ?? id;
   const criterionName = (id: string) => study.criteria.find((criterion) => criterion.id === id)?.name ?? id;
-  const personaName = (id: string) => report.personas.find((persona) => persona.id === id)?.name ?? id;
+  const personaName = (id: string) => shared ? 'Research collector' : report.personas.find((persona) => persona.id === id)?.name ?? id;
   const taskName = (id: string) => { const index = study.tasks.findIndex((task) => task.id === id); return index < 0 ? 'Unrecorded task' : `Task ${index + 1}`; };
   const scenarioName = (id: string) => study.scenarios.find((scenario) => scenario.id === id)?.name ?? id;
-  const segmentName = (id: string | null) => report.segments.find((segment) => segment.id === id)?.name ?? (id ?? 'Unsegmented personas');
+  const segmentName = (id: string | null) => shared ? 'Shared company evidence' : report.segments.find((segment) => segment.id === id)?.name ?? (id ?? 'Unsegmented personas');
   const scopeName = (scope: { scenario_id: string; task_id: string; segment_id: string | null }) => `${scenarioName(scope.scenario_id)} · ${segmentName(scope.segment_id)} · ${taskName(scope.task_id)}`;
   const catalog = evidenceCatalog(comparison.cells);
   const groups = new Map<string, ComparisonCell[]>();
@@ -41,19 +44,20 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
     <section aria-labelledby="comparison-decision-title" className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 id="comparison-decision-title" className={heading}>Decision and scope</h3>
-        <span data-tone={comparison.decision.status === 'conditional_shortlist' ? 'warn' : 'neutral'} className="tone-chip">{comparison.decision.status === 'conditional_shortlist' ? 'Conditional shortlist' : comparison.decision.status === 'no_suitable_tool' ? 'No suitable tool in this scope' : 'Insufficient evidence'}</span>
+        <span data-tone={comparison.decision.status === 'leading_candidate' ? 'good' : comparison.decision.status === 'conditional_shortlist' ? 'warn' : 'neutral'} className="tone-chip">{comparisonDecisionLabels[comparison.decision.status]}</span>
       </div>
       <p className="text-base font-medium text-stone-900">{comparison.decision.summary}</p>
-      <p className="text-sm text-stone-600">{scopes.join(' · ')} · {study.execution.mode === 'independent' ? 'Independent benchmark' : 'Buyer journey'}</p>
+      <p className="text-sm text-stone-600">{scopes.join(' · ')} · {shared ? 'Shared source research' : study.execution.mode === 'independent' ? 'Independent benchmark' : 'Buyer journey'}</p>
       <p className="text-sm text-stone-700"><span className="font-medium">Decision question:</span> {study.question}</p>
-      {comparison.decision.shortlist.length > 0 && <p className="text-sm text-stone-700"><span className="font-medium">Conditional candidates:</span> {comparison.decision.shortlist.map(targetName).join(', ')}. Check each scenario’s unresolved requirements below.</p>}
+      {comparison.decision.shortlist.length > 0 && <p className="text-sm text-stone-700"><span className="font-medium">Candidates:</span> {comparison.decision.shortlist.map(targetName).join(', ')}. Selection conditions are scoped below.</p>}
       <p className="text-xs text-stone-600">Assessments apply only to the recorded scenario, criteria and access. A visible vendor claim does not verify a live workflow.</p>
+      <ComparisonDecision comparison={comparison} catalog={catalog} targetName={targetName} segmentName={segmentName} inFile={inFile} />
     </section>
 
     <section aria-labelledby="comparison-matrix-title" className="min-w-0 space-y-5">
       <div className="space-y-1">
         <h3 id="comparison-matrix-title" className={heading}>Side-by-side comparison</h3>
-        <p className="text-sm text-stone-600">Each target faces the same criterion. Coverage counts assessed persona/task episodes; distinct sources are counted separately. Unknown means the evidence cannot settle the requirement.</p>
+        <p className="text-sm text-stone-600">Each target faces the same criterion. {shared ? 'Coverage counts shared source reviews, not independent persona behavior.' : 'Coverage counts assessed persona/task episodes.'} Distinct sources are counted separately. Unknown means the evidence cannot settle the requirement.</p>
         <p className="text-xs text-stone-600 print:hidden">On narrow screens, scroll the table horizontally to compare every tool.</p>
       </div>
       {groups.size === 0 && <p className="text-sm text-stone-600">No criterion observations are available yet. The decision remains unresolved.</p>}
@@ -63,7 +67,12 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
         const criteria = study.criteria.filter((criterion) => task?.criterion_ids.includes(criterion.id) || cells.some((cell) => cell.criterion_id === criterion.id));
         return <section key={key} aria-labelledby={`comparison-scope-${groupIndex}`} className="space-y-2">
           <h4 id={`comparison-scope-${groupIndex}`} className="text-sm font-medium text-stone-900">{scopeName(scope)} · {ACCESS_LABELS[scope.access_scope]}</h4>
-          {task && <p className="text-sm text-stone-600">{task.instruction}</p>}
+          <details className="report-more" open={inFile}><summary>Task and company context</summary>
+            <div className="mt-2 space-y-2 text-sm text-stone-600">
+              <p>{study.scenarios.find((scenario) => scenario.id === scope.scenario_id)?.context}</p>
+              {task && <><p>{task.instruction}</p><p><span className="font-medium">Success rule:</span> {task.success_rule}</p>{task.prerequisites.length > 0 && <p><span className="font-medium">Prerequisites:</span> {task.prerequisites.join('; ')}</p>}</>}
+            </div>
+          </details>
           <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
             <table className="comparison-matrix w-full table-fixed text-left text-sm" style={{ minWidth: `${12 + study.targets.length * 11}rem` }}>
               <thead className="bg-stone-50"><tr><th scope="col" className="w-48 p-3 text-xs font-medium text-stone-600">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id} className="p-3 align-top font-medium text-stone-900">{target.name}{target.id === study.focal_target_id && <span className="block text-xs font-normal text-stone-600">Your tool</span>}</th>)}</tr></thead>
@@ -76,9 +85,9 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
                     <span className="tone-chip" data-tone={ASSESSMENTS[cell.assessment].tone}>{ASSESSMENTS[cell.assessment].label}</span>
                     <p className="text-stone-900">{cell.summary}</p>
                     <p className="text-xs text-stone-600"><span className="font-medium">Basis:</span> {cell.bases.map((basis) => BASIS_LABELS[basis]).join('; ') || 'No supporting evidence'}</p>
-                    <p className="text-xs tabular-nums text-stone-600">{cell.assessed} / {cell.eligible} eligible episodes assessed · {cell.distinct_sources} distinct {cell.distinct_sources === 1 ? 'source' : 'sources'}</p>
+                    <p className="text-xs tabular-nums text-stone-600">{cell.assessed} / {cell.eligible} eligible {shared ? 'source reviews' : 'episodes'} assessed · {cell.distinct_sources} distinct {cell.distinct_sources === 1 ? 'source' : 'sources'}</p>
                     <EvidenceLinks evidence={cell.evidence} catalog={catalog} />
-                    {cell.limitations.length > 0 && <ul className="list-disc space-y-1 pl-4 text-xs text-stone-600">{cell.limitations.map((limitation, i) => <li key={i}>{limitation}</li>)}</ul>}
+                    {cell.limitations.length > 0 && <details className="report-more" open={inFile}><summary>Assessment limits</summary><ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-stone-600">{cell.limitations.map((limitation, i) => <li key={i}>{limitation}</li>)}</ul></details>}
                   </td>;
                 })}
               </tr>)}</tbody>
@@ -90,11 +99,12 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
 
     <section aria-labelledby="comparison-fit-title" className="space-y-3">
       <h3 id="comparison-fit-title" className={heading}>Where each tool fits</h3>
-      {comparison.tradeoffs.length > 0 && <ul className="space-y-3" aria-label="Your tool’s advantages, gaps and parity">{comparison.tradeoffs.map((tradeoff, i) => <li key={i} className="space-y-1 rounded-lg bg-stone-50 p-3 text-sm">
-        <h4 className="font-medium text-stone-900">{TRADEOFF_LABELS[tradeoff.result]} · {criterionName(tradeoff.criterion_id)}</h4>
+      <details className="report-more" open={inFile}><summary>Fit by task and all supported tradeoffs</summary>
+      {comparison.tradeoffs.length > 0 && <ul className="space-y-3" aria-label="Tool advantages, gaps and parity">{comparison.tradeoffs.map((tradeoff, i) => <li key={i} className="space-y-1 rounded-lg bg-stone-50 p-3 text-sm">
+        <h4 className="font-medium text-stone-900">{study.purpose === 'choose_tool' ? ({ advantage: `${targetName(tradeoff.focal_target_id)} advantage`, gap: `${targetName(tradeoff.other_target_id)} advantage`, parity: 'Parity', unresolved: 'Unresolved comparison' })[tradeoff.result] : TRADEOFF_LABELS[tradeoff.result]} · {criterionName(tradeoff.criterion_id)}</h4>
         <p className="text-xs text-stone-600">{targetName(tradeoff.focal_target_id)} versus {targetName(tradeoff.other_target_id)} · {scopeName(tradeoff)}</p>
         <p className="text-stone-700">{tradeoff.summary}</p>
-        <EvidenceLinks evidence={catalog.filter(({ evidence }) => tradeoff.evidence_seqs.includes(evidence.event_seq)).map(({ evidence }) => evidence)} catalog={catalog} />
+        <EvidenceLinks evidence={catalog.flatMap(({ captures }) => captures.filter((evidence) => tradeoff.evidence_seqs.includes(evidence.event_seq)))} catalog={catalog} />
       </li>)}</ul>}
       {comparison.fits.length === 0 && <p className="text-sm text-stone-600">No supported fit assessment is available yet.</p>}
       <ul className="divide-y divide-stone-200">{comparison.fits.map((fit, i) => {
@@ -107,23 +117,28 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
           ] as const).map(([label, values, empty]) => <div key={label}><dt className="font-medium text-stone-900">{label}</dt><dd className="text-stone-700">{values.length ? <ul className="list-disc pl-5">{values.map((value, j) => <li key={j}>{value}</li>)}</ul> : empty}</dd></div>)}</dl>
           <EvidenceLinks evidence={cells.flatMap((cell) => cell.evidence)} catalog={catalog} />
         </li>;
-      })}</ul>
+      })}</ul></details>
     </section>
 
     <section aria-labelledby="comparison-actions-title" className="space-y-3">
       <h3 id="comparison-actions-title" className={heading}>{study.purpose === 'improve_own_product' ? 'Actions for your product and evaluation' : 'Next checks before choosing'}</h3>
-      {comparison.actions.length === 0 && <p className="text-sm text-stone-600">No supported action was generated. Resolve the unknown must-haves in the matrix before making a selection.</p>}
+      {comparison.actions.length === 0 && <p className="text-sm text-stone-600">No unresolved check is prioritized from the tested criteria. Review the supported selection conditions.</p>}
       <ol className="list-decimal space-y-4 pl-5">{comparison.actions.map((action, i) => <li key={i} className="space-y-1 pl-1 text-sm">
         <h4 className="font-medium text-stone-900">{action.action}</h4>
-        <p className="text-xs text-stone-600">{OWNER_LABELS[action.owner]} · {targetName(action.target_id)} · {scopeName(action)}</p>
-        <p className="text-stone-700">{action.rationale}</p>
-        <p className="text-stone-700"><span className="font-medium">Expected benefit (hypothesis):</span> {action.expected_benefit}</p>
-        <p className="text-stone-700"><span className="font-medium">Validate:</span> {action.validation}</p>
-        <EvidenceLinks evidence={catalog.filter(({ evidence }) => action.evidence_seqs.includes(evidence.event_seq) || action.evidence_seqs.includes(evidence.assessment_seq)).map(({ evidence }) => evidence)} catalog={catalog} />
+        <p className="text-xs text-stone-600">{OWNER_LABELS[action.owner]} · {(action.target_ids ?? [action.target_id]).map(targetName).join(', ')} · {(action.scopes ?? [action]).map(scopeName).join('; ')}</p>
+        {action.changes_choice && <p className="text-stone-700"><span className="font-medium">What would change the choice:</span> {action.changes_choice}</p>}
+        <details className="report-more" open={inFile}><summary>Why and how to check</summary>
+          <div className="mt-2 space-y-2 text-stone-700">
+            <p>{action.rationale}</p>
+            <p><span className="font-medium">Expected benefit (hypothesis):</span> {action.expected_benefit}</p>
+            <p><span className="font-medium">Validate:</span> {action.validation}</p>
+            <EvidenceLinks evidence={catalog.flatMap(({ captures }) => captures.filter((evidence) => action.evidence_seqs.includes(evidence.event_seq) || action.evidence_seqs.includes(evidence.assessment_seq)))} catalog={catalog} />
+          </div>
+        </details>
       </li>)}</ol>
     </section>
 
-    <ComparisonCoverage comparison={comparison} targetName={targetName} scopeName={scopeName} personaName={personaName} taskName={taskName} inFile={inFile} />
-    <ComparisonEvidence catalog={catalog} targetName={targetName} criterionName={criterionName} personaName={personaName} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} />
+    <ComparisonCoverage comparison={comparison} targetName={targetName} scopeName={scopeName} personaName={personaName} taskName={taskName} inFile={inFile} onInspect={onInspect} />
+    <ComparisonEvidence catalog={catalog} cells={comparison.cells} targetName={targetName} criterionName={criterionName} personaName={personaName} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} />
   </>;
 }

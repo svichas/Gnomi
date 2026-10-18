@@ -7,6 +7,7 @@ import { fnv1a, mulberry32, postingPropensity, type Traits } from '@gnomi/simula
 import { getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 import { latin } from '@gnomi/simulation/llm/english.ts';
+import { comparisonAudienceContext } from './propose.ts';
 
 const text = latin(z.string().trim().min(1));
 const candidate = z.object({
@@ -80,16 +81,19 @@ export function writerUser(project: ProjectConfig, segment: Segment, traits: Tra
   const schema = getPersonaSchema(project.persona_schema);
   const entries = profileEntries({ ...traits, seed } as Persona, schema, 'prompt');
   const values = Object.fromEntries(entries.map(({ attribute, value }) => [attribute.id, value]));
-  const descriptors = schema.attributes.filter((a) => a.enabled && a.use_in_prompt).map((a) => `${a.id} (${a.group}, ${a.type}): ${a.description}`);
-  const ignored = ['job_title', 'industry', 'context_of_use'].filter((id) => !isAttributeEnabled(schema, id, 'prompt'));
+  const fixedCompany = project.comparison !== null && project.comparison !== undefined;
+  const fixedFields = ['company_size', 'employer', 'context_of_use', 'motivation'];
+  if (fixedCompany) for (const field of fixedFields) delete values[field];
+  const descriptors = schema.attributes.filter((a) => a.enabled && a.use_in_prompt && !(fixedCompany && fixedFields.includes(a.id))).map((a) => `${a.id} (${a.group}, ${a.type}): ${a.description}`);
+  const ignored = ['job_title', 'industry', 'context_of_use'].filter((id) => !isAttributeEnabled(schema, id, 'prompt') || (fixedCompany && id === 'industry'));
   return [
-    `The product: ${project.name}.${project.description ? ` ${project.description}` : ''}`,
+    fixedCompany ? comparisonAudienceContext(project) : `The product: ${project.name}.${project.description ? ` ${project.description}` : ''}`,
     `Their segment: ${segment.name}. ${segment.description}`,
-    `They use the product ${FREQUENCY[segment.usage_frequency]}, usually arriving ${ENTRY[segment.entry]}, ${ACCOUNT[segment.account_state]}.${goals}`,
-    `The task they will attempt: "${segment.goal_override ?? project.goal}"`,
+    ...(fixedCompany ? ['This stakeholder evaluates the fixed company requirements. Vary decision priorities and voice, never company size, budget, integrations or assigned tasks. They have no assumed product account or operational work waiting.'] : [`They use the product ${FREQUENCY[segment.usage_frequency]}, usually arriving ${ENTRY[segment.entry]}, ${ACCOUNT[segment.account_state]}.${goals}`]),
+    `The task they will attempt: "${project.comparison?.question ?? segment.goal_override ?? project.goal}"`,
     '',
     `${TRAITS_LABEL}${JSON.stringify(values)}`,
-    `${WRITTEN_LABEL}${JSON.stringify(['name', 'job_title', 'industry', 'background', 'context_of_use', 'goal_interpretation', 'voice'].filter((id) => isAttributeEnabled(schema, id, 'prompt')))}`,
+    `${WRITTEN_LABEL}${JSON.stringify(['name', 'job_title', 'industry', 'background', 'context_of_use', 'goal_interpretation', 'voice'].filter((id) => isAttributeEnabled(schema, id, 'prompt') && !ignored.includes(id)))}`,
     `Prompt attributes:\n${descriptors.join('\n')}`,
     ...(ignored.length ? [`These output slots are unused: ${ignored.join(', ')}. Set them to "Not specified" and do not infer or mention their values in other output fields.`] : []),
     ...(values.country || values.employer ? ['Keep the sampled location and employer fixed wherever provided; the biography, context and voice must agree with them. Languages are ordered preferences, with the first language used for thoughts.'] : []),
@@ -151,7 +155,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
         persona_id: job.id,
         round: 0,
         purpose,
-        system,
+        system: deps.project.comparison ? `${system}\nThis is a stakeholder in a comparison study, not an operational product user. The fixed company brief and frozen tasks are authoritative. Do not invent a different company, candidate inbox, invitation, account, job post or task. goal_interpretation restates the supplied decision; context_of_use describes evaluation. Never reintroduce sampled company or employer facts omitted from the prompt.` : system,
         user: [{ type: 'text', text: writerUser(deps.project, job.segment, job.traits, avoid, job.seed) + extra }],
         schema,
         signal,
@@ -163,7 +167,7 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
         },
       };
       // Exact model-visible inputs key every stage. Changing prompts, traits, goals or models invalidates it.
-      const key = JSON.stringify([job.id, job.seed, req.model, deps.project.settings.local_base_url, purpose, system, req.user, z.toJSONSchema(schema)]);
+      const key = JSON.stringify([job.id, job.seed, req.model, deps.project.settings.local_base_url, purpose, req.system, req.user, z.toJSONSchema(schema)]);
       const cached = schema.safeParse(deps.cache?.get(key));
       if (cached.success) return cached.data;
       await slot(purpose === 'write_persona' ? 1 : 0);
@@ -216,10 +220,10 @@ export async function writePersonas(jobs: Job[], taken: Map<string, string>, dep
         ...job.traits,
         name: c.name,
         job_title: c.job_title,
-        industry: c.industry,
+        industry: deps.project.comparison ? 'Not specified' : c.industry,
         background: expanded.background,
         context_of_use: c.context_of_use,
-        goal_interpretation: c.goal_interpretation,
+        goal_interpretation: deps.project.comparison?.question ?? c.goal_interpretation,
         voice: c.voice,
         seed: job.seed,
         posting_propensity: postingPropensity(job.seed),

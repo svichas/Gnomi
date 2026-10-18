@@ -210,15 +210,15 @@ export function App() {
   const back = () => {
     if (tab === 'settings') go(returnTab);
     else if (tab === 'run') go('review');
-    else if (tab === 'review') setTab('audience');
+    else if (tab === 'review') setTab(draft?.form.comparison?.execution.collection === 'shared_research' ? 'project' : 'audience');
     else if (tab === 'audience') setTab('project');
     else showHome();
   };
   const headings = {
-    project: ['What would you like to learn?', 'Give your simulated users a place to start and a goal to try.'],
+    project: ['What would you like to learn?', draft?.form.study_intent === 'choose_tool' ? 'Define your company requirements and add the tools you want to compare.' : 'Give your simulated users a place to start and a goal to try.'],
     audience: ['A few different perspectives.', 'Choose who will try your product. These personas are simulated users.'],
-    review: ['One last look before you start.', 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
-    run: ['Simulation', 'Follow your audience’s experience, from first impressions to final findings.'],
+    review: ['One last look before you start.', draft?.form.comparison ? 'Review the shared brief, source access and collection budget before starting.' : 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
+    run: ['Simulation', draft?.form.comparison?.execution.collection === 'shared_research' ? 'Follow source collection and review the evidence for your decision.' : 'Follow your audience’s experience, from first impressions to final findings.'],
     settings: ['Make Gnomi work for you.', 'Connect an AI provider and choose your limits.'],
   };
 

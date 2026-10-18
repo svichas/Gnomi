@@ -41,9 +41,10 @@ const FORMATS = {
   design: { icon: 'image', title: 'Add design', description: 'See how people interpret your screens.', example: 'Upload PNG, JPEG, or WebP images' },
 } as const;
 
-function PoiEditor({ draft, index, count, expanded, focusName, segments, sessions, onToggle, onChange, onMove, onRemove }: {
+function PoiEditor({ draft, index, count, expanded, focusName, segments, sessions, comparison, onToggle, onChange, onMove, onRemove }: {
   draft: PoiDraft; index: number; count: number; expanded: boolean; focusName: boolean;
   segments: Segment[]; sessions: SessionInfo[]; onToggle(): void;
+  comparison?: boolean;
   onChange(change: (draft: PoiDraft) => PoiDraft): void; onMove(by: number): void; onRemove(): void;
 }) {
   const id = useId();
@@ -56,7 +57,7 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
   const title = poiTitle(draft, index);
   const Form = FORMS[draft.type] as ComponentType<PoiFormProps<PoiDraft>>;
   const incomplete = typeof poiOf(draft) === 'string';
-  const detail = draft.type === 'web' ? draft.mode === 'observe_only' ? 'Competitor, observed only' : draft.url.trim() || 'Add a start page'
+  const detail = draft.type === 'web' ? draft.mode === 'observe_only' ? comparison ? 'Public evidence, read only' : 'Competitor, observed only' : draft.url.trim() || 'Add a start page'
     : draft.type === 'text' ? draft.asset ? 'Text added' : 'Paste text or choose a file'
     : draft.frames.length ? `${draft.frames.length} ${draft.frames.length === 1 ? 'screen' : 'screens'}` : 'Add your first screen';
   return (
@@ -81,7 +82,7 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
         <Field label={`${POI_KINDS[draft.type].label} name`} hint="Optional. Give it a name you’ll recognize in the report.">
           <input ref={name} value={draft.name} onChange={(e) => onChange((was) => ({ ...was, name: e.target.value }))} placeholder={draft.type === 'web' ? 'e.g. Our hiring app' : draft.type === 'text' ? 'e.g. Welcome email' : 'e.g. Onboarding screens'} className={inputClass} />
         </Field>
-        <Form draft={draft} onChange={onChange} sessions={sessions} />
+        <Form draft={draft} onChange={onChange} sessions={sessions} comparison={comparison} />
         {segments.length > 0 && <details className="disclosure poi-audience">
           <summary><Icon name="people" size={18} />Who tries this?<span>{draft.segments === null ? 'Automatic selection' : `${draft.segments.length} selected`}</span></summary>
           <div className="disclosure-body"><Segments draft={draft} segments={segments} onChange={(chosen) => onChange((was) => ({ ...was, segments: chosen }))} /></div>
@@ -96,8 +97,8 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
 }
 
 /** The project's points of interest, in the order personas use them. */
-export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDraft[]) => PoiDraft[]): void; segments: Segment[]; sessions: SessionInfo[] }) {
-  const { pois, onChange, segments, sessions } = props;
+export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDraft[]) => PoiDraft[]): void; segments: Segment[]; sessions: SessionInfo[]; comparison?: boolean }) {
+  const { pois, onChange, segments, sessions, comparison } = props;
   const [figma, setFigma] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(pois[0]?.id ?? null);
   const [added, setAdded] = useState<string | null>(null);
@@ -124,12 +125,12 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDr
   return (
     <section ref={root} className="content-panel poi-section" aria-labelledby={heading}>
       <div className="poi-section-heading"><h2 id={heading}>Points of interest</h2><span className="poi-count">{pois.length} {pois.length === 1 ? 'item' : 'items'}</span></div>
-      <p className="poi-intro">Give your personas something to explore. Mix websites, words, and designs in one test.</p>
-      {pois.length > 0 ? <p className="poi-sequence-label"><Icon name="play" size={14} />Your test sequence<span>Personas try these in order</span></p>
+      <p className="poi-intro">{comparison ? 'Add the websites and materials to evaluate. Assign each source to a tool in the comparison below.' : 'Give your personas something to explore. Mix websites, words, and designs in one test.'}</p>
+      {pois.length > 0 ? <p className="poi-sequence-label"><Icon name="play" size={14} />{comparison ? 'Comparison sources' : 'Your test sequence'}<span>{comparison ? 'Each tool faces the same requirements' : 'Personas try these in order'}</span></p>
         : <div className="poi-empty"><span className="poi-item-icon"><Icon name="spark" size={22} /></span><div><h3>Start with one thing to try.</h3><p>Choose a format below. You can add more whenever you need.</p></div></div>}
       <ol className="poi-list" aria-label="Points of interest">
         {pois.map((draft, index) => <PoiEditor key={draft.id} draft={draft} index={index} count={pois.length} expanded={expanded === draft.id} focusName={added === draft.id}
-          segments={segments} sessions={sessions} onToggle={() => setExpanded(expanded === draft.id ? null : draft.id)}
+          segments={segments} sessions={sessions} comparison={comparison} onToggle={() => setExpanded(expanded === draft.id ? null : draft.id)}
           onChange={(change) => update(draft.id, change)} onMove={(by) => move(index, by)} onRemove={() => remove(index)} />)}
       </ol>
       <div className="poi-add">
@@ -137,7 +138,7 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDr
         <div className="poi-choices">
           {(Object.keys(FORMATS) as PoiType[]).map((type) => <button type="button" key={type} className="poi-choice" aria-label={`Add ${POI_KINDS[type].label.toLowerCase()}`} aria-describedby={`${heading}-${type}`} onClick={() => add(POI_KINDS[type].blank(nextPoiId(pois)))}>
             <span className="poi-choice-icon"><Icon name={FORMATS[type].icon} /></span>
-            <span className="poi-choice-copy"><strong>{FORMATS[type].title}</strong><span id={`${heading}-${type}`}>{FORMATS[type].description}</span><small>{FORMATS[type].example}</small></span>
+            <span className="poi-choice-copy"><strong>{comparison && type === 'web' ? 'Add website' : FORMATS[type].title}</strong><span id={`${heading}-${type}`}>{comparison ? { web: 'Review a public site or a permitted test workflow.', text: 'Compare supplied documentation and product facts.', design: 'Evaluate supplied screens as prototype evidence.' }[type] : FORMATS[type].description}</span><small>{comparison ? { web: 'Marketing, pricing, or documentation', text: 'Product documents or pricing terms', design: 'Upload PNG, JPEG, or WebP images' }[type] : FORMATS[type].example}</small></span>
             <Icon name="plus" size={16} />
           </button>)}
           <button type="button" className="poi-choice" aria-label="Add from Figma" aria-describedby={`${heading}-figma`} onClick={() => setFigma(true)}>

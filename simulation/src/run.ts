@@ -1,13 +1,14 @@
 import { createComparisonRuntime, comparisonSession, ComparisonEnvironmentError } from './comparison/runtime.ts';
 import { effectiveComparisonPois, validateComparison } from './comparison/config.ts';
-import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
+import type { ComparisonTarget } from './comparison/types.ts';
+import type { ComparisonBlock } from './comparison/planning.ts';
+import { createComparisonBudget, comparisonBudgetGateway } from './comparison/budget.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
 import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
-import { costUsd, isPriced } from './llm/prices.ts';
 import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
 import { comparisonFor } from './poi/compare.ts';
 import { poiBudget, runnerFor } from './poi/index.ts';
@@ -114,8 +115,6 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let spent = 0;
   let seen = 0;
   let navigationSpent = 0;
-  const comparisonCosts = { navigator: { cost: 0, calls: 0 }, judge: { cost: 0, calls: 0 } };
-  const blockReservations = new Map<string, { total: number; navigation: number }>();
   let comparisonAdmissionReason: string | null = null;
   const spentUsd = () => {
     for (const e of store.events(run_id, { types: ['llm.call'], afterSeq: seen })) {
@@ -125,15 +124,6 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         if (project.comparison) {
           const cost = e.payload.cost_usd;
           if (e.payload.role === 'navigator') navigationSpent += cost;
-          if (e.payload.role === 'navigator' || e.payload.role === 'judge') {
-            comparisonCosts[e.payload.role].cost += cost;
-            comparisonCosts[e.payload.role].calls++;
-          }
-          const reservation = blockReservations.get(e.persona_id ?? '');
-          if (reservation) {
-            reservation.total = Math.max(0, reservation.total - cost);
-            if (e.payload.role === 'navigator') reservation.navigation = Math.max(0, reservation.navigation - cost);
-          }
         }
       }
     }
@@ -180,36 +170,16 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     checkRecordedBudget(); // Also protects callers supplying a custom gateway without per-attempt notifications.
   };
 
-  // Admission reserves a minimum useful matched block: one observation and two evidence-review calls per target.
-  // Observed per-role costs replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
-  // this improves coverage allocation, while the recorded-cost guard remains the run-wide stop policy.
-  const comparisonCallCost = (role: 'navigator' | 'judge') => {
-    const observed = comparisonCosts[role];
-    if (observed.calls) return observed.cost / observed.calls;
-    const model = settings.routing[role];
-    if (!isPriced(model)) return null;
-    return costUsd(model, { input_tokens: role === 'navigator' ? 5000 : 1500, output_tokens: role === 'navigator' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
-  };
-  const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
+  const comparisonBudget = project.comparison ? createComparisonBudget({ settings, analysisReserve: project.comparison.execution.analysis_reserve_fraction, spent: spentUsd, navigationSpent: () => { spentUsd(); return navigationSpent; } }) : null;
+  const beginComparisonBlock = (block: ComparisonBlock) => {
     if (drain.signal.aborted) return false;
-    const now = spentUsd();
-    const scenario = project.comparison!.scenarios.find((item) => item.id === task.scenario_id)!;
-    if (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? '')) return true;
-    const targetCount = task.entries.filter((entry) => {
-      const poi = project.pois.find((item) => item.id === entry.poi_id)!;
-      return poi.segments === null || poi.segments.includes(persona.segment_id ?? '');
-    }).length;
-    // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
-    // observed charges take over once available, retaining the existing support for unpriced model routes.
-    const navigatorCost = comparisonCallCost('navigator') ?? 0, judgeCost = comparisonCallCost('judge') ?? 0;
-    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + 2 * judgeCost) };
-    const reserved = [...blockReservations.values()].reduce((sum, value) => ({ total: sum.total + value.total, navigation: sum.navigation + value.navigation }), { total: 0, navigation: 0 });
-    const navigationLimit = settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction);
-    if (now + reserved.total + needed.total > settings.cost_budget_usd || navigationSpent + reserved.navigation + needed.navigation > navigationLimit) {
-      comparisonAdmissionReason = 'The remaining allowance cannot admit another complete matched task block with evidence analysis; its targets were left unattempted.';
-      return false;
-    }
-    blockReservations.set(persona.id, needed);
+    const task = project.comparison!.tasks.find((item) => item.id === block.task_id)!;
+    return comparisonBudget!.admit(block.id, block.episodes.filter((job) => job.eligible).length, task.max_steps);
+  };
+  const beginComparisonStep = (blockId?: string) => {
+    checkRecordedBudget();
+    if (drain.signal.aborted || !blockId || !comparisonBudget!.hasBlock(blockId)) return false;
+    inFlight++;
     return true;
   };
 
@@ -511,17 +481,39 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const comparison = project.comparison ? createComparisonRuntime({
     config, llm: budgetedLlm, blobs, record, events: () => store.events(run_id), signal: hard.signal,
     openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
-    beginBlock: beginComparisonBlock,
-    endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
-    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigator') ?? undefined); },
-    beginAnalysisStep: () => beginStep(comparisonCallCost('judge') ?? undefined), endStep, stopped: () => drain.signal.aborted,
+    endBlock: (block) => { spentUsd(); comparisonBudget!.finishBlock(block.id); },
+    llmForBlock: (id) => comparisonBudgetGateway(comparisonBudget!, id, budgetedLlm, () => halt({ reason: 'cost_budget', detail: 'Recorded model charges exceeded the reserved task allowance; further work stopped to preserve other evidence-review obligations.' }, false)),
+    beginUsageStep: beginComparisonStep, beginAnalysisStep: beginComparisonStep, endStep, stopped: () => drain.signal.aborted,
     stopReason: () => halted?.detail ?? (halted ? halted.reason : comparisonAdmissionReason ?? 'The navigation allowance was exhausted; remaining allowance is reserved for evidence analysis.'),
     tripwire,
   }) : null;
 
   const schedule = async () => {
     if (comparison) {
-      await inParallel(config.personas, (persona) => comparison.runPersona(persona));
+      const active = new Map<Promise<void>, Set<string>>();
+      for (const block of comparison.plan.blocks) {
+        const identities = new Set(block.episodes.map((job) => job.persona_id));
+        const conflicts = () => [...active.values()].some((ids) => [...identities].some((id) => ids.has(id)));
+        while ((active.size >= concurrency || conflicts()) && !drain.signal.aborted) await Promise.race(active.keys());
+        if (drain.signal.aborted) break;
+        // A running block can still release unused navigation and retry funds. Keep coverage order and
+        // retry this block after those obligations settle before declaring it unaffordable.
+        let admitted = beginComparisonBlock(block);
+        while (!admitted && active.size && !drain.signal.aborted) {
+          await Promise.race(active.keys());
+          admitted = beginComparisonBlock(block);
+        }
+        if (drain.signal.aborted) break;
+        if (!admitted) {
+          comparisonAdmissionReason = 'The remaining allowance cannot admit another complete matched task block with its planned navigation, both evidence reviews and one retry per request; its targets were left unattempted.';
+          continue;
+        }
+        const work: Promise<void> = comparison.runBlock(block)
+          .catch((err) => halt({ reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true))
+          .finally(() => active.delete(work));
+        active.set(work, identities);
+      }
+      await Promise.all(active.keys());
       comparison.finishUnscheduled();
       if (comparisonAdmissionReason && !halted) halt({ reason: 'cost_budget', detail: comparisonAdmissionReason }, false);
       return;

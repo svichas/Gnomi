@@ -398,3 +398,39 @@ test('a custom schema needs a generated audience, and legacy profiles migrate wh
   await call('save_project', { project: { ...config, persona_schema: getPersonaSchema() } });
   await assert.rejects(call('start_run', { reset: false }), /profile.*changed|refresh|generate.*again/i);
 });
+
+test('shared research runs without generated personas and preserves segment-restricted source access', async () => {
+  await call('open_project', { dir: join(dir, 'research-without-personas') });
+  const { id } = await call('import_asset', { text: '# Product facts\nA public trial is available. Pricing requires a quote.', name: 'research.md' });
+  const config = project({}, { study_intent: 'choose_tool', goal: 'Choose a tool for our company',
+    audience: audience([segment('buyer'), segment('technical')], 20), persona_schema: getPersonaSchema(),
+    pois: ['buyer', 'technical'].map((scope) => ({ id: `source-${scope}`, name: scope, type: 'text', asset: id, segments: [scope] })),
+  });
+  config.comparison = draftComparison(config);
+  config.comparison.targets.forEach((target) => { target.access_scope = 'documentation'; });
+  config.comparison.execution.collection = 'shared_research';
+  config.comparison.execution.research_environment = { locale: 'en-US', timezone: 'UTC' };
+  await call('save_project', { project: config });
+  const estimate = await call('estimate_run', {});
+  assert.ok(estimate.calls > 0, 'research estimates use the same available identities as execution');
+  const eventOffset = events.length; // run IDs are local to each project in this shared host test.
+  const { run_id } = await call('start_run', { reset: false });
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => { clearInterval(poll); reject(new Error('Research did not produce a report')); }, 10_000);
+    const poll = setInterval(() => {
+      if (!events.slice(eventOffset).some((event) => event.run_id === run_id && event.type === 'report.generated')) return;
+      clearTimeout(timeout); clearInterval(poll); resolve();
+    }, 20);
+  });
+  const runEvents = events.slice(eventOffset).filter((event) => event.run_id === run_id);
+  const snapshot = runEvents.find((event) => event.type === 'run.started')!;
+  assert.equal(snapshot.type, 'run.started');
+  assert.deepEqual(snapshot.payload.config.personas.map((person) => person.segment_id).sort(), ['buyer', 'technical']);
+  assert.equal(runEvents.filter((event) => event.type === 'comparison.episode_started').length, 2);
+  assert.equal(runEvents.filter((event) => event.type === 'llm.call' && event.payload.role === 'judge').length, 4);
+  const report = await call('get_report', { run_id });
+  assert.ok(report.comparison?.coverage.every((row) => row.attempted === 1 && row.unit === 'source_review'));
+  assert.match(report.banner, /public sources/i);
+  assert.doesNotMatch(report.banner, /simulated users/i);
+  assert.equal((await call('get_project', {})).personas.length, 0, 'research identities do not create an audience');
+});

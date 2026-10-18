@@ -3,6 +3,7 @@ import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
 import { placeName } from '@gnomi/simulation/poi/pois.ts';
+import { comparisonPlan } from '@gnomi/simulation/comparison/planning.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -288,8 +289,16 @@ export const stateWord = (state: PersonaState, ended: boolean) => (ended && stat
 
 /** Where each persona stands, from the log alone. Once the run has ended, those still working or queued were cut short. */
 export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<string, PersonaState> {
-  const states = new Map<string, PersonaState>(personas.map((persona) => [persona.id, 'waiting']));
-  const comparison = events.find((event) => event.type === 'run.started')?.payload.config.project.comparison;
+  const config = events.find((event) => event.type === 'run.started')?.payload.config;
+  const comparison = config?.project.comparison;
+  const plan = comparison && config ? comparisonPlan(config) : null;
+  const expected = new Map<string, Set<string>>();
+  for (const episode of plan?.episodes ?? []) if (episode.eligible) {
+    const own = expected.get(episode.persona_id) ?? new Set<string>();
+    own.add(JSON.stringify([episode.task_id, episode.target_id]));
+    expected.set(episode.persona_id, own);
+  }
+  const states = new Map<string, PersonaState>(personas.filter((persona) => plan?.collection !== 'shared_research' || expected.has(persona.id)).map((persona) => [persona.id, 'waiting']));
   const resolved = new Map<string, Set<string>>();
   const unfinished = new Set<string>();
   for (const event of events) {
@@ -297,11 +306,13 @@ export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<st
     if (comparison) {
       if (event.type === 'comparison.episode_started' || event.type === 'comparison.assessment') states.set(event.persona_id, 'active');
       if (event.type === 'comparison.episode_finished') {
+        const key = JSON.stringify([event.payload.task_id, event.payload.target_id]);
+        if (!expected.get(event.persona_id)?.has(key)) continue;
         const own = resolved.get(event.persona_id) ?? new Set<string>();
-        own.add(event.payload.episode_id);
+        own.add(key);
         resolved.set(event.persona_id, own);
         if (event.payload.outcome === 'incomplete' || event.payload.outcome === 'not_attempted') unfinished.add(event.persona_id);
-        states.set(event.persona_id, own.size === comparison.targets.length * comparison.tasks.length ? unfinished.has(event.persona_id) ? 'unfinished' : 'done' : 'active');
+        states.set(event.persona_id, own.size === expected.get(event.persona_id)!.size ? unfinished.has(event.persona_id) ? 'unfinished' : 'done' : 'active');
       }
       continue;
     }
