@@ -7,6 +7,7 @@ import { isEnd } from './activity.ts';
 import { initialDraft, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { Project } from './Project.tsx';
+import { ProjectRunHistory } from './ProjectRunHistory.tsx';
 import type { ProjectAction, ProjectCatalog } from '../../projects.ts';
 import { configuredProviders, withAvailableProvider, type ProviderList } from '../../providers.ts';
 import { ProjectDialog, Projects } from './Projects.tsx';
@@ -192,15 +193,18 @@ export function App() {
     setHome(true);
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
   };
+  function showRun(id: string) {
+    setRunId(id);
+    setHome(false);
+    setTab('run');
+    requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }));
+  }
   async function openSessionRun(run: SessionRun): Promise<boolean> {
     if (!run.project_id || !catalog?.projects.some((project) => project.id === run.project_id)) throw new Error('This project is no longer in your workspace.');
     if (catalog.currentId !== run.project_id) {
       if (await projectAction({ action: 'open', id: run.project_id }) === null) return false;
     }
-    setRunId(run.run_id);
-    setHome(false);
-    setTab('run');
-    requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }));
+    showRun(run.run_id);
     return true;
   }
   const back = () => {
@@ -224,7 +228,10 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>}
+        {!home && <div className="header-actions">
+          <ProjectRunHistory key={revision} runs={info?.runs ?? []} selected={tab === 'run' ? runId : null} onSelect={showRun} />
+          <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>
+        </div>}
       </header>
 
       <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
@@ -290,7 +297,7 @@ export function App() {
               ) : <p className="text-sm text-stone-500">Saving your project and checking the run…</p>}
             </div>
             <div role="region" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
-              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSelect={setRunId} onSetup={() => go('project')} />
+              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSetup={() => go('project')} />
             </div>
           </div>
         )}

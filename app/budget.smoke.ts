@@ -54,13 +54,14 @@ try {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
-  await page.locator('#tab-run').click();
-  await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Past runs', exact: true }).click();
+  await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: /r-0001/ }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click();
   const report = page.locator('section[aria-labelledby=report-title]');
   await report.getByRole('heading', { name: 'Report', exact: true }).waitFor();
   const status = page.getByRole('region', { name: 'Run status' });
-  assert.match(await status.innerText(), /Recorded cost/);
+  assert.match(await status.innerText(), /\$5\.25 recorded · \$5\.00 limit/);
   assert.match(await status.innerText(), /\$5\.25/);
   assert.match(await report.innerText(), /Recorded cost/);
   assert.match(await report.innerText(), /\$5\.25/);
@@ -75,6 +76,9 @@ try {
   assert.deepEqual(errors, []);
   console.log('ok    stopped-run cost, uncertain charges and 720px report render in Electron');
   passed = true;
+} catch (error) {
+  await (await app.firstWindow()).screenshot({ path: join(shots, 'budget-failure.png') });
+  throw error;
 } finally {
   await app.close();
   if (passed) rmSync(dir, { recursive: true, force: true });

@@ -44,8 +44,8 @@ try {
   // An occluded or unfocused window may throttle its frames; the measurement is of rendering, not of the desktop.
   await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.webContents.setBackgroundThrottling(false); win.setSize(1280, 900); });
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
-  await page.locator('#tab-run').click();
-  await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+  await page.getByRole('button', { name: 'Past runs', exact: true }).click();
+  await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: /r-0001/ }).click();
   const simulationTab = page.getByRole('tab', { name: 'Simulation', exact: true });
   if (await simulationTab.isVisible()) await simulationTab.click();
   const graph = page.getByRole('region', { name: 'Swarm graph' });

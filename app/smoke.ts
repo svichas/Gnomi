@@ -315,7 +315,7 @@ try {
 
   await stage('the pre-run summary lists the allowed hosts and offers the reset for a project with a reset hook', async () => {
     await tab('Project').click();
-    await page.locator('summary').filter({ hasText: 'Access & advanced options' }).click();
+    await page.locator('summary').filter({ hasText: 'Website access & safety' }).click();
     await page.getByLabel('Add a host').fill('cdn.example.test');
     await page.getByRole('button', { name: 'Add host' }).click();
     await page.getByLabel('Reset hook URL (optional)').fill('http://localhost:9/reset');
@@ -520,7 +520,9 @@ try {
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
       for (const name of ['Recruiters', 'Hiring managers', 'Weighted by share']) assert.match(segments, new RegExp(name));
       assert.equal(await page.getByRole('region', { name: /How each persona did/ }).locator('details').count(), 6, 'a card for each of the six personas');
-      assert.match(await page.getByRole('region', { name: 'Run status' }).innerText(), /Personas finished\s+6 of 6/);
+      const status = page.getByRole('region', { name: 'Run status' });
+      assert.match(await status.innerText(), /6 simulated people/);
+      assert.equal(await status.getByRole('progressbar', { name: 'Simulation progress' }).getAttribute('aria-valuenow'), '100');
       assert.match(await methodsText(page), /3 browsers at a time/);
       await page.screenshot({ path: join(shots, 'report-population.png'), fullPage: true });
       // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
@@ -642,8 +644,8 @@ try {
     await page.locator('#panel-audience').getByRole('heading', { name: 'Personas (6)' }).waitFor();
     assert.equal(await page.locator('#panel-audience').getByRole('list', { name: 'Segments', exact: true }).getByRole('slider').count(), 2);
     if (!ran) return; // nothing to open: the first run failed
-    await tab('Run').click();
-    await page.getByLabel('Run history', { exact: true }).selectOption('r-0001');
+    await page.getByRole('button', { name: 'Past runs', exact: true }).click();
+    await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: /r-0001/ }).click();
     await openReport(page);
     await expectReport(page);
   });
@@ -652,8 +654,8 @@ try {
     const inspector = page.getByRole('complementary', { name: 'Persona inspector' });
     const graph = page.getByRole('region', { name: 'Swarm graph' });
     // The scripted swarm run above: personas, the Gym, its used and friction edges, and its social rounds.
-    await tab('Run').click();
-    await page.getByLabel('Run history', { exact: true }).selectOption('r-0005');
+    await page.getByRole('button', { name: 'Past runs', exact: true }).click();
+    await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: /r-0005/ }).click();
     await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
     await graph.getByText(/^6 personas, 1 point of interest, [1-9]\d* connections$/).waitFor();
     assert.ok(Number(await graph.locator('.swarm-filter').filter({ hasText: 'Product use' }).locator('.swarm-filter-count').innerText()) > 0);
@@ -675,8 +677,8 @@ try {
     store.close();
     await page.reload();
     await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
-    await tab('Run').click();
-    await page.getByLabel('Run history', { exact: true }).selectOption(config.run_id);
+    await page.getByRole('button', { name: 'Past runs', exact: true }).click();
+    await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: new RegExp(config.run_id) }).click();
     await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
     await graph.getByText(`12 personas, 3 points of interest, ${buildGraph(logged).edges.size} connections`).waitFor();
     await page.getByText('Audience conversations', { exact: true }).click();

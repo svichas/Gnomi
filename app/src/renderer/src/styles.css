@@ -174,9 +174,7 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .review-segments strong { font-weight: 500; margin-right: 4px; }
 .review-status { font-size: 12px; color: var(--gnomi-text-muted); text-align: right; }
 .run-history-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 24px; color: var(--gnomi-text-muted); font-size: 12px; }
-.run-history-bar label { display: flex; align-items: center; gap: 8px; }
 .run-history-bar .text-link { margin-left: auto; }
-.run-history-select { border: 1px solid var(--gnomi-control-border); border-radius: 8px; padding: 8px 12px; max-width: 100%; color: var(--gnomi-text); background: var(--gnomi-surface); }
 .run-status { background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; padding: 24px; }
 .run-title { font-size: 20px; font-weight: 500; letter-spacing: -.02em; }
 .run-stat { padding: 8px 12px 8px 0; }
@@ -262,7 +260,6 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
   .disclosure-body { padding: 16px; }
   .run-status { padding: 16px; }
   .run-title { font-size: 18px; }
-  .run-history-select { width: 100%; order: 3; }
   .timeline-header { gap: 12px; padding-inline: 4px; }
   .timeline-row::before { left: 22px; }
   .timeline-time { font-size: 10px; }

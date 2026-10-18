@@ -16,7 +16,7 @@ import { Feed } from './Feed.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
 import { Swarm } from './Swarm.tsx';
-import { Button, Note, Screenshot, when } from './ui.tsx';
+import { Button, Note, Screenshot } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 
 const DOT: Record<PersonaState, string> = {
@@ -235,15 +235,10 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   );
 }
 
-const STATUS_WORDS = { running: 'Running', finished: 'Complete', stopped: 'Stopped', interrupted: 'Interrupted' };
-
-export function Run({ runId, runs, onSelect, onSetup, active }: { runId: string | null; runs: RunRow[]; onSelect(runId: string): void; onSetup(): void; active: boolean }) {
+export function Run({ runId, runs, onSetup, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; active: boolean }) {
   return (
     <div className="run-page">
-      {runs.length > 0 && <div className="run-history-bar"><label htmlFor="run-history"><Icon name="clock" size={18} />Run history</label><select id="run-history" value={runId ?? ''} onChange={(event) => onSelect(event.target.value)} className="run-history-select">
-        {!runId && <option value="">Choose a run</option>}
-        {runs.map((run) => <option key={run.run_id} value={run.run_id}>{when(run.started_at)} · {STATUS_WORDS[run.status]} · {runSetup(run.config).personas.length} people</option>)}
-      </select><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {runs.length > 0 && <div className="run-history-bar"><span>{runId}</span><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
       {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );
