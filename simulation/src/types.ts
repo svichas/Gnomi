@@ -430,7 +430,8 @@ export interface EventPayloads {
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
   'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
-  'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[] }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
+  // keys: each friction group's id → its grouping key when the judge ran, so a rebuild under changed grouping rules drops stale answers; absent in older logs
+  'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[]; keys?: Record<string, string> }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
 }
@@ -446,13 +447,13 @@ export interface SurveyItem {
   severity: number | null; // 1–4 for frictions and objections; null for likes
 }
 
-/** How much a finding rests on: one persona, a few, or a clear share of those who used the point of interest. */
-export type EvidenceLevel = 'strong' | 'some' | 'single';
+/** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
+export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
 
 /** k of n personas, with a 95% Wilson interval: what the share could plausibly be with this few personas. */
 export interface Prevalence {
   personas: number; // k: personas with the finding
-  exposed: number; // n: personas who used the point of interest
+  exposed: number; // n: personas who could meet it: who reached its pages, or for buyer objections who answered a buyer survey
   share: number; // k ÷ n
   low: number;
   high: number;
@@ -515,7 +516,8 @@ export type ReportFriction = {
   screenshot: string | null;
 } & StepEvidence;
 
-export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'incomplete';
+// not_started: the run never got to the persona (no step, no episode); it is left out of every rate.
+export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'incomplete' | 'not_started';
 
 export interface ReportPersona {
   id: string;
@@ -523,8 +525,9 @@ export interface ReportPersona {
   job_title?: string; // omitted when disabled in the run's frozen profile schema
   segment_id: string | null;
   device: Device;
-  outcome: Outcome;
+  outcome: Outcome; // done only when every non-competitor POI it was given ended done, else its worst POI's outcome
   outcome_text: string | null;
+  pois?: Record<string, Outcome>; // per non-competitor POI it was given; only when the project has more than one
   steps: number;
   frictions: number;
   attributes?: Record<string, AttributeValue>; // enabled report dimensions only
@@ -543,9 +546,10 @@ export interface ReportSegment {
   share: number; // percent, as the audience set it
   personas: number;
   outcomes: Record<Outcome, number>;
-  completion: number; // done ÷ personas
-  with_friction: number; // personas who reported at least one friction ÷ personas
+  completion: number; // done ÷ personas who started
+  with_friction: number; // personas with a self-report, survey friction or signal in a friction theme ÷ personas who started
   frictions: number;
+  pois?: { poi_id: string; personas: number; completion: number }[]; // per non-competitor POI, of those who started it; only with more than one
 }
 
 /** Evidence trust within the simulation (tech.md §8.1): a self-report backed by a signal, a signal alone, a self-report alone. */
@@ -570,7 +574,7 @@ export type ReportEvidence = {
   signals: SignalKind[];
 } & StepEvidence;
 
-/** Frictions grouped into one problem, ranked by segment-weighted affected share × severity × trust (tech.md §8.2). */
+/** Frictions grouped into one problem, ranked by severity tier, then the low end of the first-hand share × trust (tech.md §8.2). */
 export interface ReportTheme {
   id: string; // its group ids joined by '+'
   poi_id: string;
@@ -581,15 +585,16 @@ export interface ReportTheme {
   category?: 'friction' | 'objection'; // objection: a reason not to adopt, from the survey; absent before structured surveys
   prevalence?: Prevalence; // first-hand personas only (new_simulation.md §4); absent in reports written before it
   heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
+  first_hand?: string[]; // the persona ids counted in prevalence; absent before it was stored
   trust: Trust; // the highest among member frictions
-  severity: number; // median member severity, 1–4
-  impact: number; // Σ share_s × affected_s
-  score: number; // prevalence.low × severity × trust weight; before prevalence, impact × severity × trust weight
+  trust_counts?: Record<Trust, number>; // member frictions per trust; absent in older reports
+  severity: number; // median over personas of each persona's highest member severity, 1–4
+  score: number; // prevalence.low × the mean trust weight of its personas; ranked after the severity tier. Older reports used other formulas
   personas: number;
   frictions: number;
   pages: string[]; // page patterns, ids normalised out
   elements: string[]; // role "name"
-  affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[];
+  affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[]; // affected: first-hand personas
   evidence: ReportEvidence[]; // at most three, highest severity first
   seqs: number[]; // every member's events, so the theme always links to the log
   suggestion: { change: string; solution: string } | null; // generated by the author model; a suggestion, not a finding
@@ -599,9 +604,9 @@ export interface ReportTheme {
 export interface ReportSentiment {
   segment_id: string | null;
   name: string;
-  surveyed: number;
+  surveyed: number; // answers from users, one per persona and POI; buyers are in ReportBuyers
   sentiment: number | null; // mean, −2…+2
-  would_continue: number; // share of surveyed personas
+  would_continue: number; // share of the answers
 }
 
 /** How the personas who used both compared a competitor's site with the team's product (tech.md §7), by segment. */
@@ -711,10 +716,13 @@ export interface ReportPost {
 export interface SpreadStats {
   posts: number; // posts about it, replies included
   seeds: ReportPost[]; // the first posts about it: those of the earliest round with one, at most three
-  first_hand: string[]; // persona ids with their own friction in it
-  second_hand: string[]; // repeats: persona ids who posted about it without their own friction in it
-  segments: { segment_id: string | null; name: string; personas: number; seed: boolean }[]; // where its posters and influenced personas are
-  influence: InfluenceEdge[]; // the shared rule in social/influence.ts, limited to its posts
+  first_hand: string[]; // persona ids who met it first-hand, as the theme's prevalence counts them
+  second_hand: string[]; // repeats: persona ids who posted about it without meeting it first-hand
+  posters?: string[]; // persona ids who posted about it; absent in older reports
+  readers?: string[]; // persona ids shown one of its posts in a feed or at a step; absent in older reports
+  segments: { segment_id: string | null; name: string; personas: number; seed: boolean }[]; // where its readers are; older reports: posters and influenced personas
+  influence: InfluenceEdge[]; // the shared rule in social/influence.ts, limited to its posts, one per (author, persona, change)
+  heard?: InfluenceEdge[]; // changes of mind at a step handed one of its posts without citing it; not counted as influence
   sentiment: { round: number; mean: number | null; personas: number }[]; // mean latest opinion at each round's end, −2…+2
 }
 

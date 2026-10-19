@@ -3,7 +3,7 @@ import type { LlmGateway, Recorder } from '../seams.ts';
 import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { english } from '../llm/english.ts';
 import { buildReport } from './build.ts';
-import { likeGroups } from './friction.ts';
+import { groupKey, likeGroups } from './friction.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
@@ -107,7 +107,8 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
         user: [{ type: 'text', text: JSON.stringify({ product, groups, ...(social ? { posts } : {}), ...(liked ? { likes } : {}) }) }],
         schema: judgeSchemaFor(social, liked),
       });
-      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}), ...(liked ? { likes: object.likes } : {}) } });
+      const keys = Object.fromEntries(all.filter((g) => g.poi_id === poi_id).map((g) => [g.id, groupKey(g.members[0])]));
+      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}), ...(liked ? { likes: object.likes } : {}), keys } });
     } catch {
       // No key, a provider error, two invalid answers or a stop: llm.call recorded any attempt, and the themes stay deterministic.
     }

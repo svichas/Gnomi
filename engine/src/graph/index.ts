@@ -41,7 +41,7 @@ export interface SwarmEdge {
   last_seq: number;
   round: number; // the round it first appeared in
   last_round: number; // the latest round that added to it, for "only this round"
-  kind?: 'influence' | 'formed'; // influenced edges only: formed is a first opinion after reading, kept apart so it never counts as influence
+  kind?: 'influence' | 'formed' | 'heard'; // influenced edges only: formed is a first opinion after reading, kept apart so it never counts as influence
 }
 
 export interface SwarmGraph {

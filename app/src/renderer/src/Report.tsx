@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT } from '@gnomi/simulation/report/markdown.ts';
+import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonReport } from './ComparisonReport.tsx';
@@ -32,6 +32,7 @@ const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
   repeated_failure: { text: 'Got stuck', tone: 'warn' },
   blocked: { text: 'Blocked', tone: 'bad' },
   incomplete: { text: 'Did not finish', tone: 'neutral' },
+  not_started: { text: 'Did not start', tone: 'neutral' },
 };
 
 function OutcomeChip({ outcome }: { outcome: Outcome }) {
@@ -75,13 +76,14 @@ const EVIDENCE_LEVEL = {
   strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it', order: 3 },
   some: { text: 'Some evidence', plain: 'two or more personas', order: 2 },
   single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern', order: 1 },
+  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed first', order: 0 },
 } as const satisfies Record<EvidenceLevel, { text: string; plain: string; order: number }>;
 const evidenceOf = (finding: { prevalence?: Prevalence; personas: number }): EvidenceLevel => finding.prevalence?.level ?? (finding.personas <= 1 ? 'single' : 'some');
 const isSingle = (theme: ReportTheme) => evidenceOf(theme) === 'single';
 
-/** Better evidence first; within it the most severe, then the engine's score (the low end of the share × severity × trust). */
+/** Better evidence first; within it the engine's rank (severity, then the low end of the share × trust). */
 const byPriority = (a: ReportTheme, b: ReportTheme) =>
-  EVIDENCE_LEVEL[evidenceOf(b)].order - EVIDENCE_LEVEL[evidenceOf(a)].order || level(b.severity) - level(a.severity) || b.score - a.score;
+  EVIDENCE_LEVEL[evidenceOf(b)].order - EVIDENCE_LEVEL[evidenceOf(a)].order || a.rank - b.rank;
 
 function EvidenceChip({ finding }: { finding: { prevalence?: Prevalence; personas: number } }) {
   const { text, plain } = EVIDENCE_LEVEL[evidenceOf(finding)];
@@ -93,7 +95,7 @@ function Share({ finding, noun }: { finding: { prevalence?: Prevalence; personas
   const p = finding.prevalence;
   if (!p) return <>{count(finding.personas, 'persona')}{noun && ` ${noun}`}</>;
   return (
-    <span title={`With ${count(p.exposed, 'persona')}, the true share could plausibly be anywhere from ${pct(p.low)} to ${pct(p.high)} (95% range).`}>
+    <span title={`95% range ${pct(p.low)} to ${pct(p.high)} among this run's ${count(p.exposed, 'simulated persona')}, assuming independent personas; not an estimate of real users.`}>
       {p.personas} of {count(p.exposed, 'persona')}{noun && ` ${noun}`} ({pct(p.share)}, likely {pct(p.low)}–{pct(p.high)})
     </span>
   );
@@ -146,10 +148,13 @@ function Tile({ label, value, detail, children }: { label: string; value: string
 }
 
 /** The run in one sentence and three numbers: who got there, what is in the way and how it felt. Always the full run. */
-function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] }) {
+function Glance({ report, themes: all }: { report: ReportData; themes: ReportTheme[] }) {
+  // A competitor's problems are not the team's to fix.
+  const themes = all.filter((t) => !report.pois.find((poi) => poi.id === t.poi_id)?.competitor);
   const total = report.personas.length;
   const outcomes = (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => [outcome, report.personas.filter((p) => p.outcome === outcome).length] as const).filter(([, n]) => n > 0);
   const done = outcomes.find(([outcome]) => outcome === 'done')?.[1] ?? 0;
+  const started = total - (outcomes.find(([outcome]) => outcome === 'not_started')?.[1] ?? 0);
   const singles = themes.filter(isSingle).length;
   const problems: { severity: number }[] = report.themes ? themes.filter((t) => !isSingle(t)) : report.frictions;
   const levels = LEVELS.map((n) => [n, problems.filter((p) => level(p.severity) === n).length] as const).filter(([, n]) => n > 0);
@@ -157,20 +162,21 @@ function Glance({ report, themes }: { report: ReportData; themes: ReportTheme[] 
   const surveyed = answers.reduce((sum, row) => sum + row.surveyed, 0);
   const feeling = surveyed ? answers.reduce((sum, row) => sum + row.sentiment! * row.surveyed, 0) / surveyed : null;
   const carryOn = surveyed ? answers.reduce((sum, row) => sum + row.would_continue * row.surveyed, 0) / surveyed : 0;
-  // The verdict names a problem more than one persona met; objections only lead when nothing got in the way.
-  const top = themes.find((t) => !isSingle(t) && t.category !== 'objection');
-  const doubt = top ? undefined : themes.find((t) => !isSingle(t));
+  // The verdict names a problem more than one persona met first-hand; objections only lead when nothing got in the way.
+  const leads = (t: ReportTheme) => !isSingle(t) && evidenceOf(t) !== 'none';
+  const top = themes.find((t) => leads(t) && t.category !== 'objection');
+  const doubt = top ? undefined : themes.find(leads);
   return (
     <section aria-labelledby="glance-title" className="space-y-3">
       <h3 id="glance-title" className={heading}>At a glance</h3>
       <p className="text-base text-stone-900">
-        {done} of {count(total, 'persona')} reached the goal.
+        {done} of {count(started, 'persona')} reached the goal.{started < total && ` ${total - started} did not start.`}
         {top ? <> Fix first: <span className="font-medium">{top.title}</span> (<Share finding={top} />).</>
           : doubt ? <> Biggest objection: <span className="font-medium">{doubt.title}</span> (<Share finding={doubt} />).</>
           : themes.length > 0 ? ' No problem came up for more than one persona.' : report.frictions.length === 0 && ' Nobody reported any friction.'}
       </p>
       <div className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(14rem,1fr))]">
-        <Tile label="Reached the goal" value={`${done} of ${total}`} detail={total ? `${pct(done / total)} of personas${report.segments.length > 1 ? `, ${pct(report.weighted.completion)} weighted by segment share` : ''}` : undefined}>
+        <Tile label="Reached the goal" value={`${done} of ${started}`} detail={started ? `${pct(done / started)} of personas who started${report.segments.length > 1 ? `, ${pct(report.weighted.completion)} weighted by segment share` : ''}` : undefined}>
           <span aria-hidden="true" className="flex h-2 overflow-hidden rounded-full bg-stone-200">
             {outcomes.map(([outcome, n]) => <span key={outcome} data-tone={OUTCOMES[outcome].tone} className="tone-fill" style={{ width: pct(n / total) }} />)}
           </span>
@@ -215,11 +221,11 @@ const TRUST: Record<Trust, { text: string; style: string }> = {
   reported: { text: 'Reported', style: 'border-stone-300 bg-stone-50 text-stone-800' },
 };
 
-/** Trust is always spelled out: within the simulation, never a claim that real people confirmed it (brand.md §5). */
-function TrustBadge({ trust }: { trust: Trust }) {
+/** Trust is always spelled out: within the simulation, never a claim that real people confirmed it (brand.md §5). A theme shows its mix. */
+function TrustBadge({ trust, counts }: { trust: Trust; counts?: Record<Trust, number> }) {
   return (
     <span title={`${TRUST[trust].text}: ${TRUST_TEXT[trust]}`} className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${TRUST[trust].style}`}>
-      {TRUST[trust].text}
+      {counts ? trustMix(counts) : TRUST[trust].text}
     </span>
   );
 }
@@ -229,7 +235,7 @@ function Affected({ theme }: { theme: ReportTheme }) {
   const rows = theme.affected.filter((a) => a.reached > 0);
   return (
     <figure>
-      <figcaption className="mb-1 text-xs font-medium text-stone-700">Affected, of the personas who reached the page</figcaption>
+      <figcaption className="mb-1 text-xs font-medium text-stone-700">Met it first-hand, of the personas who reached the page</figcaption>
       <ul className="space-y-1">
         {rows.map((a) => (
           <li key={a.segment_id ?? a.name} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-xs">
@@ -283,9 +289,9 @@ function Priority({ theme, nested, onInspect, renderScreenshot }: { theme: Repor
       <div className="flex flex-wrap items-center gap-2">
         <SeverityChip severity={theme.severity} />
         <EvidenceChip finding={theme} />
-        <TrustBadge trust={theme.trust} />
+        <TrustBadge trust={theme.trust} counts={theme.trust_counts} />
         <span className="text-xs tabular-nums text-stone-500">
-          <Share finding={theme} noun="affected" />, {count(theme.frictions, 'report')}
+          <Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}
         </span>
       </div>
       <div className="space-y-1">
@@ -366,7 +372,7 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
       <section aria-labelledby="themes-title" className="space-y-3">
         <div className="space-y-1">
           <h3 id="themes-title" className={heading}>What to fix first ({problems.length})</h3>
-          <p className="text-sm text-stone-600">What got in the personas' way, grouped into problems. Problems more personas met come first; the range says how sure that share is with this many personas.</p>
+          <p className="text-sm text-stone-600">What got in the personas' way, grouped into problems. Problems with stronger evidence come first; within the same evidence, the more severe first, then the larger share with better trust. The range says how sure that share is among this run's personas.</p>
         </div>
         <SeverityLegend />
         <Findings themes={problems} empty={singles.length ? 'No problem came up for more than one persona. The single reports are below.' : 'No problems to fix in this run.'} {...props} />
@@ -385,7 +391,7 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
         </section>
       )}
       {singles.length > 0 && (
-        <Fold id="singles-title" title={`Single reports (${singles.length})`} hint="Each from one persona: worth a look, not yet a pattern">
+        <Fold id="singles-title" title={`Met first-hand by one persona (${singles.length})`} hint="Worth a look, not yet a pattern">
           <Findings themes={singles} empty="" {...props} />
         </Fold>
       )}
@@ -455,6 +461,10 @@ function Rate({ rate, of, tone }: { rate: number; of: number; tone: Tone }) {
 /** Each segment's completion, friction and survey answers, then the two rates weighted by share (roadmap M2). */
 function SegmentTable({ report }: { report: ReportData }) {
   const surveys = report.sentiment && report.sentiment.length > 0 ? report.sentiment : null;
+  const pois = report.segments[0]?.pois ?? []; // only with several POIs of the team's own
+  const name = (id: string) => report.pois.find((poi) => poi.id === id)?.name ?? id;
+  const started = (segment: ReportData['segments'][number]) => segment.personas - (segment.outcomes.not_started ?? 0);
+  const notStarted = report.segments.reduce((sum, segment) => sum + segment.personas - started(segment), 0);
   return (
     <section aria-labelledby="segments-title" className="space-y-3">
       <h3 id="segments-title" className={heading}>Results by segment</h3>
@@ -465,6 +475,7 @@ function SegmentTable({ report }: { report: ReportData }) {
               <Th>Segment</Th>
               <Th>Share</Th>
               <Th>Reached the goal</Th>
+              {pois.map((poi) => <Th key={poi.poi_id}>Reached it on {name(poi.poi_id)}</Th>)}
               <Th>Ran into friction</Th>
               {surveys && <Th>Mood, −2 to +2</Th>}
               {surveys && <Th>Would carry on</Th>}
@@ -477,8 +488,12 @@ function SegmentTable({ report }: { report: ReportData }) {
                 <tr key={segment.id ?? segment.name}>
                   <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">{segment.name}</th>
                   <td className="px-3 py-2 tabular-nums">{segment.share}%</td>
-                  <td className="px-3 py-2"><Rate rate={segment.completion} of={segment.personas} tone="good" /></td>
-                  <td className="px-3 py-2"><Rate rate={segment.with_friction} of={segment.personas} tone="warn" /></td>
+                  <td className="px-3 py-2"><Rate rate={segment.completion} of={started(segment)} tone="good" /></td>
+                  {pois.map((poi) => {
+                    const row = segment.pois?.find((p) => p.poi_id === poi.poi_id);
+                    return <td key={poi.poi_id} className="px-3 py-2">{row?.personas ? <Rate rate={row.completion} of={row.personas} tone="good" /> : '-'}</td>;
+                  })}
+                  <td className="px-3 py-2"><Rate rate={segment.with_friction} of={started(segment)} tone="warn" /></td>
                   {surveys && <td className="px-3 py-2">{survey?.sentiment == null ? 'No answers' : <SentimentScale value={survey.sentiment} />}</td>}
                   {surveys && <td className="px-3 py-2 tabular-nums">{survey?.surveyed ? pct(survey.would_continue) : '-'}</td>}
                 </tr>
@@ -490,6 +505,7 @@ function SegmentTable({ report }: { report: ReportData }) {
               <th scope="row" className="px-3 py-2 text-left font-medium text-stone-900">Weighted by share</th>
               <td className="px-3 py-2">100%</td>
               <td className="px-3 py-2 font-medium tabular-nums">{pct(report.weighted.completion)}</td>
+              {pois.length > 0 && <td colSpan={pois.length} />}
               <td className="px-3 py-2 font-medium tabular-nums">{pct(report.weighted.with_friction)}</td>
               {surveys && <td colSpan={2} />}
             </tr>
@@ -497,8 +513,10 @@ function SegmentTable({ report }: { report: ReportData }) {
         </table>
       </div>
       <p className="text-xs text-stone-500">
-        The weighted row counts each segment by its share of the audience, not by how many personas it has.
-        {surveys && ' Mood and carrying on come from each persona’s survey at the end, 0 is neutral, without weighting.'}
+        The weighted row counts each segment by its share of the audience, not by how many personas it has. Ran into friction: a self-report, survey friction or browser signal in one of the problems; objections are not counted.
+        {pois.length > 0 && ' A persona reached the goal only when it did so on every text, design or site it was given.'}
+        {notStarted > 0 && ` ${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of the rates.`}
+        {surveys && ' Mood and carrying on come from users’ surveys at the end, one answer per persona and point of interest, 0 is neutral, without weighting.'}
       </p>
     </section>
   );
@@ -584,7 +602,7 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
 }
 
 /** One persona folded to who they are and how it ended; opening it lists what got in their way, the worst first. */
-function PersonaReport({ persona, segment, frictions, onInspect, renderScreenshot }: { persona: ReportPersona; segment?: string; frictions: ReportFriction[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function PersonaReport({ persona, segment, pois, frictions, onInspect, renderScreenshot }: { persona: ReportPersona; segment?: string; pois: ReportData['pois']; frictions: ReportFriction[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
   return (
     <li>
@@ -606,6 +624,11 @@ function PersonaReport({ persona, segment, frictions, onInspect, renderScreensho
           <p className="text-sm text-stone-700">
             <span className="font-medium text-stone-900">{OUTCOMES[persona.outcome].text}</span> after {count(persona.steps, 'step')}.{persona.outcome_text && ` ${persona.outcome_text}`}
           </p>
+          {persona.pois && (
+            <ul className="flex flex-wrap gap-2 text-xs text-stone-600" aria-label={`How ${persona.name} did on each`}>
+              {Object.entries(persona.pois).map(([id, outcome]) => <li key={id} className="flex items-center gap-1.5">{pois.find((poi) => poi.id === id)?.name ?? id}: <OutcomeChip outcome={outcome} /></li>)}
+            </ul>
+          )}
           {frictions.length === 0 ? (
             <p className="text-sm text-stone-600">{persona.name} reported no friction.</p>
           ) : (
@@ -640,6 +663,7 @@ function Personas({ report, onInspect, renderScreenshot }: { report: ReportData;
             key={persona.id}
             persona={persona}
             segment={segmentName(persona)}
+            pois={report.pois}
             frictions={report.frictions.filter((friction) => friction.persona_id === persona.id).sort(bySeverity)}
             onInspect={onInspect}
             renderScreenshot={renderScreenshot}
@@ -690,6 +714,7 @@ function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; person
   const crossed = stats.segments.filter((segment) => !segment.seed).length;
   const figures = [
     ['Posts', stats.posts],
+    ...(stats.posters ? [['Posted', stats.posters.length], ['Reached', stats.readers?.length ?? 0]] as const : []),
     ['First-hand', stats.first_hand.length],
     ['Second-hand', stats.second_hand.length],
     ['Influence edges', stats.influence.length],
@@ -740,6 +765,19 @@ function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; person
           {stats.influence.length > 5 && <p className="text-xs text-stone-500">And {count(stats.influence.length - 5, 'more edge')}.</p>}
         </div>
       )}
+      {stats.heard && stats.heard.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-stone-700">Heard before a change of mind, not counted as influence</p>
+          <ul className="text-stone-700">
+            {stats.heard.slice(0, 5).map((edge) => (
+              <li key={`${edge.seq}/${edge.from}`}>
+                {name(edge.from)} → {name(edge.to)}, round {edge.round}, sentiment {signed(edge.delta)}
+              </li>
+            ))}
+          </ul>
+          {stats.heard.length > 5 && <p className="text-xs text-stone-500">And {count(stats.heard.length - 5, 'more')}.</p>}
+        </div>
+      )}
       <div>
         <p className="text-xs font-medium text-stone-700">Mean sentiment by round, −2 to +2</p>
         <SentimentLine rows={stats.sentiment} />
@@ -753,7 +791,7 @@ function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; perso
   return (
     <div className="space-y-3">
       <p className="text-xs text-stone-500">
-        First-hand: personas with their own friction in it. Second-hand: personas who posted about it without one. Influence: a cited post moved a persona's sentiment by 0.5 or more.
+        First-hand: personas who met it before reading about it, as the problem counts them. Second-hand: personas who posted about it without meeting it first-hand. Reached: personas shown a post about it in a feed or at a step. Influence: a cited post moved a persona's sentiment by 0.5 or more, once per author and change.
       </p>
       {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a particular text, design or site.</p>}
       {spread.map((poi) => (
@@ -887,7 +925,7 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
       <h3 id="profile-results-title" className={heading}>Results by profile: {dimension.name}</h3>
       <div className="max-h-80 overflow-auto rounded-lg border border-stone-200">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-stone-50"><tr><Th>{dimension.name}</Th><Th>Personas</Th><Th>Reached the goal</Th><Th>Reported friction</Th><Th>Mean latest feeling</Th></tr></thead>
+          <thead className="sticky top-0 bg-stone-50"><tr><Th>{dimension.name}</Th><Th>Personas</Th><Th>Reached the goal</Th><Th>Ran into friction</Th><Th>Mean latest feeling</Th></tr></thead>
           <tbody className="divide-y divide-stone-100">
             {dimension.values.map((group) => <tr key={attributeKey(group.value)} className={attributeKey(group.value) === selected ? 'bg-indigo-50' : ''}>
               <th scope="row" className="px-3 py-2 text-left font-medium">{formatAttributeValue(group.value)}</th>

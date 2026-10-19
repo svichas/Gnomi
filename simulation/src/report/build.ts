@@ -1,4 +1,4 @@
-import { assetPlaces, placeName, webPois, withPois, type SavedProject } from '../poi/pois.ts';
+import { assetPlaces, placeName, poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
@@ -30,7 +30,11 @@ import type {
 export const HYPOTHESIS_BANNER =
   'These findings come from simulated users. Treat them as hypotheses and validate the top items with real users before committing to changes.';
 
-const OUTCOMES: Outcome[] = ['done', 'abandoned', 'budget_exceeded', 'repeated_failure', 'blocked', 'incomplete'];
+const OUTCOMES: Outcome[] = ['done', 'abandoned', 'budget_exceeded', 'repeated_failure', 'blocked', 'incomplete', 'not_started'];
+// Events only an episode the persona began can log.
+const EPISODE = new Set<EventType>(['persona.episode_started', 'persona.step', 'persona.goal_done', 'persona.abandoned']);
+// A persona with several POIs ends as its worst: the first of these that one of its POIs ended with.
+const WORST: Outcome[] = ['blocked', 'repeated_failure', 'budget_exceeded', 'abandoned', 'incomplete'];
 
 // Runs logged before M2 froze one `persona`, a top-level budget, and no audience or settings; before M5, one `poi`.
 type LoggedConfig = Omit<RunConfig, 'personas' | 'sessions' | 'project'> & {
@@ -87,18 +91,40 @@ function endingOf(own: GnomiEvent[]): Ending {
   return ending;
 }
 
-function segmentOf(id: string | null, name: string, share: number, members: ReportPersona[]): ReportSegment {
+/** Each POI the persona was given ends on its own; the persona is done only when all of them are, else as its worst. */
+function endingsOf(own: GnomiEvent[], given: string[], defaultPoi: string): Ending & { pois: Record<string, Outcome> } {
+  const endings = given.map((poi_id): Ending => {
+    const mine = own.filter((e) => (e.poi_id ?? defaultPoi) === poi_id);
+    const began = mine.some((e) => EPISODE.has(e.type));
+    return began ? endingOf(mine) : { outcome: 'not_started', outcome_text: null };
+  });
+  const pois = Object.fromEntries(given.map((id, i) => [id, endings[i].outcome]));
+  if (endings.every((e) => e.outcome === 'not_started')) return { outcome: 'not_started', outcome_text: null, pois };
+  if (endings.every((e) => e.outcome === 'done')) return { ...endings[0], pois };
+  // A POI the persona never got to leaves it incomplete.
+  const worst = WORST.find((o) => endings.some((e) => (e.outcome === 'not_started' ? 'incomplete' : e.outcome) === o))!;
+  return { ...(endings.find((e) => e.outcome === worst) ?? { outcome: 'incomplete', outcome_text: null }), pois };
+}
+
+// Rates leave out personas the run never started: their gap is scheduling, not the product.
+function segmentOf(id: string | null, name: string, share: number, members: ReportPersona[], withFriction: Set<string>, pois: string[]): ReportSegment {
   const outcomes = Object.fromEntries(OUTCOMES.map((o) => [o, 0])) as Record<Outcome, number>;
   for (const p of members) outcomes[p.outcome] += 1;
+  const started = members.filter((p) => p.outcome !== 'not_started');
+  const perPoi = pois.map((poi_id) => {
+    const on = members.filter((p) => p.pois?.[poi_id] !== undefined && p.pois[poi_id] !== 'not_started');
+    return { poi_id, personas: on.length, completion: rate(on.filter((p) => p.pois?.[poi_id] === 'done').length, on.length) };
+  });
   return {
     id,
     name,
     share,
     personas: members.length,
     outcomes,
-    completion: rate(outcomes.done, members.length),
-    with_friction: rate(members.filter((p) => p.frictions > 0).length, members.length),
+    completion: rate(outcomes.done, started.length),
+    with_friction: rate(started.filter((p) => withFriction.has(p.id)).length, started.length),
     frictions: members.reduce((sum, p) => sum + p.frictions, 0),
+    ...(pois.length > 1 ? { pois: perPoi } : {}),
   };
 }
 
@@ -132,15 +158,19 @@ export function buildReport(events: GnomiEvent[]): Report {
   const personaById = new Map<string, Persona>();
   for (const p of population) if (!personaById.has(p.id)) personaById.set(p.id, p);
 
+  const ourPois = pois.filter((poi) => !competitors.has(poi.id));
   const personas: ReportPersona[] = population.map((p) => {
     const own = eventsOf(p.id);
+    const given = poisFor(ourPois, audience?.segments.find((s) => s.id === p.segment_id) ?? null).map((poi) => poi.id);
+    const { pois: perPoi, ...ending } = endingsOf(own, given, pois[0]?.id ?? '');
     return {
       id: p.id,
       name: p.name,
       ...(!schema || isAttributeEnabled(schema, 'job_title', 'all') ? { job_title: p.job_title } : {}),
       segment_id: p.segment_id ?? null, // runs before M2 have no segment
       device: p.device,
-      ...endingOf(own),
+      ...ending,
+      ...(ourPois.length > 1 ? { pois: perPoi } : {}),
       steps: ofType(own, 'persona.step').length,
       frictions: ofType(own, 'persona.friction_reported').length,
       ...(schema ? { attributes: reportAttributes(p, schema) } : {}),
@@ -172,24 +202,28 @@ export function buildReport(events: GnomiEvent[]): Report {
   });
 
   // Segments with no personas in this run are left out; a run without an audience has one built-in segment.
-  const segments: ReportSegment[] = audience
-    ? audience.segments.flatMap((s) => {
-        const members = personas.filter((p) => p.segment_id === s.id);
-        return members.length > 0 ? [segmentOf(s.id, s.name, s.share, members)] : [];
-      })
-    : [segmentOf(null, 'Built-in persona', 100, personas)];
-
-  // Each segment counts by its share; the shares are renormalised over the segments that have personas.
-  const weight = segments.reduce((sum, s) => sum + s.share, 0);
-  const weighted = (pick: (s: ReportSegment) => number) =>
-    weight === 0 ? 0 : segments.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
-
+  const inRun = audience
+    ? audience.segments.filter((s) => personas.some((p) => p.segment_id === s.id)).map((s) => ({ id: s.id, name: s.name, share: s.share }))
+    : [{ id: null, name: 'Built-in persona', share: 100 }];
   const ctx: Context = {
     poi_id: pois[0]?.id ?? '',
     personas: new Map(personas.map((p) => [p.id, { name: p.name, segment_id: p.segment_id }])),
-    segments,
+    segments: inRun,
   };
   const analysis = analyseFrictions(events, ctx);
+
+  // Ran into friction: any self-report, survey friction or signal in a friction theme of the team's product; objections are not friction.
+  const personaAt = new Map(events.map((e) => [e.seq, e.persona_id]));
+  const withFriction = new Set(analysis.themes.filter((t) => t.category !== 'objection' && !competitors.has(t.poi_id)).flatMap((t) => t.seqs.flatMap((seq) => personaAt.get(seq) ?? [])));
+  const segments: ReportSegment[] = inRun.map((s) =>
+    segmentOf(s.id, s.name, s.share, audience ? personas.filter((p) => p.segment_id === s.id) : personas, withFriction, ourPois.map((poi) => poi.id)),
+  );
+
+  // Each segment counts by its share; the shares are renormalised over the segments with a persona that started.
+  const counted = segments.filter((s) => s.personas > s.outcomes.not_started);
+  const weight = counted.reduce((sum, s) => sum + s.share, 0);
+  const weighted = (pick: (s: ReportSegment) => number) =>
+    weight === 0 ? 0 : counted.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
   const comparisons = buildComparisons(events, competitors, ctx);
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');
@@ -250,7 +284,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     goal: config.project.goal,
     pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null, ...(poi.type === 'web' && poi.mode === 'observe_only' ? { competitor: true as const } : {}) })),
     personas,
-    ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema) } : {}),
+    ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema, withFriction) } : {}),
     segments,
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
     steps: ofType(events, 'persona.step').length,

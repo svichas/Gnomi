@@ -1,5 +1,6 @@
 import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
-import { buildCandidates, categoryOf, groupCandidates, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { postPois } from '../social/feed.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -92,9 +93,11 @@ export function judgeGroups(groups: Group[], cap = JUDGE_TOKEN_CAP): GroupSummar
 
 export type Post = EventOf<'social.post'> & { persona_id: string };
 
-/** Posts about one POI, replies included, in seq order. */
-export const postsAbout = (events: GnomiEvent[], poi_id: string) =>
-  events.filter((e): e is Post => e.type === 'social.post' && e.persona_id !== null && e.payload.about_poi_id === poi_id);
+/** Posts about one POI, replies included, in seq order; a post's POI as social/feed.ts postPois resolves it. */
+export function postsAbout(events: GnomiEvent[], poi_id: string): Post[] {
+  const about = postPois(events);
+  return events.filter((e): e is Post => e.type === 'social.post' && e.persona_id !== null && about.get(e.payload.post_id) === poi_id);
+}
 
 export interface PostSummary {
   id: string;
@@ -249,15 +252,23 @@ export function pickEvidence(members: Candidate[], n = EVIDENCE): Candidate[] {
 interface Reach {
   pages: Map<string, Set<string>>; // persona → page patterns it reached
   poi: Map<string, Set<string>>; // poi → personas that reached it at all
+  buyers: Map<string, Set<string>>; // poi → personas who answered a buyer survey on it
+  buyerSeqs: Set<number>; // the buyer surveys' events
 }
 
 function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
   const places = placesOf(events);
   const pages = new Map<string, Set<string>>();
   const poi = new Map<string, Set<string>>();
+  const buyers = new Map<string, Set<string>>();
+  const buyerSeqs = new Set<number>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
   for (const e of events) {
     if (!e.persona_id) continue;
+    if (e.type === 'persona.survey' && e.payload.buyer) {
+      add(buyers, e.payload.poi_id, e.persona_id);
+      buyerSeqs.add(e.seq);
+    }
     if (e.type === 'persona.step') {
       add(pages, e.persona_id, pagePattern(e.payload.result.url_before, places));
       add(pages, e.persona_id, pagePattern(e.payload.result.url_after, places));
@@ -270,57 +281,66 @@ function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: stri
     if (c.page) add(pages, c.persona_id, c.page);
     add(poi, c.poi_id, c.persona_id);
   }
-  return { pages, poi };
+  return { pages, poi, buyers, buyerSeqs };
 }
 
 /**
- * Step 5: affected_s = personas in segment s with a friction in the theme ÷ personas in s who reached one of its pages
- * (any page of the POI for a theme of survey answers only); impact = Σ share_s × affected_s, with shares renormalised over the segments
- * in the run; score = impact × median severity × the highest trust weight.
+ * Step 5: affected_s = first-hand personas in segment s ÷ personas in s who reached one of the theme's pages (any page of the POI
+ * for a theme of survey answers only). Prevalence is the first-hand personas of those who reached it, or for buyer objections of
+ * the buyers surveyed on the POI. Severity is the median over personas of each one's worst; score = the share's low end × the mean
+ * trust weight over personas, each at its best trust. Themes rank by severity tier, then score.
  */
-export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id)).size) {
+export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id))) {
   const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
   const affectedIds = new Set(members.map((m) => m.persona_id));
   const reached = (id: string) =>
     affectedIds.has(id) || (pages.length === 0 ? !!reach.poi.get(poi_id)?.has(id) : pages.some((p) => reach.pages.get(id)?.has(p)));
-  const total = ctx.segments.reduce((sum, s) => sum + s.share, 0);
   const ids = [...ctx.personas.keys()];
   const affected = ctx.segments.map((s) => {
     const inSegment = ids.filter((id) => ctx.personas.get(id)?.segment_id === s.id);
-    const hit = inSegment.filter((id) => affectedIds.has(id)).length;
+    const hit = inSegment.filter((id) => firstHand.has(id)).length;
     const seen = inSegment.filter(reached).length;
     return { segment_id: s.id, name: s.name, affected: hit, reached: seen, rate: seen === 0 ? 0 : hit / seen };
   });
-  const impact = total === 0 ? 0 : affected.reduce((sum, a, i) => sum + (ctx.segments[i].share / total) * a.rate, 0);
-  const severity = median(members.map((m) => m.severity));
-  const trust = maxTrust(members);
-  const exposed = new Set([...(reach.poi.get(poi_id) ?? []), ...affectedIds]).size;
-  const share = prevalence(firstHand, exposed);
-  // The lower end of the share's range, so a problem one persona of many met cannot outrank one that many met.
-  return { affected, impact, severity, trust, prevalence: share, score: share.low * severity * TRUST_WEIGHT[trust] };
+  // Each persona counts once, so one persona repeating a problem cannot outvote the others.
+  const worst = new Map<string, number>();
+  const best = new Map<string, number>();
+  const trust_counts: Record<Trust, number> = { confirmed: 0, observed: 0, reported: 0 };
+  for (const m of members) {
+    worst.set(m.persona_id, Math.max(worst.get(m.persona_id) ?? 0, m.severity));
+    best.set(m.persona_id, Math.max(best.get(m.persona_id) ?? 0, TRUST_WEIGHT[m.trust]));
+    trust_counts[m.trust] += 1;
+  }
+  const weight = [...best.values()].reduce((sum, w) => sum + w, 0) / best.size;
+  const buyers = members.every((m) => m.kind === 'objection' && reach.buyerSeqs.has(m.seqs[0]));
+  const exposed = new Set([...(buyers ? (reach.buyers.get(poi_id) ?? []) : ids.filter(reached)), ...affectedIds]).size;
+  const share = prevalence(firstHand.size, exposed);
+  return { affected, severity: median([...worst.values()]), trust: maxTrust(members), trust_counts, prevalence: share, score: share.low * weight };
 }
 
 interface Echoes {
   feeds: EventOf<'social.feed_viewed'>[]; // in seq order
   heard: Map<number, string[]>; // step seq → the posts handed to that step; empty in logs from before heard ids
   authors: Map<string, string>; // post id → the persona who wrote it
+  rounds: Map<number, number>; // event seq → its round
 }
 
 /**
  * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal, or made before any feed
- * showed them a post the judge tagged with the theme. Without tags (null), a reported friction at a step that was handed a post by
- * a persona with an earlier report in the theme is heard first.
+ * showed them a post the judge tagged with the theme (when it tagged any), and not at a step that was handed a post by a persona
+ * who met the theme at an earlier round and step.
  */
 function firstHand(members: Candidate[], theme: string, tagged: Map<string, string[]> | null, echoes: Echoes): Set<string> {
+  // Seqs order completion, not time, across personas running at once; round then step number is the persona's own clock.
+  const at = (c: Candidate) => [echoes.rounds.get(c.seqs[0]) ?? 0, c.step_no ?? Infinity];
+  const earlier = (a: Candidate, b: Candidate) => at(a)[0] < at(b)[0] || (at(a)[0] === at(b)[0] && at(a)[1] < at(b)[1]);
   const echo = (c: Candidate) => {
     if (c.trust !== 'reported') return false; // a browser signal cannot repeat a post
-    if (tagged) {
-      const shown = echoes.feeds.find((e) => e.persona_id === c.persona_id && e.payload.post_ids.some((id) => tagged.get(id)?.includes(theme)));
-      return shown !== undefined && shown.seq < c.seqs[0];
-    }
+    const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && e.payload.post_ids.some((id) => tagged.get(id)?.includes(theme)));
+    if (shown && shown.seq < c.seqs[0]) return true;
     return (echoes.heard.get(c.step_seq ?? -1) ?? []).some((id) => {
       const author = echoes.authors.get(id);
-      return author !== undefined && author !== c.persona_id && members.some((m) => m.persona_id === author && m.seqs[0] < c.seqs[0]);
+      return author !== undefined && author !== c.persona_id && members.some((m) => m.persona_id === author && earlier(m, c));
     });
   };
   return new Set(members.filter((c) => !echo(c)).map((c) => c.persona_id));
@@ -330,11 +350,11 @@ const Z = 1.96; // 95%
 
 /**
  * k of n personas with its 95% Wilson score interval, which stays honest for small n and for 0 or n of n (tech.md §8.2 step 5).
- * Strong: three or more personas and at least a quarter of those who used the POI; some: two or more; single: one.
+ * Strong: three or more personas and at least a quarter of n; some: two or more; single: one; none: nobody first-hand.
  */
 export function prevalence(k: number, n: number): Prevalence {
   const exposed = Math.max(n, k);
-  const level = k <= 1 ? 'single' : k >= 3 && k / exposed >= 0.25 ? 'strong' : 'some';
+  const level = k === 0 ? 'none' : k === 1 ? 'single' : k >= 3 && k / exposed >= 0.25 ? 'strong' : 'some';
   if (exposed === 0) return { personas: 0, exposed: 0, share: 0, low: 0, high: 0, level };
   const p = k / exposed;
   const z2 = Z * Z;
@@ -404,10 +424,10 @@ export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
   return sent;
 }
 
-/** Step 8: the mean survey sentiment and the share who would continue, per segment. */
+/** Step 8: the mean survey sentiment and the share who would continue, per segment, over users' answers; buyers have their own section. */
 export function sentimentBySegment(events: GnomiEvent[], ctx: Context): ReportSentiment[] {
   const surveys = new Map<string, { sentiment: number; would_continue: boolean }>(); // the latest per persona and POI
-  for (const e of events) if (e.type === 'persona.survey' && e.persona_id) surveys.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e.payload);
+  for (const e of events) if (e.type === 'persona.survey' && e.persona_id && !e.payload.buyer) surveys.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e.payload);
   if (surveys.size === 0) return [];
   return ctx.segments.map((s) => {
     const answers = [...surveys].filter(([key]) => ctx.personas.get(key.split('\u0000')[0])?.segment_id === s.id).map(([, a]) => a);
@@ -500,7 +520,9 @@ export interface Analysis {
 export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const candidates = buildCandidates(events, ctx.poi_id);
   const groups = groupCandidates(candidates);
+  const likes = likeGroups(events);
   const reach = reachOf(events, candidates, ctx.poi_id);
+  const names = poiNamesOf(events);
   const limitations: string[] = [];
   const themes: ReportTheme[] = [];
   const tagged = new Map<string, string[]>();
@@ -508,32 +530,43 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
     heard: new Map(events.flatMap((e) => (e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
     authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
+    rounds: new Map(events.map((e) => [e.seq, e.round])),
   };
 
   for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
+    // Each POI says the same things, so with several each note names its POI.
+    const note = (text: string) => limitations.push(names.size > 1 ? `${names.get(poi_id) ?? poi_id}: ${text}` : text);
     const own = groups.filter((g) => g.poi_id === poi_id);
     const judged = lastFor(events, 'report.themes', poi_id);
-    const { drafts, unknown } = applyJudge(own, judged?.payload.themes ?? null);
+    // Group ids are positions: after a change to the grouping rules an old answer's id names another group, so it is dropped.
+    const keys = judged?.payload.keys;
+    const keyOf = new Map(own.map((g) => [g.id, groupKey(g.members[0])]));
+    const stale = (id: unknown) => keys !== undefined && keys[String(id)] !== keyOf.get(String(id));
+    const fresh = <T extends { group_ids?: unknown }>(items: T[] | undefined) =>
+      Array.isArray(items) ? items.filter((item) => !(Array.isArray(item?.group_ids) && item.group_ids.some(stale))) : items;
+    const judgedThemes = fresh(judged?.payload.themes);
+    const judgedPosts = fresh(judged?.payload.posts);
+    const { drafts, unknown } = applyJudge(own, judgedThemes ?? null);
     const talk = postsAbout(events, poi_id);
-    const input = judgeInput(own, talk);
+    const input = judgeInput(own, talk, undefined, undefined, likes.filter((g) => g.poi_id === poi_id));
     if (!judged) {
-      limitations.push('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
-      if (talk.length > 0) limitations.push('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.');
+      note('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
+      if (talk.length > 0) note('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.');
     } else {
       const sent = input.groups.length;
-      if (sent < own.length) limitations.push(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
-      if (input.posts.length < talk.length) limitations.push(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
-      if (unknown.length > 0) limitations.push(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
+      if (sent < own.length) note(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
+      if (input.posts.length < talk.length) note(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
+      if (unknown.length > 0) note(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
     }
 
     // Tagged before ranking: first-hand counts, and so the ranking, depend on which posts discuss which theme.
     const idOf = (draft: Draft) => draft.groups.map((g) => g.id).join('+');
-    const tags = judged && talk.length > 0 ? tagPosts(drafts.map((d) => ({ id: idOf(d) })), judged.payload.posts, new Set(input.posts.map((p) => p.id))) : null;
+    const tags = judged && talk.length > 0 ? tagPosts(drafts.map((d) => ({ id: idOf(d) })), judgedPosts, new Set(input.posts.map((p) => p.id))) : null;
     if (tags) {
       for (const [post_id, ids] of tags.tagged) tagged.set(post_id, ids);
-      if (tags.unknown.length > 0) limitations.push(`The judge tagged unknown post or group ids (${tags.unknown.join(', ')}); they were ignored.`);
+      if (tags.unknown.length > 0) note(`The judge tagged unknown post or group ids (${tags.unknown.join(', ')}); they were ignored.`);
     }
-    const themeTags = judged ? (tags?.tagged ?? new Map<string, string[]>()) : null;
+    const themeTags = judged && tags?.tagged.size ? tags.tagged : null;
     const unseparated = 'Posts were not tagged to themes and the steps did not record which posts they were handed, so reports that repeat the feed could not be separated from first-hand ones.';
     if (!themeTags && echoes.heard.size === 0 && echoes.feeds.length > 0 && !limitations.includes(unseparated)) limitations.push(unseparated);
 
@@ -542,8 +575,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const members = draft.groups.flatMap((g) => g.members);
         const id = idOf(draft);
         const personas = new Set(members.map((m) => m.persona_id)).size;
-        const k = firstHand(members, id, themeTags, echoes).size;
-        const { affected, impact, severity, trust, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, k);
+        const hand = firstHand(members, id, themeTags, echoes);
+        const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
           poi_id,
@@ -553,10 +586,11 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           named_by: draft.named_by,
           category: categoryOf(draft.groups[0].kind),
           prevalence: share,
-          heard_first: personas - k,
+          heard_first: personas - hand.size,
+          first_hand: [...hand],
           trust,
+          trust_counts,
           severity,
-          impact,
           score,
           personas,
           frictions: members.length,
@@ -568,22 +602,27 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           suggestion: null,
         };
       })
-      .sort((a, b) => b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
+      // A severe problem one persona met outranks a mild one many met; within a tier, the share's low end × trust.
+      .sort((a, b) => Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
     ranked.forEach((t, i) => (t.rank = i + 1));
 
     const suggested = lastFor(events, 'report.suggestions', poi_id);
-    if (!suggested) limitations.push('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
+    const given = suggested?.payload.suggestions;
+    const suggestions = Array.isArray(given) ? given.filter((s) => !(typeof s?.theme_id === 'string' && s.theme_id.split('+').some(stale))) : given;
+    const dropped = (judged?.payload.themes?.length ?? 0) - (judgedThemes?.length ?? 0) + (judged?.payload.posts?.length ?? 0) - (judgedPosts?.length ?? 0);
+    const unsuggested = (given?.length ?? 0) - (suggestions?.length ?? 0);
+    if (dropped + unsuggested > 0) note(`The grouping rules changed after this run, so ${plural(dropped, 'judge answer')} and ${plural(unsuggested, 'suggested change')} naming groups that no longer match were dropped.`);
+    if (!suggested) note('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
     else {
-      const { unknown: strays } = applySuggestions(ranked, suggested.payload.suggestions);
+      const { unknown: strays } = applySuggestions(ranked, suggestions ?? null);
       const covered = ranked.filter((t) => t.suggestion).length;
-      if (covered < ranked.length) limitations.push(`Suggested changes cover ${covered} of ${plural(ranked.length, 'theme')}.`);
-      if (strays.length > 0) limitations.push(`The author named unknown theme ids (${strays.join(', ')}); they were ignored.`);
+      if (covered < ranked.length) note(`Suggested changes cover ${covered} of ${plural(ranked.length, 'theme')}.`);
+      if (strays.length > 0) note(`The author named unknown theme ids (${strays.join(', ')}); they were ignored.`);
     }
     themes.push(...ranked);
   }
 
   // Said once, after the judge's and author's notes: a small run is the likeliest reason a share looks off.
-  const names = poiNamesOf(events);
   const small = [...new Set(groups.map((g) => g.poi_id))].map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
   if (small.length > 0) {
     const few = Math.min(...small.map(({ n }) => n));

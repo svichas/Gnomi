@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
-import { buildCandidates, groupCandidates, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { buildCandidates, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
+import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -54,21 +54,20 @@ const run = log(
   ['persona.step', 'b2', step(1, HOME)],
 );
 
-test('scoring: the low end of the share of personas affected × median severity × the highest trust; impact per segment beside it', () => {
+test('scoring: the low end of the first-hand share of those who reached the page × the mean trust of its personas', () => {
   const [theme] = analyseFrictions(run, ctx).themes;
-  // 3 of the 5 personas who used the POI: 60%, with a 95% Wilson range of 23% to 88%; median severity of 3, 2, 4 is 3;
-  // a1 is confirmed, so trust 1.0; score 0.2307 × 3 × 1. Three personas and over a quarter: strong evidence.
-  assert.deepEqual(theme.prevalence, { personas: 3, exposed: 5, share: 0.6, low: 0.2307, high: 0.8824, level: 'strong' });
-  // Recruiters 2 of 3 who reached the page, hiring managers 1 of 1 (b2 never reached it):
-  // impact = 0.6 × 2/3 + 0.4 × 1 = 0.8.
+  // 3 of the 4 personas who reached the page (b2 never left home): 75%, with a 95% Wilson range of 30% to 95%; the median of
+  // each persona's worst severity, 3, 2 and 4, is 3. Three personas and over a quarter: strong evidence.
+  assert.deepEqual(theme.prevalence, { personas: 3, exposed: 4, share: 0.75, low: 0.3006, high: 0.9544, level: 'strong' });
   assert.deepEqual(theme.affected, [
     { segment_id: 'rec', name: 'Recruiters', affected: 2, reached: 3, rate: 2 / 3 },
     { segment_id: 'hm', name: 'Hiring managers', affected: 1, reached: 1, rate: 1 },
   ]);
-  assert.ok(Math.abs(theme.impact - 0.8) < 1e-12);
   assert.equal(theme.severity, 3);
+  // One confirmed report among two reported ones: the badge says so, and the score uses the mix (1 + 0.5 + 0.5) / 3, not the best.
   assert.equal(theme.trust, 'confirmed');
-  assert.ok(Math.abs(theme.score - 0.2307 * 3) < 1e-12);
+  assert.deepEqual(theme.trust_counts, { confirmed: 1, observed: 0, reported: 2 });
+  assert.ok(Math.abs(theme.score - 0.3006 * (2 / 3)) < 1e-12);
   assert.deepEqual([theme.rank, theme.personas, theme.frictions, theme.title], [1, 3, 3, 'Trouble with button "Save" on /jobs/new']);
 });
 
@@ -171,6 +170,8 @@ test('sentiment by segment and what went well come from the surveys', () => {
     { text: 'Fast', count: 2, personas: 2, seqs: [1, 3] },
   ]);
   assert.deepEqual(sentimentBySegment(run, ctx), [], 'no surveys, no sentiment');
+  const buyer = { ...survey([], [], -2, false), buyer: { would_buy: false, price: 'high', objections: [], unclear: [] } } as EventPayloads['persona.survey'];
+  assert.deepEqual(sentimentBySegment([...events, ...log(['persona.survey', 'b1', buyer]).map((e) => ({ ...e, seq: 9, payload: { ...buyer, poi_id: 'other' } }) as GnomiEvent)], ctx)[1], { segment_id: 'hm', name: 'Hiring managers', surveyed: 1, sentiment: 1, would_continue: 1 }, 'buyers have their own section');
 });
 
 test('limitations say what the analysis could not do', () => {
@@ -214,6 +215,20 @@ test('echoes: a report after a feed showed a post about the theme is heard first
   assert.deepEqual(counts(social), [3, 2, 1, 'some', false], 'by the heard ids, without the judge');
   const unrecorded = social.map((e) => (e.type === 'persona.step' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
   assert.deepEqual(counts(unrecorded), [3, 3, 0, 'strong', true], 'neither: every report counts, and the report says so');
+  const taggedNothing = { ...judged, payload: { ...judged.payload, posts: [] } } as GnomiEvent;
+  assert.deepEqual(counts([...social, taggedNothing]), [3, 2, 1, 'some', false], 'a judge that tagged nothing leaves the heard ids in charge');
+  const { themes: [theme] } = analyseFrictions(social, ctx);
+  assert.deepEqual([...(theme.first_hand ?? [])].sort(), ['a1', 'a3'], 'the first-hand ids are kept on the theme');
+  assert.deepEqual(theme.affected.map((a) => a.affected), [2, 0], 'and the segment rows count only them');
+  // Seqs are completion order across personas: a1 met it at step 1 but its report is logged after a2's at step 2, which echoes it.
+  const late = log(
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['persona.step', 'a2', heard(2, ['p1'])],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+  );
+  assert.equal(analyseFrictions(late, ctx).themes[0].heard_first, 1);
 });
 
 test('structured survey answers group by the part of the product they name, and objections stay apart from frictions', () => {
@@ -233,10 +248,37 @@ test('structured survey answers group by the part of the product they name, and 
   assert.deepEqual(judged.drafts.map((d) => [d.groups.map((g) => g.id), d.named_by]), [[['g1'], 'judge'], [['g2'], 'rules'], [['g3'], 'rules']]);
   const themes = analyseFrictions(events, ctx).themes;
   assert.deepEqual(themes.map((t) => [t.id, t.category, t.prevalence?.personas, t.prevalence?.exposed, t.prevalence?.level]), [
-    ['g1', 'friction', 2, 3, 'some'],
-    ['g2', 'objection', 1, 3, 'single'],
+    ['g2', 'objection', 1, 3, 'single'], // severity 4
+    ['g1', 'friction', 2, 3, 'some'], // a median of 2.5 is in the severity 3 tier, with the larger share
     ['g3', 'objection', 1, 3, 'single'],
   ]);
+});
+
+test('buyer objections are a share of the buyers surveyed on the POI, not of everyone who used it', () => {
+  const buyer = { ...survey(['Too expensive for us'], []), buyer: { would_buy: false, price: 'high', objections: ['Too expensive for us'], unclear: [] } } as EventPayloads['persona.survey'];
+  const events = log(
+    ...[...['a1', 'a2', 'a3']].map((id) => ['persona.survey', id, survey([], [])] as [EventType, string, object]),
+    ['persona.survey', 'b1', buyer],
+    ['persona.survey', 'b2', buyer],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.deepEqual([theme.category, theme.prevalence?.personas, theme.prevalence?.exposed], ['objection', 2, 2]);
+});
+
+test('nobody met first-hand is evidence none, not a single report', () => {
+  assert.equal(prevalence(0, 5).level, 'none');
+  assert.equal(prevalence(1, 5).level, 'single');
+});
+
+test('replayed judge answers and suggestions are dropped when their group ids now name other groups, and the report says so', () => {
+  const answer = (keys: Record<string, string>) => ({ ...run[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Save is broken', description: 'd', group_ids: ['g1'] }], keys } }) as GnomiEvent;
+  const suggested = { ...run[0], seq: 100, persona_id: null, type: 'report.suggestions', payload: { poi_id: 'poi', suggestions: [{ theme_id: 'g1', change: 'Fix Save.', solution: 's' }] } } as GnomiEvent;
+  const current = groupKey(groupCandidates(buildCandidates(run, 'poi'))[0].members[0]);
+  const same = analyseFrictions([...run, answer({ g1: current }), suggested], ctx);
+  assert.deepEqual([same.themes[0].title, same.themes[0].suggestion?.change], ['Save is broken', 'Fix Save.']);
+  const moved = analyseFrictions([...run, answer({ g1: '["poi","elsewhere"]' }), suggested], ctx);
+  assert.deepEqual([moved.themes[0].named_by, moved.themes[0].suggestion], ['rules', null]);
+  assert.ok(moved.limitations.includes('The grouping rules changed after this run, so 1 judge answer and 1 suggested change naming groups that no longer match were dropped.'));
 });
 
 test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {
@@ -245,7 +287,7 @@ test('a buyer’s plain answers are objections; an older survey’s are friction
   assert.deepEqual(kinds, [['objection', null, 2], ['survey', null, 2]]);
 });
 
-test('ranking: a problem one persona of many met ranks below one several met, even when it is a blocker', () => {
+test('ranking: a severe problem one persona met ranks above a mild one several met; one persona repeating itself counts once', () => {
   const many = new Map([...'abcdefghij'].map((id) => [id, { name: id, segment_id: 'rec' }]));
   const wide: Context = { poi_id: 'poi', personas: many, segments: [{ id: 'rec', name: 'Recruiters', share: 100 }] };
   const events = log(
@@ -255,10 +297,18 @@ test('ranking: a problem one persona of many met ranks below one several met, ev
   );
   const themes = analyseFrictions(events, wide).themes;
   assert.deepEqual(themes.map((t) => [t.title, t.prevalence?.level, t.rank]), [
-    ['Search ignores the job title', 'strong', 1],
-    ['Export crashed and I could not go on', 'single', 2],
+    ['Export crashed and I could not go on', 'single', 1],
+    ['Search ignores the job title', 'strong', 2],
   ]);
-  assert.deepEqual(themes[0].prevalence, { personas: 3, exposed: 10, share: 0.3, low: 0.1078, high: 0.6032, level: 'strong' });
+  assert.deepEqual(themes[1].prevalence, { personas: 3, exposed: 10, share: 0.3, low: 0.1078, high: 0.6032, level: 'strong' });
+  // Persona e reports a blocker eight times; f and g a small irritation once each: the median is over personas, so 1.
+  const repeated = log(
+    ...[...'efg'].map((id) => ['persona.step', id, step(1)] as [EventType, string, object]),
+    ...Array.from({ length: 8 }, () => ['persona.friction_reported', 'e', friction(1, 4)] as [EventType, string, object]),
+    ['persona.friction_reported', 'f', friction(1, 1)],
+    ['persona.friction_reported', 'g', friction(1, 1)],
+  );
+  assert.equal(analyseFrictions(repeated, wide).themes[0].severity, 1);
 });
 
 test('what went well: likes grouped by where, merged and named by the judge, with the share of personas who named them', () => {

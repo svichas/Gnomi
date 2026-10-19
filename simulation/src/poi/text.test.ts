@@ -131,8 +131,8 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
   assert.deepEqual(report.personas.map((p) => [p.id, p.outcome, p.outcome_text]), [...buyers, ...users].map((p) => [p.id, 'done', 'Ask sales whether Team includes SSO']));
   assert.ok(of(events, 'persona.episode_started').every((e) => e.payload.start_url.startsWith('asset:')));
 
-  // Per-segment sentiment from the surveys, and the buyers' own results.
-  assert.deepEqual(report.sentiment?.map((s) => [s.name, s.surveyed, s.sentiment]), [['Team leads buying', 3, -1 / 3], ['Planners', 2, -1]]);
+  // Per-segment sentiment from the users' surveys, and the buyers' own results.
+  assert.deepEqual(report.sentiment?.map((s) => [s.name, s.surveyed, s.sentiment]), [['Team leads buying', 0, null], ['Planners', 2, -1]]);
   assert.equal(report.buyers?.length, 1);
   const bought = report.buyers![0];
   assert.deepEqual([bought.poi_id, bought.name, bought.surveyed, bought.would_buy, bought.price], ['pricing', 'Team leads buying', 3, 1 / 3, { low: 0, fair: 1, high: 0, unclear: 2 }]);

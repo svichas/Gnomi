@@ -36,3 +36,18 @@ test('a first opinion after reading a post is formed, not influenced, and moves 
   assert.deepEqual(influenceEdges([post(1, 'a', 's1'), changed(2, 'b', null, -1, ['s1'])]).map((e) => e.kind), ['formed']);
   assert.equal(influenceEdges([post(1, 'a', 's1'), changed(2, 'b', null, 0, ['s1'])]).length, 0);
 });
+
+test('a reply about no POI is about its parent’s, and a change at a step handed a post it does not cite is heard, not influence', () => {
+  const reply = post(2, 'a', 'r1', null);
+  if (reply.type === 'social.post') reply.payload.parent_id = 's1';
+  const step: GnomiEvent = {
+    ...base, seq: 3, round: 2, persona_id: 'b', type: 'persona.step',
+    payload: { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: 'u', url_after: 'u', dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 1, heard_post_ids: ['r1'] },
+  };
+  const change = changed(4, 'b', 1, -1, []);
+  if (change.type === 'persona.opinion_changed') change.payload.cause.step_ids = [3];
+  assert.deepEqual(influenceEdges([post(1, 'c', 's1'), reply, step, change, changed(5, 'd', 1, -1, ['r1'])]).map((e) => [e.from, e.to, e.post_id, e.kind]), [
+    ['a', 'b', 'r1', 'heard'],
+    ['a', 'd', 'r1', 'influence'],
+  ]);
+});

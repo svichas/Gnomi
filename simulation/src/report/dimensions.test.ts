@@ -58,7 +58,7 @@ test('report dimensions use typed values, persona outcomes and only each persona
   const report = buildReport(events);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'region')?.values, [
     { value: 'Americas', personas: 1, completion: 1, with_friction: 0, sentiment: 0 },
-    { value: 'EMEA', personas: 2, completion: 0.5, with_friction: 0.5, sentiment: 2 },
+    { value: 'EMEA', personas: 2, completion: 0.5, with_friction: 1, sentiment: 2 }, // p2 gave up: a friction theme counts it
   ]);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'consent')?.values.map((group) => group.value), [false, true]);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'tenure')?.values.map((group) => group.value), [0, 1]);
@@ -100,7 +100,7 @@ test('synthetic neutral feelings from invalid model output do not change group s
 test('Markdown includes dimension denominators and typed labels without exposing disabled attributes', () => {
   const markdown = reportToMarkdown(buildReport(fixture().events));
   assert.match(markdown, /Results by profile/);
-  assert.match(markdown, /EMEA \| 2 \| 50% \| 50% \| 2\.00/);
+  assert.match(markdown, /EMEA \| 2 \| 50% \| 100% \| 2\.00/);
   assert.match(markdown, /false \| 2/);
   assert.doesNotMatch(markdown, /PRIVATE|secret_note|Hidden title/);
   assert.equal(formatAttributeValue(0), '0');
