@@ -4,8 +4,8 @@ import { AttributeRule } from './AttributeRule.tsx';
 import { ATTRIBUTE_TYPES, choiceValues, defaultRule, PROFILE_GROUPS, setAttributeChoices, setSegmentRule } from './profile.ts';
 import { Button, Check, Field, inputClass } from './ui.tsx';
 
-function Flag({ label, checked, disabled = false, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange(value: boolean): void }) {
-  return <label className="flex items-center gap-2 text-sm text-stone-700"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="accent-indigo-600" />{label}</label>;
+function Flag({ label, text, checked, disabled = false, onChange }: { label: string; text?: string; checked: boolean; disabled?: boolean; onChange(value: boolean): void }) {
+  return <label className="flex items-center gap-2 text-sm text-stone-700"><input type="checkbox" aria-label={label} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="accent-indigo-600" />{text ?? label}</label>;
 }
 
 export function ProfileAttributeEditor({ attribute, custom, segments, onChange, onRemove }: { attribute: ProfileAttribute; custom: boolean; segments: Segment[]; onChange(next: ProfileAttribute): void; onRemove(): void }) {
@@ -18,15 +18,16 @@ export function ProfileAttributeEditor({ attribute, custom, segments, onChange, 
   const override = selected && attribute.sampling?.by_segment[selected.id];
   const rule = override || attribute.sampling?.default;
   return (
-    <li className="space-y-3 rounded-lg border border-stone-200 bg-white p-4" aria-label={`${attribute.name} attribute`}>
+    <li className="profile-attribute space-y-3" data-included={attribute.enabled} aria-label={`${attribute.name} attribute`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Flag label={`Include ${attribute.name}`} checked={attribute.enabled} disabled={attribute.core} onChange={(value) => set('enabled', value)} />
+        <Flag label={`Include ${attribute.name}`} text={attribute.name} checked={attribute.enabled} disabled={attribute.core} onChange={(value) => set('enabled', value)} />
         <span className="text-xs text-stone-500">{attribute.core ? 'Required' : custom ? 'Custom attribute' : 'Default attribute'}</span>
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-2">
-        <Flag label={`Show ${attribute.name} on cards`} checked={attribute.show_on_card} disabled={!attribute.enabled} onChange={(value) => set('show_on_card', value)} />
-        <Flag label={`Use ${attribute.name} in prompts`} checked={attribute.use_in_prompt} disabled={attribute.core || !attribute.enabled} onChange={(value) => set('use_in_prompt', value)} />
-        <Flag label={`Use ${attribute.name} as a report dimension`} checked={attribute.report_dimension} disabled={!attribute.enabled} onChange={(value) => set('report_dimension', value)} />
+      <p className="profile-attribute-description">{attribute.description}</p>
+      <div className="profile-attribute-flags">
+        <Flag label={`Show ${attribute.name} on cards`} text="Show on cards" checked={attribute.show_on_card} disabled={!attribute.enabled} onChange={(value) => set('show_on_card', value)} />
+        <Flag label={`Use ${attribute.name} in prompts`} text="Use in prompts" checked={attribute.use_in_prompt} disabled={attribute.core || !attribute.enabled} onChange={(value) => set('use_in_prompt', value)} />
+        <Flag label={`Use ${attribute.name} as a report dimension`} text="Report dimension" checked={attribute.report_dimension} disabled={!attribute.enabled} onChange={(value) => set('report_dimension', value)} />
       </div>
       <details>
         <summary className="cursor-pointer text-sm font-medium text-indigo-700">Configure {attribute.name}</summary>

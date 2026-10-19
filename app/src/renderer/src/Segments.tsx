@@ -9,8 +9,8 @@ const ENTRY: Record<Segment['entry'], string> = { direct: 'Opens the site direct
 const ACCOUNT: Record<Segment['account_state'], string> = { empty: 'A new, empty account', populated: 'An account with data' };
 // Absent is user (segments saved before M5). What each kind does by default is isEligible in simulation/src/poi/pois.ts.
 const KIND: Record<NonNullable<Segment['kind']>, { label: string; hint: string }> = {
-  user: { label: 'Users', hint: 'Users try every point of interest, web apps included, then say whether they would keep using it.' },
-  buyer: { label: 'Buyers', hint: 'Buyers only read text and look at designs, then say whether they would buy and what held them back.' },
+  user: { label: 'Users', hint: 'Try the product and describe their experience.' },
+  buyer: { label: 'Buyers', hint: 'Review text and designs to decide whether they would buy.' },
 };
 
 function Pick<T extends string>(props: { label: string; value: T; options: Record<T, string>; onChange(value: T): void }) {
@@ -80,13 +80,12 @@ export function SegmentCard(props: {
       </div>
 
       <div className="segment-body">
-        <div role="group" aria-label={`Kind of segment for ${segment.name}`} className="col-span-full flex flex-wrap items-center gap-2">
+        <div role="group" aria-label={`Kind of segment for ${segment.name}`} className="segment-kind-picker">
           {(Object.keys(KIND) as (keyof typeof KIND)[]).map((kind) => (
-            <Button key={kind} small variant={(segment.kind ?? 'user') === kind ? 'primary' : 'secondary'} aria-pressed={(segment.kind ?? 'user') === kind} onClick={() => set('kind', kind)}>
-              {KIND[kind].label}
+            <Button key={kind} small className="segment-kind-choice" aria-label={KIND[kind].label} aria-pressed={(segment.kind ?? 'user') === kind} onClick={() => set('kind', kind)}>
+              <span className="segment-kind-mark" aria-hidden="true">{(segment.kind ?? 'user') === kind && <Icon name="check" size={14} />}</span><span><strong>{KIND[kind].label}</strong><small>{KIND[kind].hint}</small></span>
             </Button>
           ))}
-          <p className="text-xs text-stone-500">{KIND[segment.kind ?? 'user'].hint}</p>
         </div>
         <Field label="Who they are">
           <textarea value={segment.description} onChange={(e) => set('description', e.target.value)} rows={2} placeholder="A sentence or two. The persona writer reads it." className={inputClass} />
@@ -96,7 +95,7 @@ export function SegmentCard(props: {
         </Field>
       </div>
 
-      <details className="segment-options"><summary>Habits, devices & scenarios</summary><div className="space-y-4 mt-4">
+      <details className="segment-options"><summary>Habits, devices & scenarios<span>{Math.round(segment.mobile_share * 100)}% phone · {segment.role || 'Logged out'} · {FREQUENCY[segment.usage_frequency]}</span></summary><div className="space-y-4 mt-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Login">
           <select value={segment.role ?? ''} onChange={(e) => set('role', e.target.value || null)} className={inputClass}>

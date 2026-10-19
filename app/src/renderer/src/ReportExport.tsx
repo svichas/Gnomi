@@ -2,7 +2,8 @@ import { useState } from 'react';
 import type { Report as ReportData } from '@gnomi/simulation/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
 import type { ReportFormat } from '../../reports.ts';
-import { Button, Note, useAction } from './ui.tsx';
+import { Button, Note, inputClass, useAction } from './ui.tsx';
+import { Icon } from './Icon.tsx';
 
 /** Saves the report as a file. The file is drawn on demand, so the screen never loads the static renderer or the inlined styles. */
 export function ExportReport({ report }: { report: ReportData }) {
@@ -15,14 +16,15 @@ export function ExportReport({ report }: { report: ReportData }) {
       return path === null ? null : { ok: true, text: `Report exported to ${path}` };
     });
   return (
-    <div className="flex min-w-0 max-w-full flex-col items-end gap-2 break-words">
-      <div className="flex items-center gap-2">
+    <div className="report-export">
+      <div className="report-export-copy"><Icon name="report" size={20} /><div><strong>Keep a copy of the findings</strong><p>Export the full report with its simulation records.</p></div></div>
+      <div className="report-export-actions">
         <select
           aria-label="Export format"
           value={format}
           onChange={(e) => setFormat(e.target.value as ReportFormat)}
           disabled={busy}
-          className="rounded-lg border border-stone-300 bg-white px-2 py-2 text-sm text-stone-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          className={inputClass}
         >
           {Object.entries(REPORT_FORMATS).map(([value, label]) => (
             <option key={value} value={value}>

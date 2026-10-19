@@ -6,11 +6,12 @@ import type { ReportFormat } from '../../reports.ts';
 import { InFile, Report } from './Report.tsx';
 import { when } from './ui.tsx';
 import css from './styles.css?inline';
+import resultsCss from './results.css?inline';
 import font from '../../../../assets/brand/fonts/InterVariable.woff2?inline';
 import logo from '../../../../assets/brand/gnomi-logo.svg?raw';
 
 // Exports travel without the app's asset folder. Replace the bundled font URL with its embedded bytes.
-const portableCss = css.replace(/@font-face\s*\{[^}]*\}/g, '') + `\n@font-face { font-family: 'Inter'; src: url('${font}') format('woff2'); font-style: normal; font-weight: 100 900; font-display: swap; }`;
+const portableCss = css.replace(/@font-face\s*\{[^}]*\}/g, '') + resultsCss + `\n@font-face { font-family: 'Inter'; src: url('${font}') format('woff2'); font-style: normal; font-weight: 100 900; font-display: swap; }`;
 const logoUrl = `data:image/svg+xml,${encodeURIComponent(logo)}`;
 
 // Screenshots past this are left out, so a 50-persona run stays under the roadmap's 25 MB (M3) with room for the markup.

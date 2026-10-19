@@ -16,6 +16,7 @@ import { SocialRounds } from './SocialRounds.tsx';
 import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
+import './audience-settings.css';
 
 /** Where the audience stands on its way to a run; the review step shows it too, at its last stage. */
 export function AudienceSteps({ stage }: { stage: 1 | 2 | 3 }) {
@@ -42,11 +43,13 @@ function PersonaCount({ audience, onChange, estimate, written }: { audience: Aud
         <p id={`${id}-hint`} className="persona-count-hint">{PERSONA_MINIMUM} to {PERSONA_MAXIMUM}. Use 1 for a quick check.</p>
       </div>
       <div>
+        <p className="persona-allocation-label">Your audience mix</p>
+        {counts && <div className="persona-allocation-bar" aria-hidden="true">{audience.segments.map((segment, index) => <span key={segment.id} style={{ flex: counts[index], background: `var(--gnomi-segment-${index % 5 + 1})` }} />)}</div>}
         {counts && (
           <ul aria-label="Personas per segment" className="persona-count-split">
             {audience.segments.map((segment, index) => (
               <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
-                <span className="segment-dot" /><span>{segment.name.trim() || 'Unnamed segment'}</span><strong>{counts[index]}</strong>
+                <span className="segment-dot" /><span>{segment.name.trim() || 'Unnamed segment'}</span><span className="persona-allocation-share">{segment.share}%</span><strong>{counts[index]} <span className="sr-only">personas</span></strong>
               </li>
             ))}
           </ul>
@@ -177,8 +180,16 @@ export function AudienceTab(props: {
   const segments = audience?.segments ?? [];
   const several = segments.length > 1;
   return (
-    <div className="space-y-5">
+    <div className="audience-workspace space-y-5">
       <AudienceSteps stage={stage} />
+      {building === 'personas' ? <div ref={buildPanel}><BuildProgress kind="personas" progress={progress} /></div> : !building && audience && (
+        <div className="audience-next">
+          <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
+          <div><p className="eyebrow">{needsPersonas ? 'Step 2 · Required before your run' : 'Your people are ready'}</p><h2>{needsPersonas ? 'Create your simulated audience' : `${personas.length} ${personas.length === 1 ? 'persona' : 'personas'} ready to explore`}</h2><p>{needsPersonas ? `Review the mix below, then generate ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} to unlock your run.` : 'Review the profiles below or continue to your run. Generate again after changing the mix.'}</p></div>
+          <Button onClick={generate} disabled={busy} variant={needsPersonas ? 'primary' : 'secondary'}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></Button>
+        </div>
+      )}
+      {plan.outcome && <Note tone={plan.outcome.ok ? 'ok' : 'error'}>{plan.outcome.text}</Note>}
       <Card title="Audience">
         {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
@@ -199,6 +210,7 @@ export function AudienceTab(props: {
           </div>
         ) : (
           <div className="space-y-5">
+            <div className="audience-builder-intro"><p>Shape who takes part</p><span>{segments.length} {segments.length === 1 ? 'segment' : 'segments'}<span aria-hidden="true"> · </span>{changed ? 'Unsaved changes' : 'Saved with project'}</span></div>
             <div className="audience-toolbar">
               <div className="audience-toolbar-main">
                 <PersonaCount audience={audience} onChange={(persona_count) => onAudience({ ...audience, persona_count })} estimate={estimate} written={personas.length} />
@@ -252,7 +264,7 @@ export function AudienceTab(props: {
 
             <div className="space-y-3 border-t border-stone-200 pt-4">
               <p className="text-sm text-stone-600">
-                Generating keeps every persona whose segment, seed and traits are unchanged, and only writes the new or changed ones.
+                Generate personas saves your audience and only rewrites profiles that changed. You can also save your draft to continue later.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={onSave} disabled={plan.busy}>
@@ -265,24 +277,12 @@ export function AudienceTab(props: {
           </div>
         )}
         </fieldset>
-        {plan.outcome && (
-          <div className="mt-4">
-            <Note tone={plan.outcome.ok ? 'ok' : 'error'}>{plan.outcome.text}</Note>
-          </div>
-        )}
       </Card>
 
       {audience && <details className="disclosure"><summary><Icon name="settings" />Customize persona attributes<span>Optional · traits, templates, and sampling</span></summary><div className="disclosure-body"><ProfileEditor schema={schema} segments={segments} onSchema={onSchema} disabled={people.busy || plan.busy} /></div></details>}
 
       {stale.size > 0 && <Note tone="info">{stale.size} {stale.size === 1 ? 'persona needs' : 'personas need'} regeneration after profile changes. Their old biographies and voices are hidden until you generate personas.</Note>}
 
-      {building === 'personas' ? <div ref={buildPanel}><BuildProgress kind="personas" progress={progress} /></div> : !building && audience && (
-        <div className="audience-next">
-          <span className="audience-next-icon"><Icon name={needsPersonas ? 'people' : 'check'} size={24} /></span>
-          <div><p className="eyebrow">{needsPersonas ? 'Step 2 · Required before your run' : 'Your people are ready'}</p><h3>{needsPersonas ? 'Bring your audience to life.' : `${personas.length} ${personas.length === 1 ? 'perspective' : 'perspectives'}, ready to explore.`}</h3><p>{needsPersonas ? `When your segments look right, generate ${audience.persona_count} simulated ${audience.persona_count === 1 ? 'person' : 'people'} to unlock your run.` : 'Review your people below, or adjust your audience and generate again to apply changes.'}</p></div>
-          <Button onClick={generate} disabled={busy} variant={needsPersonas ? 'primary' : 'secondary'}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></Button>
-        </div>
-      )}
       {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
 
       {people.outcome && <Note tone={people.outcome.ok ? 'ok' : 'error'}>{people.outcome.text}</Note>}

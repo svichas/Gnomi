@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 
 const paths = {
+  search: 'M21 21l-5-5M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z',
   up: 'M12 19V5m-6 6 6-6 6 6',
   down: 'M12 5v14m-6-6 6 6 6-6',
   trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7',

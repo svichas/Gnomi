@@ -21,10 +21,10 @@ import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
 
 const TABS = [
-  { id: 'project', label: 'Setup' },
-  { id: 'audience', label: 'Audience' },
-  { id: 'review', label: 'Review' },
-  { id: 'run', label: 'Simulation' },
+  { id: 'project', label: 'Setup', description: 'Your question & materials' },
+  { id: 'audience', label: 'Audience', description: 'People & perspectives' },
+  { id: 'review', label: 'Review', description: 'Readiness & run limits' },
+  { id: 'run', label: 'Simulation', description: 'Activity & findings' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'] | 'settings';
 
@@ -189,6 +189,7 @@ export function App() {
   const setSchema = (persona_schema: PersonaSchema) => setDraft((was) => was && { ...was, persona_schema });
 
   const currentProject = catalog?.projects.find((entry) => entry.id === catalog.currentId);
+  const dirty = draft !== null && JSON.stringify(draft) !== baseline.current;
   const showHome = () => {
     setHome(true);
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
@@ -224,6 +225,7 @@ export function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <header className="app-header">
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
@@ -234,7 +236,7 @@ export function App() {
         </div>}
       </header>
 
-      <main ref={main} className={`app-main ${home ? 'projects-main' : ''}`}>
+      <main ref={main} id="main-content" tabIndex={-1} className={`app-main ${home ? 'projects-main' : ''}`}>
         {problem && (
           <div className="mb-5">
             <Note tone="error">{problem}</Note>
@@ -245,15 +247,18 @@ export function App() {
           <p className="text-sm text-stone-500">Starting Gnomi...</p>
         ) : (
           // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
-          <div key={revision} hidden={home}>
+          <div key={revision} hidden={home} className="project-workspace">
             <div className="journey-nav">
               <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</Button>
+              <p className="workflow-label">Your workflow</p>
               <nav aria-label="Project steps" className="step-nav">
-                {TABS.map(({ id, label }, index) => <button key={id} type="button" id={`tab-${id}`} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span>{label}</button>)}
+                {TABS.map(({ id, label, description }, index) => <button key={id} type="button" id={`tab-${id}`} aria-label={label} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span><span className="step-copy"><strong>{label}</strong><small>{description}</small></span><Icon name="chevron" size={14} /></button>)}
               </nav>
+              <div className="workflow-note"><Icon name="leaf" size={20} /><p>Different perspectives. Better questions.</p><span>Findings are hypotheses to explore with real people.</span></div>
             </div>
-            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><p className="eyebrow">{tab === 'settings' ? 'Preferences' : currentProject?.name ?? 'Your project'}</p><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
-            <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'} className="max-w-2xl">
+            <div className="workspace-content">
+            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : tab === 'project' ? 'Study setup' : tab === 'audience' ? 'Audience builder' : tab === 'review' ? 'Ready to run' : 'Simulation workspace'}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
+            <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>
@@ -298,6 +303,7 @@ export function App() {
             </div>
             <div role="region" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
               <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSetup={() => go('project')} />
+            </div>
             </div>
           </div>
         )}

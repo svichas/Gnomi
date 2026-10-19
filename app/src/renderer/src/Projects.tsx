@@ -69,10 +69,12 @@ function ProjectMenu({ name, disabled, children }: { name: string; disabled: boo
 
 export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCatalog; onAction(action: ProjectAction): Promise<string | null>; onReturn(): void }) {
   const [name, setName] = useState('');
+  const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<{ action: 'rename' | 'duplicate'; id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
   const action = useAction();
+  const visibleProjects = catalog.projects.filter((project) => project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const perform = (request: ProjectAction) => action.run(async () => {
     const text = await onAction(request);
     if (text === null) return null;
@@ -83,8 +85,9 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
 
   return (
     <div className="projects-page">
-      <div className="page-heading projects-heading"><p className="eyebrow">Perspective before you ship</p><h1 tabIndex={-1}>Your projects.</h1><p>A place for each product, its people, and what you learn.</p></div>
-      <div className="section-toolbar"><h2>Projects <span aria-hidden="true" className="count-label">{catalog.projects.length}</span></h2><Button onClick={() => setCreating(true)} variant="primary"><Icon name="plus" size={18} />New project</Button></div>
+      <div className="projects-welcome"><div className="page-heading projects-heading"><p className="eyebrow">Perspective before you ship</p><h1 tabIndex={-1}>Your projects.</h1><p>A place for each product, its people, and what you learn.</p></div><Button onClick={() => setCreating(true)} variant="primary"><Icon name="plus" size={18} />New project</Button></div>
+      <ol className="workspace-guide" aria-label="How a study works"><li><Icon name="globe" /><div><strong>Set the scene</strong><p>Bring a product, idea, or design.</p></div></li><li><Icon name="people" /><div><strong>Add perspectives</strong><p>Define who you want to learn from.</p></div></li><li><Icon name="report" /><div><strong>Find your next question</strong><p>Explore findings and their evidence.</p></div></li></ol>
+      <div className="section-toolbar projects-toolbar"><h2>All projects <span aria-hidden="true" className="count-label">{catalog.projects.length}</span></h2><div className="project-search"><Icon name="search" size={16} /><input type="search" aria-label="Search projects" placeholder="Find a project…" value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button type="button" className="icon-button" aria-label="Clear project search" onClick={() => setQuery('')}><Icon name="close" size={14} /></button>}</div></div>
       {creating && <ProjectDialog title="Create a project" onCancel={() => { if (!action.busy) setCreating(false); }}>
         <p className="text-sm text-stone-600">Give your product a name. You can add the details next.</p>
         <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void perform({ action: 'create', name }); }}>
@@ -98,8 +101,8 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
       {action.outcome && !creating && <Note tone={action.outcome.ok ? 'ok' : 'error'}>{action.outcome.text}</Note>}
       {action.busy && <p role="status" className="text-sm text-stone-500">Working on the project…</p>}
       <ul aria-label="Projects" className="project-list">
-        {catalog.projects.map((project) => (
-          <li key={project.id} className="project-list-row">
+        {visibleProjects.map((project) => (
+          <li key={project.id} className="project-list-row" data-current={project.id === catalog.currentId}>
             <button type="button" onClick={() => void perform({ action: 'open', id: project.id })} disabled={action.busy} aria-label={`Open ${project.name}`} className="project-open">
               <span className="project-folder"><Icon name="folder" size={24} /></span><span className="project-row-copy"><span className="project-row-title"><span role="heading" aria-level={3}>{project.name}</span>{project.id === catalog.currentId && <span className="current-label">Last opened</span>}</span><span className="project-meta">{project.configured ? `Updated ${when(project.updatedAt)}` : 'Ready for your first test'}</span></span><Icon name="arrow" size={20} />
             </button>
@@ -112,6 +115,7 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
           </li>
         ))}
       </ul>
+      {catalog.projects.length > 0 && visibleProjects.length === 0 && <div className="empty-state compact" role="status"><Icon name="filter" size={28} /><h2>No matching projects</h2><p>Try a different name, or clear your search to see all projects.</p><Button variant="quiet" onClick={() => setQuery('')}>Clear search</Button></div>}
       {catalog.projects.length === 0 && <div className="empty-state"><Icon name="folder" size={32} /><h2>Your next perspective starts here.</h2><p>Create a project for the product you want to explore.</p></div>}
       <div className="projects-footnote"><p><Icon name="folder" size={16} />Projects are saved on this computer.</p>{catalog.currentId && <Button onClick={onReturn} variant="link">Return to open project<Icon name="arrow" size={16} /></Button>}</div>
 

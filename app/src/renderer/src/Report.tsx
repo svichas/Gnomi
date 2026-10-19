@@ -10,6 +10,7 @@ import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
+import './results.css';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -136,7 +137,7 @@ function Fold({ id, title, hint, children }: { id: string; title: string; hint: 
 
 function Tile({ label, value, detail, children }: { label: string; value: string; detail?: string; children?: ReactNode }) {
   return (
-    <div className="space-y-2 rounded-lg bg-stone-50 p-4">
+    <div className="report-metric space-y-2 rounded-lg bg-stone-50 p-4">
       <p className="text-xs font-medium text-stone-500">{label}</p>
       <p className="text-2xl font-medium tracking-tight tabular-nums text-stone-900">{value}</p>
       {detail && <p className="text-xs text-stone-600">{detail}</p>}
@@ -279,7 +280,7 @@ function Priority({ theme, nested, onInspect, renderScreenshot }: { theme: Repor
   const Title = nested ? 'h5' : 'h4';
   const inFile = useContext(InFile);
   return (
-    <li data-tone={SEVERITY[level(theme.severity)].tone} className="tone-edge space-y-3 rounded-lg border border-stone-200 bg-white p-4">
+    <li data-tone={SEVERITY[level(theme.severity)].tone} className="report-finding tone-edge space-y-3 rounded-lg border border-stone-200 bg-white p-4">
       <div className="flex flex-wrap items-center gap-2">
         <SeverityChip severity={theme.severity} />
         <EvidenceChip finding={theme} />
@@ -914,6 +915,16 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
   const details = filtered ? { ...report, personas: selectedPersonas, frictions: report.frictions.filter((friction) => ids.has(friction.persona_id)) } : report;
   const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
   const themes = [...(report.themes ?? [])].sort(byPriority);
+  const sections: [string, string][] = report.comparison ? [
+    ['comparison-decision-title', 'Decision'], ['comparison-matrix-title', 'Compare tools'],
+    ['comparison-fit-title', 'Tool fit'], ['comparison-actions-title', 'Next checks'],
+    ['comparison-coverage-title', 'Coverage'], ['comparison-evidence-title', 'Evidence'],
+  ] : [
+    ['glance-title', 'Overview'], ...(report.themes ? [['themes-title', 'Priority findings'] as [string, string]] : []),
+    ...(report.went_well?.length ? [['went-well-title', 'What worked'] as [string, string]] : []),
+    ['segments-title', 'Audience results'], ['personas-title', 'Persona journeys'],
+  ];
+  sections.push(['methods-title', 'Methods']);
   const facts = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
@@ -922,8 +933,9 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
   return (
-    <section aria-labelledby="report-title" className="min-w-0 space-y-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm sm:p-6">
-      <header className="space-y-3">
+    <section aria-labelledby="report-title" className="report-sheet min-w-0 space-y-8 rounded-xl border border-stone-200 bg-white p-5 sm:p-6">
+      <header className="report-masthead space-y-3">
+        <div className="report-kicker"><span>{report.comparison ? 'Comparison findings' : 'Simulation findings'}</span><span className="tone-chip" data-tone={report.status === 'finished' ? 'good' : 'warn'}>{report.status === 'finished' ? 'Completed run' : report.status === 'stopped' ? 'Partial report' : 'In progress'}</span></div>
         <div className="space-y-1">
           <h2 id="report-title" className="text-xl font-medium tracking-tight text-stone-900">
             Report
@@ -934,9 +946,9 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
           {!report.comparison && (report.pois.length > 1 || report.pois.some((poi) => poi.competitor)) && <p className="text-sm text-stone-600">What the personas tried, in this order: {report.pois.map(poiName).join(', ')}</p>}
           {report.status === 'stopped' && report.stop_reason && <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
         </div>
-        <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+        <dl className="report-run-facts">
           {facts.map(([label, value]) => (
-            <div key={label} className="flex gap-1.5">
+            <div key={label}>
               <dt className="text-stone-500">{label}</dt>
               <dd className="font-medium tabular-nums text-stone-900">{value}</dd>
             </div>
@@ -947,6 +959,17 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under How each persona did. Everything else describes the full run.`}</p>}
       </header>
+      {!inFile && <nav className="report-contents" aria-label="Report contents"><span>In this report</span>{sections.map(([id, label]) => <a key={id} href={`#${id}`} onClick={(event) => {
+        event.preventDefault();
+        const heading = event.currentTarget.closest('.report-sheet')?.querySelector<HTMLElement>(`#${id}`);
+        const disclosure = heading?.closest('details');
+        if (disclosure) disclosure.open = true;
+        if (heading) {
+          heading.tabIndex = -1;
+          heading.focus({ preventScroll: true });
+          heading.scrollIntoView({ block: 'start' });
+        }
+      }}>{label}</a>)}</nav>}
       {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
       <Glance report={report} themes={themes} />
       {report.themes && <Priorities themes={themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} />}

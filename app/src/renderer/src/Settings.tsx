@@ -8,6 +8,7 @@ import { problemFor, ROLES } from './form.ts';
 import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
+import './audience-settings.css';
 
 // What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
 const PROVIDER_NOTES: Partial<Record<ProviderId | 'figma', string>> = {
@@ -43,21 +44,21 @@ function ProviderRow(props: { provider: ProviderId | 'figma'; detail: string; te
   const label = provider === 'figma' ? 'Figma' : PROVIDER_LABELS[provider];
   const note = PROVIDER_NOTES[provider];
   return (
-    <li className="space-y-2 border-t border-stone-200 py-3 first:border-t-0 first:pt-0">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1 basis-48">
+    <li className="provider-row">
+      <div className="provider-row-main">
+        <div className="provider-identity">
           <p className="text-sm font-medium text-stone-900">{label}</p>
           <p className="truncate font-mono text-xs text-stone-600">{detail}</p>
         </div>
-        <div className="w-44">{testing.busy ? <p className="text-xs text-stone-500">Testing...</p> : <TestResult test={test} />}</div>
-        <div className="flex gap-2">
-          <Button
+        <div className="provider-test-result" role="status">{testing.busy ? <p className="text-xs text-stone-500">Testing...</p> : <TestResult test={test} />}</div>
+        <div className="provider-row-actions">
+          <Button small
             onClick={() => testing.run(async () => { const problem = await onTest(); return problem ? { ok: false, text: problem } : null; })}
             disabled={disabled || testing.busy}
           >
             Test<span className="sr-only"> {label}</span>
           </Button>
-          <Button onClick={onRemove} disabled={disabled || testing.busy}>
+          <Button small variant="quiet" onClick={onRemove} disabled={disabled || testing.busy}>
             Remove<span className="sr-only"> {label}</span>
           </Button>
         </div>
@@ -82,9 +83,9 @@ function AddProvider({ choices, disabled, onAdd }: { choices: ProviderId[]; disa
   }
 
   return (
-    <form onSubmit={submit} className="space-y-2 rounded-lg bg-stone-50 p-4">
+    <form onSubmit={submit} className="settings-add-provider">
       <p className="text-sm font-medium text-stone-800">Add a provider</p>
-      <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-end">
+      <div className="settings-add-provider-controls">
         <Field label="Provider">
           <select value={provider} onChange={(e) => { setPicked(e.target.value as ProviderId); setValue(''); }} className={inputClass}>
             {choices.map((id) => (
@@ -122,7 +123,7 @@ function AddFigmaToken({ disabled, onAdd }: { disabled: boolean; onAdd(token: st
     if (await onAdd(value)) setValue('');
   }
   return (
-    <form onSubmit={submit} className="grid gap-3 rounded-lg bg-stone-50 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+    <form onSubmit={submit} className="settings-figma-form">
       <Field label="Figma access token">
         <input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Paste the token" autoComplete="off" spellCheck={false} className={inputClass} />
       </Field>
@@ -234,6 +235,8 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     return null;
   }
 
+  const connectedCount = configured?.length ?? 0;
+
   const onSave = () =>
     saving.run(async () => {
       const saved = await save();
@@ -241,11 +244,20 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     });
 
   return (
-    <div className="space-y-5">
+    <div className="settings-workspace">
+      <div className="settings-overview" aria-label="Current settings">
+        <div><Icon name="globe" /><span><strong>{list ? `${connectedCount} ${connectedCount === 1 ? 'provider' : 'providers'} connected` : 'Loading connections…'}</strong><small>{list && connectedCount === 0 ? 'Add a provider to generate personas' : 'AI access for your projects'}</small></span></div>
+        <div><Icon name="clock" /><span><strong>${settings.cost_budget_usd} · {settings.wall_clock_budget_min} min</strong><small>Limits for each simulation</small></span></div>
+        <div><Icon name="people" /><span><strong>{settings.concurrency} at a time</strong><small>Personas exploring in parallel</small></span></div>
+      </div>
+      <div className="settings-layout">
+      <div className="settings-connections">
+      <div className="settings-group-heading"><p>Connections</p><span>Manage AI and design access</span></div>
       <Card title="Providers">
         <p className="mb-4 text-sm text-stone-600">
-          Gnomi uses your own keys. Each is stored encrypted by your operating system and is only ever sent to its provider. Add the ones you want to use.
+          Connect an AI provider to create personas and run simulations. Keys are stored using your operating system’s secure storage and sent only to their provider.
         </p>
+        {!list && <div className="settings-loading" role="status" aria-busy="true"><span /><span /><p>Loading your connections…</p></div>}
         {list && (list.keys.length || localUrl) ? (
           <ul className="mb-4">
             {list.keys.map(({ provider, masked, remembered, test: last }) => (
@@ -271,7 +283,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
             )}
           </ul>
         ) : (
-          list && <p className="mb-4 text-sm text-stone-500">No provider yet. Add one to run personas.</p>
+          list && <p className="settings-empty"><Icon name="plus" size={18} /><span>No provider yet. Add one below to get started.</span></p>
         )}
         {addable.length > 0 && <AddProvider choices={addable} disabled={changing.busy} onAdd={add} />}
         {changing.busy && <p className="mt-3 text-sm text-stone-500">Working...</p>}
@@ -279,10 +291,8 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       </Card>
 
       <Card title="Figma">
-        <p className="mb-4 text-sm text-stone-600">
-          Optional. With a Figma access token Gnomi can import frames from a Figma file as a design to test. In Figma, open Settings → Security and generate a personal access token with the file_content:read scope; it expires within 90 days.
-          Use an account with a Dev or Full seat: a View or Collab seat allows only a few imports a month.
-        </p>
+        <p className="mb-4 text-sm text-stone-600">Optional. Connect Figma to import frames as designs for your audience to explore.</p>
+        <details className="settings-help"><summary>How to create a Figma token</summary><p>In Figma, open Settings → Security and generate a personal access token with the file_content:read scope. Use an account with a Dev or Full seat; View and Collab seats have limited imports. Tokens expire, so check the expiry when creating one.</p></details>
         {list?.figma ? (
           <ul>
             <ProviderRow
@@ -303,7 +313,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       <Card title="Where Gnomi connects">
         <p className="mb-3 text-sm text-stone-600">Besides the sites you test, Gnomi sends data only to these addresses. There is no telemetry.</p>
         {list && (egressList(list, localUrl).length ? (
-          <ul className="space-y-1 text-sm">
+          <ul className="settings-egress">
             {egressList(list, localUrl).map(({ host, why }) => (
               <li key={host}><span className="font-mono text-stone-900">{host}</span> <span className="text-stone-500">· {why}</span></li>
             ))}
@@ -313,7 +323,56 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         ))}
       </Card>
 
-      <details className="disclosure"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
+      </div>
+      <div className="settings-run-options">
+      <div className="settings-group-heading"><p>Run settings</p><span>Saved with this project</span></div>
+      <Card title="Budgets">
+        <div className="space-y-4">
+          <div className="settings-budget-fields">
+            <Field label="Cost budget (USD)" hint="Stops new work at the recorded cost limit and cancels outstanding model requests.">
+              <NumberInput label="Cost budget (USD)" value={settings.cost_budget_usd} onChange={(v) => set('cost_budget_usd', v)} min={0} step={0.5} />
+            </Field>
+            <Field label="Time budget (minutes)" hint="The run stops after this long.">
+              <NumberInput label="Time budget (minutes)" value={settings.wall_clock_budget_min} onChange={(v) => set('wall_clock_budget_min', v)} min={1} step={5} />
+            </Field>
+            <Field label="Concurrency (1-32)" hint="Personas browsing at once, each in its own browser.">
+              <NumberInput label="Concurrency (1-32)" value={settings.concurrency} onChange={(v) => set('concurrency', v)} min={1} max={32} />
+            </Field>
+          </div>
+          <p className="text-xs text-stone-500">Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed this limit. Persona generation is charged separately.</p>
+          <Check checked={settings.screenshots} onChange={(on) => set('screenshots', on)}>
+            Show each page to the model as a screenshot
+          </Check>
+          <p className="pl-6 text-xs text-stone-500">Screenshots are always kept as evidence. Showing them to the model lets it see the page, and costs more.</p>
+        </div>
+      </Card>
+
+      <Card title="Persona generation">
+        <Field label="Writer concurrency (1-32)" hint="Profiles written at once. Lower this if your provider throttles requests or your local model slows down.">
+          <NumberInput label="Writer concurrency (1-32)" value={settings.persona_concurrency ?? 32} onChange={(v) => set('persona_concurrency', v)} min={1} max={32} />
+        </Field>
+        <p className="mt-3 text-xs text-stone-500">Completed drafts are saved automatically. Retrying an interrupted build resumes the work already completed.</p>
+      </Card>
+
+      <Card title="Social rounds">
+        <div className="space-y-4">
+          <Check checked={settings.social ?? false} onChange={(on) => set('social', on)}>
+            Let personas read and post in a shared feed between stretches of use
+          </Check>
+          <p className="pl-6 text-xs text-stone-500">
+            Each round, every persona uses the product for part of its steps, then reads posts from the people it follows and may post, reply or react. Most stay silent. Needs an audience: the built-in persona runs alone.
+          </p>
+          {settings.social && (
+            <Field label="Rounds (1-10)" hint="More rounds give opinions more chances to spread, with one socialiser call per persona each round.">
+              <NumberInput label="Rounds (1-10)" value={settings.rounds ?? 5} onChange={(v) => set('rounds', v)} min={1} max={MAX_ROUNDS} />
+            </Field>
+          )}
+        </div>
+      </Card>
+
+      </div>
+      </div>
+      <details className="disclosure settings-models"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
         <p className="mb-4 text-sm text-stone-600">With one connected provider, Gnomi assigns it to every task automatically. You can choose a provider and model for each task below. Changing the provider selects its recommended model.</p>
         <div className="space-y-3">
           {ROLES.map((role) => {
@@ -322,7 +381,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
             const warning = configured && routeProblem(choice.provider, configured);
             const blind = role === 'navigator' && choice.provider === 'deepseek' && settings.screenshots;
             return (
-              <div key={role} className="grid gap-2 sm:grid-cols-[9rem_10rem_minmax(0,1fr)] sm:items-start">
+              <div key={role} className="settings-model-row">
                 <div>
                   <p className="text-sm font-medium text-stone-800">{text.label}</p>
                   <p className="text-xs text-stone-500">{text.used ? text.hint : `${text.hint} Used from a later version.`}</p>
@@ -352,54 +411,11 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
       </div></details>
 
-      <Card title="Persona generation">
-        <Field label="Writer concurrency (1-32)" hint="Profiles written at once. Lower this if your provider throttles requests or your local model slows down.">
-          <NumberInput label="Writer concurrency (1-32)" value={settings.persona_concurrency ?? 32} onChange={(v) => set('persona_concurrency', v)} min={1} max={32} />
-        </Field>
-        <p className="mt-3 text-xs text-stone-500">Completed drafts are saved automatically. Retrying an interrupted build resumes the work already completed.</p>
-      </Card>
-
-      <Card title="Budgets">
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Cost budget (USD)" hint="Stops new work at the recorded cost limit and cancels outstanding model requests.">
-              <NumberInput label="Cost budget (USD)" value={settings.cost_budget_usd} onChange={(v) => set('cost_budget_usd', v)} min={0} step={0.5} />
-            </Field>
-            <Field label="Time budget (minutes)" hint="The run stops after this long.">
-              <NumberInput label="Time budget (minutes)" value={settings.wall_clock_budget_min} onChange={(v) => set('wall_clock_budget_min', v)} min={1} step={5} />
-            </Field>
-            <Field label="Concurrency (1-32)" hint="Personas browsing at once, each in its own browser.">
-              <NumberInput label="Concurrency (1-32)" value={settings.concurrency} onChange={(v) => set('concurrency', v)} min={1} max={32} />
-            </Field>
-          </div>
-          <p className="text-xs text-stone-500">Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed this limit. Persona generation is charged separately.</p>
-          <Check checked={settings.screenshots} onChange={(on) => set('screenshots', on)}>
-            Show each page to the model as a screenshot
-          </Check>
-          <p className="pl-6 text-xs text-stone-500">Screenshots are always kept as evidence. Showing them to the model lets it see the page, and costs more.</p>
-        </div>
-      </Card>
-
-      <Card title="Social rounds">
-        <div className="space-y-4">
-          <Check checked={settings.social ?? false} onChange={(on) => set('social', on)}>
-            Let personas read and post in a shared feed between stretches of use
-          </Check>
-          <p className="pl-6 text-xs text-stone-500">
-            Each round, every persona uses the product for part of its steps, then reads posts from the people it follows and may post, reply or react. Most stay silent. Needs an audience: the built-in persona runs alone.
-          </p>
-          {settings.social && (
-            <Field label="Rounds (1-10)" hint="More rounds give opinions more chances to spread, with one socialiser call per persona each round.">
-              <NumberInput label="Rounds (1-10)" value={settings.rounds ?? 5} onChange={(v) => set('rounds', v)} min={1} max={MAX_ROUNDS} />
-            </Field>
-          )}
-        </div>
-      </Card>
-
       <ActionBar>
+        <p className="settings-save-hint">Provider keys save immediately. Save to apply this project’s run settings.</p>
         {saving.outcome && <Note tone={saving.outcome.ok ? 'ok' : 'error'}>{saving.outcome.text}</Note>}
         {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
-        <Button onClick={onSave} disabled={saving.busy} variant="primary">
+        <Button onClick={onSave} disabled={saving.busy} loading={saving.busy} variant="primary">
           Save settings
         </Button>
       </ActionBar>

@@ -101,8 +101,10 @@ async function openReport(page: Page, options: { timeout?: number } = {}) {
 }
 
 async function showActivity(page: Page) {
-  await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
+  const simulation = page.getByRole('tab', { name: 'Simulation', exact: true });
+  if (await simulation.count()) await simulation.click(); // live runs already show activity and have no report tabs yet
   const activity = page.getByRole('region', { name: 'Activity', exact: true });
+  await activity.waitFor();
   const filters = activity.getByRole('button', { name: /^Filter/ });
   if (await filters.getAttribute('aria-expanded') === 'false') await filters.click();
   return activity;
@@ -337,7 +339,7 @@ try {
       await settings.getByLabel(provider === 'openai_compatible' ? 'Base URL' : 'API key', { exact: true }).fill(value);
       await settings.getByRole('button', { name: 'Add provider' }).click();
     };
-    await settings.getByText('No provider yet. Add one to run personas.').waitFor();
+    await settings.getByText('No provider yet. Add one below to get started.').waitFor();
     assert.deepEqual(await options(), ['Anthropic'], 'only the provider in use, flagged');
     await settings.getByText('The selected AI provider is not connected. Add it under Providers or choose a connected provider.').first().waitFor();
 
@@ -528,11 +530,17 @@ try {
       // Social rounds are on: the scripted swarm reads its feeds and mostly stays silent, but someone posts.
       const activity = await showActivity(page);
       await activity.getByLabel('Kind of event').selectOption({ label: 'Feed, posts and reactions' });
-      await page.waitForFunction(() => {
-        const section = document.querySelector('section[aria-labelledby=activity-title]');
-        section?.scrollIntoView({ block: 'end' }); // the list holds only the rows on screen, and the first posts are at its end
-        return [...(section?.querySelectorAll('[role=listitem]') ?? [])].some((row) => row.textContent?.includes('Posted in the feed'));
-      }, null, { timeout: 30_000 });
+      // Social posts can occur anywhere between feed reads and reactions. Traverse the virtual list as a reader would;
+      // pinning the viewport to its end only exposes the earliest empty-feed events on taller activity rows.
+      await activity.getByRole('heading', { name: 'Activity', exact: true }).scrollIntoViewIfNeeded();
+      const posted = activity.locator('.timeline-one-line').filter({ hasText: /^Posted in the feed/ }).first();
+      for (const deadline = Date.now() + 30_000; !await posted.isVisible() && Date.now() < deadline;) {
+        await page.mouse.wheel(0, await page.evaluate(() => Math.round(innerHeight * .6)));
+        await page.waitForTimeout(100); // allow virtual rows and their measured heights to settle after each scroll
+      }
+      await posted.waitFor({ state: 'visible' });
+      await posted.scrollIntoViewIfNeeded();
+      assert.match(await posted.locator('..').locator('.moment-quote').innerText(), /Scripted demo post/);
       await page.screenshot({ path: join(shots, 'activity-social.png') });
       await activity.getByLabel('Kind of event').selectOption({ label: 'Everything' });
       population = true;
@@ -547,22 +555,28 @@ try {
     await page.locator('summary').filter({ hasText: 'People in this run' }).click();
     await page.getByRole('button', { name: /^Inspect / }).first().click();
     await inspector.waitFor();
-    // Opinions and the survey come first; the timeline's screenshots load once they are scrolled into view.
+    // Evidence comes first; section shortcuts keep opinions and the full profile reachable.
     const timeline = inspector.getByRole('region', { name: 'Timeline' });
-    await timeline.scrollIntoViewIfNeeded();
+    const sections = inspector.getByRole('navigation', { name: 'Persona sections' });
+    await sections.getByRole('button', { name: /^Journey/ }).click();
+    // Newest social events can precede every screenshot. Scroll the lazy screenshot itself into the viewport.
+    await timeline.getByRole('img').or(timeline.getByText('Loading screenshot...', { exact: true })).first().scrollIntoViewIfNeeded();
     const image = timeline.getByRole('img').first();
     await image.waitFor();
     await page.waitForFunction((img) => (img as HTMLImageElement).naturalWidth > 0, await image.elementHandle());
-    await inspector.getByText('Full profile').click();
+    await sections.getByRole('button', { name: 'Profile', exact: true }).click();
+    assert.notEqual(await inspector.getByLabel('Profile', { exact: true }).getAttribute('open'), null, 'the profile shortcut opens its disclosure');
     assert.match(await inspector.innerText(), /Biography/);
     assert.match(await inspector.innerText(), /Germany/);
     assert.match(await inspector.innerText(), /Europe\/Berlin/);
     const opinions = inspector.getByRole('region', { name: 'Current opinions' });
+    await sections.getByRole('button', { name: 'Opinions', exact: true }).click();
     assert.match(await opinions.innerText(), /Sentiment\s+-1 of −2 to \+2/);
     assert.match(await opinions.innerText(), /Self-reported confidence\s+50%/);
     assert.match(await opinions.innerText(), /Likes[\s\S]+Sample like from the scripted demo/);
     assert.match(await opinions.innerText(), /Frictions[\s\S]+Sample friction from the scripted demo/);
-    const survey = inspector.getByRole('region', { name: 'Survey' });
+    const survey = inspector.getByLabel('Survey', { exact: true });
+    await unfold(survey);
     assert.match(await survey.innerText(), /Would keep using it\s+No/);
     assert.match(await survey.innerText(), /Scripted demo survey: no model was called/);
     await survey.screenshot({ path: join(shots, 'inspector-survey.png') });
@@ -593,8 +607,11 @@ try {
       const status = page.getByRole('region', { name: 'Run status' });
       await banner.waitFor({ timeout: 120_000 });
       // Three run at a time, so three stop at the challenge and the other three have not started.
-      await status.getByText('Waiting for you 3').waitFor({ timeout: 120_000 });
-      await status.getByText('Waiting to start 3').waitFor();
+      await status.getByText('3 people need help. Resolve the request below to continue.', { exact: true }).waitFor({ timeout: 120_000 });
+      const roster = page.locator('details.persona-roster');
+      await unfold(roster);
+      assert.equal(await roster.getByRole('button').filter({ hasText: 'Waiting for you' }).count(), 3);
+      assert.equal(await roster.getByRole('button').filter({ hasText: 'Waiting to start' }).count(), 3);
       const said = await banner.innerText();
       assert.match(said, /3 personas \(.*\) hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
       // The status line still says three until the engine has answered, so look at each persona's own rows: a second stop means she was blocked again.
@@ -603,20 +620,16 @@ try {
       await banner.getByRole('button', { name: 'Retry' }).click();
       const feed = await showActivity(page);
       await feed.getByLabel('Kind of event').selectOption({ label: 'Blocked and resumed' });
-      // The feed holds only the rows on screen, so each poll brings its end into view before it counts.
-      const rowsWith = (text: string, count: number) =>
-        page.waitForFunction(
-          ({ wanted, n }) => {
-            const section = document.querySelector('section[aria-labelledby=activity-title]');
-            section?.scrollIntoView({ block: 'end' });
-            return [...(section?.querySelectorAll('[role=listitem]') ?? [])].filter((row) => row.textContent?.includes(wanted)).length >= n;
-          },
-          { wanted: text, n: count },
-          { timeout: 120_000 },
-        );
       for (const name of names) {
         await feed.getByLabel('Persona', { exact: true }).selectOption({ label: name });
-        await rowsWith('Blocked by a CAPTCHA, waiting for you', 2); // the challenge is still there
+        // The activity list is virtualized. Open the selected persona's complete recorded journey to count both stops.
+        await feed.evaluate((section) => section.scrollIntoView({ block: 'end' }));
+        await feed.locator('.timeline-persona-name').filter({ hasText: name }).first().click();
+        const inspector = page.getByRole('dialog', { name: 'Persona details' });
+        const blocked = inspector.getByRole('region', { name: 'Timeline', exact: true }).getByRole('listitem').filter({ hasText: 'Blocked by a CAPTCHA, waiting for you' });
+        await blocked.nth(1).waitFor({ timeout: 120_000 }); // the challenge is still there after Retry
+        assert.equal(await blocked.count(), 2);
+        await inspector.getByRole('button', { name: 'Close', exact: true }).click();
       }
       await banner.getByRole('button', { name: 'End run' }).click();
       await openReport(page, { timeout: 120_000 });
@@ -662,7 +675,9 @@ try {
     assert.ok(Number(await graph.locator('.swarm-filter').filter({ hasText: 'Friction' }).locator('.swarm-filter-count').innerText()) > 0);
     assert.ok(await graph.getByRole('slider').isEnabled(), 'its rounds can be scrubbed');
     await clickNode(page, 'persona:');
-    await inspector.getByRole('region', { name: 'Social memory' }).getByText(/^Follows \(\d+\)$/).waitFor();
+    const populationSocial = inspector.getByLabel('Social memory', { exact: true });
+    await unfold(populationSocial);
+    await populationSocial.getByText(/^Follows \(\d+\)$/).waitFor();
     await inspector.getByRole('button', { name: 'Close' }).click();
 
     // A synthetic social run of three rounds, written to the open project's log as the social engine would.
@@ -681,7 +696,7 @@ try {
     await page.getByRole('region', { name: 'Project run history', exact: true }).getByRole('button', { name: new RegExp(config.run_id) }).click();
     await page.getByRole('tab', { name: 'Simulation', exact: true }).click();
     await graph.getByText(`12 personas, 3 points of interest, ${buildGraph(logged).edges.size} connections`).waitFor();
-    await page.getByText('Audience conversations', { exact: true }).click();
+    await page.locator('summary').filter({ hasText: 'Audience conversations' }).click();
     const feed = page.getByRole('region', { name: 'Feed' });
     await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();
     assert.ok(await feed.getByText('Injected by the test harness').count() >= 1, 'the injected post is labelled');
@@ -700,7 +715,8 @@ try {
 
     const id = await clickNode(page, 'persona:');
     const memory = socialMemory(logged, id);
-    const social = inspector.getByRole('region', { name: 'Social memory' });
+    const social = inspector.getByLabel('Social memory', { exact: true });
+    await unfold(social);
     await social.getByText(`Follows (${memory.follows.length})`).waitFor();
     await social.getByText(`Posts seen (${memory.seen.length})`).waitFor();
     await social.getByText(`Own posts (${memory.own.length})`).waitFor();

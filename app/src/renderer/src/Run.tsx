@@ -203,6 +203,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segments={segments}
           filters={filters}
           live={!ended}
+          profileGroups={groups}
           onFilters={setFilters}
           onOpen={(id, seq) => setInspecting({ persona: id, seq })}
         />
@@ -238,7 +239,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
 export function Run({ runId, runs, onSetup, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; active: boolean }) {
   return (
     <div className="run-page">
-      {runs.length > 0 && <div className="run-history-bar"><span>{runId}</span><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
       {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );

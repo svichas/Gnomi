@@ -38,7 +38,7 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
   }
   const scopes = [...new Set(study.targets.map((target) => ACCESS_LABELS[target.access_scope]))];
   return <>
-    <section aria-labelledby="comparison-decision-title" className="space-y-3">
+    <section aria-labelledby="comparison-decision-title" className="comparison-decision space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 id="comparison-decision-title" className={heading}>Decision and scope</h3>
         <span data-tone={comparison.decision.status === 'conditional_shortlist' ? 'warn' : 'neutral'} className="tone-chip">{comparison.decision.status === 'conditional_shortlist' ? 'Conditional shortlist' : comparison.decision.status === 'no_suitable_tool' ? 'No suitable tool in this scope' : 'Insufficient evidence'}</span>
@@ -56,7 +56,7 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
         <p className="text-sm text-stone-600">Each target faces the same criterion. Coverage counts assessed persona/task episodes; distinct sources are counted separately. Unknown means the evidence cannot settle the requirement.</p>
         <p className="text-xs text-stone-600 print:hidden">On narrow screens, scroll the table horizontally to compare every tool.</p>
       </div>
-      {groups.size === 0 && <p className="text-sm text-stone-600">No criterion observations are available yet. The decision remains unresolved.</p>}
+      {groups.size === 0 && <div className="report-empty"><h4>No comparison evidence yet</h4><p>No criterion observations are available. Review coverage and limitations below to see what prevented an assessment.</p></div>}
       {[...groups.entries()].map(([key, cells], groupIndex) => {
         const scope = cells[0];
         const task = study.tasks.find((candidate) => candidate.id === scope.task_id);
@@ -64,7 +64,7 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
         return <section key={key} aria-labelledby={`comparison-scope-${groupIndex}`} className="space-y-2">
           <h4 id={`comparison-scope-${groupIndex}`} className="text-sm font-medium text-stone-900">{scopeName(scope)} · {ACCESS_LABELS[scope.access_scope]}</h4>
           {task && <p className="text-sm text-stone-600">{task.instruction}</p>}
-          <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
+          <div className="comparison-table-scroll overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
             <table className="comparison-matrix w-full table-fixed text-left text-sm" style={{ minWidth: `${12 + study.targets.length * 11}rem` }}>
               <thead className="bg-stone-50"><tr><th scope="col" className="w-48 p-3 text-xs font-medium text-stone-600">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id} className="p-3 align-top font-medium text-stone-900">{target.name}{target.id === study.focal_target_id && <span className="block text-xs font-normal text-stone-600">Your tool</span>}</th>)}</tr></thead>
               <tbody className="divide-y divide-stone-200">{criteria.map((criterion) => <tr key={criterion.id}>
@@ -110,7 +110,7 @@ export function ComparisonReport({ comparison, report, inFile, onInspect, render
       })}</ul>
     </section>
 
-    <section aria-labelledby="comparison-actions-title" className="space-y-3">
+    <section aria-labelledby="comparison-actions-title" className="comparison-next-checks space-y-3">
       <h3 id="comparison-actions-title" className={heading}>{study.purpose === 'improve_own_product' ? 'Actions for your product and evaluation' : 'Next checks before choosing'}</h3>
       {comparison.actions.length === 0 && <p className="text-sm text-stone-600">No supported action was generated. Resolve the unknown must-haves in the matrix before making a selection.</p>}
       <ol className="list-decimal space-y-4 pl-5">{comparison.actions.map((action, i) => <li key={i} className="space-y-1 pl-1 text-sm">

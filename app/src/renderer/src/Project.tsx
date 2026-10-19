@@ -3,6 +3,7 @@ import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { PoiList } from './poi/PoiList.tsx';
+import { poiOf } from './poi/index.ts';
 import { useRecorder } from './Recorder.tsx';
 import { ActionBar, Button, Card, Field, inputClass, Note, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
@@ -45,6 +46,8 @@ export function Project(props: {
     });
 
   const persona = info?.persona;
+  const readyMaterials = form.pois.filter((poi) => typeof poiOf(poi) !== 'string').length;
+  const briefReady = !!(form.name.trim() && form.goal.trim());
 
   const continueToAudience = () => run(async () => {
     const saved = await save();
@@ -56,7 +59,7 @@ export function Project(props: {
   return (
     <div className="setup-layout">
       <div className="space-y-5">
-      <Card title="What to test">
+      <Card id="study-brief" title="What to test" description="Start with a clear question. Everything in the study follows from here.">
         <div className="space-y-4">
           <Field label="Project name">
             <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Your product" className={inputClass} />
@@ -81,7 +84,7 @@ export function Project(props: {
         </div>
       </Card>
 
-      <PoiList pois={form.pois} onChange={(change) => onForm((was) => ({ ...was, pois: change(was.pois) }))} segments={audience?.segments ?? []} sessions={sessions} />
+      <div id="study-materials"><PoiList pois={form.pois} onChange={(change) => onForm((was) => ({ ...was, pois: change(was.pois) }))} segments={audience?.segments ?? []} sessions={sessions} /></div>
 
       <ComparisonSetup draft={draft} onChange={(study) => set('comparison', study)} sessions={sessions} sessionsPersist={sessionsPersist} recorder={recorder} saveFirst={saveFirst} />
 
@@ -110,8 +113,17 @@ export function Project(props: {
       </div>
 
       <aside className="setup-aside" aria-label="Your test at a glance">
-        <div className="aside-intro"><span className="aside-icon"><Icon name="leaf" size={24} /></span><h2>A little perspective<br />goes a long way.</h2><p>Watch simulated people try your product, then explore the moments that matter.</p></div>
-        <ol className="journey-preview"><li><span>1</span><div><strong>Set the scene</strong><p>A website and a task to try.</p></div></li><li><span>2</span><div><strong>Meet your audience</strong><p>Different people, different perspectives.</p></div></li><li><span>3</span><div><strong>Follow their experience</strong><p>Actions, opinions, and evidence.</p></div></li></ol>
+        <div className="study-summary">
+          <div className="study-summary-heading"><Icon name="report" size={18} /><h2>Your study at a glance</h2></div>
+          <p className="study-summary-goal">{form.goal.trim() || 'What would you like to find out?'}</p>
+          <dl className="study-summary-facts"><div><dt>Materials</dt><dd>{form.pois.length}<span>{form.pois.length === 1 ? 'source' : 'sources'} to explore</span></dd></div><div><dt>Audience</dt><dd>{audience?.persona_count ?? 1}<span>simulated people</span></dd></div></dl>
+          <p className="study-summary-label">Before you continue</p>
+          <ul className="setup-checklist">
+            <li data-ready={briefReady}><Icon name={briefReady ? 'check' : 'plus'} size={15} /><a href="#study-brief">{briefReady ? 'Study brief added' : 'Define your study brief'}</a></li>
+            <li data-ready={readyMaterials > 0 && readyMaterials === form.pois.length}><Icon name={readyMaterials > 0 && readyMaterials === form.pois.length ? 'check' : 'plus'} size={15} /><a href="#study-materials">{form.pois.length ? `${readyMaterials} of ${form.pois.length} materials ready` : 'Add something to explore'}</a></li>
+            <li data-ready={!needsProvider}><Icon name={needsProvider ? 'plus' : 'check'} size={15} /><button type="button" onClick={onSettings}>{needsProvider ? 'Connect an AI provider' : 'AI provider configured'}</button></li>
+          </ul>
+        </div>
       {audience !== null ? (
         <Card title="Who will try it">
           <p className="text-sm text-stone-700">

@@ -91,6 +91,14 @@ try {
   assert.doesNotMatch(reportText, /At a glance|What to fix first|Legacy comparison:/);
   for (const [name] of materials) assert.ok(await report.getByRole('columnheader', { name, exact: true }).isVisible());
   await page.screenshot({ path: join(shots, 'comparison-report.png'), fullPage: true });
+  const contents = report.getByRole('navigation', { name: 'Report contents', exact: true });
+  await contents.getByRole('link', { name: 'Evidence', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  assert.notEqual(await report.locator('details').filter({ has: page.locator('#comparison-evidence-title') }).getAttribute('open'), null, 'report navigation opens folded evidence');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'comparison-evidence-title', 'keyboard navigation moves focus to its destination');
+  await contents.getByRole('link', { name: 'Methods', exact: true }).click();
+  assert.notEqual(await report.locator('details').filter({ has: page.locator('#methods-title') }).getAttribute('open'), null, 'methods are reachable directly from the contents');
+  await contents.getByRole('link', { name: 'Decision', exact: true }).click();
 
   // Read-only database inspection does not mark a live project/run interrupted, unlike opening another ProjectStore.
   const db = new DatabaseSync(join(projectDir, 'project.sqlite'), { readOnly: true });

@@ -91,10 +91,11 @@ export function Activity(props: {
   segments: Segment[];
   filters: Filters;
   live?: boolean;
+  profileGroups?: ProfileGroups[];
   onFilters(filters: Filters): void;
   onOpen(personaId: string, seq: number | null): void;
 }) {
-  const { rows, total, personas, segments, filters, live = false, onFilters, onOpen } = props;
+  const { rows, total, personas, segments, filters, live = false, profileGroups = [], onFilters, onOpen } = props;
   const byId = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const [showFilters, setShowFilters] = useState(false);
   const [allEvents, setAllEvents] = useState(false);
@@ -107,11 +108,20 @@ export function Activity(props: {
   const routineVisible = allEvents || !!filters.category;
   const moments = useMemo(() => activityMoments(feedRows, routineVisible), [feedRows, routineVisible]);
   const pending = useMemo(() => pausedRows ? pendingActivityCount(routineVisible ? rows : rows.filter(isTimelineHighlight), pausedRows) : 0, [rows, pausedRows, routineVisible]);
-  const activeFilters = !!(filters.persona || filters.segment || filters.category);
+  const activeFilters = !!(filters.persona || filters.segment || filters.category || filters.dimension);
   const set = (change: Partial<Filters>) => { setSnapshot(null); onFilters({ ...filters, ...change }); };
+  const clear = () => set({ persona: '', segment: '', category: '', dimension: '', value: '' });
+  const profileGroup = profileGroups.find((group) => group.attribute.id === filters.dimension);
+  const profileValue = profileGroup?.values.find(({ value }) => attributeKey(value) === filters.value);
+  const applied = [
+    filters.persona && { key: 'persona', label: byId.get(filters.persona)?.name ?? 'Selected persona', clear: () => set({ persona: '' }) },
+    filters.segment && { key: 'segment', label: segments.find((segment) => segment.id === filters.segment)?.name ?? 'Selected segment', clear: () => set({ segment: '' }) },
+    filters.category && { key: 'category', label: CATEGORIES[filters.category], clear: () => set({ category: '' }) },
+    filters.dimension && { key: 'profile', label: `${profileGroup?.attribute.name ?? 'Audience'}: ${profileValue ? formatAttributeValue(profileValue.value) : 'All values'}`, clear: () => set({ dimension: '', value: '' }) },
+  ].filter((item) => !!item);
   return (
     <section aria-labelledby="activity-title" className="activity-feed">
-      <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{moments.length}</span></h2><p>Follow each action, the thinking behind it, and what happened next.</p></div><div className="activity-toolbar-actions">{activeFilters && <Button variant="link" onClick={() => set({ persona: '', segment: '', category: '' })}>Clear filters</Button>}<Button variant="quiet" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</Button></div></div>
+      <div className="section-toolbar timeline-toolbar"><div><h2 id="activity-title">Activity <span aria-hidden="true" className="count-label">{moments.length}</span></h2><p>Follow each action, the thinking behind it, and what happened next.</p></div><div className="activity-toolbar-actions">{activeFilters && <Button variant="link" onClick={clear}>Clear filters</Button>}<Button variant="quiet" aria-expanded={showFilters} aria-controls="activity-filters" onClick={() => setShowFilters(!showFilters)}><Icon name="filter" size={18} />Filter{activeFilters ? ' · on' : ''}</Button></div></div>
       <div id="activity-filters" hidden={!showFilters}>
       <div className="filter-bar grid gap-3 sm:grid-cols-3">
         <Field label="Persona">
@@ -145,11 +155,13 @@ export function Activity(props: {
           </select>
         </Field>
       </div>
+      {profileGroups.length > 0 && <div className="activity-profile-filters"><ProfileFilters groups={profileGroups} filter={{ dimension: filters.dimension, value: filters.value }} onChange={(next) => set({ ...next, persona: '' })} /></div>}
       </div>
+      {applied.length > 0 && <div className="activity-applied-filters" aria-label="Applied filters">{applied.map((item) => item && <button key={item.key} type="button" onClick={item.clear} aria-label={`Remove filter: ${item.label}`}>{item.label}<span aria-hidden="true">×</span></button>)}</div>}
       <div className="timeline-options"><div role="group" aria-label="Timeline detail" className="segmented-control"><button type="button" aria-pressed={!routineVisible} onClick={() => { setAllEvents(false); set({ category: '' }); }}>Highlights</button><button type="button" aria-pressed={routineVisible} onClick={() => { setAllEvents(true); set({ category: '' }); }}>All events</button></div><div className="activity-live-controls"><span className={`activity-live-state${live && !pausedRows ? ' is-live' : ''}`}><i aria-hidden="true" />{pausedRows ? 'Updates paused' : live ? 'Live updates' : 'Run history'}</span>{live && !pausedRows && <button type="button" className="activity-pause" onClick={pause}>Pause updates</button>}{pausedRows && <button type="button" className="activity-pause" onClick={() => setSnapshot(null)}>{pending ? `Show ${pending} new update${pending === 1 ? '' : 's'}` : live ? 'Resume updates' : 'Show latest'}</button>}</div></div>
       <div className="activity-reading-guide"><p>{routineVisible ? 'Every recorded event, newest first.' : 'Related steps and observations are grouped into moments, newest first.'}</p>{pausedRows ? <span>{live ? 'The simulation keeps running while you read.' : 'Show the latest updates to see the full history.'}</span> : <span>Select a name to explore their full journey.</span>}</div>
       {moments.length === 0 ? (
-        <div className="empty-state compact"><Icon name="message" size={28} /><h3>{activeFilters ? 'No moments match these filters.' : live || total === 0 ? 'Waiting for the first observation.' : 'No highlights were recorded.'}</h3><p>{activeFilters ? 'Try another filter to see more of the experience.' : live ? 'People’s actions and feedback will appear as they explore.' : 'Choose All events to explore the complete activity history.'}</p></div>
+        <div className="empty-state compact"><Icon name="message" size={28} /><h3>{activeFilters ? 'No moments match these filters.' : live || total === 0 ? 'Waiting for the first observation.' : 'No highlights were recorded.'}</h3><p>{activeFilters ? 'Broaden your view to see more of the experience.' : live ? 'People’s actions and feedback will appear as they explore.' : 'Choose All events to explore the complete activity history.'}</p>{activeFilters ? <Button onClick={clear}>Clear filters</Button> : !live && !routineVisible && <Button onClick={() => setAllEvents(true)}>Show all events</Button>}</div>
       ) : (
         <Virtuoso
           useWindowScroll

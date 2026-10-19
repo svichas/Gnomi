@@ -1,4 +1,11 @@
 .activity-feed { min-width: 0; }
+.activity-feed #activity-filters { padding: 20px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: var(--gnomi-radius-control); }
+.activity-feed #activity-filters .filter-bar { margin: 0; }
+.activity-profile-filters { border-top: 1px solid var(--gnomi-line); padding-top: 16px; margin-top: 16px; }
+.activity-applied-filters { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; }
+.activity-applied-filters button { display: inline-flex; align-items: center; gap: 12px; border: 1px solid var(--gnomi-control-border); background: var(--gnomi-selected); color: var(--gnomi-text); border-radius: var(--gnomi-radius-control); padding: 6px 12px; min-height: 32px; font-size: 12px; }
+.activity-applied-filters button:hover { border-color: var(--gnomi-action); }
+.activity-applied-filters button span { color: var(--gnomi-action); font-size: 16px; line-height: 1; }
 .activity-feed .timeline-toolbar { margin: 28px 0 16px; align-items: flex-start; gap: 16px; }
 .activity-feed .timeline-toolbar h2 { font-size: 20px; letter-spacing: -.025em; }
 .activity-feed .timeline-toolbar p { max-width: 60ch; font-size: 13px; line-height: 1.6; margin-top: 4px; }
@@ -46,6 +53,7 @@
 .activity-feed .tone-bad .event-label, .activity-feed .tone-alarm .event-label { background: color-mix(in srgb, var(--gnomi-error) 10%, var(--gnomi-surface)); color: var(--gnomi-error); }
 .activity-feed .tone-good .event-label { background: color-mix(in srgb, var(--gnomi-success) 10%, var(--gnomi-surface)); color: var(--gnomi-success); }
 .activity-feed .empty-state { background: var(--gnomi-surface); border: 1px dashed var(--gnomi-line); border-radius: var(--gnomi-radius-panel); padding: 40px 24px; margin-top: 8px; }
+.activity-feed .empty-state .button { margin-top: 16px; }
 
 @media (max-width: 640px) {
   .activity-feed .timeline-toolbar { flex-wrap: wrap; }

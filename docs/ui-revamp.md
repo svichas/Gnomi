@@ -1,5 +1,21 @@
 # Project-first UI
 
+## Workspace refinement — October 2026
+
+The desktop workflow now lives in a persistent left rail, leaving more room above the fold for the current task. At tablet widths it becomes a compact horizontal bar; phone widths retain all four step labels. The header shows whether the current study has unsaved changes, and a skip link moves keyboard users directly to the workspace. Research-only studies return from Review to Setup consistently.
+
+Projects has a searchable list with an explicit no-results recovery action. Setup replaces introductory sidebar copy with the actual study goal, planned audience, source counts, and links to unfinished setup. These indicators describe authoring readiness; Review remains the authority for validation and permission checks.
+
+Audience puts generation, progress, and recoverable errors before the form. Allocation bars complement numeric segment counts, selected user/buyer options explain their roles, and country/profile editors group related controls. Settings separates connections from run limits, shows a concise configuration summary, and keeps model customization available in its disclosure.
+
+Review leads with readiness and a compact summary of materials, people or research scenarios, time, and cost. The start action waits for login checks and requires current persona profiles after audience edits, including changes that leave the persona count unchanged. Reports have a clearer metric header, section shortcuts, readable comparison tables, and a dedicated export area. Shortcuts open folded sections and move keyboard focus to their headings; exports retain portable, static content. Persona inspection leads with recorded actions and provides Journey, Opinions, and Profile shortcuts. Empty social sections stay folded.
+
+Activity now keeps all filters together, including profile attributes. Removable chips show active selections, and clearing filters also clears the profile selection, so an empty feed has an obvious recovery action. Saved run history and the background simulation dock retain their independent scrolling and spacing above fixed action bars.
+
+Verification uses disposable Electron profiles and scripted model responses. The full journey plus UI, projects, audience, providers, profiles, Figma, comparison, research, completion, background, point-of-interest, and text smoke suites cover the affected workflows. The UI smoke also checks project search and visible workflow controls at 320, 768, 1024, and 1440 pixels; comparison/research checks exercise section shortcuts and the research-only back path. Audience checks cover both changed persona counts and stale profiles with unchanged counts. See `app/test-results/` for captured screens.
+
+## Existing behavior and guarantees
+
 The desktop app follows the supplied `brand.md`: Paper canvas, Olive actions, the supplied logo, local Inter, quiet rules, and no decorative shadows. The project chooser is a simple list with a single create action; project management lives in a compact dropdown anchored to a centered, 40px overflow button. It closes on outside clicks, focus leaving the control, window blur, Escape, or selecting an action. Tab moves through its actions; Escape and returning from a dialog restore focus to the overflow button. The active project reopens on launch. Returning to the list keeps the draft; switching projects retains the existing save/discard/cancel protection.
 
 Within a project, Setup → Audience → Review → Simulation establishes the journey. Settings remain available separately. Setup leads with product, test URL and goal; login, network and reset controls are progressively disclosed. Existing safety confirmation and run review stay intact. Each screen has a visible way back. Configured projects can revisit any step.

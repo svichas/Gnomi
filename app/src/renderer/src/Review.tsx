@@ -5,6 +5,7 @@ import { loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { effectiveComparisonPois } from '@gnomi/simulation/comparison/config.ts';
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';
@@ -14,6 +15,7 @@ import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
 import { ROLE_TEXT } from './Settings.tsx';
 import { ActionBar, Button, Check, Note, usd, useAction } from './ui.tsx';
+import './results.css';
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
 export type ReviewScreen = 'project' | 'audience' | 'settings';
@@ -63,6 +65,9 @@ export function Review(props: {
     onRecheck(); // a new login: save and check everything again
   });
   const personas = info?.personas ?? [];
+  const countChanged = !!saved?.audience && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count);
+  const profilesStale = !!saved?.audience && personas.some((persona) => !personaProfileIsCurrent(persona, saved));
+  const audienceReady = personas.length > 0 && !countChanged && !profilesStale;
 
   useEffect(() => {
     if (!saved) return;
@@ -103,7 +108,8 @@ export function Review(props: {
     issues.push({ text: problemFor(config, screen), blocking: true, action: fix(screen, { project: 'Fix in Setup', audience: 'Fix in Audience', settings: 'Fix in Settings' }[screen]) });
   }
   if (saved?.audience && personas.length === 0) issues.push({ text: 'Your audience has no personas yet. Generate them before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
-  if (saved?.audience && personas.length > 0 && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count)) issues.push({ text: 'The persona count has changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
+  if (personas.length > 0 && countChanged) issues.push({ text: 'The persona count has changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
+  if (!countChanged && profilesStale) issues.push({ text: 'Your audience changed. Generate personas again before starting a run.', blocking: true, action: fix('audience', 'Generate personas') });
   for (const role of roles) {
     const login = logins[role];
     if (login === 'checking' || login === undefined || login.ok) continue;
@@ -117,13 +123,14 @@ export function Review(props: {
   else if (estimate && estimate.unpriced.length > 0) issues.push({ text: `No price is known for ${estimate.unpriced.join(', ')}. Choose a model with a known price before starting.`, blocking: true, action: fix('settings', 'Choose models') });
   else if (saved && estimate && estimate.cost_usd[1] > saved.settings.cost_budget_usd) issues.push({ text: 'The estimate may be more than your budget, so the run could stop early.', blocking: false, action: fix('settings', 'Adjust budget') });
   const blocking = issues.filter((issue) => issue.blocking).length;
-  const ready = saved !== null && estimate !== null && blocking === 0;
+  const checkingLogins = roles.some((role) => logins[role] === 'checking' || logins[role] === undefined);
+  const ready = saved !== null && estimate !== null && !checkingLogins && blocking === 0;
 
-  const status = !saved ? 'Fix the problem above to continue.' : estimate === null ? 'Checking logins and the estimate…' : blocking ? `${blocking} ${blocking === 1 ? 'thing' : 'things'} to fix before starting.` : 'Everything is in place.';
+  const status = !saved ? 'Fix the problem above to continue.' : estimate === null || checkingLogins ? 'Checking logins and the estimate…' : blocking ? `${blocking} ${blocking === 1 ? 'thing' : 'things'} to fix before starting.` : 'Everything is in place.';
 
   return (
     <div className="review-page">
-      {saved?.audience && <AudienceSteps stage={3} />}
+      {saved?.audience && <AudienceSteps stage={audienceReady ? 3 : 2} />}
       {issues.length > 0 && (
         <section aria-labelledby="review-issues-title" className="review-issues" data-blocking={blocking > 0 || undefined}>
           <h2 id="review-issues-title">{blocking ? 'Fix before you start' : 'Worth a look'}</h2>
@@ -140,12 +147,19 @@ export function Review(props: {
       )}
       <RecordingPanel recorder={recorder} />
       {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
-      {ready && (
-        <div className="review-ready">
-          <span className="audience-next-icon"><Icon name="check" size={24} /></span>
-          <div><h2>Ready when you are.</h2><p>Your simulated users will try {new Intl.ListFormat('en').format(saved.pois.map((poi) => poi.name))}. Start the run, then follow their experience as it unfolds.</p></div>
+      {saved && (
+        <div className="review-ready" data-ready={ready} role="status">
+          <span className="audience-next-icon"><Icon name={ready ? 'check' : blocking ? 'alert' : 'clock'} size={24} /></span>
+          <div><h2>{ready ? 'Ready when you are.' : blocking ? 'A few things need your attention.' : 'Checking the final details.'}</h2><p>Your simulated users will try {new Intl.ListFormat('en').format(saved.pois.map((poi) => poi.name))}. {ready ? 'Start the run, then follow their experience as it unfolds.' : status}</p></div>
         </div>
       )}
+
+      {saved && <dl className="review-overview" aria-label="Run overview">
+        <div><dt>{saved.comparison ? 'Tools to compare' : 'Materials to explore'}</dt><dd>{saved.comparison?.targets.length ?? saved.pois.length}<span>{saved.comparison ? 'tools in scope' : 'in this run'}</span></dd></div>
+        <div><dt>Simulated audience</dt><dd>{saved.audience ? personas.length : 1}<span>people</span></dd></div>
+        <div><dt>Time limit</dt><dd>{saved.settings.wall_clock_budget_min}<span>minutes</span></dd></div>
+        <div><dt>Cost limit</dt><dd>{usd(saved.settings.cost_budget_usd)}<span>recorded usage</span></dd></div>
+      </dl>}
 
       {saved && <div className="review-grid">
         <Section title="What they will try" edit={fix('project', 'Edit setup')}>

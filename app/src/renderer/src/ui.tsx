@@ -19,10 +19,10 @@ export function Button({ variant = 'secondary', small, loading, disabled, classN
   );
 }
 
-export function Card({ title, children }: { title: string; children: ReactNode }) {
+export function Card({ title, children, description, id, className }: { title: string; children: ReactNode; description?: string; id?: string; className?: string }) {
   return (
-    <section className="content-panel">
-      <h2 className="mb-3 text-base font-semibold text-stone-900">{title}</h2>
+    <section id={id} className={['content-panel', className].filter(Boolean).join(' ')}>
+      <h2>{title}</h2>{description && <p className="panel-description">{description}</p>}
       {children}
     </section>
   );
@@ -32,7 +32,7 @@ export function Card({ title, children }: { title: string; children: ReactNode }
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string; 'aria-describedby'?: string }> }) {
   const id = useId();
   return (
-    <div>
+    <div className="field-control">
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-stone-700">
         {label}
       </label>

@@ -47,6 +47,13 @@ try {
   assert.ok(await page.getByAltText('Gnomi', { exact: true }).evaluate((image) => (image as HTMLImageElement).naturalWidth > 0));
   assert.ok(await page.evaluate(() => [...document.fonts].some((font) => font.family === 'Inter' && font.status === 'loaded')));
   assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(246, 245, 240)');
+  const skip = page.getByRole('link', { name: 'Skip to content' });
+  assert.equal(await skip.evaluate((element) => getComputedStyle(element).opacity), '0');
+  await skip.focus();
+  assert.equal(await skip.evaluate((element) => getComputedStyle(element).opacity), '1');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'main-content');
+  assert.equal(await skip.evaluate((element) => getComputedStyle(element).opacity), '0');
   await page.getByRole('button', { name: 'Continue to audience' }).click();
   await page.getByRole('heading', { name: 'A few different perspectives.' }).waitFor();
   await page.getByRole('button', { name: 'Back to setup', exact: true }).first().click();
@@ -56,6 +63,9 @@ try {
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `setup overflow at ${width}`);
+    for (const label of ['Setup', 'Audience', 'Review', 'Simulation']) {
+      assert.ok(await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button', { name: label, exact: true }).isVisible());
+    }
     await page.screenshot({ path: join(shots, `revamp-setup-${width}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1100, height: 900 });
@@ -210,6 +220,13 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `projects overflow at ${width}`);
     await page.screenshot({ path: join(shots, `revamp-projects-${width}.png`) });
   }
+  const search = page.getByRole('searchbox', { name: 'Search projects' });
+  await search.fill('  HIRING  ');
+  assert.equal(await page.getByRole('list', { name: 'Projects', exact: true }).getByRole('listitem').count(), 1);
+  await search.fill('no matching project');
+  await page.getByRole('heading', { name: 'No matching projects', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+  assert.equal(await search.inputValue(), '');
   await page.getByRole('button', { name: 'Open Hiring app', exact: true }).click();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   assert.deepEqual(errors, []);

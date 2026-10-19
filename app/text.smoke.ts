@@ -75,8 +75,8 @@ try {
   assert.equal(await kind('Team leads').getByRole('button', { name: 'Users', exact: true }).getAttribute('aria-pressed'), 'true', 'a segment without a kind is users');
   await kind('Team leads').getByRole('button', { name: 'Buyers', exact: true }).click();
   assert.equal(await kind('Team leads').getByRole('button', { name: 'Buyers', exact: true }).getAttribute('aria-pressed'), 'true');
-  await kind('Team leads').getByText('Buyers only read text and look at designs').waitFor();
-  await kind('Planners').getByText('Users try every point of interest').waitFor();
+  await kind('Team leads').getByText('Review text and designs to decide whether they would buy.').waitFor();
+  await kind('Planners').getByText('Try the product and describe their experience.').waitFor();
   await page.screenshot({ path: join(shots, 'audience-kind.png'), fullPage: true });
   await panel.getByRole('button', { name: 'Save audience', exact: true }).click();
   await panel.getByText('Not saved yet.').waitFor({ state: 'detached' });

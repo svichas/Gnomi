@@ -152,7 +152,7 @@ try {
   await page.locator('#panel-review').getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click({ timeout: 120_000 });
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor({ timeout: 120_000 });
-  await page.locator('summary').filter({ hasText: 'Audience filters' }).click();
+  await page.locator('summary').filter({ hasText: 'Filter report by audience' }).click();
   await page.getByLabel('Profile dimension', { exact: true }).selectOption({ label: 'Procurement region' });
   await page.getByLabel('Profile value', { exact: true }).selectOption({ label: 'EMEA' });
   await page.getByText('Showing 3 of 6 personas', { exact: false }).waitFor();

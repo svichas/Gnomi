@@ -187,7 +187,40 @@ try {
   await review.click();
   const reviewStep = page.locator('#panel-review');
   await reviewStep.getByText('1 simulated person', { exact: true }).waitFor();
-  assert.equal(await page.locator('.step-nav [aria-current]').innerText(), '3\nReview');
+  assert.equal(await page.locator('.step-nav [aria-current]').getAttribute('id'), 'tab-review');
+  assert.match(await reviewStep.locator('.audience-steps [aria-current]').innerText(), /Review & start/);
+  await reviewStep.getByRole('button', { name: 'Back to audience', exact: true }).click();
+  await count.fill('2');
+  await page.locator('#tab-review').click();
+  await reviewStep.getByText('The persona count has changed. Generate personas again before starting a run.', { exact: true }).waitFor();
+  assert.match(await reviewStep.locator('.audience-steps [aria-current]').innerText(), /Build personas/);
+  assert.equal(await reviewStep.locator('.audience-steps li').nth(1).getAttribute('data-complete'), null);
+  await reviewStep.getByRole('button', { name: 'Back to audience', exact: true }).click();
+  await count.fill('1');
+  await review.click();
+  await reviewStep.getByText('1 simulated person', { exact: true }).waitFor();
+  await reviewStep.getByRole('button', { name: 'Back to audience', exact: true }).click();
+  // Editing traits at the same population size must also block direct navigation to Review.
+  // Change each segment because the one generated persona may belong to any of them.
+  const descriptions = panel.getByLabel('Who they are', { exact: true });
+  const originalDescriptions = await descriptions.evaluateAll((fields) => fields.map((field) => (field as HTMLTextAreaElement).value));
+  for (let index = 0; index < originalDescriptions.length; index++) {
+    await descriptions.nth(index).fill(`${originalDescriptions[index]} They need to coordinate accessibility reviews for their hiring team.`);
+  }
+  assert.equal(await count.inputValue(), '1', 'profile changes keep the generated population size');
+  await page.locator('#tab-review').click();
+  await reviewStep.getByText('Your audience changed. Generate personas again before starting a run.', { exact: true }).waitFor();
+  assert.match(await reviewStep.locator('.audience-steps [aria-current]').innerText(), /Build personas/);
+  assert.equal(await reviewStep.locator('.audience-steps li').nth(1).getAttribute('data-complete'), null);
+  assert.ok(await reviewStep.getByRole('button', { name: 'Start run', exact: true }).isDisabled(), 'stale same-count profiles cannot start a run');
+  const regenerate = reviewStep.getByRole('button', { name: 'Generate personas', exact: true });
+  assert.ok(await regenerate.isVisible());
+  assert.ok(await regenerate.isEnabled());
+  await regenerate.click();
+  for (let index = 0; index < originalDescriptions.length; index++) await descriptions.nth(index).fill(originalDescriptions[index]);
+  await review.click();
+  await reviewStep.getByRole('heading', { name: 'Ready when you are.', exact: true }).waitFor();
+  assert.ok(await reviewStep.getByRole('button', { name: 'Start run', exact: true }).isEnabled(), 'restoring the generated traits restores readiness');
   await reviewStep.getByRole('button', { name: 'Back to audience', exact: true }).click();
   await page.locator('#tab-settings').click();
   await page.getByLabel('Writer concurrency (1-32)', { exact: true }).fill('4');
@@ -200,7 +233,7 @@ try {
   await page.locator('#tab-settings').click();
   assert.equal(await page.getByLabel('Writer concurrency (1-32)', { exact: true }).inputValue(), '4');
   assert.deepEqual(errors, []);
-  console.log('ok    audience planning, stages/attempts, failure/retry, completion, call diagnostics, count-change regeneration gates, single-persona generation/review/persistence, saved concurrency, responsive layouts and reduced motion');
+  console.log('ok    audience planning, stages/attempts, failure/retry, completion, call diagnostics, count-change and stale-profile regeneration gates, single-persona generation/review/persistence, saved concurrency, responsive layouts and reduced motion');
   passed = true;
 } finally {
   await app.close();
