@@ -21,14 +21,14 @@ function step(step_no: number, type: Action['type'], from: string, to = from, ov
 /** Runs `rule` over each step with the steps before it as history, collecting what it found. */
 const replay = (steps: Step[], rule: (history: Step[], s: Step) => unknown) => steps.map((s, i) => rule(steps.slice(0, i), s)).filter(Boolean);
 
-test('failed_action: ref not found, not editable and timeout are failures; a model or containment error is not', () => {
-  for (const error of ['ref_not_found', 'not_editable', 'timeout']) {
+test('failed_action: not editable and timeout are failures; a model or containment error is not', () => {
+  for (const error of ['not_editable', 'timeout']) {
     assert.deepEqual(failedAction(step(4, 'type', A, A, { result: { ok: false, error } })), {
       type: 'signal.failed_action',
       payload: { step_no: 4, url: A, ref: 'e1', action: 'type', error },
     });
   }
-  for (const error of ['invalid_output', 'password_field', 'host_not_allowed', 'option_not_found']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
+  for (const error of ['ref_not_found', 'invalid_output', 'password_field', 'host_not_allowed', 'option_not_found']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
 });
 
 test('failed_action: a click with no URL or DOM change had no effect; one that changed the DOM or the URL did', () => {
@@ -37,6 +37,7 @@ test('failed_action: a click with no URL or DOM change had no effect; one that c
   assert.equal(failedAction(step(2, 'click', A, B, { result: { dom_changed: false } })), null, 'the URL changed');
   assert.equal(failedAction(step(2, 'click', A, `${A}#top`, { result: { dom_changed: false } })), null, 'an anchor jump is a change');
   assert.equal(failedAction(step(2, 'read', A, A, { result: { dom_changed: false } })), null, 'reading changes nothing by design');
+  assert.equal(failedAction(step(2, 'click', A, A, { result: { dom_changed: false, pending: true } })), null, 'a slow save or a new tab is not a dead click');
 });
 
 test('loop: the same URL and snapshot seen three times within ten steps, reported once', () => {
@@ -50,6 +51,9 @@ test('loop: the same URL and snapshot seen three times within ten steps, reporte
 
 test('loop: reading a page twice is not a loop, nor are three visits spread over more than ten steps or with different snapshots', () => {
   assert.deepEqual(replay([step(1, 'read', A), step(2, 'read', A)], (h, s) => loop(h, s, T)), []);
+  const unusable = step(3, 'wait', A, A, { result: { ok: false, error: 'invalid_output' } });
+  assert.deepEqual(replay([step(1, 'read', A), step(2, 'wait', A), unusable], (h, s) => loop(h, s, T)), [], 'reads, waits and unusable answers stay put by design');
+  assert.deepEqual(replay([step(1, 'click', A), step(2, 'read', A), step(3, 'click', A)], (h, s) => loop(h, s, T)), [], 'nor do they count towards a loop');
   const spread = [1, 6, 11].map((n) => step(n, 'click', A));
   assert.deepEqual(replay(spread, (h, s) => loop(h, s, T)), []);
   const changing = [1, 2, 3].map((n) => step(n, 'type', A, A, { hash: `h${n}` }));
@@ -120,6 +124,10 @@ test('validation_error: no new message, hints on a new page, a message already s
   const link = step(3, 'click', A, A, { target: { role: 'link', name: 'Help', box: null } });
   assert.equal(validationError(link, FORM, `${FORM}\n- alert: Something went wrong`), null, 'a link is not a submit');
   assert.equal(validationError(submit(), FORM, null), null, 'no snapshot after');
+  assert.equal(validationError(submit(), FORM, `${FORM}\n- textbox "Enter a job title" [ref=e50]`), null, 'a new field whose placeholder reads like an error');
+  assert.equal(validationError(submit(), FORM, `${FORM}\n- textbox "Enter a job title" [invalid] [ref=e50]`)?.payload.message, 'Enter a job title');
+  const hint = (where: string) => `${FORM}\n- paragraph [ref=e50] ${where}: Fields marked * are required`;
+  assert.equal(validationError(submit(), hint('[box=0,900,100,20] (off screen, below)'), hint('[box=0,300,100,20]')), null, 'a hint that scrolled into view');
 });
 
 test('small_target: a mobile tap on an element under 40×40 CSS px; desktop taps and large targets never', () => {
@@ -145,6 +153,8 @@ test('detectSignals: page errors become signal.error on the step; a done step re
       ['signal.error', { step_no: 1, url: A, ref: 'e1', kind: 'console', status: null, message: 'boom' }],
     ],
   );
+  const moved = step(2, 'click', A, B);
+  assert.deepEqual(detectSignals({ history: [], step: moved, device: 'desktop', errors: errors.slice(1), before: null, after: null, thresholds: T }).map((s) => s.payload.url), [B], 'an error belongs to the page the step landed on');
   const looped = [1, 2].map((n) => step(n, 'read', A));
   const done = step(3, 'done', A, A, { ref: null, target: null, result: { dom_changed: false } });
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: [], before: null, after: null, thresholds: T }), []);

@@ -40,6 +40,10 @@ const pages: Record<string, string> = {
 <div role="combobox" aria-label="Dropdown"><button type="button" onclick="this.nextElementSibling.style.opacity = '1'; this.nextElementSibling.style.pointerEvents = 'auto'">1 - 20 employees</button>
 <div style="opacity:0;pointer-events:none"><ol><li>1 - 20 employees</li><li>21 - 50 employees</li></ol></div></div>
 <label><input type="checkbox" style="opacity:0"> Annual billing</label></body></html>`,
+  '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
+<input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
+<a href="/next" target="_blank">Open in a new tab</a>
+<button onclick="fetch('/slow').then(() => document.body.append('Saved slowly'))">Slow save</button></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -57,6 +61,8 @@ before(async () => {
       // Two inputs whose values come from the query, to compare screenshots of different values.
       const { password = '', text = '' } = Object.fromEntries(url.searchParams);
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
+    } else if (url.pathname === '/slow') {
+      setTimeout(() => res.end('ok'), 1_500);
     } else if (url.pathname.startsWith('/status/')) {
       res.statusCode = Number(url.pathname.slice('/status/'.length));
       res.end('<h1>Failed</h1>');
@@ -314,6 +320,29 @@ test('wait settles and reports nothing changed', async (t) => {
   const page = await open(t);
   const outcome = await act(page, 'wait');
   assert.deepEqual([outcome.ok, outcome.dom_changed, outcome.target, outcome.text], [true, false, null, null]);
+});
+
+test('press sends Enter or Escape to a field or to whatever has focus, and nothing else', async (t) => {
+  const page = await open(t, '/keys-and-tabs');
+  const search = refOf((await page.snapshot()).text, /textbox "Search" \[ref=(\w+)\]/);
+  await act(page, 'type', search, 'engineer');
+  const pressed = await act(page, 'press', search, 'Enter');
+  assert.deepEqual([pressed.ok, pressed.dom_changed], [true, true]);
+  assert.match((await page.snapshot()).text, /Searched for engineer/);
+  assert.equal((await act(page, 'press', null, 'Escape')).ok, true);
+  assert.equal((await act(page, 'press', search, 'Tab')).error, "press needs text 'Enter' or 'Escape'");
+});
+
+test('a link that opens a new tab takes the persona there; a slow response marks the click pending, not dead', async (t) => {
+  const page = await open(t, '/keys-and-tabs');
+  const { text } = await page.snapshot();
+  const slow = await act(page, 'click', refOf(text, /button "Slow save" \[ref=(\w+)\]/));
+  assert.deepEqual([slow.ok, slow.dom_changed, slow.pending], [true, false, true]);
+  const tab = await act(page, 'click', refOf(text, /link "Open in a new tab" \[ref=(\w+)\]/));
+  assert.deepEqual([tab.ok, tab.url_after, tab.pending], [true, `${origin}/next`, true]);
+  assert.equal((await page.snapshot()).title, 'Next page');
+  const plain = await act(page, 'wait');
+  assert.equal(plain.pending, undefined, 'only a step that started something carries the flag');
 });
 
 test('a click that can never succeed times out instead of hanging', async (t) => {

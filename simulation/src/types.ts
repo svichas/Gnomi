@@ -274,11 +274,11 @@ export interface RunRow {
   config: RunConfig;
 }
 
-export const ACTION_TYPES = ['click', 'type', 'select', 'scroll', 'back', 'navigate', 'read', 'wait', 'done', 'abandon'] as const;
+export const ACTION_TYPES = ['click', 'type', 'select', 'scroll', 'press', 'back', 'navigate', 'read', 'wait', 'done', 'abandon'] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
 // One flat action shape from model output to event payload (tech.md §6.3, §10.6). `text` is the
-// typed text (type), option label (select), 'up' | 'down' (scroll), URL (navigate), summary (done)
+// typed text (type), option label (select), 'up' | 'down' (scroll), 'Enter' | 'Escape' (press), URL (navigate), summary (done)
 // or reason (abandon).
 export interface Action {
   type: ActionType;
@@ -298,6 +298,7 @@ export interface ActionResult {
   url_after: string;
   dom_changed: boolean;
   error: string | null; // 'ref_not_found' | 'not_editable' | 'host_not_allowed' | 'timeout' | message; older logs may contain 'password_field'
+  pending?: boolean; // a request the action started was still in flight, or it opened a tab: no change yet is not no effect
 }
 
 export interface ActionOutcome extends ActionResult {

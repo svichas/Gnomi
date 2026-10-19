@@ -390,7 +390,7 @@ test('three identical failed actions in a row end the episode', async () => {
 
 test('signals follow their step under the thresholds frozen in the run, or the defaults on a legacy run', async () => {
   assert.deepEqual(newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }).signals, DEFAULT_SIGNALS);
-  const script = [step('click', 'e9'), step('read', 'e1'), step('read', 'e1'), step('done', null, 'Done')];
+  const script = [step('click', 'e9'), step('click', 'e1'), step('click', 'e1'), step('done', null, 'Done')]; // reads never loop
   const act = (a: { ref: string | null }) => (a.ref === 'e9' ? { dom_changed: false } : {});
   const legacy = begin(script, { act, config: { signals: undefined } });
   await legacy.run.done;

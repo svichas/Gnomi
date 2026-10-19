@@ -62,6 +62,8 @@ function describeAction(action: Action, target: ActionTarget | null): string {
       return `Chose "${action.text}" in ${element}`;
     case 'scroll':
       return `Scrolled ${action.text ?? 'down'}`;
+    case 'press':
+      return `Pressed ${action.text}${action.ref ? ` in ${element}` : ''}`;
     case 'back':
       return 'Went back';
     case 'navigate':

@@ -566,7 +566,7 @@ test('M3: a broken link and a rejected form raise signal.error and signal.valida
   );
   const steps = of(events, 'persona.step');
   const [broken] = of(events, 'signal.error');
-  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
+  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/job`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
   assert.equal(broken.seq, steps[0].seq + 1, 'written right after its step');
   assert.equal(of(events, 'signal.error').length, 1, "Chromium's console line for the 404 is not a second error");
   const [rejected] = of(events, 'signal.validation_error');

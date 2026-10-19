@@ -77,6 +77,7 @@ const ACTION_HELP: Record<ActionType, string> = {
   type: 'type: ref = the field, text = what to type',
   select: 'select: ref = the list, text = the label of the option',
   scroll: 'scroll: text = "up" or "down", or ref = an element to bring into view',
+  press: 'press: text = "Enter" or "Escape", ref = the element, or null for what has focus',
   back: 'back: return to the previous page',
   navigate: 'navigate: text = a web address to type',
   read: 'read: ref = a region to read closely',
@@ -225,6 +226,8 @@ function describeAction(a: Action, t: ActionTarget | null): string {
       return `select "${a.text ?? ''}" in ${el}`;
     case 'scroll':
       return a.ref ? `scroll to ${el}` : `scroll ${a.text ?? 'down'}`;
+    case 'press':
+      return `press ${a.text ?? ''}${a.ref ? ` in ${el}` : ''}`;
     case 'back':
       return 'go back';
     case 'navigate':
