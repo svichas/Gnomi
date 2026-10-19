@@ -1428,6 +1428,30 @@ function comparisonAnswer(req: LlmRequest<unknown>) {
   return step('done', null, 'Found Jobs.');
 }
 
+test('comparison initial matched-block admission uses the optional verifier model price', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
+  for (const verifier of ['judge', 'navigator'] as const) {
+    const target = publicComparison();
+    target.comparison!.execution.verifier = verifier;
+    const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer', { segment_id: 'buyers' })], settings: { cost_budget_usd: 0.04, concurrency: 1 }, cost: 0 });
+    const report = await r.run.done;
+    assert.ok(report.comparison!.coverage.every((row) => verifier === 'judge' ? row.outcomes.not_attempted === 1 : row.outcomes.completed === 1));
+  }
+});
+
+test('comparison step admission learns verifier costs separately from the more expensive assessment', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
+  const target = publicComparison();
+  target.comparison!.execution.verifier = 'navigator';
+  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer', { segment_id: 'buyers' })], settings: { cost_budget_usd: 0.09, concurrency: 1 },
+    llm: (record) => ({ call: (req) => createScriptedGateway([comparisonAnswer(req)], record, { costPerCall: req.purpose === 'comparison_assessment' ? 0.02 : 0.001 }).call(req) }),
+  });
+  const report = await r.run.done;
+  assert.ok(report.comparison!.coverage.every((row) => row.outcomes.completed === 1));
+  assert.equal(of(r.events, 'llm.call').filter((call) => call.payload.purpose === 'comparison_verification').length, 4);
+  assert.ok(Math.abs(report.cost_usd - 0.088) < 1e-9);
+});
+
 test('explicit all-public comparison admits buyer web tasks and produces replayable evidence across every target', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
   const r = begin(comparisonAnswer, { project: publicComparison(), personas: [persona('buyer-a', { segment_id: 'buyers' }), persona('buyer-b', { segment_id: 'buyers' })], settings: rounds(3) });

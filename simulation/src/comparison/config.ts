@@ -28,7 +28,7 @@ const studySchema = z.object({
   scenarios: z.array(z.object({ id, name: text, context: text, segment_ids: ids.nullable() }).strict()).min(1).max(16),
   tasks: z.array(z.object({ id, scenario_id: id, instruction: text, success_rule: text, prerequisites: z.array(text).max(32), requires_fixture: z.boolean().optional(), criterion_ids: ids, max_steps: z.number().int().min(1).max(100), entries: z.array(z.object({ target_id: id, poi_id: id, start_url: z.url().optional(), fixture: text.optional() }).strict()).min(1).max(12) }).strict()).min(1).max(32),
   criteria: z.array(z.object({ id, name: text, question: text, importance: z.enum(['must_have', 'preference']), evidence_required: text, decision_rule: text }).strict()).min(1).max(16),
-  execution: z.object({ mode: z.enum(['independent', 'buyer_journey']), carryover: z.enum(['none', 'prior_observations']), social: z.literal('off'), order: z.literal('balanced'), replicate_id: id, analysis_reserve_fraction: z.number().min(0.05).max(0.5) }).strict(),
+  execution: z.object({ mode: z.enum(['independent', 'buyer_journey']), carryover: z.enum(['none', 'prior_observations']), social: z.literal('off'), order: z.literal('balanced'), replicate_id: id, analysis_reserve_fraction: z.number().min(0.05).max(0.5), verifier: z.enum(['judge', 'navigator']).optional() }).strict(),
 }).strict();
 
 /** Empty means valid, including a legacy project with no comparison. Pure and safe for setup UI. */

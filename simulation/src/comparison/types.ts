@@ -21,6 +21,8 @@ export interface ComparisonStudy {
     order: 'balanced';
     replicate_id: string;
     analysis_reserve_fraction: number;
+    /** Model route for semantic verification only; omitted keeps the judge model. */
+    verifier?: 'judge' | 'navigator';
   };
 }
 

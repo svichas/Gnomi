@@ -9,6 +9,20 @@ import { buildComparison } from './comparison.ts';
 import { buildReport } from './build.ts';
 import { reportToMarkdown } from './markdown.ts';
 
+test('comparison reports and Markdown disclose the frozen verifier model, including the legacy default', () => {
+  for (const route of [undefined, 'judge', 'navigator'] as const) {
+    const f = fixture();
+    if (route) f.study.execution.verifier = route;
+    f.episode(0, 0);
+    const report = buildReport(f.events);
+    const model = DEFAULT_SETTINGS.routing[route ?? 'judge'];
+    const expected = `Configured semantic verifier: ${route ?? 'judge'} model (${model.provider}/${model.model})`;
+    assert.ok(report.comparison!.limitations.some((line) => line.startsWith(expected)));
+    assert.ok(reportToMarkdown(report).includes(expected));
+    assert.deepEqual(buildReport(JSON.parse(JSON.stringify(f.events))).comparison, report.comparison);
+  }
+});
+
 function fixture() {
   const project: ProjectConfig = { name: 'Tools', description: 'tools', goal: 'Choose ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
     pois: ['Alpha', 'Beta'].map((name, i) => ({ id: `poi-${i}`, name, type: 'web', mode: 'observe_only', segments: null, start_url: `https://v${i}.example/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
