@@ -13,6 +13,17 @@ export const comparisonProject = (): ProjectConfig => ({
   })),
 });
 
+test('comparison verifier routing is optional and limited to judge or navigator', () => {
+  const project = comparisonProject();
+  project.comparison = draftComparison(project);
+  for (const verifier of [undefined, 'judge', 'navigator'] as const) {
+    project.comparison.execution.verifier = verifier;
+    assert.deepEqual(validateComparison(project), []);
+  }
+  const invalid = { ...project, comparison: { ...project.comparison, execution: { ...project.comparison.execution, verifier: 'author' } } } as unknown as ProjectConfig;
+  assert.ok(validateComparison(invalid).some((issue) => issue.includes('execution.verifier')));
+});
+
 test('all observe-only tools draft a neutral peer comparison without inferring ownership', () => {
   const project = comparisonProject();
   project.comparison = draftComparison(project);

@@ -69,7 +69,7 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
   };
 }
 
-/** Comparison episodes collect evidence before two judge passes; legacy surveys and social calls are not used. */
+/** Comparison episodes collect evidence before assessment and optional verification; budget for both passes. */
 function estimateComparison({ personas, settings, pois, study, at }: { personas: Persona[]; settings: RunSettings; pois?: Poi[]; study: ComparisonStudy; at: Date }): RunEstimate {
   const tasks = personas.flatMap((persona) => study.tasks.flatMap((task) => {
     const scenario = study.scenarios.find((candidate) => candidate.id === task.scenario_id);
@@ -86,15 +86,16 @@ function estimateComparison({ personas, settings, pois, study, at }: { personas:
     ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
   const navigator = settings.routing.navigator;
   const judge = settings.routing.judge;
+  const verifier = settings.routing[study.execution.verifier ?? 'judge'];
   const prompt = PROMPT_TOKENS + (settings.screenshots ? SCREENSHOT_TOKENS : 0);
   const lowSteps = steps * STEP_SHARE[0];
   const analyses = episodes * 2;
   const parallel = Math.max(1, Math.min(settings.concurrency, personas.length));
   return {
     calls: Math.round((lowSteps + steps) / 2) + analyses,
-    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 4_000, 1_000), steps * price(navigator, prompt, OUTPUT_TOKENS) + analyses * price(judge, 60_000, 6_000)],
+    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + episodes * (price(judge, 4_000, 1_000) + price(verifier, 4_000, 1_000)), steps * price(navigator, prompt, OUTPUT_TOKENS) + episodes * (price(judge, 60_000, 6_000) + price(verifier, 60_000, 6_000))],
     minutes: [(lowSteps * 2 + analyses * 5) / parallel / 60 + OVERHEAD_MIN, (steps * 6 + analyses * 30) / parallel / 60 + OVERHEAD_MIN],
-    unpriced: [...new Set([navigator, judge].filter((model) => !isPriced(model)).map((model) => model.model))],
+    unpriced: [...new Set([navigator, judge, verifier].filter((model) => !isPriced(model)).map((model) => model.model))],
   };
 }
 

@@ -120,7 +120,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let spent = 0;
   let seen = 0;
   let navigationSpent = 0;
-  const comparisonCosts = { navigator: { cost: 0, calls: 0 }, judge: { cost: 0, calls: 0 } };
+  const comparisonCosts = { navigation: { cost: 0, calls: 0 }, comparison_assessment: { cost: 0, calls: 0 }, comparison_verification: { cost: 0, calls: 0 } };
   const blockReservations = new Map<string, { total: number; navigation: number }>();
   let comparisonAdmissionReason: string | null = null;
   const spentUsd = () => {
@@ -130,15 +130,18 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         spent += e.payload.cost_usd;
         if (project.comparison) {
           const cost = e.payload.cost_usd;
-          if (e.payload.role === 'navigator') navigationSpent += cost;
-          if (e.payload.role === 'navigator' || e.payload.role === 'judge') {
-            comparisonCosts[e.payload.role].cost += cost;
-            comparisonCosts[e.payload.role].calls++;
+          const purpose = e.payload.purpose;
+          const stage = purpose === 'comparison_assessment' || purpose === 'comparison_verification' ? purpose
+            : e.payload.role === 'navigator' ? 'navigation' : e.payload.role === 'judge' ? 'comparison_assessment' : null;
+          if (stage === 'navigation') navigationSpent += cost;
+          if (stage) {
+            comparisonCosts[stage].cost += cost;
+            comparisonCosts[stage].calls++;
           }
           const reservation = blockReservations.get(e.persona_id ?? '');
           if (reservation) {
             reservation.total = Math.max(0, reservation.total - cost);
-            if (e.payload.role === 'navigator') reservation.navigation = Math.max(0, reservation.navigation - cost);
+            if (stage === 'navigation') reservation.navigation = Math.max(0, reservation.navigation - cost);
           }
         }
       }
@@ -195,14 +198,15 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   // Admission reserves a minimum useful matched block: one observation and two evidence-review calls per target.
-  // Observed per-role costs replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
+  // Observed costs per purpose replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
   // this improves coverage allocation, while the recorded-cost guard remains the run-wide stop policy.
-  const comparisonCallCost = (role: 'navigator' | 'judge') => {
-    const observed = comparisonCosts[role];
+  const comparisonCallCost = (stage: keyof typeof comparisonCosts) => {
+    const observed = comparisonCosts[stage];
     if (observed.calls) return observed.cost / observed.calls;
+    const role = stage === 'navigation' ? 'navigator' : stage === 'comparison_verification' ? project.comparison!.execution.verifier ?? 'judge' : 'judge';
     const model = settings.routing[role];
     if (!isPriced(model)) return null;
-    return costUsd(model, { input_tokens: role === 'navigator' ? 5000 : 1500, output_tokens: role === 'navigator' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
+    return costUsd(model, { input_tokens: stage === 'navigation' ? 5000 : 1500, output_tokens: stage === 'navigation' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
   };
   const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
     if (drain.signal.aborted) return false;
@@ -215,8 +219,9 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }).length;
     // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
     // observed charges take over once available, retaining the existing support for unpriced model routes.
-    const navigatorCost = comparisonCallCost('navigator') ?? 0, judgeCost = comparisonCallCost('judge') ?? 0;
-    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + 2 * judgeCost) };
+    const navigatorCost = comparisonCallCost('navigation') ?? 0;
+    const assessmentCost = comparisonCallCost('comparison_assessment') ?? 0, verifierCost = comparisonCallCost('comparison_verification') ?? 0;
+    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + assessmentCost + verifierCost) };
     const reserved = [...blockReservations.values()].reduce((sum, value) => ({ total: sum.total + value.total, navigation: sum.navigation + value.navigation }), { total: 0, navigation: 0 });
     const navigationLimit = settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction);
     if (now + reserved.total + needed.total > settings.cost_budget_usd || navigationSpent + reserved.navigation + needed.navigation > navigationLimit) {
@@ -550,8 +555,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
     beginBlock: beginComparisonBlock,
     endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
-    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigator') ?? undefined); },
-    beginAnalysisStep: () => beginStep(comparisonCallCost('judge') ?? undefined), endStep, stopped: () => drain.signal.aborted,
+    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigation') ?? undefined); },
+    beginAnalysisStep: (purpose) => beginStep(comparisonCallCost(purpose) ?? undefined), endStep, stopped: () => drain.signal.aborted,
     stopReason: () => halted?.detail ?? (halted ? halted.reason : comparisonAdmissionReason ?? 'The navigation allowance was exhausted; remaining allowance is reserved for evidence analysis.'),
     tripwire,
   }) : null;

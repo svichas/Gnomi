@@ -14,6 +14,21 @@ const persona = (patience: number): Persona => ({ ...BUILTIN_PERSONA, patience }
 const REPORT = { calls: 2, cost: [0.014 + 0.048, 0.1 + 0.24], minutes: [0.2, 1] } as const;
 const withNavigator = (navigator: ModelChoice, rest: Partial<RunSettings> = {}): RunSettings => ({ ...DEFAULT_SETTINGS, ...rest, routing: { ...DEFAULT_SETTINGS.routing, navigator } });
 
+test('comparison verifier estimate prices the selected route without changing navigation or assessment calls', () => {
+  const comparison = draftComparison({ name: 'Tools', description: '', goal: 'Evaluate plans', role: null, audience: null, settings: DEFAULT_SETTINGS,
+    pois: ['a', 'b'].map((id) => ({ id, name: id, type: 'text', asset: `${id}.md`, segments: null })) });
+  const estimate = () => estimateRun({ personas: [persona(1)], settings: DEFAULT_SETTINGS, comparison });
+  const original = estimate();
+  comparison.execution.verifier = 'judge';
+  assert.deepEqual(estimate(), original);
+  comparison.execution.verifier = 'navigator';
+  const cheaper = estimate();
+  assert.equal(cheaper.calls, original.calls);
+  assert.deepEqual(cheaper.minutes, original.minutes);
+  close(original.cost_usd[0] - cheaper.cost_usd[0], 2 * (0.018 - 0.0009));
+  close(original.cost_usd[1] - cheaper.cost_usd[1], 2 * (0.18 - 0.009));
+});
+
 test('comparison estimate follows shared tasks, includes both judges, and excludes legacy social and author calls', () => {
   const comparison = draftComparison({ name: 'Tools', description: '', goal: 'Evaluate plans', role: null, audience: null, settings: DEFAULT_SETTINGS,
     pois: ['a', 'b'].map((id) => ({ id, name: id, type: 'text', asset: `${id}.md`, segments: null })) });
