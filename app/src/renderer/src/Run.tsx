@@ -213,7 +213,14 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
         </div>
       </div>}
       {ended && view === 'report' && <div role="tabpanel" id="run-panel-report" aria-labelledby="run-tab-report" className="space-y-5">
-        {report ? <>{groups.length > 0 && <details className="disclosure"><summary><Icon name="filter" />Filter report by audience<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied' : 'All profiles'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /></div></details>}<ExportReport report={report} /><Report report={report} filter={profileFilter} onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })} renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />} /></> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
+        {report ? <Report
+          report={report}
+          filter={profileFilter}
+          actions={<ExportReport report={report} />}
+          audienceFilters={groups.length > 0 ? <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /> : undefined}
+          onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })}
+          renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />}
+        /> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
       </div>}
       <p className="simulation-note">These are simulated experiences. Validate important findings with real people.</p>
       {inspected && inspecting && (

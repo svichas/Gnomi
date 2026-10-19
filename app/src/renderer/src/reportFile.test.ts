@@ -109,7 +109,7 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
   for (const text of ['Opinion spread', 'About Gym', 'Saving fails', '“Save &lt;is&gt; broken”', 'Persona 0 → Persona 1, round 2, sentiment −1.0', 'Round 2: −1.5', 'Posts 0.42 (2 posts)', 'The posts read alike.']) {
     assert.ok(html.includes(text), text);
   }
-  assert.equal(html.split('<svg').length - 1, 2, 'one sentiment line for the POI and one for the theme');
+  assert.equal(html.split('viewBox="0 0 168 64"').length - 1, 2, 'one sentiment line for the POI and one for the theme');
   assert.doesNotMatch(html, /<(?:button|select|script)\b/);
 });
 
@@ -140,7 +140,7 @@ test('the report puts the most severe problem first and folds each persona, ever
   const html = await reportFile(report, 'html', thumbnails());
   assert.ok(html.indexOf('Theme b') < html.indexOf('Theme a'), 'the engine rank orders problems of the same evidence');
   assert.ok(html.indexOf('Could not save the job.') < html.indexOf('A small irritation.'), "a persona's worst friction comes first");
-  assert.ok(html.includes('0 of 1 persona reached the goal.'), 'the verdict leads the report');
+  assert.match(html, /Reached the goal<\/p><p class="report-stat-value">0 of 1<\/p>/, 'completion stays visible in the overview');
   assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'every fold prints open');
 });
 
@@ -153,11 +153,11 @@ test('a problem one persona met is a single report, below and apart from one sev
   });
   report.themes = [theme('lone', 4, 1, 10), theme('shared', 2, 4, 10), theme('doubt', 3, 3, 10, 'objection')];
   const html = await reportFile(report, 'html', thumbnails());
-  assert.ok(html.includes('Fix first: <span class="font-medium">Theme shared</span>'), 'the verdict names the problem several met');
+  assert.ok(html.indexOf('Theme shared') < html.indexOf('Theme lone'), 'the main list leads with the problem several met');
   assert.ok(html.includes('4 of 10 personas affected (40%, likely 10%–60%)'), 'the share and its range are spelled out');
-  assert.ok(html.indexOf('Theme shared') < html.indexOf('Objections (1)') && html.indexOf('Objections (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
-  assert.ok(html.indexOf('Met first-hand by one persona (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
-  assert.ok(html.includes('What to fix first (1)'));
+  assert.ok(html.indexOf('Theme shared') < html.indexOf('Reasons for hesitation (1)') && html.indexOf('Reasons for hesitation (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
+  assert.ok(html.indexOf('Individual observations (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
+  assert.ok(html.includes('What to improve <span>1</span>'));
 });
 
 test('the share says who read about it first, trust shows its mix, and a competitor never leads the verdict', async () => {
@@ -170,7 +170,7 @@ test('the share says who read about it first, trust shows its mix, and a competi
   });
   report.themes = [theme('rival', 'rival', 1), theme('ours', 'poi-gym', 1)];
   const html = await reportFile(report, 'html', thumbnails());
-  assert.ok(html.includes('Fix first: <span class="font-medium">Theme ours</span>'), "the competitor's problem is not the team's to fix");
+  assert.ok(html.indexOf('Theme ours') < html.indexOf('Competitor findings (1)') && html.indexOf('Competitor findings (1)') < html.indexOf('Theme rival'), "the competitor's problem stays outside the team's list");
   assert.match(html, /2 of 10 personas affected \(20%, likely 6%–51%\)<\/span>, \+2 more after reading the feed/);
   assert.ok(html.includes('1 confirmed, 3 reported'));
 });
