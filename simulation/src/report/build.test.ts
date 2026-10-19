@@ -19,6 +19,7 @@ import type {
   WebPoi,
 } from '../types.ts';
 import { buildReport, HYPOTHESIS_BANNER } from './build.ts';
+import { reportToMarkdown } from './markdown.ts';
 
 const url = 'http://localhost:3001/jobs/new';
 const startUrl = 'http://localhost:3001/';
@@ -171,7 +172,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         name: 'Built-in persona',
         share: 100,
         personas: 1,
-        outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+        outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
         completion: 1,
         with_friction: 1,
         frictions: 2,
@@ -220,10 +221,11 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         // One persona of one: the share's 95% range runs from 21% to 100%, and the score uses its low end.
         prevalence: { personas: 1, exposed: 1, share: 1, low: 0.2065, high: 1, level: 'single' },
         heard_first: 0,
+        first_hand: ['p-001'],
         trust: 'reported',
-        severity: 2.5,
-        impact: 1,
-        score: 0.2065 * 2.5 * 0.5,
+        trust_counts: { confirmed: 0, observed: 0, reported: 2 },
+        severity: 3, // one persona, at its worst
+        score: 0.2065 * 0.5,
         personas: 1,
         frictions: 2,
         pages: ['localhost:3001/jobs/new'],
@@ -356,6 +358,9 @@ test('outcomes follow done > abandoned > repeated_failure > blocked > budget_exc
   assert.equal(outcomeOf(blockedAt(1200), resumedAt(1300), budgetAt(1400)), 'budget_exceeded');
   assert.equal(outcomeOf(budgetAt(1200)), 'budget_exceeded');
   assert.equal(outcomeOf(), 'incomplete');
+  const silent: [number, NewEvent] = [1200, { ...env, type: 'signal.repeated_failure', payload: { step_no: 3, action: 'wait', error: 'invalid_output' } }];
+  assert.deepEqual(buildReport(stored([startedAt, stepAt(1100), silent])).personas[0].outcome_text?.startsWith('The model gave no valid answer'), true);
+  assert.equal(outcomeOf(silent), 'model_failed', 'the model failing to answer is not the product');
 });
 
 test('the methods appendix counts blocked requests per host, most first, ties A to Z', () => {
@@ -517,7 +522,7 @@ test('a population folds into per-persona outcomes and per-segment rates', () =>
       name: 'Recruiters',
       share: 60,
       personas: 4,
-      outcomes: { done: 1, abandoned: 1, budget_exceeded: 1, repeated_failure: 1, blocked: 0, incomplete: 0 },
+      outcomes: { done: 1, abandoned: 1, budget_exceeded: 1, repeated_failure: 1, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
       completion: 0.25,
       with_friction: 0.75,
       frictions: 4,
@@ -527,7 +532,7 @@ test('a population folds into per-persona outcomes and per-segment rates', () =>
       name: 'Hiring managers',
       share: 40,
       personas: 2,
-      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 1, incomplete: 0 },
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 1, incomplete: 0, not_started: 0 },
       completion: 0.5,
       with_friction: 0.5,
       frictions: 1,
@@ -668,7 +673,7 @@ const expectedOldReport = {
       name: 'Built-in persona',
       share: 100,
       personas: 1,
-      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
       completion: 1,
       with_friction: 0,
       frictions: 0,
@@ -692,4 +697,57 @@ test('a pre-M2 run whose persona was logged as persona.created folds the same wa
   const report = buildReport(stored(oldRun(true)));
   assert.deepEqual(report.personas, expectedOldReport.personas);
   assert.deepEqual(report.segments, expectedOldReport.segments);
+});
+
+test('a persona is done only when every POI it was given ended done, else its worst; never-started personas stay out of the rates', () => {
+  const pricing = { id: 'pricing', type: 'text' as const, name: 'Pricing', asset: 'a1', segments: null };
+  const twoPois: RunConfig = { ...config, personas: [person('p-a', null, 'Ana'), person('p-b', null, 'Ben'), person('p-c', null, 'Cleo')], project: { ...project, pois: [...project.pois, pricing] } };
+  const on = (persona_id: string, poi_id: string) => ({ run_id: 'r-0001', round: 1, persona_id, poi_id }) as const;
+  const report = buildReport(stored([
+    [1000, { ...runEnv, type: 'run.started', payload: { config: twoPois } }],
+    ...twoPois.personas.map((p, i): [number, NewEvent] => [1001 + i, { ...on(p.id, 'poi-gym'), type: 'persona.created', payload: { persona: p } }]),
+    // Ana is done on the pricing text but gives up on the web app; Ben is done on both; Cleo never starts.
+    [1100, { ...on('p-a', 'pricing'), type: 'persona.step', payload: stepPayload(1, 'Reading.', null) }],
+    [1110, { ...on('p-a', 'pricing'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Read it.' } }],
+    [1120, { ...on('p-a', 'poi-gym'), type: 'persona.step', payload: stepPayload(1, 'Looking.', null) }],
+    [1130, { ...on('p-a', 'poi-gym'), type: 'persona.abandoned', payload: { step_no: 1, reason: 'No form.' } }],
+    [1200, { ...on('p-b', 'poi-gym'), type: 'persona.step', payload: stepPayload(1, 'Posting.', null) }],
+    [1210, { ...on('p-b', 'poi-gym'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Posted.' } }],
+    [1220, { ...on('p-b', 'pricing'), type: 'persona.step', payload: stepPayload(1, 'Reading.', null) }],
+    [1230, { ...on('p-b', 'pricing'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Read it.' } }],
+    [9000, { ...runEnv, type: 'run.stopped', payload: { reason: 'wall_clock', detail: null } }],
+  ]));
+  assert.deepEqual(report.personas.map((p) => [p.id, p.outcome, p.outcome_text, p.pois]), [
+    ['p-a', 'abandoned', 'No form.', { 'poi-gym': 'abandoned', pricing: 'done' }],
+    ['p-b', 'done', 'Posted.', { 'poi-gym': 'done', pricing: 'done' }],
+    ['p-c', 'not_started', null, { 'poi-gym': 'not_started', pricing: 'not_started' }],
+  ]);
+  const [segment] = report.segments;
+  assert.deepEqual([segment.personas, segment.outcomes.not_started, segment.completion, segment.with_friction], [3, 1, 0.5, 0.5], 'Cleo is out of both rates; Ana gave up, a friction');
+  assert.deepEqual(segment.pois, [{ poi_id: 'poi-gym', personas: 2, completion: 0.5 }, { poi_id: 'pricing', personas: 2, completion: 1 }]);
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('| Built-in persona | 100% | 3 | 50% | 50% | 50% of 2 | 100% of 2 |'), 'completion per POI');
+  assert.ok(md.includes('1 persona did not start before the run ended and is left out of these rates.'));
+  assert.ok(md.includes('**Unweighted:** completion 50%.'));
+  assert.ok(report.methods.limitations?.includes('Gym: The author model wrote no suggested changes (no key, a model failure, or the run stopped first).'), 'with several POIs each note names its POI');
+});
+
+test('personas the model never answered are counted apart and left out of the completion and friction rates', () => {
+  const three: RunConfig = { ...config, personas: [person('p-a', null, 'Ana'), person('p-b', null, 'Ben'), person('p-c', null, 'Cleo')] };
+  const on = (persona_id: string) => ({ run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-gym' }) as const;
+  const report = buildReport(stored([
+    [1000, { ...runEnv, type: 'run.started', payload: { config: three } }],
+    ...three.personas.map((p, i): [number, NewEvent] => [1001 + i, { ...on(p.id), type: 'persona.created', payload: { persona: p } }]),
+    [1100, { ...on('p-a'), type: 'persona.step', payload: stepPayload(1, 'Posting.', null) }],
+    [1110, { ...on('p-a'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Posted.' } }],
+    [1200, { ...on('p-b'), type: 'persona.step', payload: stepPayload(1, '', null) }],
+    [1210, { ...on('p-b'), type: 'signal.repeated_failure', payload: { step_no: 3, action: 'click', error: 'invalid_output' } }],
+    [1300, { ...on('p-c'), type: 'persona.step', payload: stepPayload(1, 'Looking.', null) }],
+    [1310, { ...on('p-c'), type: 'persona.abandoned', payload: { step_no: 1, reason: 'No form.' } }],
+    [9000, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.personas.map((p) => p.outcome), ['done', 'model_failed', 'abandoned']);
+  const [segment] = report.segments;
+  assert.deepEqual([segment.personas, segment.outcomes.model_failed, segment.completion], [3, 1, 0.5], 'Ben is out of the denominator, not a failure');
+  assert.equal(report.weighted.completion, 0.5);
 });

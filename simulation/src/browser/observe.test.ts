@@ -101,7 +101,8 @@ before(async () => {
     if (path !== '/') return void res.end(`<!doctype html><title>${path}</title><h1>Page ${path}</h1>`);
     res.end(`<!doctype html><title>Home</title><h1>Home</h1><p id="ws">socket: none</p>
       <form method="post" action="/save"><label>Note <input name="note"></label><button>Save</button></form>
-      <button type="button" onclick="fetch('/api', { method: 'POST', body: 'x' }).catch(() => {})">Send by script</button>
+      <form onsubmit="return false"><button type="button" onclick="fetch('/api', { method: 'POST', body: 'x' }).catch(() => {})">Send by script</button></form>
+      <button type="button" onclick="fetch('/beacon', { method: 'POST', body: 'x' }).catch(() => {}); this.textContent = 'Opened'">Open menu</button>
       <a href="/private">Private</a> <a href="/private/ok">Allowed</a>
       <script>const ws = new WebSocket('ws://' + location.host + '/socket'); ws.onerror = () => { document.getElementById('ws').textContent = 'socket: error'; };</script>`);
   });
@@ -145,6 +146,7 @@ test('observe-only: a form post and a script write fail as submit_blocked before
 
   snap = await page.snapshot();
   assert.equal((await page.act({ type: 'click', ref: refOf(snap.text, 'button', 'Send by script'), text: null })).error, 'submit_blocked');
+  assert.equal((await page.act({ type: 'click', ref: refOf(snap.text, 'button', 'Open menu'), text: null })).error, null, 'a background write outside a form is the page\'s, not the click\'s');
   const privately = await page.act({ type: 'click', ref: refOf(snap.text, 'link', 'Private'), text: null });
   assert.equal(privately.error, 'robots_disallowed');
   assert.equal(privately.url_after, `${origin}/`);
@@ -154,7 +156,7 @@ test('observe-only: a form post and a script write fail as submit_blocked before
   assert.equal(allowed.url_after, `${origin}/private/ok`);
 
   const summary = blocked.map((b) => `${b.method} ${new URL(b.url).pathname} ${b.reason} navigation=${b.navigation}`).sort();
-  assert.deepEqual(summary, ['GET /private robots navigation=true', 'GET /socket observe_only navigation=false', 'POST /api observe_only navigation=false', 'POST /save observe_only navigation=true']);
+  assert.deepEqual(summary, ['GET /private robots navigation=true', 'GET /socket observe_only navigation=false', 'POST /api observe_only navigation=false', 'POST /beacon observe_only navigation=false', 'POST /save observe_only navigation=true']);
   assert.deepEqual(hits.filter((h) => h.method !== 'GET').map((h) => `${h.method} ${h.path}`), [], 'no write and no WebSocket reached the site');
   assert.ok(!hits.some((h) => h.path === '/private'), 'the disallowed page was never fetched');
 

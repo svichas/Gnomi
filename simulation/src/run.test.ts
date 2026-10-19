@@ -13,7 +13,7 @@ import { buildReport } from './report/build.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
-import { DEFAULT_SETTINGS } from './settings.ts';
+import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from './settings.ts';
 import { influenceEdges } from './social/influence.ts';
 import type { BlobStore, BrowserPool, LlmAttempt, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 import type {
@@ -374,7 +374,7 @@ test('step budgets follow patience: 12, 20, 30, 45 and 60 steps', async () => {
     ],
   );
   assert.equal(of(r.events, 'persona.step').length, 12 + 20 + 30 + 45 + 60);
-  assert.match(r.transcripts.find((t) => t.persona_id === 'p-1')?.request_json ?? '', /gives up after about 12 actions/);
+  assert.doesNotMatch(r.transcripts.find((t) => t.persona_id === 'p-1')?.request_json ?? '', /gives up after about|Step \d+ of/, 'the engine enforces the budget; the prompt does not show it');
 });
 
 test('three identical failed actions in a row end the episode', async () => {
@@ -389,9 +389,36 @@ test('three identical failed actions in a row end the episode', async () => {
   assert.equal(report.personas[0].outcome, 'repeated_failure');
 });
 
+test('three invalid outputs in a row end the episode as the model failing, with no survey; alone they break no failed-action streak', async () => {
+  const bad = { thought: 'no action' }; // a step takes two invalid attempts
+  let surveys = 0;
+  const silent = begin([bad, bad, bad, bad, bad, bad], { onCall: (req) => void (req.purpose === 'survey' && surveys++) });
+  const report = await silent.run.done;
+  assert.deepEqual(of(silent.events, 'signal.repeated_failure').map((e) => e.payload), [{ step_no: 3, action: 'wait', error: 'invalid_output' }]);
+  assert.deepEqual([report.personas[0].outcome, surveys, of(silent.events, 'persona.survey').length], ['model_failed', 0, 0]);
+  const dead = step('click', 'e9');
+  const between = begin([dead, dead, bad, bad, dead, dead], { act: (a) => (a.ref === 'e9' ? { ok: false, error: 'ref_not_found', dom_changed: false, target: null } : {}) });
+  await between.run.done;
+  assert.deepEqual(of(between.events, 'signal.repeated_failure').map((e) => e.payload), [{ step_no: 4, action: 'click', error: 'ref_not_found' }]);
+});
+
+test('a friction repeated on the same page is recorded once, about the failed action before it or the element it names', async () => {
+  const save = { severity: 2, what: 'Save does nothing!', expected: 'A saved draft' };
+  const r = begin([step('click', 'e9'), step('click', 'e1', null, save), step('click', 'e1', null, { ...save, what: 'save does   nothing' }), step('click', 'e1', null, { severity: 1, what: 'Odd label', expected: 'Jobs', about_ref: 'e1' }), step('done', null, 'Done')], {
+    act: (a) => (a.ref === 'e9' ? { ok: false, error: 'timeout', dom_changed: false, target: { role: 'button', name: 'Save', box: null } } : {}),
+  });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'persona.step').length, 5, 'the repeat keeps its step, thought and feeling');
+  assert.deepEqual(of(r.events, 'persona.friction_reported').map((e) => [e.payload.step_no, e.payload.where.ref, e.payload.about]), [
+    [2, 'e9', { role: 'button', name: 'Save', box: null }],
+    [4, 'e1', { role: 'link', name: 'Jobs', box: null }],
+  ]);
+  assert.ok(report.themes?.some((t) => t.elements.includes('button "Save"')), 'grouped under the element it is about, not the next click');
+});
+
 test('signals follow their step under the thresholds frozen in the run, or the defaults on a legacy run', async () => {
   assert.deepEqual(newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }).signals, DEFAULT_SIGNALS);
-  const script = [step('click', 'e9'), step('read', 'e1'), step('read', 'e1'), step('done', null, 'Done')];
+  const script = [step('click', 'e9'), step('click', 'e1'), step('click', 'e1'), step('done', null, 'Done')]; // reads never loop
   const act = (a: { ref: string | null }) => (a.ref === 'e9' ? { dom_changed: false } : {});
   const legacy = begin(script, { act, config: { signals: undefined } });
   await legacy.run.done;
@@ -443,6 +470,8 @@ test('every episode that ends on its own gets one survey from the navigator, abo
   assert.match(text('abandoned'), /after 1 step: Persona gave up \("Too slow"\)\.\nPersona reported no frictions/);
   assert.match(text('stuck'), /after 3 steps: Persona stopped after the same action failed three times in a row\./);
   assert.match(text('budget'), /after 12 steps: Persona ran out of patience before finishing\./);
+  assert.match(text('done'), /What Persona was thinking at the last 2 steps:\n- "A click, then\."\n- "A done, then\."\nPersona has no settled opinion of Gym ATS yet\./, 'the survey sees what the persona saw');
+  assert.match(text('budget'), /What Persona was thinking at the last 5 steps:/);
 });
 
 test('no survey after a user stop, the wall clock, an unanswered block or a cost stop', async () => {
@@ -461,9 +490,9 @@ test('no survey after a user stop, the wall clock, an unanswered block or a cost
   assert.deepEqual([clock.done, clock.report.stop_reason?.split(':')[0], clock.asked], [1, 'wall_clock', 0]);
   const blocked = await run([step('click', 'e1'), ...posted], { inspect: (n) => (n === 1 ? { challenge: 'recaptcha' } : {}), config: { pause_timeout_ms: 20 } });
   assert.deepEqual([blocked.report.personas[0].outcome, blocked.asked], ['blocked', 0]);
-  // $0.20 spent and $0.20 a call: the survey would reach the $0.40 cap, so it is never sent.
+  // $0.20 spent and $0.20 a call: the survey's call reaches the $0.40 cap, so its answer is never logged.
   const cost = await run(posted, { cost: 0.2, settings: { cost_budget_usd: 0.4 } });
-  assert.deepEqual([cost.done, cost.report.stop_reason?.split(':')[0], cost.asked], [1, 'cost_budget', 0]);
+  assert.deepEqual([cost.done, cost.report.stop_reason?.split(':')[0], cost.asked], [1, 'cost_budget', 1]);
 });
 
 test('survey answers follow the step rules: validated, retried once, cut off at the cap, errors end the run', async () => {
@@ -599,6 +628,13 @@ test('screenshots are always kept, and sent to the model only when enabled', asy
   const s = begin([step('done', null, 'Done')]);
   await s.run.done;
   assert.match(s.transcripts[0].request_json, /"type":"image","bytes":3/);
+  // DeepSeek takes no images, so its prompt must not mention one; the report says the navigator saw text only.
+  const d = begin([step('done', null, 'Done')], { settings: { routing: { ...DEFAULT_SETTINGS.routing, navigator: PROVIDER_DEFAULTS.deepseek.navigator } } });
+  const textOnly = await d.run.done;
+  assert.ok(d.files.has('runs/r-0001/shots/p-001-0001.jpg'));
+  assert.doesNotMatch(d.transcripts[0].request_json, /"type":"image"|screenshot is/);
+  assert.ok((textOnly.methods.limitations ?? []).some((l) => l.startsWith('The navigator saw each page as text only')));
+  assert.ok(!((await s.run.done).methods.limitations ?? []).some((l) => l.includes('text only')));
 });
 
 // —— A population ——
@@ -644,21 +680,43 @@ test('a rate limit halves the concurrency once per burst and records it', async 
   assert.equal(of(r.events, 'persona.goal_done').length, 8);
 });
 
-test('projected cost can stop admission early while already admitted calls and actions settle', async () => {
+test('without social rounds no step is refused by projection: the recorded cap stops the run and admitted work settles', async () => {
   const personas = Array.from({ length: 6 }, (_, i) => persona(`p-${i}`, { patience: 5 }));
   const r = begin(forever, { personas, settings: { concurrency: 3, cost_budget_usd: 1 }, cost: 0.1, delayMs: 2 });
   const report = await r.run.done;
   const spent = r.finished[0].cost_usd;
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
-    [{ reason: 'cost_budget', detail: 'the next steps were projected to reach the $1 budget' }],
+    [{ reason: 'cost_budget', detail: 'the $1 recorded-cost budget was reached' }],
   );
-  assert.ok(spent <= 1 + 1e-9, `spent ${spent}`);
-  assert.ok(spent >= 1 - (3 + 1) * 0.1 - 1e-9, `stopped too early: ${spent}`);
-  assert.equal(of(r.events, 'llm.call').length, of(r.events, 'persona.step').length, 'every call that started finished as a step');
+  assert.ok(spent >= 1 - 1e-9 && spent <= 1 + 3 * 0.1 + 1e-9, `spent ${spent}`); // the cap plus at most the three calls in flight
   assert.ok(r.files.has('runs/r-0001/report.json'));
   assert.equal(report.status, 'stopped');
   assert.ok(r.pages.every((p) => p.closed));
+});
+
+test('without social rounds the cohort is admitted once, so reversing who answers first changes no step count', async () => {
+  const counts = async (slow: string) => {
+    const r = begin([], {
+      // 24 steps at $0.10 stay under $2.45; a free, slow survey keeps one persona in flight while the other takes its last step.
+      personas: [persona('p-0', { patience: 1 }), persona('p-1', { patience: 1 })], settings: { concurrency: 2, cost_budget_usd: 2.45 },
+      llm: (record) => {
+        const steps = createScriptedGateway({ navigator: forever }, record, { costPerCall: 0.1 });
+        const free = createScriptedGateway({ navigator: () => SURVEY, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+        return { async call<T>(req: LlmRequest<T>) {
+          if (req.role !== 'navigator') return free.call(req);
+          if (req.purpose === 'survey') return sleep(50).then(() => free.call(req));
+          await sleep(req.persona_id === slow ? 6 : 5);
+          return steps.call(req);
+        } };
+      },
+    });
+    await r.run.done;
+    return ['p-0', 'p-1'].map((id) => of(r.events, 'persona.step').filter((e) => e.persona_id === id).length);
+  };
+  const first = await counts('p-1');
+  assert.deepEqual(first, [12, 12], 'neither persona is refused a step by the other one being in flight');
+  assert.deepEqual(await counts('p-0'), first);
 });
 
 test('a final done response at the recorded cap stops the run and still writes its report', async () => {
@@ -744,6 +802,7 @@ test('a browser action dispatched before the cap settles and is recorded while l
   let calls = 0;
   const r = begin([], {
     personas: [persona('first'), persona('crossing'), persona('not-started')], settings: { concurrency: 2, cost_budget_usd: 0.5 },
+    config: { seed: 1 }, // a start order of first, crossing, not-started
     act: async () => { actions++; acting.resolve(); await releaseAction.promise; return {}; },
     onEvent: (event) => { if (event.type === 'llm.call' && event.payload.cost_usd === 0.6) crossed.resolve(); },
     llm: (record) => ({ async call<T>(req: LlmRequest<T>) {
@@ -778,6 +837,14 @@ test('the wall-clock budget ends the run the same way', async () => {
   assert.ok(r.files.has('runs/r-0001/report.json'));
 });
 
+test('a stop reason that arrives after the first joins its detail instead of being dropped', async () => {
+  // The wall clock runs out while the first step is answered; the user stops the run once that step is recorded.
+  const r = begin(forever, { settings: { wall_clock_budget_min: 0.001 }, delayMs: 150, onEvent: (e, run) => void (e.type === 'persona.step' && run.stop()) });
+  const report = await r.run.done;
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload), [{ reason: 'wall_clock', detail: 'the 0.001-minute limit was reached; then user' }]);
+  assert.equal(report.stop_reason, 'wall_clock: the 0.001-minute limit was reached; then user');
+});
+
 test('personas carry their effective locale into isolated browsers and episode events, with legacy fallbacks', async () => {
   const personas = [
     persona('german', { country: 'DE', city: 'Berlin', timezone: 'Europe/Berlin', languages: ['de-DE', 'en-GB'], language: 'de' }),
@@ -789,8 +856,8 @@ test('personas carry their effective locale into isolated browsers and episode e
     { locale: 'de-DE', timezone: 'Europe/Berlin', languages: ['de-DE', 'en-GB'] },
     { locale: 'el', timezone: 'UTC', languages: ['el'] },
   ];
-  assert.deepEqual(r.pages.map(({ options: { locale, timezone, languages } }) => ({ locale, timezone, languages })), expected);
-  assert.deepEqual(of(r.events, 'persona.episode_started').map(({ payload: { locale, timezone, languages } }) => ({ locale, timezone, languages })), expected);
+  assert.deepEqual(r.pages.map(({ options: { locale, timezone, languages } }) => ({ locale, timezone, languages })).sort((a, b) => a.locale!.localeCompare(b.locale!)), expected); // in start order
+  assert.deepEqual(of(r.events, 'persona.episode_started').map(({ payload: { locale, timezone, languages } }) => ({ locale, timezone, languages })).sort((a, b) => a.locale!.localeCompare(b.locale!)), expected);
 });
 
 test('each persona gets her segment goal, context and device', async () => {
@@ -996,7 +1063,7 @@ test('a reset hook that fails stops the run before any persona starts', async (t
 
 const QUIET = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
 const said = (req: LlmRequest<unknown>) => req.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
-const stepOf = (req: LlmRequest<unknown>) => Number(/^Step (\d+) of/m.exec(said(req))?.[1]);
+const stepOf = (req: LlmRequest<unknown>) => Number(/^Step (\d+)\./m.exec(said(req))?.[1]);
 const feedOf = (req: LlmRequest<unknown>) => [...said(req).matchAll(/^\[post (\S+)\]/gm)].map((m) => m[1]);
 // Patience 1 is a 12-step budget, so three rounds are slices of four steps.
 const swarm = (n: number) => Array.from({ length: n }, (_, i) => persona(`p-${i}`, { segment_id: i % 2 ? 'seg-b' : 'seg-a', patience: 1 }));
@@ -1058,7 +1125,7 @@ test('slices continue one episode: one page per persona kept open between rounds
   assert.equal(r.pages.length, 2);
   assert.ok(r.pages.every((p) => p.closed && p.gotos.length === 1), 'one start-page load each, closed once the run is over');
   for (const id of ['p-0', 'p-1']) assert.deepEqual(of(r.events, 'persona.step').filter((e) => e.persona_id === id).map((e) => e.payload.step_no), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-  const fifth = r.transcripts.find((t) => t.persona_id === 'p-0' && /Step 5 of 12/.test(t.request_json));
+  const fifth = r.transcripts.find((t) => t.persona_id === 'p-0' && /Step 5\./.test(t.request_json));
   assert.match(fifth?.request_json ?? '', /4\. scroll down/, 'step 5 remembers step 4 across the social phase');
   assert.deepEqual(of(r.events, 'persona.episode_started').length, 2);
   assert.deepEqual(of(r.events, 'signal.budget_exceeded').map((e) => e.round), [3, 3]);
@@ -1085,7 +1152,7 @@ test('the follow graph is stored with each persona, and feeds show what the foll
   ]);
   const feeds = of(r.events, 'social.feed_viewed');
   assert.ok(feeds.filter((e) => e.round === 1).every((e) => e.payload.post_ids.length === 0), 'posts written in a phase show from the next round on');
-  assert.deepEqual(feeds.filter((e) => e.round === 2).map((e) => [e.persona_id, e.payload.post_ids]), [['p-0', []], ['p-1', ['r1-p-0']], ['p-2', ['r1-p-0']], ['p-3', ['r1-p-0']]]);
+  assert.deepEqual(feeds.filter((e) => e.round === 2).map((e) => [e.persona_id, e.payload.post_ids]).sort(), [['p-0', []], ['p-1', ['r1-p-0']], ['p-2', ['r1-p-0']], ['p-3', ['r1-p-0']]]);
 });
 
 test('social answers are recorded in population order once the phase settles, however fast each call returns', async () => {
@@ -1113,7 +1180,7 @@ test('social answers are recorded in population order once the phase settles, ho
   await r.run.done;
   assert.deepEqual(completed, ['p-3', 'p-2', 'p-1', 'p-0']);
   const first = (type: 'social.feed_viewed' | 'social.post') => of(r.events, type).filter((e) => e.round === 1).map((e) => e.persona_id);
-  assert.deepEqual(first('social.feed_viewed'), ['p-0', 'p-1', 'p-2', 'p-3']);
+  assert.deepEqual(first('social.feed_viewed').sort(), ['p-0', 'p-1', 'p-2', 'p-3']); // read in the seeded start order
   assert.deepEqual(first('social.post'), ['p-0', 'p-1', 'p-2', 'p-3'], 'posts land in population order, not completion order');
 });
 
@@ -1132,8 +1199,8 @@ test('an injected post goes in at the start of its round’s social phase, befor
   assert.ok(lastStep < post.seq && feeds.filter((e) => e.round === 2).every((e) => post.seq < e.seq), 'after the usage slice, before every feed');
   const followers = of(r.events, 'persona.created').filter((e) => e.payload.follows?.includes('p-0')).map((e) => e.persona_id!);
   assert.equal(followers.length, 5);
-  assert.deepEqual(feeds.filter((e) => e.round === 2 && e.payload.post_ids.includes('inj-r2-1')).map((e) => e.persona_id), followers);
-  assert.deepEqual(seen, followers, 'their socialiser read it');
+  assert.deepEqual(feeds.filter((e) => e.round === 2 && e.payload.post_ids.includes('inj-r2-1')).map((e) => e.persona_id).sort(), followers);
+  assert.deepEqual(seen.sort(), followers, 'their socialiser read it');
   assert.ok(feeds.filter((e) => e.round === 3).every((e) => !e.payload.post_ids.includes('inj-r2-1')), 'never shown twice');
 });
 
@@ -1155,10 +1222,10 @@ test('an opinion the feed changes cites its posts, an unchanged one records noth
   assert.deepEqual([changes[1].round, changes[1].poi_id, changes[1].payload], [2, 'poi-1', { poi_id: 'poi-1', before: liked, after: soured, cause: { step_ids: [], post_ids: ['r1-p-0'] } }]);
   assert.deepEqual(of(r.events, 'social.reaction').map((e) => [e.persona_id, e.round, e.payload]), [['p-1', 2, { post_id: 'r1-p-0', kind: 'agree' }]]);
   assert.deepEqual(influenceEdges(r.events).map((e) => [e.from, e.to, e.post_id, e.round, e.delta]), [['p-0', 'p-1', 'r1-p-0', 2, -2]]);
-  const ninth = r.transcripts.find((t) => t.persona_id === 'p-1' && /Step 9 of 12/.test(t.request_json));
+  const ninth = r.transcripts.find((t) => t.persona_id === 'p-1' && /Step 9\./.test(t.request_json));
   assert.match(ninth?.request_json ?? '', /Current opinion.*Others lose their drafts/, 'the next slice starts from the opinion the feed left');
   // Slices of three steps: round 2's feed, where p-1 read the post, comes before step 7.
-  const prompt = (n: number) => r.transcripts.find((t) => t.persona_id === 'p-1' && new RegExp(`Step ${n} of 12`).test(t.request_json))?.request_json ?? '';
+  const prompt = (n: number) => r.transcripts.find((t) => t.persona_id === 'p-1' && new RegExp(`Step ${n}\\.`).test(t.request_json))?.request_json ?? '';
   assert.match(prompt(7), /Since Persona last looked, Persona read this in a feed where other people talk about it[^\n]*\\n- Persona p-0 about Gym ATS: \\"Lost my draft twice today\.\\"/, 'the next slice starts with what it read there');
   assert.doesNotMatch(prompt(4), /Since Persona last looked/, 'an empty feed adds nothing');
   assert.doesNotMatch(prompt(8), /Since Persona last looked/, 'only the first step after the feed hears it');
@@ -1181,19 +1248,27 @@ test('two invalid socialiser answers leave the persona silent for that phase, an
 });
 
 test('the cost cap reached in a social phase stops the run there: no later round or step, and every page closes', async () => {
-  // Sixteen $0.01 steps make the first slice; the projection then admits one socialiser call and stops before the next.
+  // Sixteen $0.01 steps make the first slice; the whole phase of four socialiser calls would reach the budget, so none starts.
   const budget = 0.18;
   const r = begin(swarmAnswers(), { personas: swarm(4), project: SWARM, settings: { ...rounds(3), cost_budget_usd: budget }, cost: 0.01 });
   const report = await r.run.done;
-  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload.reason), ['cost_budget']);
-  const social = of(r.events, 'llm.call').filter((e) => e.payload.role === 'socialiser');
-  assert.ok(social.length >= 1 && social.length < 4, `${social.length} socialiser calls`);
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => [e.payload.reason, e.payload.detail]), [['cost_budget', 'the social phase of round 1 was projected to reach the $0.18 budget']]);
+  assert.equal(of(r.events, 'llm.call').filter((e) => e.payload.role === 'socialiser').length, 0, 'a phase is admitted whole or not at all');
   assert.deepEqual([of(r.events, 'run.round_started').map((e) => e.round), of(r.events, 'run.round_ended').map((e) => e.round)], [[1], [1]]);
   assert.ok(of(r.events, 'persona.step').every((e) => e.round === 1 && e.payload.step_no <= 4));
   assert.ok(r.pages.length === 4 && r.pages.every((p) => p.closed), 'episodes waiting for a slice end and close their pages');
   assert.equal(of(r.events, 'persona.survey').length, 0);
   assert.equal(r.finished[0].status, 'stopped');
   assert.ok(report.cost_usd <= budget + 12 * 0.01 + 1e-9);
+});
+
+test('a usage slice is admitted whole: when its steps would reach the budget, none of them starts', async () => {
+  // Round 1: sixteen $0.01 steps and four socialiser calls; round 2's sixteen steps would reach $0.30, so the run stops before them.
+  const r = begin(swarmAnswers(), { personas: swarm(4), project: SWARM, settings: { ...rounds(3), cost_budget_usd: 0.3 }, cost: 0.01 });
+  await r.run.done;
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload.detail), ['the usage slice of round 2 was projected to reach the $0.3 budget']);
+  assert.deepEqual([of(r.events, 'run.round_started').map((e) => e.round), of(r.events, 'persona.step').length], [[1], 16]);
+  assert.ok(r.pages.every((p) => p.closed));
 });
 
 test('social rounds off, absent from an older project, or with only the built-in persona: the run is exactly as before M4', async () => {
@@ -1240,7 +1315,7 @@ test('each persona uses its eligible POIs in order, with step numbers running on
   assert.equal(new Set(steps.map((e) => e.payload.screenshot)).size, 4, 'every step keeps its own screenshot');
   assert.ok(r.pages.every((p) => p.closed) && r.pages.length === 3, 'one page per persona and POI');
   assert.deepEqual(r.pages.map((p) => p.options.allowedHosts), [['gym.test', 'www.gym.test', 'cdn.gym.test'], ['gym.test', 'www.gym.test', 'cdn.gym.test'], ['gym.test', 'www.gym.test', 'cdn.gym.test']]);
-  assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.payload.poi_id]), [['a', 'poi-home'], ['b', 'poi-home'], ['b', 'poi-locale']]);
+  assert.deepEqual(of(r.events, 'persona.survey').map((e) => [e.persona_id, e.payload.poi_id]).sort(), [['a', 'poi-home'], ['b', 'poi-home'], ['b', 'poi-locale']]);
   const surveyed = of(r.events, 'persona.survey').find((e) => e.persona_id === 'b' && e.payload.poi_id === 'poi-locale')!;
   assert.ok(of(r.events, 'persona.step').filter((e) => e.persona_id === 'b' && e.poi_id === 'poi-locale').every((e) => e.seq < surveyed.seq));
   assert.deepEqual(report.pois.map((p) => p.id), ['poi-home', 'poi-locale']);
@@ -1265,6 +1340,62 @@ test('social slices count a persona’s steps across its POIs', async () => {
   assert.deepEqual(mine(of(r.events, 'persona.survey')).map((e) => e.payload.poi_id), ['poi-home', 'poi-locale']);
   const feed = r.transcripts.find((t) => t.persona_id === 'b' && t.request_json.includes('about_poi_id'))!;
   assert.match(feed.request_json, /about_poi_id: \\"poi-home\\" when the post or reply is about Home, \\"poi-locale\\" when the post or reply is about Locale/);
+});
+
+test('personas start in a seeded order that mixes segments, the same on every replay; the snapshot keeps the population order', async () => {
+  const starts = async () => {
+    const r = begin([step('done', null, 'Done')], { personas: swarm(6), project: SWARM, settings: { social: false, concurrency: 1 } });
+    await r.run.done;
+    return { started: of(r.events, 'persona.episode_started').map((e) => e.persona_id), frozen: of(r.events, 'run.started')[0].payload.config.personas.map((p) => p.id) };
+  };
+  const [a, b] = [await starts(), await starts()];
+  const population = swarm(6).map((p) => p.id);
+  assert.deepEqual(a.started, b.started);
+  assert.notDeepEqual(a.started, population);
+  assert.deepEqual([...a.started].sort(), population);
+  assert.deepEqual(a.frozen, population);
+});
+
+test('a hard stop in a social phase logs each paid answer it discards, and the report names the round and count', async () => {
+  const r = begin(swarmAnswers(() => ({ ...QUIET, action: 'post', text: 'Lost my draft.', about_poi_id: 'poi-1' })), {
+    personas: swarm(4), project: SWARM, settings: rounds(3),
+    onEvent: (e, run) => void (e.type === 'llm.call' && e.payload.role === 'socialiser' && run.stop()),
+  });
+  const report = await r.run.done;
+  const call = of(r.events, 'llm.call').find((e) => e.payload.role === 'socialiser')!;
+  assert.deepEqual(of(r.events, 'social.discarded').map((e) => [e.persona_id, e.round, e.payload.call_seq]), [[call.persona_id, 1, call.seq]]);
+  assert.equal(of(r.events, 'social.post').length, 0);
+  assert.ok((report.methods.limitations ?? []).includes('The run stopped in round 1 before applying 1 paid social answer, so the feed and opinions miss it.'));
+});
+
+test('a feed records the parents of the replies it showed', async () => {
+  const social = (req: LlmRequest<unknown>) =>
+    req.persona_id === 'p-0' && req.round === 1 ? { ...QUIET, action: 'post', text: 'Where is save?', about_poi_id: 'poi-1' }
+    : req.persona_id === 'p-1' && feedOf(req).includes('r1-p-0') ? { ...QUIET, action: 'reply', post_id: 'r1-p-0', text: 'Same here.' } : QUIET;
+  const r = begin(swarmAnswers(social), { personas: swarm(3), project: SWARM, settings: rounds(3) });
+  await r.run.done;
+  const showing = of(r.events, 'social.feed_viewed').filter((e) => e.payload.post_ids.includes('r2-p-1'));
+  assert.ok(showing.length > 0 && showing.every((e) => e.payload.parent_ids?.includes('r1-p-0')));
+  assert.ok(of(r.events, 'social.feed_viewed').every((e) => e.payload.post_ids.includes('r2-p-1') || !e.payload.parent_ids?.length));
+});
+
+test('an episode that starts after a social phase starts from the opinion it gave that POI', async () => {
+  // Slices of eight steps over 24; b is done with Home at step 10, mid-slice in round 2, so Locale starts there.
+  const heardOf = { sentiment: -1, confidence: 0.4, likes: [], frictions: ['Locale settings are said to be buried'] };
+  const own = { sentiment: 1, confidence: 0.7, likes: ['Locale was easy'], frictions: [] };
+  const onLocale = (req: LlmRequest<unknown>) => said(req).includes('url: http://gym.test/locale');
+  const r = begin((req) =>
+    req.role === 'socialiser' ? (req.persona_id === 'b' && req.round === 1 ? { ...QUIET, opinion_updates: [{ poi_id: 'poi-locale', ...heardOf, post_ids: [] }] } : QUIET)
+    : req.persona_id !== 'b' ? forever()
+    : onLocale(req) ? (stepOf(req) === 1 ? { ...forever(), opinion: own } : forever())
+    : stepOf(req) === 10 ? step('done', null, 'Done') : forever(), {
+    personas: [persona('b', { segment_id: 'seg-b', patience: 1 }), persona('c', { segment_id: 'seg-b', patience: 1 })], project: twoPois, settings: rounds(3),
+  });
+  await r.run.done;
+  const first = r.transcripts.find((t) => t.persona_id === 'b' && t.request_json.includes('url: http://gym.test/locale'));
+  assert.match(first?.request_json ?? '', /Current opinion \(self-reported, from earlier steps\): .*Locale settings are said to be buried/);
+  const change = of(r.events, 'persona.opinion_changed').find((e) => e.persona_id === 'b' && e.poi_id === 'poi-locale' && e.payload.cause.step_ids.length > 0);
+  assert.deepEqual(change?.payload.before, heardOf, 'not null: the episode began with the feed’s opinion');
 });
 
 test('a persona with no point of interest stops the run before anyone starts', async () => {
@@ -1297,6 +1428,30 @@ function comparisonAnswer(req: LlmRequest<unknown>) {
   if (req.purpose === 'comparison_verification') return { outcome_supported: true, outcome_reason: 'The Jobs entry is captured.', criteria: [{ criterion_id: 'entry', supported: true, reason: 'The quotation supports this criterion.' }] };
   return step('done', null, 'Found Jobs.');
 }
+
+test('comparison initial matched-block admission uses the optional verifier model price', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
+  for (const verifier of ['judge', 'navigator'] as const) {
+    const target = publicComparison();
+    target.comparison!.execution.verifier = verifier;
+    const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer', { segment_id: 'buyers' })], settings: { cost_budget_usd: 0.04, concurrency: 1 }, cost: 0 });
+    const report = await r.run.done;
+    assert.ok(report.comparison!.coverage.every((row) => verifier === 'judge' ? row.outcomes.not_attempted === 1 : row.outcomes.completed === 1));
+  }
+});
+
+test('comparison step admission learns verifier costs separately from the more expensive assessment', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
+  const target = publicComparison();
+  target.comparison!.execution.verifier = 'navigator';
+  const r = begin(comparisonAnswer, { project: target, personas: [persona('buyer', { segment_id: 'buyers' })], settings: { cost_budget_usd: 0.09, concurrency: 1 },
+    llm: (record) => ({ call: (req) => createScriptedGateway([comparisonAnswer(req)], record, { costPerCall: req.purpose === 'comparison_assessment' ? 0.02 : 0.001 }).call(req) }),
+  });
+  const report = await r.run.done;
+  assert.ok(report.comparison!.coverage.every((row) => row.outcomes.completed === 1));
+  assert.equal(of(r.events, 'llm.call').filter((call) => call.payload.purpose === 'comparison_verification').length, 4);
+  assert.ok(Math.abs(report.cost_usd - 0.088) < 1e-9);
+});
 
 test('explicit all-public comparison admits buyer web tasks and produces replayable evidence across every target', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));

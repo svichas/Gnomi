@@ -73,9 +73,15 @@ async function expectReport(page: Page) {
   // Problems more than one persona met come first; with a small swarm they can all be single reports, folded below them.
   const singles = report.locator('section[aria-labelledby=singles-title]');
   if (await singles.count()) await unfold(singles.locator('details').first());
+  // Findings start collapsed: open each one so its suggestion and evidence are readable.
+  for (const section of [report.locator('section[aria-labelledby=themes-title]'), singles]) {
+    if (!await section.count()) continue;
+    for (const finding of await section.locator('.report-finding details').all()) await unfold(finding);
+  }
   const findings = await report.locator('section[aria-labelledby=themes-title], section[aria-labelledby=singles-title]').allInnerTexts();
   assert.match(findings.join('\n'), /Scripted demo theme \d+: no model named it[\s\S]*Generated suggestion/);
-  // Each persona's frictions are folded away: open the first persona with one.
+  // Each persona's frictions are folded away: open the journeys fold, then the first persona with one.
+  await unfoldSection(page, 'journeys-title');
   const persona = report.getByRole('region', { name: /How each persona did/ }).locator('details').filter({ has: page.locator('ol > li') }).first();
   await unfold(persona);
   const friction = persona.locator('ol > li').first();
@@ -93,6 +99,13 @@ async function methodsText(page: Page) {
   const methods = page.locator('section[aria-labelledby=methods-title]');
   await unfold(methods.locator('details'));
   return methods.innerText();
+}
+
+/** A report section starts folded; open its disclosure before reading what it holds. */
+async function unfoldSection(page: Page, id: string) {
+  const section = page.locator(`section[aria-labelledby=${id}]`);
+  await unfold(section.locator('details').first());
+  return section;
 }
 
 async function openReport(page: Page, options: { timeout?: number } = {}) {
@@ -214,7 +227,7 @@ try {
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
     // The problems to fix at the window's size and at 720 px wide, for a look at the evidence layout.
-    const themes = page.getByRole('region', { name: /What to fix first/ });
+    const themes = page.getByRole('region', { name: /What to improve/ });
     await themes.screenshot({ path: join(shots, 'report-themes.png') });
     const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
     await app.evaluate(({ BrowserWindow }, [, height]) => BrowserWindow.getAllWindows()[0].setSize(720, height), size);
@@ -287,8 +300,9 @@ try {
       await page.screenshot({ path: join(shots, 'blocked.png') });
       await banner.getByRole('button', { name: 'End run' }).click();
       await openReport(page, { timeout: 60_000 });
-      assert.match(await page.locator('section[aria-labelledby=report-title]').innerText(), /Blocked/);
-      assert.match(await methodsText(page), /a CAPTCHA.*did not resume/);
+      const ended = await methodsText(page);
+      assert.match(ended, /blocked/);
+      assert.match(ended, /a CAPTCHA.*did not resume/);
     } finally {
       await site.close();
     }
@@ -519,8 +533,10 @@ try {
       await page.getByLabel('Start page URL').fill(site.url);
       await startRun(page, 'r-0005');
       await openReport(page, { timeout: 300_000 });
+      await unfoldSection(page, 'audience-results-title');
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
       for (const name of ['Recruiters', 'Hiring managers', 'Weighted by share']) assert.match(segments, new RegExp(name));
+      await unfoldSection(page, 'journeys-title');
       assert.equal(await page.getByRole('region', { name: /How each persona did/ }).locator('details').count(), 6, 'a card for each of the six personas');
       const status = page.getByRole('region', { name: 'Run status' });
       assert.match(await status.innerText(), /6 simulated people/);
@@ -588,6 +604,7 @@ try {
     await inspector.waitFor({ state: 'detached' });
     // The report's persona cards open it too.
     await openReport(page);
+    await unfoldSection(page, 'journeys-title');
     const card = page.getByRole('region', { name: /How each persona did/ }).locator('details').first();
     await unfold(card);
     await card.getByRole('button', { name: /timeline$/ }).click();
@@ -633,6 +650,7 @@ try {
       }
       await banner.getByRole('button', { name: 'End run' }).click();
       await openReport(page, { timeout: 120_000 });
+      await unfoldSection(page, 'journeys-title');
       const outcomes = (await page.getByRole('region', { name: /How each persona did/ }).locator('summary').allInnerTexts()).join('\n');
       assert.equal((outcomes.match(/Blocked/g) ?? []).length, 3);
       // Each stopped twice: the first time they were let go again, the second time the run ended on them.

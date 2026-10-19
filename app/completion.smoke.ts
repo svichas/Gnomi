@@ -192,7 +192,7 @@ try {
   await page.waitForFunction(() => window.completionSmoke.reportResponses >= 2);
   assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true', 'The saved report response must preserve a deliberate Timeline selection.');
   await reportTab.click();
-  await page.locator('#run-panel-report').getByText('Goal: Saved completion report', { exact: true }).waitFor();
+  await page.locator('#run-panel-report').getByText('Saved completion report', { exact: true }).waitFor();
   console.log('ok    report.generated refreshes the report without switching views again');
 
   await page.evaluate(() => sessionStorage.setItem('completion-scenario', 'race'));
@@ -207,8 +207,8 @@ try {
   await page.waitForFunction(() => window.completionSmoke.reportResponses === 2);
   assert.equal(await page.getByRole('tab', { name: 'Simulation', exact: true }).getAttribute('aria-selected'), 'true');
   await reportTab.click();
-  await page.locator('#run-panel-report').getByText('Goal: Saved completion report', { exact: true }).waitFor();
-  assert.equal(await page.locator('#run-panel-report').getByText('Goal: Initial completion report', { exact: true }).count(), 0);
+  await page.locator('#run-panel-report').getByText('Saved completion report', { exact: true }).waitFor();
+  assert.equal(await page.locator('#run-panel-report').getByText('Initial completion report', { exact: true }).count(), 0);
   console.log('ok    late initial responses cannot replace the saved report or undo a manual view choice');
 
   await page.evaluate(() => sessionStorage.setItem('completion-scenario', 'historical'));

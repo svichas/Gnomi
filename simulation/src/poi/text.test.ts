@@ -34,15 +34,19 @@ test('a long text is read in parts that end at a paragraph break and cover it ex
 });
 
 test('a quoted passage keeps offsets that hold it, is repaired to the nearest occurrence, and is dropped when the text has no such span', () => {
-  const text = 'Team includes SSO.\nBusiness includes SSO.\nThe FAQ says:   single sign-on is Business only.';
-  const second = text.indexOf('SSO', 20);
-  assert.deepEqual(locatePassage(text, 'SSO', second, second + 3), { start: second, end: second + 3, text: 'SSO' });
-  assert.deepEqual(locatePassage(text, ' SSO ', 0, 0), { start: 14, end: 17, text: 'SSO' }, 'trimmed, then the occurrence nearest the given start');
-  assert.deepEqual(locatePassage(text, 'SSO', 40, 99), { start: second, end: second + 3, text: 'SSO' });
+  const text = 'Team: the plan includes SSO.\nBusiness: the plan includes SSO.\nThe FAQ says:   single sign-on is Business only.';
+  const q = 'the plan includes SSO';
+  const second = text.indexOf(q, 20);
+  assert.deepEqual(locatePassage(text, q, second, second + q.length), { start: second, end: second + q.length, text: q });
+  assert.deepEqual(locatePassage(text, ` ${q} `, 0, 0), { start: 6, end: 6 + q.length, text: q }, 'trimmed, then the occurrence nearest the given start');
+  assert.deepEqual(locatePassage(text, q, 40, 99), { start: second, end: second + q.length, text: q });
   const faq = text.indexOf('The FAQ');
   assert.deepEqual(locatePassage(text, 'The FAQ says: Single sign-on', 0, 0), { start: faq, end: faq + 30, text: 'The FAQ says:   single sign-on' }, 'case and runs of white space differ');
   assert.equal(locatePassage(text, 'SSO is free on every plan', 0, 10), null);
   assert.equal(locatePassage(text, '   ', 0, 3), null);
+  assert.equal(locatePassage(text, 'includes SSO', 0, 0), null, 'under three words and 15 characters links nothing');
+  assert.ok(locatePassage(text, 'single sign-on', 0, 0) === null && locatePassage(text, 'Business only.', 0, 0) === null, 'two words under 15 characters');
+  assert.ok(locatePassage(text, 'single sign-on is', 0, 0), 'three words');
 });
 
 // —— Runs on Gym v3's pricing copy (gym/design.ts, defect D28: the Team card lists SSO, the table and the FAQ give it to Business) ——
@@ -108,6 +112,7 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
     assert.doesNotMatch(req.shared ?? '', /Persona/, 'nothing about the persona in the shared part, so every reader reuses one cached copy');
     assert.doesNotMatch(said(req), /<text/);
     assert.match(req.system, req.persona_id!.startsWith('b') ? /weighing whether to buy Plotline/ : /^(?![\s\S]*weighing whether to buy)/);
+    assert.doesNotMatch(req.system, /parts read|one look/, 'the engine-enforced budget does not show through');
     return {
       thought: 'Team says SSO, but the FAQ says Business. Which is it?',
       feeling: -1,
@@ -131,8 +136,8 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
   assert.deepEqual(report.personas.map((p) => [p.id, p.outcome, p.outcome_text]), [...buyers, ...users].map((p) => [p.id, 'done', 'Ask sales whether Team includes SSO']));
   assert.ok(of(events, 'persona.episode_started').every((e) => e.payload.start_url.startsWith('asset:')));
 
-  // Per-segment sentiment from the surveys, and the buyers' own results.
-  assert.deepEqual(report.sentiment?.map((s) => [s.name, s.surveyed, s.sentiment]), [['Team leads buying', 3, -1 / 3], ['Planners', 2, -1]]);
+  // Per-segment sentiment from the users' surveys, and the buyers' own results.
+  assert.deepEqual(report.sentiment?.map((s) => [s.name, s.surveyed, s.sentiment]), [['Team leads buying', 0, null], ['Planners', 2, -1]]);
   assert.equal(report.buyers?.length, 1);
   const bought = report.buyers![0];
   assert.deepEqual([bought.poi_id, bought.name, bought.surveyed, bought.would_buy, bought.price], ['pricing', 'Team leads buying', 3, 1 / 3, { low: 0, fair: 1, high: 0, unclear: 2 }]);
@@ -146,6 +151,7 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
   for (const f of quoted) assert.equal(text.slice(f.passage!.start, f.passage!.end), f.passage!.text);
   assert.deepEqual([...new Set(quoted.map((f) => f.passage!.start))].sort((a, b) => a - b), [team, faq]);
   for (const f of report.frictions.filter((f) => !f.passage?.text)) assert.deepEqual([f.what, f.passage], ['Something the copy does not say', { start: 0, end: text.length }]);
+  assert.ok(of(events, 'persona.friction_reported').every((e) => (e.payload.quote_unverified === true) === !e.payload.passage), 'an unfound quote is flagged');
 
   // Ranked confusions grouped by passage, with quotes: each theme is one passage, reached by every persona.
   const themes = report.themes!.filter((t) => t.poi_id === 'pricing');

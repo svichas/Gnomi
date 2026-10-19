@@ -9,6 +9,8 @@ export const MERGE_STEPS = 3;
 export const SIGNAL_KINDS: SignalKind[] = ['failed_action', 'loop', 'backtrack', 'error', 'validation_error', 'small_target'];
 /** Severity (1–4) of a signal nobody reported; a backtrack is often just a persona reading again. */
 export const SIGNAL_SEVERITY: Record<SignalKind, number> = { failed_action: 2, loop: 2, backtrack: 1, error: 2, validation_error: 2, small_target: 2 };
+// Only a product failure corroborates a self-report: a loop, backtrack or small target is often the persona, a console line the page's noise.
+const CORROBORATES = new Set<SignalKind>(['failed_action', 'validation_error', 'error']);
 const ABANDON_SEVERITY = 3; // the persona gave up
 const SURVEY_SEVERITY = 2; // surveys before structured items asked for frictions, not their severity
 
@@ -125,13 +127,14 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
   };
 
   const reports: Candidate[] = [];
-  const signals: Candidate[] = [];
+  const signals: Candidate[] = []; // those that may confirm a self-report
+  const unmatched: Candidate[] = [];
   const surveys: Candidate[] = [];
   for (const e of events) {
     if (e.type === 'persona.friction_reported') {
       const at = atStep(e, e.payload.step_no, e.payload.where.url);
-      // A text's confusions group by the passage they quote, as a page's frictions do by their element.
-      const element = e.payload.passage?.text ? `passage "${e.payload.passage.text.replace(/\s+/g, ' ').slice(0, 120)}"` : at.element;
+      // A text's confusions group by the passage they quote, a page's by the element they are about, not always the step's (loop.ts).
+      const element = e.payload.passage?.text ? `passage "${e.payload.passage.text.replace(/\s+/g, ' ').slice(0, 120)}"` : e.payload.about ? elementOf(e.payload.about) : at.element;
       reports.push({ ...at, ...stepEvidence(e.payload, at), element, severity: clampSeverity(e.payload.severity), text: e.payload.what });
     } else if (e.type === 'persona.abandoned') {
       reports.push({ ...atStep(e, e.payload.step_no, null), kind: 'abandoned', severity: ABANDON_SEVERITY, text: e.payload.reason });
@@ -150,12 +153,17 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       }
     } else if (isSignal(e)) {
       const kind = e.type.slice(7) as SignalKind;
-      signals.push({ ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind] });
+      // A console line or exception never corroborates. It may come from a script containment refused, but a blocked request
+      // does not log its resource type, so such a step's page errors stay as candidates rather than all being dropped.
+      const pageNoise = e.type === 'signal.error' && e.payload.kind !== 'http';
+      const signal: Candidate = { ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind] };
+      // A console line or exception is about the page, not the element clicked, so it groups by its text (groupKey).
+      if (pageNoise) signal.element = null;
+      (CORROBORATES.has(kind) && !pageNoise ? signals : unmatched).push(signal);
     }
   }
 
-  // Each signal joins the nearest self-report of the same persona on the same page within MERGE_STEPS; ties go to the earlier one.
-  const unmatched: Candidate[] = [];
+  // Each corroborating signal joins the nearest self-report of the same persona on the same page within MERGE_STEPS; ties go to the earlier one.
   for (const signal of signals) {
     const distance = (r: Candidate) => Math.abs((r.step_no ?? Infinity) - (signal.step_no ?? Infinity));
     const near = reports.filter((r) => r.persona_id === signal.persona_id && r.poi_id === signal.poi_id && r.page === signal.page && distance(r) <= MERGE_STEPS);
@@ -193,13 +201,15 @@ function signalText(e: SignalEvent): string {
 
 /**
  * Survey answers have no page, so they group by the part of the product they name (their words, in surveys before that);
- * the rest by (poi, page, element), else (poi, page, kind).
+ * the rest by (poi, page, element), else a console error or exception by (poi, page, its text), else (poi, page, kind).
  */
 export function groupKey(c: Candidate): string {
   if (c.kind === 'survey' || c.kind === 'objection') {
     return JSON.stringify([c.poi_id, null, c.kind, c.element ? `where ${normaliseText(c.element)}` : normaliseText(c.text)]);
   }
-  return c.element ? JSON.stringify([c.poi_id, c.page, 'element', c.element.toLowerCase()]) : JSON.stringify([c.poi_id, c.page, 'kind', c.kind]);
+  if (c.element) return JSON.stringify([c.poi_id, c.page, 'element', c.element.toLowerCase()]);
+  // An HTTP error's path carries record ids, so it keeps grouping by kind; a console line or exception by its words.
+  return c.kind === 'error' && !c.text.startsWith('HTTP ') ? JSON.stringify([c.poi_id, c.page, 'error', normaliseText(c.text)]) : JSON.stringify([c.poi_id, c.page, 'kind', c.kind]);
 }
 
 /** Step 3: deterministic groups, in the order of their first member. */

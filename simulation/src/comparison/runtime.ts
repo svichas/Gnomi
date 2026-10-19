@@ -36,7 +36,7 @@ export function balancedTargetOrder(personas: { id: string; segment_id: string |
 /** A navigator's "done" still needs success evidence. The judge may resolve it after the trace is frozen. */
 export function terminalOutcome(end: EpisodeEnd) {
   switch (end) {
-    case 'done': case 'stopped': return 'incomplete' as const;
+    case 'done': case 'stopped': case 'model_failed': return 'incomplete' as const;
     case 'budget_exceeded': case 'repeated_failure': return 'task_failed' as const;
     case 'blocked': return 'blocked_environment' as const;
     case 'abandoned': return 'abandoned' as const;
@@ -57,7 +57,7 @@ export interface ComparisonRuntimeDeps {
   beginBlock?(persona: Persona, task: ComparisonTask): boolean;
   endBlock?(persona: Persona): void;
   beginUsageStep(): boolean;
-  beginAnalysisStep(): boolean;
+  beginAnalysisStep(purpose: 'comparison_assessment' | 'comparison_verification'): boolean;
   endStep(): void;
   stopped(): boolean;
   stopReason(): string;
@@ -129,7 +129,7 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
   const study = config.project.comparison!;
   const own = deps.events().filter((e) => e.seq > startSeq && e.seq <= endSeq && e.persona_id === persona.id);
   const sources = own.filter((e): e is SourceEvent => e.type === 'comparison.source' && e.payload.episode_id === scope.episode_id);
-  if (!sources.length || deps.stopped() || !deps.beginAnalysisStep()) return end;
+  if (!sources.length || deps.stopped() || !deps.beginAnalysisStep('comparison_assessment')) return end;
   const criteria = study.criteria.filter((c) => task.criterion_ids.includes(c.id));
   const base = { run_id: config.run_id, round: 1, persona_id: persona.id, poi_id: task.entries.find((entry) => entry.target_id === scope.target_id)!.poi_id };
   const provenance = { provider: config.project.settings.routing.judge.provider, model: config.project.settings.routing.judge.model, prompt_version: ASSESSMENT_PROMPT_VERSION, rubric_version: RUBRIC_VERSION };
@@ -157,13 +157,37 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
     deps.endStep();
   }
   if (deps.signal.aborted) return end;
-  // Semantic review catches relevant-looking but unrelated exact citations. Its failure retains the matrix as unknown.
+  // Reject deterministic failures before paying for semantic review, preserving their recorded reasons.
+  const seen = new Set<string>();
+  const candidates = proposed.criteria.map((item) => {
+    const rejection = !task.criterion_ids.includes(item.criterion_id) ? 'The criterion is outside the frozen task.'
+      : seen.has(item.criterion_id) ? 'Duplicate criterion assessment.'
+      : citationRejection(item.evidence, suppliedSources, item.basis)
+        ?? (item.assessment !== 'unknown' && item.assessment !== 'not_applicable' && !item.evidence.length ? 'A supported assessment requires captured evidence.' : null)
+        // An evidence-free unknown cannot change a matrix label. Keep its proposal in the log, but do not
+        // publish unreviewed summary claims or count it as an assessed episode in the report.
+        ?? (item.assessment === 'unknown' && !item.evidence.length ? 'Evidence-free unknown retained without semantic verification.' : null);
+    seen.add(item.criterion_id);
+    return { item, rejection };
+  });
+  const reviewCriteria = candidates.filter(({ rejection }) => rejection === null).map(({ item }) => item);
+  // Use the existing terminal rules for both admission to review and application of the reviewed outcome.
+  const lastActionSucceeded = engineEnd === 'budget_exceeded' && proposed.outcome === 'completed' && proposed.outcome_evidence.length > 0;
+  const reviewOutcome = !citationRejection(proposed.outcome_evidence, suppliedSources)
+    && end.outcome !== 'blocked_environment'
+    && (!(end.outcome === 'task_failed' || end.outcome === 'abandoned') || lastActionSucceeded || ['invalid_task', 'blocked_environment'].includes(proposed.outcome))
+    && !(end.outcome === 'incomplete' && engineEnd !== 'done')
+    && !(proposed.outcome === 'completed' && !proposed.outcome_evidence.length);
+  // Semantic review still catches relevant-looking but unrelated exact citations. Its failure retains unknown.
   let verified: ReturnType<typeof comparisonVerificationSchema.parse> | null = null;
-  if (deps.beginAnalysisStep()) {
+  if ((reviewCriteria.length || reviewOutcome) && deps.beginAnalysisStep('comparison_verification')) {
     try {
-      const text = JSON.stringify({ ...input, proposed });
+      const text = JSON.stringify({ ...input, review_outcome: reviewOutcome, proposed: {
+        ...(reviewOutcome ? { outcome: proposed.outcome, reason: proposed.reason, outcome_evidence: proposed.outcome_evidence } : {}),
+        criteria: reviewCriteria,
+      } });
       if (text.length > 120_000) throw new Error('The proposed assessment exceeds the verification input limit.');
-      verified = (await llm.call({ role: 'judge', model: config.project.settings.routing.judge, run_id: config.run_id, persona_id: persona.id, round: 1,
+      verified = (await llm.call({ role: 'judge', model: config.project.settings.routing[study.execution.verifier ?? 'judge'], run_id: config.run_id, persona_id: persona.id, round: 1,
         purpose: 'comparison_verification', system: VERIFICATION_SYSTEM, user: [{ type: 'text', text }], max_output_tokens: 3000, schema: comparisonVerificationSchema,
         timeout_ms: 90_000, signal: deps.signal,
       })).object;
@@ -171,27 +195,14 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
     finally { deps.endStep(); }
   }
   if (deps.signal.aborted) return end;
-  const seen = new Set<string>();
-  for (const item of proposed.criteria) {
+  for (const { item, rejection: structuralRejection } of candidates) {
     const review = verified?.criteria.filter((v) => v.criterion_id === item.criterion_id);
-    const rejection = !task.criterion_ids.includes(item.criterion_id) ? 'The criterion is outside the frozen task.'
-      : seen.has(item.criterion_id) ? 'Duplicate criterion assessment.'
-      : citationRejection(item.evidence, suppliedSources, item.basis)
-        ?? (item.assessment !== 'unknown' && item.assessment !== 'not_applicable' && !item.evidence.length ? 'A supported assessment requires captured evidence.' : null)
-        ?? (!review || review.length !== 1 || !review[0].supported ? review?.[0]?.reason ?? 'Semantic verification was not completed.' : null);
-    seen.add(item.criterion_id);
+    const rejection = structuralRejection
+      ?? (!review || review.length !== 1 || !review[0].supported ? review?.[0]?.reason ?? 'Semantic verification was not completed.' : null);
     record({ ...base, type: 'comparison.assessment', payload: { ...scope, ...item, summary: packet.limit ? `${item.summary} Coverage limit: ${packet.limit}` : item.summary, assessor: provenance, rejection } });
   }
   for (const criterion of criteria.filter((c) => !seen.has(c.id))) record({ ...base, type: 'comparison.assessment', payload: { ...scope, criterion_id: criterion.id, assessment: 'unknown', basis: 'simulated_inference', summary: 'The assessor supplied no judgment for this criterion.', evidence: [], assessor: provenance, rejection: null } });
-  if (!verified?.outcome_supported || citationRejection(proposed.outcome_evidence, suppliedSources)) return end;
-  // Success at the last allowed action may be established by its captured result even without another navigator 'done' call.
-  if (end.outcome === 'blocked_environment') return end;
-  if (end.outcome === 'task_failed' || end.outcome === 'abandoned') {
-    const lastActionSucceeded = engineEnd === 'budget_exceeded' && proposed.outcome === 'completed' && proposed.outcome_evidence.length > 0;
-    if (!lastActionSucceeded && !['invalid_task', 'blocked_environment'].includes(proposed.outcome)) return end;
-  }
-  if (end.outcome === 'incomplete' && engineEnd !== 'done') return end;
-  if (proposed.outcome === 'completed' && !proposed.outcome_evidence.length) return end;
+  if (!reviewOutcome || !verified?.outcome_supported) return end;
   return { ...end, outcome: proposed.outcome, reason: proposed.reason, evidence_seqs: proposed.outcome_evidence.map((e) => e.event_seq) };
 }
 
@@ -322,6 +333,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
       : end === 'stopped' ? deps.stopReason()
       : end === 'budget_exceeded' ? 'The predeclared task-effort limit was exhausted.'
       : end === 'repeated_failure' ? 'The accessible task ended after repeated action failures.'
+      : end === 'model_failed' ? 'The navigator model gave no valid answer three steps in a row.'
       : end === 'blocked' ? 'The session or challenge prevented this task.' : 'The persona chose to abandon the assigned task.', evidence_seqs: [] };
     const endSeq = deps.events().at(-1)?.seq ?? started.seq;
     pendingEpisodes.set(scope.episode_id, { persona, task, scope, outcome, end, startSeq: started.seq, endSeq });

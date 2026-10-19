@@ -157,6 +157,7 @@ test('one call: cached system prefix, screenshot, low effort, native schema, cos
   const { payload, persona_id, run_id } = calls[0].event;
   assert.deepEqual(payload, {
     role: 'navigator',
+    purpose: null,
     provider: 'anthropic',
     model: 'claude-haiku-5-5',
     input_tokens: 1_000,
@@ -692,4 +693,12 @@ test('testProviderKey never puts a key in the message it returns', async () => {
 test('a sampling setting the provider reports it ignored is logged as null', () => {
   const ignored = [{ type: 'unsupported' as const, feature: 'temperature' }];
   assert.deepEqual([accepted(1, 'temperature', ignored), accepted(42, 'seed', ignored), accepted(1, 'temperature', [])], [null, 42, 1]);
+});
+
+test('each llm.call event carries the request purpose and POI', async () => {
+  stubFetch(() => anthropicMessage(OK), () => anthropicMessage(OK));
+  const { gateway, calls } = setup();
+  await gateway.call(request({ purpose: 'survey', poi_id: 'poi-1' }));
+  await gateway.call(request());
+  assert.deepEqual(calls.map((c) => [c.event.payload.purpose, c.event.poi_id]), [['survey', 'poi-1'], [null, null]]);
 });

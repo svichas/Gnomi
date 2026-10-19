@@ -16,8 +16,11 @@ export function hostRule(allowedHosts: string[], blockedDomains: string[]): Host
   };
 }
 
-/** How an observe-only refusal reads in the action that caused it: a write it tried, or a page robots.txt disallows. */
-export type ActionRefusal = 'submit_blocked' | 'robots_disallowed';
+/**
+ * How an observe-only refusal reads in the action that caused it: a page load or form post it tried, a script's write (the
+ * driver blames the action only for a click inside a form), or a page robots.txt disallows.
+ */
+export type ActionRefusal = 'submit_blocked' | 'write_blocked' | 'robots_disallowed';
 
 const READS = new Set(['GET', 'HEAD']);
 // A form post or a script saving something; a beacon or ping is not something the persona did.
@@ -117,7 +120,8 @@ export async function startContainment(allowedHosts: string[], blockedDomains: s
           const aborted = route.abort('blockedbyclient').catch(() => {});
           report(url, request.method(), navigation, reason);
           if (reason === 'robots') refused.push('robots_disallowed');
-          if (reason === 'observe_only' && (navigation || ACTION_WRITES.has(request.resourceType()))) refused.push('submit_blocked');
+          if (reason === 'observe_only' && navigation) refused.push('submit_blocked');
+          else if (reason === 'observe_only' && ACTION_WRITES.has(request.resourceType())) refused.push('write_blocked');
           return aborted;
         },
       );

@@ -32,6 +32,9 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     'Steps and execution latency measure simulator effort, not human time-to-value. Counts from this run are descriptive.',
     ...study.assumptions,
   ]);
+  const verifierRole = study.execution.verifier ?? 'judge';
+  const verifier = config.project.settings.routing[verifierRole];
+  limitations.add(`Configured semantic verifier: ${verifierRole} model (${verifier.provider}/${verifier.model}). Assessment proposals use the judge model. Verifier agreement is not human validation.`);
   if (study.targets.some((target) => target.access_scope === 'authenticated_workflow')) {
     limitations.add('Fresh browser contexts isolate task context, but server-side test data is not reset between episodes. Shared fixtures can affect repeated workflow observations.');
     limitations.add('An unexpected login screen is treated as unavailable test access. This study does not diagnose login-form defects without an authenticated task trace.');

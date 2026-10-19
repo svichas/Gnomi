@@ -3,7 +3,7 @@ import type { LlmGateway, Recorder } from '../seams.ts';
 import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { english } from '../llm/english.ts';
 import { buildReport } from './build.ts';
-import { likeGroups } from './friction.ts';
+import { groupKey, likeGroups } from './friction.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
@@ -70,6 +70,7 @@ Use only the theme ids you were given. These are suggestions for the team to con
 
 export interface ReportModelDeps {
   config: RunConfig;
+  round: number; // the round the run reached, so judge and author calls are not logged as round 1
   llm: LlmGateway; // the run's budgeted gateway: the recorded-cost cap and stop() apply
   record: Recorder;
   events: () => GnomiEvent[]; // the run's log as it is now
@@ -80,10 +81,10 @@ const REPORT_TIMEOUT_MS = 180_000;
 const AUTHOR_BATCH = 3; // themes per author call; the calls run together, so the wait is one short answer, not one long one
 
 /** After the episodes end and before the run's end event: per POI with frictions, in parallel, a judge call, then the author calls. */
-export async function runReportModels({ config, llm, record, events }: ReportModelDeps): Promise<void> {
+export async function runReportModels({ config, round, llm, record, events }: ReportModelDeps): Promise<void> {
   const { run_id, project } = config;
   const { routing } = project.settings;
-  const base = { run_id, round: 1, persona_id: null } as const;
+  const base = { run_id, round, persona_id: null } as const;
   const product = { name: project.name, description: project.description, goal: project.goal };
 
   const all = frictionGroups(events(), project.pois[0]?.id ?? '');
@@ -100,14 +101,16 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
         model: routing.judge,
         run_id,
         persona_id: null,
-        round: 1,
+        round,
+        poi_id,
         purpose: 'report_themes',
         timeout_ms: REPORT_TIMEOUT_MS,
         system: JUDGE_SYSTEM + (social ? JUDGE_POSTS : '') + (liked ? JUDGE_LIKES : ''),
         user: [{ type: 'text', text: JSON.stringify({ product, groups, ...(social ? { posts } : {}), ...(liked ? { likes } : {}) }) }],
         schema: judgeSchemaFor(social, liked),
       });
-      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}), ...(liked ? { likes: object.likes } : {}) } });
+      const keys = Object.fromEntries(all.filter((g) => g.poi_id === poi_id).map((g) => [g.id, groupKey(g.members[0])]));
+      record({ ...base, poi_id, type: 'report.themes', payload: { poi_id, themes: object.themes, ...(social ? { posts: object.posts } : {}), ...(liked ? { likes: object.likes } : {}), keys } });
     } catch {
       // No key, a provider error, two invalid answers or a stop: llm.call recorded any attempt, and the themes stay deterministic.
     }
@@ -122,7 +125,8 @@ export async function runReportModels({ config, llm, record, events }: ReportMod
       model: routing.author,
       run_id,
       persona_id: null,
-      round: 1,
+      round,
+      poi_id,
       purpose: 'report_suggestions',
       timeout_ms: REPORT_TIMEOUT_MS,
       system: AUTHOR_SYSTEM,

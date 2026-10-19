@@ -104,8 +104,8 @@ test('buyer_text needs a sentiment for every segment, the buyers\' answers and r
     assert.equal(result.status, 'FAIL');
     assert.match(result.detail, problem);
   };
-  fails({ sentiment: [rated('seg-1')] }, /no sentiment for Procurement/);
-  fails({ sentiment: [rated('seg-1'), rated('seg-buyers', 0, null)] }, /no sentiment for Procurement/);
+  fails({ sentiment: [rated('seg-1')], buyers: [] }, /no sentiment for Procurement/);
+  assert.equal(buyerTextCriterion('live', pricing({ sentiment: [rated('seg-1'), rated('seg-buyers', 0, null)] })).status, 'PASS', "a buyer segment's sentiment is in its buying survey");
   fails({ buyers: [] }, /no buying survey answers/);
   fails({ buyers: undefined }, /no buying survey answers/);
   fails({ themes: [] }, /no confusions/);

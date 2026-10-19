@@ -23,7 +23,7 @@ const report: Report = {
       name: 'Recruiters',
       share: 60,
       personas: 2,
-      outcomes: { done: 1, abandoned: 1, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 },
+      outcomes: { done: 1, abandoned: 1, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
       completion: 0.5,
       with_friction: 1,
       frictions: 3,
@@ -33,7 +33,7 @@ const report: Report = {
       name: 'Hiring managers',
       share: 40,
       personas: 1,
-      outcomes: { done: 0, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 1, incomplete: 0 },
+      outcomes: { done: 0, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 1, incomplete: 0, not_started: 0 },
       completion: 0,
       with_friction: 1,
       frictions: 1,
@@ -122,11 +122,11 @@ test('reportToMarkdown carries the banner, the goal, the segment table and the t
   assert.ok(md.startsWith('# Gnomi report: Post a job for a backend engineer\n'));
   for (const expected of [
     HYPOTHESIS_BANNER,
-    '| Segment | Share | Personas | Completion | With friction |',
+    '| Segment | Share | Personas | Completion | Ran into friction |',
     '| Recruiters | 60% | 2 | 50% | 100% |',
     '| Hiring managers | 40% | 1 | 0% | 100% |',
-    '**Weighted by share:** completion 30%, with friction 100%.',
-    '- Recorded cost: $0.7500',
+    '**Weighted by share:** completion 30%, with friction 100%. **Unweighted:** completion 33%.',
+    '- Recorded cost: $0.7500. Writing the personas is recorded separately and is not included in this cost.',
     '- Tokens: 2000 in, 400 out',
     '- LLM calls: 2',
     '- Duration: 8.0 s',
@@ -245,7 +245,6 @@ const theme: ReportTheme = {
   named_by: 'judge',
   trust: 'confirmed',
   severity: 3,
-  impact: 0.8,
   score: 2.4,
   personas: 2,
   frictions: 3,
@@ -270,7 +269,7 @@ test('themes carry rank, trust, affected share, evidence with event links and la
     '### 1. Saving a job fails',
     '- Trust: confirmed (a self-report backed by an objective signal)',
     '- Severity 3 of 4, score 2.40, 2 personas, 3 frictions',
-    '- Affected by segment: Recruiters 2 of 2 (100%)',
+    '- Affected first-hand by segment: Recruiters 2 of 2 (100%)',
     '- Elements: button "Save"',
     '- Events: #4, #5, #20',
     '1. Ana Ruiz (step 1, severity 3, confirmed; signals: failed_action): Save does nothing',
@@ -286,6 +285,9 @@ test('themes carry rank, trust, affected share, evidence with event links and la
   const echoed = (heard_first: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first }], sentiment: [], went_well: [] });
   assert.ok(echoed(1).includes('95% range 9%–91%); 1 more reported it only after reading about it in the feed'), 'heard-first personas sit beside the share');
   assert.ok(!echoed(0).includes('reading about it in the feed'));
+  const mixed = reportToMarkdown({ ...report, themes: [{ ...theme, trust_counts: { confirmed: 1, observed: 0, reported: 3 } }] });
+  assert.ok(mixed.includes('- Trust: 1 confirmed, 3 reported\n'), 'the trust mix, not the best member');
+  assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
 });
 
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
@@ -296,6 +298,7 @@ test('sentiment, what went well and the analysis appendix appear when the report
     methods: { ...report.methods, signal_thresholds: { loop_visits: 3 }, limitations: ['Suggested changes cover 1 of 2 themes.'] },
   });
   for (const expected of [
+    '| Segment | Answers | Mean sentiment | Would continue |',
     '| Recruiters | 2 | 0.50 | 50% |',
     '| Hiring managers | 0 | no answers | - |',
     '## What went well',

@@ -32,7 +32,8 @@ export function ExportReport({ report }: { report: ReportData }) {
             </option>
           ))}
         </select>
-        <Button onClick={() => void save()} disabled={busy}>
+        <Button variant="secondary" onClick={() => void save()} disabled={busy}>
+          <Icon name="down" size={16} />
           {busy ? 'Exporting...' : 'Export report'}
         </Button>
       </div>

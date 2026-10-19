@@ -1,3 +1,4 @@
+import { withPois, type SavedProject } from '../poi/pois.ts';
 import type { FeedPolicy, GnomiEvent } from '../types.ts';
 
 export const FEED_POSTS = 12;
@@ -40,6 +41,24 @@ export function readBoard(events: GnomiEvent[]): Board {
     } else if (e.type === 'social.feed_viewed') saw(e.persona_id, e.payload.post_ids);
   }
   return { posts: [...posts.values()], seen };
+}
+
+/**
+ * The POI each post is about, as the report reads it: a reply without one inherits its parent's, and in a one-POI project a
+ * post about nothing in particular is about that POI. Shared by the report's themes, spread and influence. Pure.
+ */
+export function postPois(events: GnomiEvent[]): Map<string, string | null> {
+  const started = events.find((e) => e.type === 'run.started');
+  const project = (started?.payload.config as { project?: SavedProject } | undefined)?.project;
+  const pois = project ? withPois(project).pois : [];
+  const only = pois.length === 1 ? pois[0].id : null;
+  const about = new Map<string, string | null>();
+  for (const e of events) {
+    if (e.type !== 'social.post') continue;
+    const { post_id, parent_id, about_poi_id } = e.payload;
+    about.set(post_id, about_poi_id ?? (parent_id === null ? undefined : about.get(parent_id)) ?? only);
+  }
+  return about;
 }
 
 // shortcut: about four characters a token plus the line's id, author and thread label; a tokenizer is not worth it at this cap.

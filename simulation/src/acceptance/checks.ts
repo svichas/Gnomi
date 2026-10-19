@@ -121,20 +121,35 @@ export function assess(mode: Mode, facts: Facts, expected = FULL_POPULATION): Cr
 export const TOP = 20; // precision is measured over a report's top 20 themes
 
 /**
- * Gym defect recall and precision against the catalogue's enabled web defects, with the M3 rule: a defect is found by a
- * confirmed or observed theme, precision counts the top themes. shortcut: a theme maps to every defect whose catalogue pages
- * it reached, not a reviewed mapping; upgrade to theme-mapping.json verdicts once reviewers record them.
+ * A proxy for Gym defect recall and precision against the catalogue's enabled web defects: themes are assigned one-to-one to
+ * defects on a shared catalogue page, so a theme credits at most one defect and a defect at most one theme. A defect is found
+ * by a confirmed or observed theme; precision counts the top themes. shortcut: the catalogue has no element and a report theme
+ * no kind, so pages alone pair them; upgrade to theme-mapping.json verdicts once reviewers record them.
  */
 export function defectScores(themes: ReportTheme[], catalogue: string, on: string[]) {
   const defects = catalogue.split(/^- /m).slice(1).map((entry) => ({
     id: /id: (\S+)/.exec(entry)?.[1] ?? '', web: /poi: web\b/.test(entry),
     pages: (/pages: \[(.*)\]/.exec(entry)?.[1] ?? '').split(',').map((page) => page.trim().replaceAll('"', '')),
   })).filter((defect) => defect.web && on.includes(defect.id));
-  const hits = (theme: ReportTheme) => defects.filter((defect) => theme.pages.some((page) => defect.pages.includes(page.split('/').slice(1).join('/') || 'dashboard'))); // patterns lead with the host; the Gym's root is its dashboard
-  const found = new Set(themes.filter((theme) => theme.trust !== 'reported').flatMap((theme) => hits(theme).map((defect) => defect.id)));
+  const reaches = (theme: ReportTheme, defect: typeof defects[number]) => theme.pages.some((page) => defect.pages.includes(page.split('/').slice(1).join('/') || 'dashboard')); // patterns lead with the host; the Gym's root is its dashboard
+  // The largest one-to-one assignment by augmenting paths, so a greedy first pick cannot block a later theme.
+  const assigned = (pool: ReportTheme[]) => {
+    const owner = new Map<string, number>(); // defect id → index in pool of the theme it is assigned to
+    const place = (t: number, seen: Set<string>): boolean => {
+      for (const defect of defects) {
+        if (seen.has(defect.id) || !reaches(pool[t], defect)) continue;
+        seen.add(defect.id);
+        const held = owner.get(defect.id);
+        if (held === undefined || place(held, seen)) { owner.set(defect.id, t); return true; }
+      }
+      return false;
+    };
+    return pool.filter((_, t) => place(t, new Set())).length;
+  };
+  const found = assigned(themes.filter((theme) => theme.trust !== 'reported'));
   const top = themes.filter((theme) => theme.rank <= TOP);
-  const matched = top.filter((theme) => hits(theme).length).length;
-  return { found: found.size, defects: defects.length, recall: defects.length ? found.size / defects.length : null, matched, top: top.length, precision: top.length ? matched / top.length : null };
+  const matched = assigned(top);
+  return { found, defects: defects.length, recall: defects.length ? found / defects.length : null, matched, top: top.length, precision: top.length ? matched / top.length : null };
 }
 
 /** Two-sided 95% Student t quantiles for 1 to 30 degrees of freedom. */
@@ -145,9 +160,11 @@ export const t95 = (df: number) => T95[df - 1] ?? 1.96;
 /** The paired mean difference (arm − baseline) over replicates where both measured, with a 95% t interval; whole replicates are the unit. */
 export function pairedDifference(arm: (number | null)[], baseline: (number | null)[]) {
   const d = arm.flatMap((value, i) => value === null || baseline[i] === null || baseline[i] === undefined ? [] : [value - baseline[i]]);
-  if (!d.length) return { n: 0, mean: null, lower: null, upper: null };
+  if (!d.length) return { n: 0, mean: null, lower: null, upper: null, note: 'no pairs' };
   const m = mean(d);
-  if (d.length < 2) return { n: 1, mean: m, lower: null, upper: null };
+  if (d.length < 3) return { n: d.length, mean: m, lower: null, upper: null, note: 'fewer than three pairs' };
+  // Identical differences are not certainty: a zero-width interval would claim it.
+  if (d.every((x) => x === d[0])) return { n: d.length, mean: m, lower: null, upper: null, note: 'no variation' };
   const half = t95(d.length - 1) * Math.sqrt(sampleVariance(d) / d.length);
-  return { n: d.length, mean: m, lower: m - half, upper: m + half };
+  return { n: d.length, mean: m, lower: m - half, upper: m + half, note: null };
 }

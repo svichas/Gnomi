@@ -36,6 +36,7 @@ export function comparisonFor(project: ProjectConfig, persona: Persona, poi: Poi
   const { sentiment, likes, frictions, reason } = earlier.payload;
   const text = [
     `This session was on ${poi.name}, a competitor's site ${p} looked at beside ${team.name}. Every answer above is about ${poi.name}.`,
+    `${p} only browsed ${poi.name}, without signing up, logging in or sending anything, so the comparison can rest only on what ${poi.name} shows a visitor.`,
     `Earlier ${p} used ${team.name} for the same task and said afterwards: "${reason}" (overall view ${signed(sentiment)} from -2 to +2).`,
     ...(likes.length ? [`What ${p} liked there: ${likes.map((l) => `"${l}"`).join('; ')}.`] : []),
     ...(frictions.length ? [`What got in ${p}'s way or put ${p} off there: ${frictions.map((f) => `"${f}"`).join('; ')}.`] : []),

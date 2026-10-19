@@ -8,6 +8,7 @@ import { mean } from 'simple-statistics';
 import { gymAssets } from '../../../gym/assets.ts';
 import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
 import { importLocalFile } from '../assets.ts';
+import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
 import { createGateway } from '../llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SCRIPT, DEMO_SOCIALISER, DEMO_SURVEY } from '../llm/scripted.ts';
@@ -161,7 +162,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
     try { replay_equal = isDeepStrictEqual(buildReport(reopened.events(config.run_id)), report); } finally { reopened.close(); }
     const calls = events.filter((event) => event.type === 'llm.call');
     const facts: Facts = {
-      population: report.personas.length, terminal: report.personas.filter((p) => p.outcome !== 'incomplete').length,
+      population: report.personas.length, terminal: report.personas.filter((p) => !['incomplete', 'not_started', 'model_failed'].includes(p.outcome)).length, // not reached, or the model failed: no outcome of the persona's own
       goal_completed: report.personas.filter((p) => p.outcome === 'done').length, blocked: report.personas.filter((p) => p.outcome === 'blocked').length,
       run_status: report.status, duration_ms, cost_usd: report.cost_usd, unknown_usage: calls.filter((event) => event.payload.usage_reported !== true).length,
       peak_contexts: measured.peak(), replay_equal,
@@ -572,10 +573,11 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
   return result;
 }
 
-const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed. Outcomes are run-level; whole replicates are the unit of analysis. Defect recall and precision use a page-overlap mapping, not reviewed verdicts.';
+const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed. Arm order is shuffled per replicate with a seed, and the Gym store is reset before each run. Outcomes are run-level; whole replicates are the unit of analysis. Defect recall and precision are NOT_RUN until reviewed theme mappings exist; each run keeps a one-to-one page-overlap proxy.';
 // The predeclared benchmark fields (new_simulation.md §9); none is filled yet, so validity and efficiency cannot be claimed.
-const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: null, efficiency_margin: null, confirmatory_repeats: null };
-const METRICS = ['completion_rate', 'abandonment_rate', 'recall', 'precision', 'themes', 'first_hand', 'heard_first', 'cost_usd', 'llm_calls', 'segment_assortativity', 'mean_in_degree', 'top_decile_in_share'] as const;
+// primary_metrics stays null until a pilot sets it; until then every interval is exploratory.
+const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: null, efficiency_margin: null, confirmatory_repeats: null, primary_metrics: null as string[] | null };
+const METRICS = ['completion_rate', 'abandonment_rate', 'themes', 'first_hand', 'heard_first', 'cost_usd', 'llm_calls', 'segment_modularity', 'mean_in_degree', 'top_decile_in_share'] as const;
 type Outcomes = ReturnType<typeof outcomesOf>;
 
 /** One finished run's outcomes, with segment numerators and denominators; the graph is the one the run logged on persona.created, absent without social rounds. */
@@ -584,17 +586,16 @@ function outcomesOf(report: Report, data: Fixture, events: GnomiEvent[], catalog
   const count = (outcome: string) => report.personas.filter((p) => p.outcome === outcome).length;
   const themes = report.themes ?? [];
   const settings = data.project.settings;
-  const defects = defectScores(themes, catalogue, DEFECT_IDS);
   const follows = new Map(events.flatMap((event) => event.type === 'persona.created' && event.payload.follows ? [[event.payload.persona.id, event.payload.follows] as const] : []));
   const graph = settings.social ? graphMetrics(follows, data.personas) : null;
   return {
     personas: n, completed: count('done'), abandoned: count('abandoned'),
     completion_rate: n ? count('done') / n : null, abandonment_rate: n ? count('abandoned') / n : null,
     segments: report.segments.map((s) => ({ segment_id: s.id, personas: s.personas, completed: s.outcomes.done, abandoned: s.outcomes.abandoned })),
-    defects, recall: defects.recall, precision: defects.precision,
+    defect_proxy: defectScores(themes, catalogue, DEFECT_IDS), // one-to-one page overlap, not reviewed: never a compared metric
     themes: themes.length, first_hand: themes.reduce((sum, t) => sum + (t.prevalence?.personas ?? 0), 0), heard_first: themes.reduce((sum, t) => sum + (t.heard_first ?? 0), 0),
     cost_usd: report.cost_usd, llm_calls: report.llm_calls,
-    segment_assortativity: graph?.segment_assortativity ?? null, mean_in_degree: graph?.mean_in_degree ?? null, top_decile_in_share: graph?.top_decile_in_share ?? null,
+    segment_modularity: graph?.segment_modularity ?? null, mean_in_degree: graph?.mean_in_degree ?? null, top_decile_in_share: graph?.top_decile_in_share ?? null,
   };
 }
 
@@ -612,7 +613,9 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const arms: Arm[] = options.arms ?? (Object.keys(ARMS) as Arm[]);
   const seeds = Array.from({ length: options.repeats ?? 5 }, (_, r) => SEED + r);
-  const replicates = seeds.map((seed, r) => ({ replicate: r + 1, seed, arms: {} as Partial<Record<Arm, { run_status: string | null; evidence: string; outcomes: Outcomes | null }>> }));
+  // A seeded arm order per replicate, so an arm's effect is not its position after the others.
+  const order = (seed: number) => { const next = mulberry32(fnv1a(`arms/${seed}`)); return arms.map((arm) => ({ arm, key: next() })).sort((a, b) => a.key - b.key).map((e) => e.arm); };
+  const replicates = seeds.map((seed, r) => ({ replicate: r + 1, seed, order: order(seed), arms: {} as Partial<Record<Arm, { run_status: string | null; evidence: string; duration_ms: number; outcomes: Outcomes | null }>> }));
   let error: string | null = null;
   let pool: BrowserPool | undefined;
   let server: Awaited<ReturnType<typeof startGym>> | undefined;
@@ -632,14 +635,17 @@ export async function runEvaluation(options: Options, env: Record<string, string
     });
     pool = await launchBrowserPool();
     for (const entry of replicates) {
-      for (const arm of arms) {
+      for (const arm of entry.order) {
         if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
+        const reset = await fetch(`${server.url}/__reset`, { method: 'POST' }); // jobs and users an earlier run created must not leak into this one
+        if (!reset.ok) throw new Error(`The Gym reset failed with HTTP ${reset.status}.`);
         const spec: { settings?: Partial<RunSettings>; generic?: true } = ARMS[arm];
         const from = spec.generic ? plain : base;
         const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
         const name = `r${entry.replicate}-${arm}`;
+        const runStarted = performance.now();
         const run = await runSeed(name, entry.seed, data, options, pool, allowance, env, data.project.settings.social !== false);
-        entry.arms[arm] = { run_status: run.run_status, evidence: name, outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null };
+        entry.arms[arm] = { run_status: run.run_status, evidence: name, duration_ms: Math.round(performance.now() - runStarted), outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null };
       }
     }
   } catch (err) {
@@ -649,18 +655,23 @@ export async function runEvaluation(options: Options, env: Record<string, string
     await server?.close();
   }
   const series = (arm: Arm, metric: typeof METRICS[number]) => replicates.map((entry) => entry.arms[arm]?.outcomes?.[metric] ?? null);
+  // Means over the same replicates in every arm, so a stopped run cannot make the arms average different seeds.
+  const complete = replicates.filter((entry) => arms.every((arm) => entry.arms[arm]?.outcomes));
   const means = Object.fromEntries(arms.map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => {
-    const values = series(arm, metric).filter((x) => x !== null);
+    const values = complete.map((entry) => entry.arms[arm]!.outcomes![metric]).filter((x) => x !== null);
     return [metric, { n: values.length, mean: values.length ? mean(values) : null }];
   }))]));
   const differences = Object.fromEntries(arms.filter((arm) => arm !== 'baseline').map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => [metric, pairedDifference(series(arm, metric), series('baseline', metric))]))]));
   const missing = Object.entries(BENCHMARK).filter(([, value]) => value === null).map(([key]) => key);
-  const labels = { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
-  const status: Status = error ? 'FAIL' : options.mode === 'scripted' ? 'NOT_RUN' : 'REVIEW_NEEDED';
-  const complete = replicates.filter((entry) => arms.every((arm) => entry.arms[arm]?.outcomes)).length;
+  const scripted = options.mode === 'scripted';
+  const labels = scripted ? { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' } as const : { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
+  const status: Status | 'INCOMPLETE' = error ? 'FAIL' : complete.length < seeds.length ? 'INCOMPLETE' : scripted ? 'NOT_RUN' : 'REVIEW_NEEDED';
+  const primary = BENCHMARK.primary_metrics ?? [];
+  const defect_metrics = { recall: null, precision: null, status: 'NOT_RUN', detail: 'Needs reviewed theme-to-defect mappings. Each run\'s outcomes.defect_proxy is a one-to-one page-overlap proxy, not a compared metric.' } as const;
   const result = {
-    status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete, arms,
-    method: 'Per arm, the mean over finished replicates; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished. Personas are never the unit.',
+    status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete.length, arms,
+    method: 'Per arm, the mean over the replicates complete in every arm; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished, given only for three or more pairs that vary. Personas are never the unit. No multiplicity correction is applied.',
+    intervals: primary.length ? `confirmatory for ${primary.join(', ')}; exploratory otherwise` : 'exploratory: no primary metric is declared', defect_metrics,
     replicates, means, differences,
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
     allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
@@ -670,10 +681,12 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const lines = [
     '# Evaluation results', '',
     `Behavioural validity: ${labels.behavioural_validity}. Efficiency: ${labels.efficiency}. Missing predeclared benchmark fields: ${missing.join(', ')}.`, '',
-    `${options.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${complete} of ${seeds.length} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${error ? ` Error: ${error}` : ''}`, '',
+    `Defect recall: n/a (${defect_metrics.status}). Defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '',
+    `Intervals: ${result.intervals}.`, '',
+    `${scripted ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${complete.length} of ${seeds.length} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${error ? ` Error: ${error}` : ''}`, '',
     ...Object.entries(differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
-      ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? 'n/a' : `${fmt(d.lower)} to ${fmt(d.upper)}`} | ${d.n} |`), '',
+      ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? `n/a (${d.note})` : `${fmt(d.lower)} to ${fmt(d.upper)}${primary.includes(metric) ? '' : ' (exploratory)'}`} | ${d.n} |`), '',
     ]),
   ];
   writeFileSync(join(options.out, 'results.md'), `${lines.join('\n')}\n`);

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
-import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playwright-core';
+import type { Browser, BrowserContext, BrowserContextOptions, Page, Request } from 'playwright-core';
 import type { PageDriver, PageError, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
 import type { ActionRefusal, Containment, HostRule } from './contain.ts';
@@ -88,7 +88,6 @@ export async function newContext(browser: Browser, device: Device, storageState:
 
 export async function openPage(context: BrowserContext): Promise<Page> {
   await context.addInitScript(countMutations);
-  // shortcut: a tab a click opens (target=_blank) is ignored, upgrade when a persona has to follow one.
   return context.newPage();
 }
 
@@ -110,7 +109,7 @@ const domVersion = async (page: Page) =>
 export async function settle(page: Page): Promise<void> {
   const deadline = Date.now() + SETTLE_MS;
   await page.waitForLoadState('load', { timeout: SETTLE_MS }).catch(() => {});
-  // shortcut: a response slower than QUIET_MS reads as "nothing happened", upgrade to wait on in-flight requests if that fakes dead-click signals.
+  // A response slower than QUIET_MS can read as "nothing happened"; act() flags the step as pending instead.
   let last = await domVersion(page);
   while (Date.now() < deadline) {
     await sleep(QUIET_MS);
@@ -125,10 +124,22 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   const page = await openPage(context);
   let targets = new Map<string, ActionTarget>();
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
+  let popup: Page | null = null; // a tab the current action opened
+  let formClick = false; // the current action clicked something inside a form
+  const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
+  page.on('popup', (opened) => {
+    popup = opened;
+  });
+  page.on('request', (request) => {
+    // A script's GET (analytics, a long poll) is the page's own traffic and would hide a dead click; a write or a load is the action's.
+    if (request.resourceType() === 'document' || (request.method() !== 'GET' && ERROR_RESOURCES.has(request.resourceType()))) inflight.add(request);
+  });
+  page.on('requestfinished', (request) => inflight.delete(request));
   const rememberPasswords = () => Promise.all(page.frames().map((frame) => frame.locator(PASSWORD).evaluateAll((inputs) => {
     for (const input of inputs) if (!input.hasAttribute('data-gnomi-password')) input.setAttribute('data-gnomi-password', '');
   })));
   page.on('requestfailed', (request) => {
+    inflight.delete(request);
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
   });
 
@@ -177,8 +188,17 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   async function perform(action: Action, ref: string | null): Promise<string | null> {
     const timeout = ACTION_MS;
     switch (action.type) {
-      case 'click':
-        await (await locate(ref)).click({ timeout });
+      case 'click': {
+        const target = await locate(ref);
+        formClick = await target.evaluate((el) => el.closest('form') !== null, null, { timeout }).catch(() => false);
+        await target.click({ timeout });
+        return null;
+      }
+      case 'press':
+        // Enter submits a search box with no button; Escape closes a dialog. With no ref, the key goes to whatever has focus.
+        if (action.text !== 'Enter' && action.text !== 'Escape') throw new Error("press needs text 'Enter' or 'Escape'");
+        if (ref) await (await locate(ref)).press(action.text, { timeout });
+        else await page.keyboard.press(action.text);
         return null;
       case 'type': {
         const input = await locate(ref);
@@ -291,6 +311,9 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       let text: string | null = null;
       let error: string | null = null;
       failedNavigation = null;
+      popup = null;
+      formClick = false;
+      inflight.clear();
       refusals(); // what the page ran into before this action is not its doing
       try {
         text = await perform(action, ref);
@@ -298,8 +321,22 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         error = e instanceof errors.TimeoutError ? 'timeout' : (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
       }
       await settle(page);
+      const opened = popup as Page | null; // set by the popup listener while the action ran
+      if (opened) {
+        // The persona follows a tab the action opened in the one tab Gnomi drives; containment checks the load as any other.
+        await opened.waitForLoadState('domcontentloaded', { timeout: ACTION_MS }).catch(() => {});
+        const url = opened.url();
+        await opened.close().catch(() => {});
+        if (/^https?:/.test(url)) {
+          await page.goto(url, { timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => {});
+          await settle(page);
+        }
+      }
+      const pending = opened !== null || inflight.size > 0;
       const outside = refusedByContainment();
-      const observed = refusals()[0] ?? null; // observe-only: a write or a page robots.txt disallows, stopped before the network
+      // Observe-only: a page load or form post, or a page robots.txt disallows, stopped before the network. A script's write
+      // counts only after a click inside a form: otherwise it is the page's own background traffic (analytics), not the persona's.
+      const observed = refusals().map((r) => (r !== 'write_blocked' ? r : formClick ? 'submit_blocked' : null)).find((r) => r !== null) ?? null;
       if (outside || (observed && page.url().startsWith('chrome-error://'))) {
         // The persona should hear "that leads outside the product" and still be on the page it was on, not on a browser error page.
         await page.goBack({ timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => null);
@@ -308,7 +345,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       if (outside) error = 'host_not_allowed';
       else if (observed) error = observed;
       const dom_changed = (await domVersion(page)) !== before;
-      return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, target: (ref && targets.get(ref)) || null, text };
+      return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, ...(pending && { pending }), target: (ref && targets.get(ref)) || null, text };
     },
 
     inspect: () => inspect(page),

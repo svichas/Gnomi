@@ -61,6 +61,11 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
               <option value="independent">Try each tool independently</option><option value="buyer_journey">Remember tools while choosing</option>
             </select>
           </Field>
+          <Field label="Evidence verifier" hint="Use the navigator model to try a lower-cost review. Quality equivalence has not been established.">
+            <select className={inputClass} value={study.execution.verifier ?? 'judge'} onChange={(e) => update({ execution: { ...study.execution, verifier: e.target.value as 'judge' | 'navigator' } })}>
+              <option value="judge">Judge model (default)</option><option value="navigator">Navigator model (experimental)</option>
+            </select>
+          </Field>
         </div>
         <Field label="Decision to make"><textarea className={inputClass} rows={2} value={study.question} onChange={(e) => update({ question: e.target.value })} /></Field>
         <p className="text-xs text-stone-600">Every persona gets the same task for each tool. Tool order is balanced; shared social feeds are off for comparisons.</p>

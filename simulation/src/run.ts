@@ -3,7 +3,7 @@ import { effectiveComparisonPois, validateComparison } from './comparison/config
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyedName, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
@@ -103,9 +103,15 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let lastThrottle = 0;
   const paused = new Map<string, () => void>();
 
-  // The first reason to stop is the one reported, except that a tripwire always is.
+  // The first reason to stop is the one reported, except that a tripwire always is; any other reason joins its detail.
+  const said = (stop: EventPayloads['run.stopped']) => (stop.detail ? `${stop.reason}: ${stop.detail}` : stop.reason);
   const halt = (stop: EventPayloads['run.stopped'], cancel: boolean) => {
-    if (!halted || (stop.reason === 'tripwire' && halted.reason !== 'tripwire')) halted = stop;
+    if (!halted) halted = stop;
+    // A call cancelled by an earlier hard stop surfaces as a user stop: that is the earlier stop, not a new reason.
+    else if (said(stop) !== said(halted) && !(stop.reason === 'user' && hard.signal.aborted)) {
+      const [kept, extra] = stop.reason === 'tripwire' && halted.reason !== 'tripwire' ? [stop, `after ${said(halted)}`] : [halted, `then ${said(stop)}`];
+      if (!kept.detail?.includes(extra)) halted = { ...kept, detail: kept.detail ? `${kept.detail}; ${extra}` : extra };
+    }
     drain.abort();
     if (cancel) hard.abort();
   };
@@ -114,7 +120,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let spent = 0;
   let seen = 0;
   let navigationSpent = 0;
-  const comparisonCosts = { navigator: { cost: 0, calls: 0 }, judge: { cost: 0, calls: 0 } };
+  const comparisonCosts = { navigation: { cost: 0, calls: 0 }, comparison_assessment: { cost: 0, calls: 0 }, comparison_verification: { cost: 0, calls: 0 } };
   const blockReservations = new Map<string, { total: number; navigation: number }>();
   let comparisonAdmissionReason: string | null = null;
   const spentUsd = () => {
@@ -124,15 +130,18 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         spent += e.payload.cost_usd;
         if (project.comparison) {
           const cost = e.payload.cost_usd;
-          if (e.payload.role === 'navigator') navigationSpent += cost;
-          if (e.payload.role === 'navigator' || e.payload.role === 'judge') {
-            comparisonCosts[e.payload.role].cost += cost;
-            comparisonCosts[e.payload.role].calls++;
+          const purpose = e.payload.purpose;
+          const stage = purpose === 'comparison_assessment' || purpose === 'comparison_verification' ? purpose
+            : e.payload.role === 'navigator' ? 'navigation' : e.payload.role === 'judge' ? 'comparison_assessment' : null;
+          if (stage === 'navigation') navigationSpent += cost;
+          if (stage) {
+            comparisonCosts[stage].cost += cost;
+            comparisonCosts[stage].calls++;
           }
           const reservation = blockReservations.get(e.persona_id ?? '');
           if (reservation) {
             reservation.total = Math.max(0, reservation.total - cost);
-            if (e.payload.role === 'navigator') reservation.navigation = Math.max(0, reservation.navigation - cost);
+            if (stage === 'navigation') reservation.navigation = Math.max(0, reservation.navigation - cost);
           }
         }
       }
@@ -159,6 +168,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
   // This estimate can stop admission before the recorded cap. It is a precaution, not a bound on provider billing.
   // Reaching the recorded cap above cancels all model work; browser actions already dispatched still settle and log.
+  // Outside comparisons whole cohorts, slices and phases are admitted (admit below), so no step is refused by who answered first.
   let inFlight = 0;
   let stepsDone = 0;
   const beginStep = (estimatedCost?: number) => {
@@ -167,7 +177,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (drain.signal.aborted) return false;
     const now = spentUsd();
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
-    if (now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
+    if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
       halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
       return false;
     }
@@ -179,16 +189,24 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     stepsDone++;
     checkRecordedBudget(); // Also protects callers supplying a custom gateway without per-attempt notifications.
   };
+  /** Before a usage slice or social phase: false, and a stop, when its `steps` at the average cost so far would reach the budget. */
+  const admit = (steps: number, what: string) => {
+    const now = spentUsd();
+    if (now + steps * (stepsDone ? now / stepsDone : 0) < settings.cost_budget_usd) return true;
+    halt({ reason: 'cost_budget', detail: `${what} was projected to reach the $${settings.cost_budget_usd} budget` }, false);
+    return false;
+  };
 
   // Admission reserves a minimum useful matched block: one observation and two evidence-review calls per target.
-  // Observed per-role costs replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
+  // Observed costs per purpose replace the starting estimate. Longer tasks, retries and unknown billing can exceed it;
   // this improves coverage allocation, while the recorded-cost guard remains the run-wide stop policy.
-  const comparisonCallCost = (role: 'navigator' | 'judge') => {
-    const observed = comparisonCosts[role];
+  const comparisonCallCost = (stage: keyof typeof comparisonCosts) => {
+    const observed = comparisonCosts[stage];
     if (observed.calls) return observed.cost / observed.calls;
+    const role = stage === 'navigation' ? 'navigator' : stage === 'comparison_verification' ? project.comparison!.execution.verifier ?? 'judge' : 'judge';
     const model = settings.routing[role];
     if (!isPriced(model)) return null;
-    return costUsd(model, { input_tokens: role === 'navigator' ? 5000 : 1500, output_tokens: role === 'navigator' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
+    return costUsd(model, { input_tokens: stage === 'navigation' ? 5000 : 1500, output_tokens: stage === 'navigation' ? 200 : 400, cache_read_tokens: 0, cache_write_tokens: 0 });
   };
   const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
     if (drain.signal.aborted) return false;
@@ -201,8 +219,9 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }).length;
     // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
     // observed charges take over once available, retaining the existing support for unpriced model routes.
-    const navigatorCost = comparisonCallCost('navigator') ?? 0, judgeCost = comparisonCallCost('judge') ?? 0;
-    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + 2 * judgeCost) };
+    const navigatorCost = comparisonCallCost('navigation') ?? 0;
+    const assessmentCost = comparisonCallCost('comparison_assessment') ?? 0, verifierCost = comparisonCallCost('comparison_verification') ?? 0;
+    const needed = { navigation: targetCount * navigatorCost, total: targetCount * (navigatorCost + assessmentCost + verifierCost) };
     const reserved = [...blockReservations.values()].reduce((sum, value) => ({ total: sum.total + value.total, navigation: sum.navigation + value.navigation }), { total: 0, navigation: 0 });
     const navigationLimit = settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction);
     if (now + reserved.total + needed.total > settings.cost_budget_usd || navigationSpent + reserved.navigation + needed.navigation > navigationLimit) {
@@ -262,16 +281,20 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   // One survey per persona and POI once its episode has ended (tech.md §8.2), admitted like a step so a run-wide stop or
   // the cost cap prevents it. The navigator plays the persona, so it answers the persona's survey too.
   const survey = async (persona: Persona, poi: Poi, end: EpisodeEnd) => {
-    if (end === 'blocked' || end === 'stopped' || !beginStep()) return;
+    // A model that could not answer the steps has nothing to say about the product either.
+    if (end === 'blocked' || end === 'stopped' || end === 'model_failed' || !beginStep()) return;
     try {
       const own = store.events(run_id, { personaId: persona.id, types: ['persona.step', 'persona.friction_reported', 'persona.goal_done', 'persona.abandoned'] }).filter((e) => e.poi_id === poi.id);
       const segment = segmentOf(persona, project);
+      // The survey answers from what the persona saw: its opinion of this POI and its latest thoughts, as the social phase does.
+      const opinion = currentOpinion(persona.id, poi.id);
       if (segment?.kind === 'buyer') { // buyers answer the buying survey instead (agent/buyer.ts)
-        const payload = await askBuyer({ llm: budgetedLlm, config, persona, segment, poi, end, own, round: base.round, signal: hard.signal });
+        const payload = await askBuyer({ llm: budgetedLlm, config, persona, segment, poi, end, own, opinion, round: base.round, signal: hard.signal });
         if (!hard.signal.aborted) record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload });
         return;
       }
       const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
+      const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
       const compare = comparisonFor(project, persona, poi, store.events(run_id, { personaId: persona.id, types: ['persona.survey'] })); // competitor POIs only
       const { object } = await budgetedLlm.call(compare.ask({
         role: 'navigator',
@@ -280,13 +303,17 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         persona_id: persona.id,
         round: base.round,
         purpose: 'survey',
+        poi_id: poi.id,
         system: surveySystemPrompt(persona, project, segmentOf(persona, project), poi),
         user: surveyParts({
           persona,
+          product: surveyedName(project, poi),
           end,
           detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
-          steps: own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output').length,
+          steps: steps.length,
           frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
+          thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+          opinion,
         }),
         schema: surveySchema,
         signal: hard.signal,
@@ -339,6 +366,9 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return Promise.race([gave, tasks.get(persona.id)!]);
   };
 
+  /** Steps a persona takes in one usage slice: its budgets over all its POIs, spread over the rounds. */
+  const sliceOf = (persona: Persona) => Math.ceil(assigned.get(persona.id)!.reduce((sum, poi) => sum + poiBudget(persona, poi), 0) / rounds);
+
   /** The persona's POIs one after another, each with its own budget and survey; slices count steps across them. */
   const episode = async (persona: Persona) => {
     const role = roleOf(persona, project);
@@ -346,7 +376,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (role && !session) throw new Error(`No login for the "${role}" role was verified before the run.`);
     const pois = assigned.get(persona.id)!;
     const budgets = pois.map((poi) => poiBudget(persona, poi));
-    const slice = rounds ? Math.ceil(budgets.reduce((sum, n) => sum + n, 0) / rounds) : 0;
+    const slice = rounds ? sliceOf(persona) : 0;
     let stepsBefore = 0;
     for (const [i, poi] of pois.entries()) {
       const end = await runnerFor(poi).episode(poi, {
@@ -356,6 +386,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         session,
         budget: budgets[i],
         stepsBefore,
+        opinion: currentOpinion(persona.id, poi.id),
         openPage: openPage(persona, role),
         llm: budgetedLlm,
         blobs,
@@ -385,10 +416,12 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (!beginStep()) return null;
     try {
       const post_ids = feed.map((p) => p.post_id);
-      record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids } });
+      const posts = new Map(board.posts.map((p) => [p.post_id, p]));
+      // A reply shows its parent's text too, so the parent reached the persona as well.
+      const parent_ids = [...new Set(feed.flatMap((p) => (p.parent_id && posts.has(p.parent_id) ? [p.parent_id] : [])))];
+      record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids, parent_ids } });
       const opinionOf = (poi_id: string) => opinions.find((o) => o.persona_id === persona.id && o.poi_id === poi_id)?.opinion ?? null;
       const pois = assigned.get(persona.id)!;
-      const posts = new Map(board.posts.map((p) => [p.post_id, p]));
       const name = (id: string) => names.get(id) ?? id;
       const about = (poi_id: string | null) => (poi_id ? (poiNames.get(poi_id) ?? null) : null);
       const steps = own.filter((e) => e.type === 'persona.step' && e.payload.result.error !== 'invalid_output');
@@ -483,16 +516,25 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       record({ ...base, persona_id: p.persona_id, poi_id: p.poi_id, type: 'social.post', payload: { post_id: `inj-r${round}-${i + 1}`, parent_id: null, text: p.text, about_poi_id: p.poi_id, injected: true } });
     });
     const { due, board, opinions } = planPhase(round);
+    if (!admit(due.size, `the social phase of round ${round}`)) return;
     const staged = new Map<Persona, () => void>();
-    await inParallel([...due.keys()], async (persona) => {
+    await inParallel(mixed([...due.keys()]), async (persona) => {
       const { feed, own } = due.get(persona)!;
       const apply = await socialise(persona, round, own, feed, board, opinions);
       if (apply) staged.set(persona, apply);
     });
     // In population order once every call has settled, so response speed cannot decide whose post is newest (new_simulation.md §5).
-    // A late answer after cancellation stays logged as llm.call but is not used, as with steps.
+    // A late answer after cancellation stays logged as llm.call but is not used, as with steps; the log says it was dropped.
     if (!hard.signal.aborted) for (const persona of due.keys()) staged.get(persona)?.();
+    else for (const persona of staged.keys()) {
+      const call_seq = store.events(run_id, { personaId: persona.id, types: ['llm.call'] }).at(-1)?.seq ?? null; // its social call: its last
+      record({ ...base, persona_id: persona.id, type: 'social.discarded', payload: { call_seq } });
+    }
   };
+
+  // Personas start in a seeded order that mixes segments, so a stop part-way does not cut the population by segment.
+  const startKey = new Map(config.personas.map((p) => [p.id, fnv1a(`order/${config.seed}/${p.id}`)]));
+  const mixed = (personas: Persona[]) => personas.toSorted((a, b) => startKey.get(a.id)! - startKey.get(b.id)!);
 
   // At most `concurrency` personas in flight, each with its own page; a paused persona keeps its slot and its page.
   const inParallel = async (personas: Persona[], work: (persona: Persona) => Promise<void>) => {
@@ -513,8 +555,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
     beginBlock: beginComparisonBlock,
     endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
-    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigator') ?? undefined); },
-    beginAnalysisStep: () => beginStep(comparisonCallCost('judge') ?? undefined), endStep, stopped: () => drain.signal.aborted,
+    beginUsageStep: () => { spentUsd(); return navigationSpent < settings.cost_budget_usd * (1 - project.comparison!.execution.analysis_reserve_fraction) && beginStep(comparisonCallCost('navigation') ?? undefined); },
+    beginAnalysisStep: (purpose) => beginStep(comparisonCallCost(purpose) ?? undefined), endStep, stopped: () => drain.signal.aborted,
     stopReason: () => halted?.detail ?? (halted ? halted.reason : comparisonAdmissionReason ?? 'The navigation allowance was exhausted; remaining allowance is reserved for evidence analysis.'),
     tripwire,
   }) : null;
@@ -526,15 +568,19 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       if (comparisonAdmissionReason && !halted) halt({ reason: 'cost_budget', detail: comparisonAdmissionReason }, false);
       return;
     }
-    if (!rounds) return inParallel(config.personas, episode);
+    if (!rounds) {
+      const steps = config.personas.reduce((sum, p) => sum + assigned.get(p.id)!.reduce((own, poi) => own + poiBudget(p, poi), 0), 0);
+      return admit(steps, 'the cohort') ? inParallel(mixed(config.personas), episode) : undefined;
+    }
     // Once every episode is over the swarm keeps talking, within the R rounds, while anyone has something to read or tell: a text
     // read in one sitting is still discussed, and what a persona found in its last stretch of use reaches the feed.
     for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
       const using = config.personas.filter((p) => !ends.has(p.id));
       if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
+      if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
       base.round = round;
       record({ ...base, type: 'run.round_started', payload: {} });
-      if (using.length) await inParallel(using, turn);
+      if (using.length) await inParallel(mixed(using), turn);
       if (!drain.signal.aborted) await socialPhase(round);
       record({ ...base, type: 'run.round_ended', payload: {} });
     }
@@ -579,7 +625,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
     try {
-      if (!halted && !comparison) await runReportModels({ config, llm: budgetedLlm, record, events: () => store.events(run_id) });
+      if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, record, events: () => store.events(run_id) });
     } finally {
       clearTimeout(clock); // Comparison analysis remains under the run's wall-clock allowance.
     }

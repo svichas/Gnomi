@@ -109,3 +109,35 @@ test('groups by (poi, page, element), else (poi, page, kind); survey answers by 
     ],
   );
 });
+
+test('a console error never confirms a self-report: it is its own candidate, grouped by its words, not the clicked element', () => {
+  const consoleError = (step_no: number, message: string): EventPayloads['signal.error'] => ({ step_no, url: JOBS, ref: 'e1', kind: 'console', status: null, message });
+  const candidates = buildCandidates(log(
+    ['persona.step', 'p1', step(5, JOBS, { role: 'button', name: 'Save' })],
+    ['persona.friction_reported', 'p1', friction(5, 'Save does nothing')],
+    ['signal.error', 'p1', consoleError(5, 'Analytics blocked')],
+    ['persona.step', 'p2', step(2, JOBS, { role: 'link', name: 'Help' })],
+    ['signal.error', 'p2', consoleError(2, 'analytics  blocked!')],
+  ), 'poi');
+  assert.deepEqual(candidates.map((c) => [c.persona_id, c.kind, c.trust, c.element]), [['p1', 'friction', 'reported', 'button "Save"'], ['p1', 'error', 'observed', null], ['p2', 'error', 'observed', null]]);
+  assert.deepEqual(groupCandidates(candidates).map((g) => [g.kind, g.members.map((m) => m.persona_id)]), [['friction', ['p1']], ['error', ['p1', 'p2']]]);
+});
+
+test('only failed actions, validation errors and HTTP errors confirm; loops, backtracks and small targets do not', () => {
+  const near = (type: EventType, payload: object) => buildCandidates(log(['persona.friction_reported', 'p1', friction(5, 'Stuck')], [type, 'p1', { step_no: 6, url: JOBS, ref: null, ...payload }]), 'poi')[0].trust;
+  assert.equal(near('signal.error', { kind: 'http', status: 500, message: 'POST http://gym.test/api/jobs' }), 'confirmed');
+  assert.equal(near('signal.validation_error', { message: 'Title is required' }), 'confirmed');
+  assert.equal(near('signal.loop', { snapshot_hash: 'h', visits: 3 }), 'reported');
+  assert.equal(near('signal.backtrack', { kind: 'revisit' }), 'reported');
+  assert.equal(near('signal.small_target', { box: [0, 0, 10, 10] }), 'reported');
+});
+
+test('an exception in a step where containment refused a request stays a candidate that confirms nothing', () => {
+  const candidates = buildCandidates(log(
+    ['containment.blocked_request', 'p1', { host: 'cdn.test', url: 'http://cdn.test/app.js', method: 'GET' }],
+    ['persona.step', 'p1', step(1)],
+    ['persona.friction_reported', 'p1', friction(1, 'The page broke')],
+    ['signal.error', 'p1', { step_no: 1, url: JOBS, ref: 'e1', kind: 'exception', status: null, message: 'x is not defined' }],
+  ), 'poi');
+  assert.deepEqual(candidates.map((c) => [c.step_no, c.trust, c.text]), [[1, 'reported', 'The page broke'], [1, 'observed', 'Uncaught exception: x is not defined']]);
+});

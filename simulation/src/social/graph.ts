@@ -1,10 +1,11 @@
 import { DirectedGraph } from 'graphology';
-import { clusters, erdosRenyi } from 'graphology-generators/random/index.js';
+import { erdosRenyi } from 'graphology-generators/random/index.js';
 import { graph as graphLib } from 'graphology-metrics';
 import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import type { NetworkPolicy, Persona } from '../types.ts';
 
 const OWN_SHARE = 0.7;
+const CLUSTER_OWN_SHARE = 0.9;
 const HUB_SHARE = 0.1;
 const HUB_WEIGHT = 3;
 const MIN_FOLLOWS = 6;
@@ -49,19 +50,29 @@ export function rewireAcrossSegments(follows: Map<string, string[]>, seed: numbe
   return out;
 }
 
-/** The follow graph under a network policy: the legacy one, its rewiring, or a graphology random or clustered graph held to 6–12 follows each. */
+/**
+ * The follow graph under a network policy: the legacy one, its rewiring, a graphology random graph held to 6–12 follows each,
+ * or the clustered homophily control: one cluster per segment, each persona keeping its legacy follow count with 90% of its
+ * follows drawn uniformly from its own segment and no hubs, so it differs from legacy only in how segment-bound follows are.
+ */
 export function networkGraph(policy: NetworkPolicy, personas: Persona[], seed: number): Map<string, string[]> {
   const legacy = followGraph(personas, seed);
   if (policy === 'legacy' || personas.length < 2) return legacy;
   if (policy === 'rewired') return rewireAcrossSegments(legacy, seed);
   const n = personas.length;
   const next = mulberry32(fnv1a(`${policy}/${seed}`));
-  const g = policy === 'random'
-    ? erdosRenyi(DirectedGraph, { order: n, probability: Math.min(1, 9 / (n - 1)), rng: next })
-    : clusters(DirectedGraph, { order: n, size: n * 9, clusters: new Set(personas.map((p) => p.segment_id)).size, clusterDensity: 0.7, rng: next });
+  const shuffled = <T>(xs: T[]) => xs.map((x) => ({ x, key: next() })).sort((a, b) => a.key - b.key).map((e) => e.x);
+  if (policy === 'clustered') return new Map(personas.map((p) => {
+    const count = legacy.get(p.id)!.length;
+    const own = personas.filter((o) => o.id !== p.id && o.segment_id === p.segment_id).map((o) => o.id);
+    const others = personas.filter((o) => o.segment_id !== p.segment_id).map((o) => o.id);
+    // A pool too small for its share hands the rest to the other one, as in followGraph.
+    const fromOwn = Math.min(own.length, Math.max(Math.round(count * CLUSTER_OWN_SHARE), count - others.length));
+    return [p.id, [...shuffled(own).slice(0, fromOwn), ...shuffled(others).slice(0, count - fromOwn)]];
+  }));
+  const g = erdosRenyi(DirectedGraph, { order: n, probability: Math.min(1, 9 / (n - 1)), rng: next });
   const hi = Math.min(MAX_FOLLOWS, n - 1);
   const lo = Math.min(MIN_FOLLOWS, hi);
-  const shuffled = (xs: number[]) => xs.map((x) => ({ x, key: next() })).sort((a, b) => a.key - b.key).map((e) => e.x);
   return new Map(personas.map((p, i) => {
     const kept = shuffled(g.outNeighbors(String(i)).map(Number)).slice(0, hi);
     const rest = shuffled(personas.map((_, k) => k).filter((k) => k !== i && !kept.includes(k)));
@@ -69,7 +80,7 @@ export function networkGraph(policy: NetworkPolicy, personas: Persona[], seed: n
   }));
 }
 
-/** Evaluation-harness measures of a follow graph; segment assortativity is directed modularity of the segment partition, since graphology-metrics has no assortativity function. */
+/** Evaluation-harness measures of a follow graph; segment modularity is directed modularity of the segment partition (graphology-metrics has no assortativity function). */
 export function graphMetrics(follows: Map<string, string[]>, personas: Persona[]) {
   const g = new DirectedGraph();
   for (const p of personas) g.addNode(p.id, { segment: String(p.segment_id) });
@@ -77,7 +88,7 @@ export function graphMetrics(follows: Map<string, string[]>, personas: Persona[]
   const n = personas.length;
   const inDegrees = personas.map((p) => g.inDegree(p.id)).sort((a, b) => b - a);
   return {
-    segment_assortativity: g.size ? graphLib.modularity(g, { getNodeCommunity: 'segment' }) : 0,
+    segment_modularity: g.size ? graphLib.modularity(g, { getNodeCommunity: 'segment' }) : 0,
     mean_in_degree: g.size / n,
     // The share of all follows that the top tenth of personas by in-degree receive.
     top_decile_in_share: g.size ? inDegrees.slice(0, Math.ceil(n / 10)).reduce((a, b) => a + b, 0) / g.size : 0,

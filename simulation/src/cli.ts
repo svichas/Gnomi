@@ -86,6 +86,8 @@ function describe(e: GnomiEvent): string {
       return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (injected)' : ''}: "${e.payload.text}"`;
     case 'social.reaction':
       return `${e.payload.kind} ${e.payload.post_id}`;
+    case 'social.discarded':
+      return `answer of llm.call #${e.payload.call_seq} dropped by the stop`;
     case 'run.finished':
       return '';
     case 'run.stopped':

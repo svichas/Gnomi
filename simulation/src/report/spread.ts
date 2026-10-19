@@ -1,4 +1,5 @@
 import { MEAN_SIMILARITY, similarity } from './similarity.ts';
+import { postPois } from '../social/feed.ts';
 import { influenceEdges, type InfluenceEdge } from '../social/influence.ts';
 import type { EventOf, GnomiEvent, Persona, ReportHomogeneity, ReportPost, ReportSpread, ReportTheme, SpreadStats } from '../types.ts';
 import { postsAbout, type Context, type Post } from './themes.ts';
@@ -26,8 +27,8 @@ export function sentimentByRound(opinions: Opinion[], rounds: number, who: Set<s
   });
 }
 
-/** Seeds, first- and second-hand personas, segments reached, influence and sentiment for one set of posts. */
-function statsOf(talk: Post[], firstHand: Set<string>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
+/** Seeds, first- and second-hand personas, posters, readers and the segments they are in, influence and sentiment for one set of posts. */
+function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<string>>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
   const firstRound = Math.min(...talk.map((p) => p.round));
   const seeds: ReportPost[] = talk
     .filter((p) => p.round === firstRound)
@@ -43,9 +44,11 @@ function statsOf(talk: Post[], firstHand: Set<string>, edges: InfluenceEdge[], s
       injected: p.payload.injected === true,
     }));
   const posters = [...new Set(talk.map((p) => p.persona_id))];
+  const ids = new Set(talk.map((p) => p.payload.post_id));
+  const readers = [...shown].filter(([, posts]) => [...posts].some((id) => ids.has(id))).map(([id]) => id);
   const seedSegments = new Set(seeds.map((s) => s.segment_id));
-  // In order of reach: the seeds' posters come first.
-  const reached = [...new Set([...posters, ...edges.map((e) => e.to)])].map((id) => segmentOf(id, ctx));
+  // Reach is who was shown a post, in the order they first were; posting is not reaching anyone.
+  const reached = readers.map((id) => segmentOf(id, ctx));
   const segments = [...new Map(reached.map((s) => [s.segment_id, s])).values()].map((s) => ({
     ...s,
     personas: reached.filter((r) => r.segment_id === s.segment_id).length,
@@ -56,27 +59,35 @@ function statsOf(talk: Post[], firstHand: Set<string>, edges: InfluenceEdge[], s
     seeds,
     first_hand: [...firstHand],
     second_hand: posters.filter((id) => !firstHand.has(id)),
+    posters,
+    readers,
     segments,
-    influence: edges,
+    influence: edges.filter((e) => e.kind === 'influence'),
+    heard: edges.filter((e) => e.kind === 'heard'),
     sentiment,
   };
 }
 
 /** The opinion spread per POI with posts about it, and per theme the judge tagged posts with. */
 export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>): ReportSpread[] {
-  const personaAt = new Map(events.map((e) => [e.seq, e.persona_id]));
-  const personasOf = (t: ReportTheme) => new Set(t.seqs.flatMap((seq) => personaAt.get(seq) ?? []));
-  const edges = influenceEdges(events).filter((e) => e.kind === 'influence'); // a formed first opinion is not a shift
+  const firstHandOf = (t: ReportTheme) => new Set(t.first_hand);
+  const edges = influenceEdges(events).filter((e) => e.kind !== 'formed'); // a formed first opinion is not a shift
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
-  const rounds = Math.max(1, ...events.map((e) => e.round));
-  const pois = [...new Set(events.flatMap((e) => (e.type === 'social.post' && e.payload.about_poi_id !== null ? [e.payload.about_poi_id] : [])))];
+  const rounds = events.reduce((max, e) => Math.max(max, e.round), 1);
+  const pois = [...new Set([...postPois(events).values()].filter((id) => id !== null))];
+  // Who was shown which posts: in a feed, including the parents its replies quoted, or handed them at a step.
+  const shown = new Map<string, Set<string>>();
+  for (const e of events) {
+    const ids = e.type === 'social.feed_viewed' ? [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])] : e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? e.payload.heard_post_ids : [];
+    if (e.persona_id && ids.length) for (const id of ids) (shown.get(e.persona_id) ?? shown.set(e.persona_id, new Set()).get(e.persona_id)!).add(id);
+  }
 
   return pois.map((poi_id) => {
     const talk = postsAbout(events, poi_id);
     const own = themes.filter((t) => t.poi_id === poi_id);
     const about = opinions.filter((e) => e.payload.poi_id === poi_id);
     const poiEdges = edges.filter((e) => e.poi_id === poi_id);
-    const spread = statsOf(talk, new Set(own.flatMap((t) => [...personasOf(t)])), poiEdges, sentimentByRound(about, rounds, null), ctx);
+    const spread = statsOf(talk, new Set(own.flatMap((t) => [...firstHandOf(t)])), shown, poiEdges, sentimentByRound(about, rounds, null), ctx);
     return {
       poi_id,
       name: names.get(poi_id) ?? poi_id,
@@ -86,9 +97,9 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
         if (posts.length === 0) return [];
         const ids = new Set(posts.map((p) => p.payload.post_id));
         const themeEdges = poiEdges.filter((e) => ids.has(e.post_id));
-        const firstHand = personasOf(t);
-        const who = new Set([...firstHand, ...posts.map((p) => p.persona_id), ...themeEdges.map((e) => e.to)]);
-        return [{ theme_id: t.id, rank: t.rank, title: t.title, ...statsOf(posts, firstHand, themeEdges, sentimentByRound(about, rounds, who), ctx) }];
+        const firstHand = firstHandOf(t);
+        const who = new Set([...firstHand, ...posts.map((p) => p.persona_id), ...themeEdges.filter((e) => e.kind === 'influence').map((e) => e.to)]);
+        return [{ theme_id: t.id, rank: t.rank, title: t.title, ...statsOf(posts, firstHand, shown, themeEdges, sentimentByRound(about, rounds, who), ctx) }];
       }),
     };
   });

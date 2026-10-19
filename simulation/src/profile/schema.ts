@@ -39,7 +39,7 @@ export const DEFAULT_PERSONA_SCHEMA: PersonaSchema = {
     attribute('decision_role', 'Decision role', 'work', 'choice', 'Whether they use, influence, approve or fund a software purchase.', ['user', 'influencer', 'approver', 'budget holder'], choices(['user', 'influencer', 'approver', 'budget holder'], [6, 2, 1, 1])),
     attribute('tools_today', 'Tools used today', 'work', 'list', 'Tools used for the job today, separate from category experience.', undefined, fixed(['Email', 'Spreadsheets', 'Team chat'])),
     attribute('tech_skill', 'Tech skill', 'capability', 'number', 'Technical confidence from 1 (low) to 5 (high).'),
-    attribute('patience', 'Patience', 'capability', 'number', 'Tolerance for friction from 1 (low) to 5 (high); determines the step budget.'),
+    attribute('patience', 'Patience', 'capability', 'number', 'Tolerance for friction from 1 (low) to 5 (high).'),
     attribute('reading_speed', 'Reading speed', 'capability', 'choice', 'How quickly they tend to read unfamiliar product text.', ['careful', 'average', 'quick'], choices(['careful', 'average', 'quick'], [2, 6, 2])),
     attribute('familiarity_with_category', 'Category familiarity', 'capability', 'choice', 'Experience with this product category.', ['low', 'medium', 'high']),
     attribute('prior_tools', 'Prior tools', 'capability', 'list', 'Previous category tools, with a short note about what worked or frustrated them. Empty means none specified.', undefined, fixed([])),

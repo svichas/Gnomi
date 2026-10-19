@@ -30,8 +30,10 @@ import { citationRejection, comparisonSession, createComparisonRuntime } from '.
 import type { GnomiEvent, NewEvent, PageSnapshot, ProjectConfig, RunConfig } from '../types.ts';
 import type { ComparisonStudy } from './types.ts';
 import type { LlmGateway, LlmRequest, PageDriver } from '../seams.ts';
+import { comparisonAssessmentSchema, type AssessedEpisode } from './prompts.ts';
+import { buildComparison } from '../report/comparison.ts';
 
-function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boolean; exhausted?: boolean; blocked?: boolean; interrupted?: boolean; fixtureMissing?: boolean; judgeFailure?: boolean; invalidNavigator?: boolean } = {}) {
+function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boolean; exhausted?: boolean; blocked?: boolean; challengeAfterAction?: boolean; interrupted?: boolean; fixtureMissing?: boolean; judgeFailure?: boolean; invalidNavigator?: boolean; propose?: (proposal: AssessedEpisode) => AssessedEpisode; verificationFailure?: boolean; verificationUnavailable?: boolean } = {}) {
   const project: ProjectConfig = { name: 'Compare ATS tools', description: '', goal: 'Choose an ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
     pois: ['Alpha', 'Beta'].map((name) => ({ id: name, name, type: 'web', start_url: `https://${name.toLowerCase()}.example/`, mode: 'observe_only', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
   const study = draftComparison(project);
@@ -56,7 +58,9 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
       const cite = { event_seq: source.event_seq, source: source.source, quote: source.text };
       output = { outcome: options.invalid ? 'invalid_task' : options.blocked ? 'blocked_environment' : options.exhausted ? 'task_failed' : 'completed', reason: options.invalid ? 'The persona invented a candidate-review assignment.' : options.blocked ? 'The required pricing API was denied by containment.' : 'Found the pricing basis for the shared scenario.', outcome_evidence: [cite],
         criteria: [{ criterion_id: 'cost', assessment: 'meets', basis: 'vendor_claim', summary: 'The team plan is USD 100 monthly for 20 seats.', evidence: [cite] }] };
+      if (options.propose) output = options.propose(comparisonAssessmentSchema.parse(output));
     } else if (req.purpose === 'comparison_verification') {
+      if (options.verificationFailure) throw new Error('Verifier is unavailable');
       output = { outcome_supported: !options.reject, outcome_reason: options.reject ? 'The source is unrelated to pricing.' : 'The frozen success rule is supported.', criteria: [{ criterion_id: 'cost', supported: !options.reject, reason: options.reject ? 'Candidate profile is not pricing evidence.' : 'The quoted plan terms support the criterion.' }] };
     } else output = { thought: options.invalid ? 'I need the candidate invitation instead.' : 'The pricing terms are visible.', feeling: 1, action: { type: options.exhausted || options.interrupted || options.blocked ? 'read' : 'done', ref: null, text: options.invalid ? 'The invitation is missing.' : 'Found the applicable plan terms.' }, friction: null };
     return { object: req.schema.parse(output), cost_usd: 0 };
@@ -66,22 +70,124 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
   const pages: PageDriver[] = [];
   let admitted = 0;
   let ended = 0;
+  const analysisAdmissions: string[] = [];
   const runtime = createComparisonRuntime({ config, llm, record, events: () => events,
     blobs: { put: async () => {}, get: async () => new Uint8Array() }, signal: new AbortController().signal,
-    beginUsageStep: () => { admitted++; return !options.interrupted || admitted === 1; }, beginAnalysisStep: () => true, endStep: () => { ended++; },
+    beginUsageStep: () => { admitted++; return !options.interrupted || admitted === 1; },
+    beginAnalysisStep: (purpose) => { analysisAdmissions.push(purpose); return purpose !== 'comparison_verification' || !options.verificationUnavailable; }, endStep: () => { ended++; },
     stopped: () => false, stopReason: () => 'Global budget interruption.', tripwire: () => () => {},
     openPage: async (_persona, _target, poi) => {
       modes.push(poi.mode);
       let current = poi.start_url;
+      let inspections = 0;
       const snapshot = (): PageSnapshot => ({ url: current, title: poi.name, text: options.sourceText ?? 'Team plan: USD 100 monthly for up to 20 seats.', hash: 'pricing' });
       const page: PageDriver = { goto: async (url) => { current = url; navigations.push(url); }, snapshot: async () => snapshot(), screenshot: async () => new Uint8Array(),
         act: async () => ({ ok: !options.blocked, error: options.blocked ? 'host_not_allowed' : null, url_before: current, url_after: current, dom_changed: false, target: null, text: null }),
-        inspect: async () => ({ login: false, challenge: null, live_key: null }), errors: () => [], close: async () => {} };
+        inspect: async () => ({ login: false, challenge: options.challengeAfterAction && inspections++ > 0 ? 'recaptcha' : null, live_key: null }), errors: () => [], close: async () => {} };
       pages.push(page); return page;
     },
   });
-  return { runtime, config, study, person, events, requests, navigations, pages, modes, ended: () => ended };
+  return { runtime, config, study, person, events, requests, navigations, pages, modes, analysisAdmissions, ended: () => ended };
 }
+
+const verificationInputs = (f: ReturnType<typeof fixture>) => f.requests.filter((r) => r.purpose === 'comparison_verification').map((r) => JSON.parse(r.user.find((p) => p.type === 'text')!.text));
+
+test('structural failures and duplicates are recorded but never sent for semantic review', async () => {
+  const f = fixture({ propose: (proposal) => {
+    const good = proposal.criteria[0];
+    return { ...proposal, criteria: [good, { ...good, summary: 'Duplicate claim must not be reviewed.' },
+      { ...good, criterion_id: 'outside-task' },
+      { ...good, criterion_id: 'bad-quote', evidence: [{ ...good.evidence[0], quote: 'Fabricated quotation.' }] },
+      { ...good, criterion_id: 'bad-source', evidence: [{ ...good.evidence[0], event_seq: 999999 }] },
+      { ...good, criterion_id: 'bad-basis', basis: 'observed_behavior' },
+      { ...good, criterion_id: 'no-evidence', evidence: [] },
+    ] };
+  } });
+  for (const id of ['bad-quote', 'bad-source', 'bad-basis', 'no-evidence']) {
+    f.study.criteria.push({ ...f.study.criteria[0], id }); f.study.tasks[0].criterion_ids.push(id);
+  }
+  await f.runtime.runPersona(f.person);
+  for (const input of verificationInputs(f)) {
+    assert.deepEqual(input.proposed.criteria.map((c: { criterion_id: string }) => c.criterion_id), ['cost']);
+    assert.doesNotMatch(JSON.stringify(input.proposed), /Fabricated quotation|Duplicate claim/);
+  }
+  const reasons = f.events.filter((e) => e.type === 'comparison.assessment').slice(0, 7).map((e) => e.payload.rejection);
+  assert.deepEqual(reasons, [null, 'Duplicate criterion assessment.', 'The criterion is outside the frozen task.',
+    'Citation quotation is not present in the captured source.', 'Citation does not name a captured source from this episode.',
+    'Observed behavior requires an action/result source, not only a vendor claim or opinion.', 'A supported assessment requires captured evidence.']);
+});
+
+test('nothing reviewable skips both verifier admission and call, retaining unknowns without publishing their prose', async () => {
+  const f = fixture({ exhausted: true, propose: (proposal) => ({ ...proposal, criteria: [{ ...proposal.criteria[0], assessment: 'unknown', evidence: [] }] }) });
+  await f.runtime.runPersona(f.person);
+  assert.deepEqual(f.analysisAdmissions, ['comparison_assessment', 'comparison_assessment']);
+  assert.equal(verificationInputs(f).length, 0);
+  assert.equal(f.ended(), f.requests.length, 'no unmatched step reservation for a skipped verifier');
+  const report = buildComparison([{ type: 'run.started', payload: { config: f.config }, run_id: f.config.run_id, seq: 0, ts: 0, round: 1, persona_id: null, poi_id: null }, ...f.events])!;
+  assert.ok(report.cells.every((cell) => cell.assessment === 'unknown' && cell.assessed === 0));
+  assert.ok(report.cells.every((cell) => !cell.summary.includes('USD 100')));
+  assert.ok(report.rejected_assessments.every((r) => r.reason === 'Evidence-free unknown retained without semantic verification.'));
+  assert.ok(report.coverage.every((row) => row.outcomes.task_failed === 1));
+});
+
+test('evidenced unknowns and not-applicable judgments still get reviewed', async () => {
+  for (const assessment of ['unknown', 'not_applicable'] as const) {
+    const f = fixture({ propose: (p) => ({ ...p, criteria: [{ ...p.criteria[0], assessment, evidence: assessment === 'unknown' ? p.criteria[0].evidence : [] }] }) });
+    await f.runtime.runPersona(f.person);
+    assert.ok(verificationInputs(f).every((input) => input.proposed.criteria[0].assessment === assessment));
+    assert.ok(f.events.filter((e) => e.type === 'comparison.assessment').every((e) => e.payload.rejection === null));
+  }
+});
+
+test('immutable terminal outcomes are omitted while useful criteria remain reviewable', async () => {
+  for (const options of [{ challengeAfterAction: true, exhausted: true }, { exhausted: true }, { interrupted: true }]) {
+    const f = fixture(options);
+    await f.runtime.runPersona(f.person);
+    const inputs = verificationInputs(f);
+    assert.ok(inputs.length > 0);
+    assert.ok(inputs.every((input) => input.review_outcome === false && !('outcome' in input.proposed) && !('outcome_evidence' in input.proposed)));
+    assert.ok(f.events.filter((e) => e.type === 'comparison.assessment').every((e) => e.payload.rejection === null));
+  }
+});
+
+test('outcome citation failures skip review even when the verifier would otherwise accept them', async () => {
+  for (const evidence of ['missing', 'fabricated'] as const) {
+    const f = fixture({ propose: (p) => ({ ...p, criteria: [], outcome_evidence: evidence === 'missing' ? [] : [{ ...p.outcome_evidence[0], quote: 'Invented success.' }] }) });
+    await f.runtime.runPersona(f.person);
+    assert.equal(verificationInputs(f).length, 0);
+    assert.ok(f.events.filter((e) => e.type === 'comparison.episode_finished').every((e) => e.payload.outcome === 'incomplete'));
+  }
+});
+
+test('an eligible outcome alone still gets verified and can establish completion', async () => {
+  const f = fixture({ propose: (p) => ({ ...p, criteria: [] }) });
+  await f.runtime.runPersona(f.person);
+  assert.ok(verificationInputs(f).every((input) => input.review_outcome && input.proposed.criteria.length === 0));
+  assert.ok(f.events.filter((e) => e.type === 'comparison.episode_finished').every((e) => e.payload.outcome === 'completed'));
+});
+
+test('failed or unadmitted verification cannot accept otherwise valid proposals', async () => {
+  for (const options of [{ verificationFailure: true }, { verificationUnavailable: true }]) {
+    const f = fixture(options);
+    await f.runtime.runPersona(f.person);
+    assert.ok(f.events.filter((e) => e.type === 'comparison.assessment').every((e) => e.payload.rejection === 'Semantic verification was not completed.'));
+    assert.ok(f.events.filter((e) => e.type === 'comparison.episode_finished').every((e) => e.payload.outcome === 'incomplete'));
+  }
+});
+
+test('only the verifier model changes on the optional navigator route; judge semantics and assessor provenance stay intact', async () => {
+  for (const route of [undefined, 'judge', 'navigator'] as const) {
+    const f = fixture();
+    f.study.execution.verifier = route;
+    await f.runtime.runPersona(f.person);
+    const calls = f.requests.filter((r) => r.purpose?.startsWith('comparison_'));
+    for (const req of calls) {
+      assert.equal(req.role, 'judge', 'verification keeps judge sampling and schema behavior');
+      assert.deepEqual(req.model, f.config.project.settings.routing[req.purpose === 'comparison_verification' ? route ?? 'judge' : 'judge']);
+    }
+    assert.ok(f.events.filter((e) => e.type === 'comparison.assessment').every((e) => e.payload.assessor.model === DEFAULT_SETTINGS.routing.judge.model));
+  }
+});
 
 test('independent episodes collect positive pricing sources and verified task results for every public target', async () => {
   const f = fixture();
@@ -267,7 +373,7 @@ test('an invalid navigator response is missing model work rather than task-effor
 test('a matched block collects every target before paying for either semantic assessment', async () => {
   const f = fixture();
   await f.runtime.runPersona(f.person);
-  assert.deepEqual(f.requests.map((request) => request.purpose ?? request.role), ['navigator', 'navigator', 'comparison_assessment', 'comparison_verification', 'comparison_assessment', 'comparison_verification']);
+  assert.deepEqual(f.requests.map((request) => request.purpose ?? request.role), ['step', 'step', 'comparison_assessment', 'comparison_verification', 'comparison_assessment', 'comparison_verification']);
   for (const request of f.requests.filter((item) => item.purpose === 'comparison_assessment')) {
     const packet = JSON.parse(request.user.find((part) => part.type === 'text')!.text);
     assert.ok(packet.sources.every((source: { target_id: string }) => source.target_id === packet.target.id));

@@ -102,12 +102,14 @@ function visit(lines: Line[], opts: Options): Line[] {
 }
 
 // A line without a box (a text or /url child, a "… more" marker) sits where the line printed before it does.
+// A line with a box off the viewport says so: the persona sees only the screen until it scrolls.
 function print(lines: Line[], depth: number, parent: number, viewportHeight: number, out: Printed[]): void {
   for (const line of lines) {
     const tail = line.value !== undefined ? `: ${line.value}` : line.kids.length ? ':' : '';
     const box = BOX.exec(line.head);
     const dist = box ? Math.max(-(+box[2] + +box[4]), +box[2] - viewportHeight, 0) : (out.at(-1)?.dist ?? 0);
-    out.push({ text: `${'  '.repeat(depth)}- ${line.head}${tail}`, dist, parent });
+    const where = box && dist > 0 ? ` (off screen, ${+box[2] < 0 ? 'above' : 'below'})` : '';
+    out.push({ text: `${'  '.repeat(depth)}- ${line.head}${where}${tail}`, dist, parent });
     print(line.kids, depth + 1, out.length - 1, viewportHeight, out);
   }
 }
