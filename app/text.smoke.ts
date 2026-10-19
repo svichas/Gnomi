@@ -89,11 +89,14 @@ try {
   await review.getByRole('button', { name: 'Start run', exact: true }).click();
   await page.getByRole('tab', { name: 'Report', exact: true }).click({ timeout: 120_000 });
   const report = page.locator('section[aria-labelledby=report-title]');
+  await report.locator('summary').filter({ hasText: 'Buying intent' }).click();
   await report.getByRole('heading', { name: 'Buying survey', exact: true }).waitFor({ timeout: 120_000 });
   const buyers = report.locator('section[aria-labelledby=buyers-title]');
   assert.match(await buyers.innerText(), /Team leads\s+2\s/, 'both team leads answered as buyers');
   assert.doesNotMatch(await buyers.innerText(), /Planners/, 'users answer the usage survey');
+  await report.locator('summary').filter({ hasText: 'Audience breakdown' }).click();
   assert.match(await report.getByRole('region', { name: 'Results by segment' }).innerText(), /Mood[\s\S]*Team leads[\s\S]*Planners/);
+  await report.locator('summary').filter({ hasText: 'User journeys' }).click();
   const personas = report.getByRole('region', { name: /How each persona did/ });
   await personas.locator('details').evaluateAll((all) => all.forEach((details) => { (details as HTMLDetailsElement).open = true; }));
   assert.equal(await personas.getByText('In the text:').count(), 3);

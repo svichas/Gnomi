@@ -63,6 +63,7 @@ try {
   const status = page.getByRole('region', { name: 'Run status' });
   assert.match(await status.innerText(), /\$5\.25 recorded · \$5\.00 limit/);
   assert.match(await status.innerText(), /\$5\.25/);
+  await report.locator('summary').filter({ hasText: 'Run details & methodology' }).click();
   assert.match(await report.innerText(), /Recorded cost/);
   assert.match(await report.innerText(), /\$5\.25/);
   assert.match(await report.innerText(), /Actual charges may exceed the recorded cost/);

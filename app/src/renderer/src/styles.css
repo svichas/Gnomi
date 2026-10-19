@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '../../../../assets/brand/brand-tokens.css';
+@import './report.css';
 
 /* Existing detailed editors share the same brand roles as the new project journey. */
 @theme {
