@@ -589,7 +589,7 @@ test('a persona runs Gym / and then Gym /locale, with a survey and themes for ea
     (req) => say('All the jobs are one click away.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }, friction('The jobs link is easy to miss')),
     say('That is the list.', { type: 'done', text: 'Reached the jobs list' }),
     (req) => {
-      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1 of \d+\./m, 'the second POI counts its own steps in the prompt');
+      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1\./m, 'the second POI counts its own steps in the prompt');
       return say('Which language is this?', { type: 'done', text: 'Read the locale' }, friction('The page does not say what it is for'));
     },
   ]), { project });

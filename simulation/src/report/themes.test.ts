@@ -229,6 +229,17 @@ test('echoes: a report after a feed showed a post about the theme is heard first
     ['persona.friction_reported', 'a1', friction(1, 3)],
   );
   assert.equal(analyseFrictions(late, ctx).themes[0].heard_first, 1);
+  // A reply shows its parent's text: a feed that showed a reply to a tagged post showed that post too.
+  const quoted = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['social.post', 'a3', { post_id: 'p2', parent_id: 'p1', text: 'Same here.', about_poi_id: 'poi' }],
+    ['social.feed_viewed', 'a2', { post_ids: ['p2'], parent_ids: ['p1'] }],
+    ['persona.step', 'a2', step(2)],
+    ['persona.friction_reported', 'a2', friction(2, 3)],
+  );
+  assert.equal(analyseFrictions([...quoted, judged], ctx).themes[0].heard_first, 1);
 });
 
 test('structured survey answers group by the part of the product they name, and objections stay apart from frictions', () => {

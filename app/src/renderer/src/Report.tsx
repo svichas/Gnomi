@@ -30,6 +30,7 @@ const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
   abandoned: { text: 'Gave up', tone: 'warn' },
   budget_exceeded: { text: 'Ran out of steps', tone: 'warn' },
   repeated_failure: { text: 'Got stuck', tone: 'warn' },
+  model_failed: { text: 'Model failed to answer', tone: 'neutral' },
   blocked: { text: 'Blocked', tone: 'bad' },
   incomplete: { text: 'Did not finish', tone: 'neutral' },
   not_started: { text: 'Did not start', tone: 'neutral' },

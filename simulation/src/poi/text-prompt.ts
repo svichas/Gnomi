@@ -56,7 +56,7 @@ export function readSystemPrompt(persona: Persona, project: ProjectConfig, segme
     ...(english ? [] : [`${p}'s first language is ${languageName(locale)}; English is a second language.`]),
     ...(segment?.kind === 'buyer' ? [`${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides.`] : []),
   ];
-  return `This is ${persona.name}. ${p} is reading "${poi.name}", a text about ${project.name}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking it. Each turn shows the next part of the text, above these notes, and the question is always the same: what does ${p} make of it, what is unclear or contradictory to ${obj}, and what does ${p} do next?
+  return `This is ${persona.name}. ${p} is reading "${poi.name}", a text about ${project.name}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking it. Each turn shows the next part of the text, above these notes, and the question is always the same: what does ${p} make of it, and what does ${p} do next?
 
 People stop reading what wastes their time. When ${p} would stop, the true answer is that ${p} stops.
 
@@ -74,7 +74,7 @@ The product: ${project.name}${project.description ? `. ${project.description}` :
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud while reading, in ${poss} own voice, in ${ENGLISH}, in at most 60 words.
 - feeling: how ${p} feels right now, an integer from -2 (very frustrated) to 2 (very pleased); 0 is neutral.
-- confusions: what confused, surprised or put off ${p} in this part, up to 5, each {quote, start, end, what, expected, severity}. quote is the passage it is about, copied exactly from the text, at most a sentence or two; start and end are where the quote sits, as character offsets from the very beginning of the whole text (each part says where it begins), end exclusive. what is what confused ${p}, expected what ${p} expected instead, severity 1 (a small irritation) to 4 (${p} cannot go on). An empty list when nothing did; do not invent confusion.
+- confusions: what confused, surprised or put off ${p} in this part, up to 5, each {quote, start, end, what, expected, severity}. quote is the passage it is about, copied exactly from the text, at least three words and at most a sentence or two; start and end are where the quote sits, as character offsets from the very beginning of the whole text (each part says where it begins), end exclusive. what is what confused ${p}, expected what ${p} expected instead, severity 1 (a small irritation) to 4 (${p} cannot go on). An empty list when nothing did; do not invent confusion.
 - opinion: ${poss} whole current view of what ${p} has read, {sentiment, confidence, likes, frictions}: sentiment an integer from -2 (very negative) to 2 (very positive), confidence ${poss} own certainty from 0 to 1, likes and frictions up to 5 short statements each (at most 500 characters per statement) in ${ENGLISH}. Keep lists empty when there is no evidence.
 - action: what ${p} does next, as {type, text}. "read_on" reads the next part (text null). "done" means ${p} has read enough to decide: text says what ${p} would do next, in ${poss} own words. "abandon" means ${p} stops here: text says why.
 

@@ -336,7 +336,7 @@ function firstHand(members: Candidate[], theme: string, tagged: Map<string, stri
   const earlier = (a: Candidate, b: Candidate) => at(a)[0] < at(b)[0] || (at(a)[0] === at(b)[0] && at(a)[1] < at(b)[1]);
   const echo = (c: Candidate) => {
     if (c.trust !== 'reported') return false; // a browser signal cannot repeat a post
-    const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && e.payload.post_ids.some((id) => tagged.get(id)?.includes(theme)));
+    const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
     if (shown && shown.seq < c.seqs[0]) return true;
     return (echoes.heard.get(c.step_seq ?? -1) ?? []).some((id) => {
       const author = echoes.authors.get(id);

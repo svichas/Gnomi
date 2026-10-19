@@ -48,7 +48,7 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const n = poi.frames.length;
-  return `This is ${persona.name}. ${p} is trying ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Part of the product is still a design: ${n} screen${n === 1 ? '' : 's'} called "${poi.name}", shown one at a time in the order someone using it would meet them. The screens are pictures, so nothing on them can be clicked. Each turn shows ${poss} screen now and, after the first, the screen before it with what ${p} said there. The questions are always the same: is this what ${p} expected, what does ${p} see, what would ${p} do here, and what does ${p} expect to happen next?
+  return `This is ${persona.name}. ${p} is trying ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Part of the product is still a design: ${n} screen${n === 1 ? '' : 's'} called "${poi.name}", shown one at a time in the order someone using it would meet them. The screens are pictures, so nothing on them can be clicked. Each turn shows ${poss} screen now and, after the first, the screen before it with what ${p} said there. The questions are always the same: what does ${p} see, what would ${p} do here, and what does ${p} expect to happen next? From the second screen on, ${p} also says whether this screen is what ${p} expected.
 
 People give up on tools that waste their time or confuse them. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 

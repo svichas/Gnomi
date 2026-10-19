@@ -260,7 +260,7 @@ function comparisonLines(report: Report): string[] {
   const name = (id: string) => line(report.pois.find((poi) => poi.id === id)?.name ?? id);
   return report.comparisons.flatMap((c) => [
     '', `## ${name(c.poi_id)} compared with ${name(c.with_poi_id)}`, '',
-    `From the survey after the competitor's site, asked of personas who used ${name(c.with_poi_id)} first. "Product" is ${name(c.with_poi_id)}.`, '',
+    `From the survey after the competitor's site, asked of personas who used ${name(c.with_poi_id)} first. "Product" is ${name(c.with_poi_id)}. ${name(c.poi_id)} was only browsed: nothing was signed up for or sent, so its side covers what a visitor sees.`, '',
     '| Segment | Compared | Prefer the product | Prefer the competitor | No preference |',
     '| --- | --- | --- | --- | --- |',
     ...c.segments.map((s) => `| ${cell(s.name)} | ${s.compared} | ${s.product} | ${s.competitor} | ${s.no_preference} |`),

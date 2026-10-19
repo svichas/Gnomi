@@ -64,15 +64,15 @@ const project = (pois: DesignPoi[], navigator = PROVIDER_DEFAULTS.anthropic.navi
 
 const noBrowser = { newPage: () => Promise.reject(new Error('A design run opens no page')) } as unknown as BrowserPool;
 
-async function runCheckout(defects: 'D26' | 'none') {
-  const folder = join(dir, defects);
+async function runCheckout(defects: 'D26' | 'none', navigator = shopper, name: string = defects) {
+  const folder = join(dir, name);
   const store = openProject(folder);
   const blobs = createFsBlobStore(folder);
   const frames = await Promise.all(gymAssets({ defects }).frames.checkout.map((path) => importLocalFile(blobs, path)));
   const poi: DesignPoi = { id: 'checkout', type: 'design', name: 'Checkout', segments: null, frames: frames.map((f, i) => ({ asset: f.id, name: i === 3 ? 'After placing the order' : null })) };
   const config = store.createRun(newRunConfig(project([poi]), { personas: [BUILTIN_PERSONA], sessions: [], reset: false }));
   const record = createRecorder(store, () => {});
-  const llm = createScriptedGateway({ navigator: shopper, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+  const llm = createScriptedGateway({ navigator, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
   const report = await startRun(config, { store, blobs, browsers: noBrowser, llm, record, sessions: null }).done;
   const events = store.events(config.run_id);
   store.close();
@@ -128,6 +128,15 @@ test('D26: the checkout run reports the expectation mismatch on frame 4 with the
   assert.equal(control.events.filter((e) => e.type === 'persona.friction_reported').length, 0, 'the control frame 4 is the confirmation');
   assert.equal(control.report.frictions.length, 0);
   assert.ok(control.events.some((e) => e.type === 'persona.goal_done'), 'and its persona still saw every frame');
+});
+
+test('a mismatch the persona gave no words for is filed on the frame whose expectation broke, with what was expected and shown', async () => {
+  const wordless = (req: LlmRequest<unknown>) => ({ ...shopper(req), ...(req.purpose === 'design' && { friction: null }) });
+  const { poi, events } = await runCheckout('D26', wordless, 'D26-wordless');
+  const frictions = events.filter((e): e is EventOf<'persona.friction_reported'> => e.type === 'persona.friction_reported');
+  assert.deepEqual(frictions.map((f) => [f.payload.frame, f.payload.step_no, f.payload.where.url]), [[2, 3, `asset:${poi.frames[2].asset}`]]);
+  assert.match(frictions[0].payload.what, /^Expected A confirmation that my order is placed, but the next screen showed: \S/);
+  assert.equal(frictions[0].payload.expected, 'A confirmation that my order is placed');
 });
 
 test('the demo responder answers design screens in the schema, with a labelled sample mismatch on the second', () => {

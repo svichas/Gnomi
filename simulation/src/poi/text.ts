@@ -40,7 +40,8 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 export function locatePassage(text: string, quote: string, start: number, end: number): { start: number; end: number; text: string } | null {
   const q = quote.trim();
-  if (!q) return null;
+  // A word or two matches all over a text, so it would link a passage the persona may not have meant.
+  if (q.split(/\s+/).length < 3 && q.length < 15) return null;
   if (text.slice(start, end) === q) return { start, end, text: q };
   const hits: { start: number; end: number }[] = [];
   for (let at = text.indexOf(q); at !== -1; at = text.indexOf(q, at + 1)) hits.push({ start: at, end: at + q.length });
@@ -70,7 +71,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
   const parts = textParts(text);
   const system = readSystemPrompt(persona, config.project, segment, poi, deps.budget);
   const memory: ReadMemory[] = [];
-  let opinion: Opinion | null = null;
+  let opinion: Opinion | null = deps.opinion ?? null;
   let heard: HeardPost[] = []; // the last feed, for the next part only
   let index = 0;
   const last = stepsBefore + deps.budget;
@@ -110,11 +111,11 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
       emit('persona.opinion_changed', { poi_id: poi.id, before: opinion, after: structuredClone(output.opinion), cause: { step_ids: [step.seq], post_ids: [] } });
       opinion = structuredClone(output.opinion);
     }
-    // A quote may come from any part read so far; one the text does not hold keeps its friction but loses the passage.
+    // A quote may come from any part read so far; one the text does not hold keeps its friction, flagged, but loses the passage.
     const read = text.slice(0, part.end);
     for (const c of output.confusions) {
       const passage = locatePassage(read, c.quote, c.start, c.end);
-      emit('persona.friction_reported', { step_no, severity: c.severity, what: c.what, expected: c.expected, where: { url: where, ref: null }, heard_post_ids, ...(passage && { passage }) });
+      emit('persona.friction_reported', { step_no, severity: c.severity, what: c.what, expected: c.expected, where: { url: where, ref: null }, heard_post_ids, ...(passage ? { passage } : { quote_unverified: true }) });
     }
     if (action.type === 'done') {
       emit('persona.goal_done', { step_no, summary: action.text ?? '' });

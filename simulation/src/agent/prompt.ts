@@ -24,7 +24,9 @@ export function stepSchema(persona: Persona) {
     // What a persona types or selects stays as entered; a done or abandon text is a report's summary.
     action: z.object({ type: z.enum(types), ref: z.string().nullable(), text: z.string().nullable() })
       .refine((a) => (a.type !== 'done' && a.type !== 'abandon') || isEnglish(a.text ?? ''), { path: ['text'], message: `must be in ${ENGLISH}` }),
-    friction: z.object({ severity: z.number().int().min(1).max(4), what: english(z.string()), expected: english(z.string()) }).nullable(),
+    // about_ref: the element the friction is about; older scripted responses omit it.
+    friction: z.object({ severity: z.number().int().min(1).max(4), what: english(z.string()), expected: english(z.string()), about_ref: z.string().nullable().optional() })
+      .meta({ required: ['severity', 'what', 'expected', 'about_ref'] }).nullable(),
     opinion: opinionSchema.nullable().optional(),
   }).strict().meta({ required: ['thought', 'feeling', 'action', 'friction', 'opinion'] });
 }
@@ -118,6 +120,7 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
   for (const { attribute, value } of profileEntries(persona, project.persona_schema, 'prompt')) {
     // Authored context can invent an invitation/account/task; the frozen comparison brief supplies those facts.
     if (project.comparison && ['context_of_use', 'motivation'].includes(attribute.id)) continue;
+    if (attribute.id === 'connectivity') continue; // not simulated: a "flaky" line would only invite invented slowness
     const formatted = attribute.id === 'pronouns' ? `${value}/${obj}`
       : attribute.id === 'country' ? `${countryName(String(value))} (${value})`
       : Array.isArray(value) ? value.join(', ') : String(value);
@@ -132,7 +135,7 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
 }
 
 /** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). An observe-only POI is a competitor's site. */
-export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, stepBudget: number, poi?: WebPoi): string {
+export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: WebPoi): string {
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
@@ -156,7 +159,7 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
   const environment = personaEnvironment(persona);
   const english = environment.locale.toLowerCase().split('-')[0] === 'en';
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}. In all, ${p} gives up after about ${stepBudget} actions, or sooner if annoyed.`,
+    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`,
     skill,
     device,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
@@ -196,7 +199,7 @@ Answer every turn with one JSON object:
 ${actionTypes(persona)
   .map((t) => `  - ${ACTION_HELP[t]}`)
   .join('\n')}
-- friction: when ${p} is confused, blocked, surprised or annoyed, say so: severity 1 (a small irritation) to 4 (${p} cannot go on), what happened, and what ${p} expected instead. Otherwise null.
+- friction: when ${p} is confused, blocked, unpleasantly surprised or annoyed, say so: severity 1 (a small irritation) to 4 (${p} cannot go on), what happened, what ${p} expected instead, and about_ref, the [ref=…] of the element it is about on the current page, or null. Otherwise null.
 - opinion: when firsthand evidence changes ${poss} view of this product, give the whole current opinion as {sentiment, confidence, likes, frictions}; otherwise null. Sentiment is an integer from -2 (very negative) to 2 (very positive), confidence is ${poss} own certainty from 0 to 1, and likes/frictions are up to 5 short statements each (at most 500 characters per statement). Keep lists empty when there is no evidence. Base this on what ${p} has already seen, never on the result of the action about to be taken. A momentary feeling need not change an opinion; do not invent praise, friction or certainty.
 Write the thought, friction, opinion and a done or abandon text in ${ENGLISH}, whatever language the page or ${p} uses. What ${p} types or selects stays as ${p} would enter it.
 An action that failed with host_not_allowed tried to open a page outside ${site}: that page cannot be shown, it is not part of the product, and it is not a problem with the product.
@@ -255,11 +258,12 @@ function describeResult(r: ActionResult, action: Action): string {
 function digest(older: StepMemory[]): string {
   const pages: string[] = [where(older[0].result.url_before)];
   for (const m of older) if (where(m.result.url_after) !== pages.at(-1)) pages.push(where(m.result.url_after));
-  const failed = older.filter((m) => !m.result.ok).length;
+  // What was tried where, once each: a retry reads as the persona's choice, not as the product failing again.
+  const tried = [...new Set(older.map((m) => `${describeAction(m.action, m.target)} on ${where(m.result.url_before)} → ${describeResult(m.result, m.action)}`))];
   const frictions = older.flatMap((m) => (m.friction ? [`"${m.friction}"`] : []));
   return [
     `Steps 1–${older.at(-1)?.step_no} in brief: pages seen ${pages.join(' → ')}`,
-    `${failed} action${failed === 1 ? '' : 's'} failed`,
+    `tried: ${tried.join('; ')}`,
     ...(frictions.length ? [`frictions reported: ${frictions.join('; ')}`] : []),
   ].join('; ');
 }
@@ -298,7 +302,6 @@ export function heardLines(p: string, heard: HeardPost[] | undefined): string[] 
 export function userParts(opts: {
   persona: Persona;
   stepNo: number;
-  stepBudget: number;
   memory: StepMemory[];
   opinion?: Opinion | null;
   heard?: HeardPost[];
@@ -313,7 +316,7 @@ export function userParts(opts: {
     ? [`What ${p} has done so far:`, ...(older.length ? [digest(older)] : []), ...recent.map((m, i) => remember(m, i === recent.length - 1, p))]
     : [`This is ${p}'s first look at the product.`];
   const text = [
-    `Step ${opts.stepNo} of ${opts.stepBudget}.`,
+    `Step ${opts.stepNo}.`,
     '',
     ...history,
     '',
@@ -331,8 +334,8 @@ export function userParts(opts: {
   return opts.screenshot ? [{ type: 'image', data: opts.screenshot, mediaType: 'image/jpeg' }, { type: 'text', text }] : [{ type: 'text', text }];
 }
 
-/** The episode endings that get a survey: the persona's own and the engine's per-persona stops, never a run-wide one. */
-export type SurveyedEnd = Exclude<EpisodeEnd, 'blocked' | 'stopped'>;
+/** The episode endings that get a survey: the persona's own and the engine's per-persona stops, never a run-wide one or the model failing to answer. */
+export type SurveyedEnd = Exclude<EpisodeEnd, 'blocked' | 'stopped' | 'model_failed'>;
 
 /** One structured survey answer: where in the product, what exactly, and for problems how bad (the step's 1–4 scale). */
 const itemWhere = english(z.string().trim().min(1).max(80));
@@ -372,12 +375,17 @@ const ENDING: Record<SurveyedEnd, (p: string) => string> = {
   repeated_failure: (p) => `${p} stopped after the same action failed three times in a row`,
 };
 
+/** The product a survey asks about: a competitor's site by its own name, anything else as the team's product. */
+export const surveyedName = (project: ProjectConfig, poi?: Poi) => (poi?.type === 'web' && poi.mode === 'observe_only' ? poi.name : project.name);
+
 /** The survey's system prompt: the same persona and goal as the steps, a survey in place of the action format. */
 export function surveySystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: Poi): string {
   const { p, obj, poss } = wordsFor(persona, project);
+  const product = surveyedName(project, poi);
   // A text is read and a design looked through, not used: the survey says which, so the answers are about what the persona met.
   const met = poi?.type === 'text' ? `has just read "${poi.name}", a text about ${project.name}, with something to get done at work in mind,`
     : poi?.type === 'design' ? `has just looked through the screens of ${poi.name}, a design of ${project.name}, with something to get done at work in mind,`
+    : product !== project.name ? `has just looked at ${product}, a competitor of ${project.name}, to see how it handles the same work, only browsing: ${p} did not sign up, log in or send anything there,`
     : `has just used ${project.name} to get something done at work`;
   return `This is ${persona.name}. ${p} ${met} and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
@@ -391,27 +399,36 @@ The product: ${project.name}${project.description ? `. ${project.description}` :
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}. Each list holds up to 5 items, one specific point per item, and is empty when there is nothing to say:
 - frictions: what got in ${poss} way while doing the task: something ${p} could not find, did not understand, that did not work or took too long.
-- objections: what would make ${p} doubt, distrust or not adopt ${project.name}, even if it worked: value, price, trust, missing capability, fit with ${poss} work.
+- objections: what would make ${p} doubt, distrust or not adopt ${product}, even if it worked: value, price, trust, missing capability, fit with ${poss} work.
 - likes: what worked well or convinced ${obj}.
 Every item has:
   - where: the page, screen, section, passage or feature it is about, in a few words (for example "pricing page", "sign-up form", "section on security"). Name the same place the same way each time.
   - what: one or two concrete sentences: what ${p} tried or looked for, what happened or was missing, and, for a problem, what ${p} expected instead. Not a verdict like "confusing" or "great UX" on its own.
-  - severity, for frictions and objections only: 1 (a small irritation) to 4 (it stops ${obj}: ${p} could not go on, or would not adopt ${project.name}).
-- sentiment: ${poss} overall view of ${project.name}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
+  - severity, for frictions and objections only: 1 (a small irritation) to 4 (it stops ${obj}: ${p} could not go on, or would not adopt ${product}).
+- sentiment: ${poss} overall view of ${product}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
 - confidence: how sure ${p} is of that view, from 0 to 1.
-- would_continue: whether ${p} would keep using ${project.name} for tasks like this one.
+- would_continue: whether ${p} would keep using ${product} for tasks like this one.
 - reason: why, as ${p} would say it, in at most 40 words.
 Answer from what ${p} saw and did in this session only. Do not invent praise, friction, objections or certainty: when ${p} gave up or got stuck, the true answer says so.`;
 }
 
-/** The volatile part: how the episode ended, how long it took and the frictions the persona reported on the way. */
-export function surveyParts(opts: { persona: Persona; end: SurveyedEnd; detail: string | null; steps: number; frictions: string[] }): UserPart[] {
+/** What the persona saw, for its survey: its latest thoughts, oldest first, and its current opinion of the product. */
+export function sawLines(p: string, product: string, thoughts: string[], opinion: Opinion | null): string[] {
+  return [
+    ...(thoughts.length ? [`What ${p} was thinking at ${thoughts.length === 1 ? 'the last step' : `the last ${thoughts.length} steps`}:`, ...thoughts.map((t) => `- "${clip(t, 200)}"`)] : []),
+    opinion ? `Current opinion of ${product} (self-reported): ${JSON.stringify(opinion)}` : `${p} has no settled opinion of ${product} yet.`,
+  ];
+}
+
+/** The volatile part: how the episode ended, how long it took, what the persona thought and reported on the way, and its opinion. */
+export function surveyParts(opts: { persona: Persona; product: string; end: SurveyedEnd; detail: string | null; steps: number; frictions: string[]; thoughts: string[]; opinion: Opinion | null }): UserPart[] {
   const p = first(opts.persona);
   const text = [
     `The session is over after ${opts.steps} step${opts.steps === 1 ? '' : 's'}: ${ENDING[opts.end](p)}${opts.detail ? ` ("${opts.detail}")` : ''}.`,
     ...(opts.frictions.length ? [`Frictions ${p} reported along the way:`, ...opts.frictions.map((f) => `- "${f}"`)] : [`${p} reported no frictions along the way.`]),
+    ...sawLines(p, opts.product, opts.thoughts, opts.opinion),
     '',
-    `What got in ${p}'s way, what would stop ${p} adopting the product, what did ${p} like, and would ${p} keep using it?`,
+    `What got in ${p}'s way, what would stop ${p} adopting ${opts.product}, what did ${p} like, and would ${p} keep using it?`,
   ].join('\n');
   return [{ type: 'text', text }];
 }

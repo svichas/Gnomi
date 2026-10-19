@@ -30,11 +30,11 @@ import type {
 export const HYPOTHESIS_BANNER =
   'These findings come from simulated users. Treat them as hypotheses and validate the top items with real users before committing to changes.';
 
-const OUTCOMES: Outcome[] = ['done', 'abandoned', 'budget_exceeded', 'repeated_failure', 'blocked', 'incomplete', 'not_started'];
+const OUTCOMES: Outcome[] = ['done', 'abandoned', 'budget_exceeded', 'repeated_failure', 'model_failed', 'blocked', 'incomplete', 'not_started'];
 // Events only an episode the persona began can log.
 const EPISODE = new Set<EventType>(['persona.episode_started', 'persona.step', 'persona.goal_done', 'persona.abandoned']);
 // A persona with several POIs ends as its worst: the first of these that one of its POIs ended with.
-const WORST: Outcome[] = ['blocked', 'repeated_failure', 'budget_exceeded', 'abandoned', 'incomplete'];
+const WORST: Outcome[] = ['blocked', 'repeated_failure', 'budget_exceeded', 'abandoned', 'model_failed', 'incomplete'];
 
 // Runs logged before M2 froze one `persona`, a top-level budget, and no audience or settings; before M5, one `poi`.
 type LoggedConfig = Omit<RunConfig, 'personas' | 'sessions' | 'project'> & {
@@ -81,10 +81,9 @@ function endingOf(own: GnomiEvent[]): Ending {
   if (budget) ending = { outcome: 'budget_exceeded', outcome_text: null };
   if (lastBlock && !resumedAfter(own, lastBlock)) ending = { outcome: 'blocked', outcome_text: lastBlock.payload.detail };
   if (stuck) {
-    ending = {
-      outcome: 'repeated_failure',
-      outcome_text: `The same ${stuck.payload.action} failed three times in a row (${stuck.payload.error})`,
-    };
+    ending = stuck.payload.error === 'invalid_output'
+      ? { outcome: 'model_failed', outcome_text: 'The model gave no valid answer three steps in a row; this says nothing about the product' }
+      : { outcome: 'repeated_failure', outcome_text: `The same ${stuck.payload.action} failed three times in a row (${stuck.payload.error})` };
   }
   if (abandoned) ending = { outcome: 'abandoned', outcome_text: abandoned.payload.reason };
   if (goalDone) ending = { outcome: 'done', outcome_text: goalDone.payload.summary };
@@ -275,6 +274,12 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Each web POI's start page host comes first and is always allowed.
   const hosts = webPois(pois).flatMap((poi) => [hostOf(poi.start_url), ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
+  const discarded = ofType(events, 'social.discarded');
+  const runNotes = [
+    // DeepSeek takes no images (llm/gateway.ts), so its navigator is text-only whatever the setting says.
+    ...(webPois(pois).length && settings && (!settings.screenshots || settings.routing.navigator.provider === 'deepseek') ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
+    ...(discarded.length ? [`The run stopped in round ${discarded[0].round} before applying ${discarded.length} paid social answer${discarded.length === 1 ? '' : 's'}, so the feed and opinions miss ${discarded.length === 1 ? 'it' : 'them'}.`] : []),
+  ];
 
   return {
     ...(comparison ? { comparison } : {}),
@@ -335,7 +340,7 @@ export function buildReport(events: GnomiEvent[]): Report {
         reason: e.payload.reason,
       })),
       signal_thresholds: config.signals ?? null,
-      limitations: comparison ? comparison.limitations : analysis.limitations,
+      limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },
   };

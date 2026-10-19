@@ -172,7 +172,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         name: 'Built-in persona',
         share: 100,
         personas: 1,
-        outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0, not_started: 0 },
+        outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
         completion: 1,
         with_friction: 1,
         frictions: 2,
@@ -358,6 +358,9 @@ test('outcomes follow done > abandoned > repeated_failure > blocked > budget_exc
   assert.equal(outcomeOf(blockedAt(1200), resumedAt(1300), budgetAt(1400)), 'budget_exceeded');
   assert.equal(outcomeOf(budgetAt(1200)), 'budget_exceeded');
   assert.equal(outcomeOf(), 'incomplete');
+  const silent: [number, NewEvent] = [1200, { ...env, type: 'signal.repeated_failure', payload: { step_no: 3, action: 'wait', error: 'invalid_output' } }];
+  assert.deepEqual(buildReport(stored([startedAt, stepAt(1100), silent])).personas[0].outcome_text?.startsWith('The model gave no valid answer'), true);
+  assert.equal(outcomeOf(silent), 'model_failed', 'the model failing to answer is not the product');
 });
 
 test('the methods appendix counts blocked requests per host, most first, ties A to Z', () => {
@@ -519,7 +522,7 @@ test('a population folds into per-persona outcomes and per-segment rates', () =>
       name: 'Recruiters',
       share: 60,
       personas: 4,
-      outcomes: { done: 1, abandoned: 1, budget_exceeded: 1, repeated_failure: 1, blocked: 0, incomplete: 0, not_started: 0 },
+      outcomes: { done: 1, abandoned: 1, budget_exceeded: 1, repeated_failure: 1, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
       completion: 0.25,
       with_friction: 0.75,
       frictions: 4,
@@ -529,7 +532,7 @@ test('a population folds into per-persona outcomes and per-segment rates', () =>
       name: 'Hiring managers',
       share: 40,
       personas: 2,
-      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 1, incomplete: 0, not_started: 0 },
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 1, incomplete: 0, not_started: 0 },
       completion: 0.5,
       with_friction: 0.5,
       frictions: 1,
@@ -670,7 +673,7 @@ const expectedOldReport = {
       name: 'Built-in persona',
       share: 100,
       personas: 1,
-      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0, not_started: 0 },
+      outcomes: { done: 1, abandoned: 0, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 },
       completion: 1,
       with_friction: 0,
       frictions: 0,

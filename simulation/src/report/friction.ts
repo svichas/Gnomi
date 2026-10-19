@@ -141,8 +141,8 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
   for (const e of events) {
     if (e.type === 'persona.friction_reported') {
       const at = atStep(e, e.payload.step_no, e.payload.where.url);
-      // A text's confusions group by the passage they quote, as a page's frictions do by their element.
-      const element = e.payload.passage?.text ? `passage "${e.payload.passage.text.replace(/\s+/g, ' ').slice(0, 120)}"` : at.element;
+      // A text's confusions group by the passage they quote, a page's by the element they are about, not always the step's (loop.ts).
+      const element = e.payload.passage?.text ? `passage "${e.payload.passage.text.replace(/\s+/g, ' ').slice(0, 120)}"` : e.payload.about ? elementOf(e.payload.about) : at.element;
       reports.push({ ...at, ...stepEvidence(e.payload, at), element, severity: clampSeverity(e.payload.severity), text: e.payload.what });
     } else if (e.type === 'persona.abandoned') {
       reports.push({ ...atStep(e, e.payload.step_no, null), kind: 'abandoned', severity: ABANDON_SEVERITY, text: e.payload.reason });

@@ -366,8 +366,10 @@ export interface EventPayloads {
     severity: number; // 1–4
     what: string;
     expected: string;
-    where: { url: string; ref: string | null };
+    where: { url: string; ref: string | null }; // ref: the element it is about, as the persona named it or the failed action before; older logs: the step's own action
     heard_post_ids: string[]; // the feed posts handed to the step it was raised in
+    about?: ActionTarget; // the element it is about, when the persona named one or the action before it failed; absent in older logs
+    quote_unverified?: true; // text POIs: the quote was too short or not found in the text, so no passage is linked
   } & StepEvidence;
   'persona.opinion_changed': {
     poi_id: string;
@@ -380,7 +382,8 @@ export interface EventPayloads {
   'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
   'persona.resumed': { step_no: number };
   // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a harness post, not a model's.
-  'social.feed_viewed': { post_ids: string[] }; // in the order shown: a post's feed position is its index here
+  'social.feed_viewed': { post_ids: string[]; parent_ids?: string[] }; // in the order shown: a post's feed position is its index here; parent_ids: the replies' parents it quoted, absent in older logs
+  'social.discarded': { call_seq: number | null }; // a paid social answer a hard stop left unapplied; call_seq: its llm.call
   'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };
   'social.reaction': { post_id: string; kind: 'agree' | 'disagree' };
   'containment.blocked_request': { host: string; url: string; method: string; reason?: 'observe_only' | 'robots' }; // no reason: an unlisted or production host
@@ -517,7 +520,8 @@ export type ReportFriction = {
 } & StepEvidence;
 
 // not_started: the run never got to the persona (no step, no episode); it is left out of every rate.
-export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'incomplete' | 'not_started';
+// model_failed: the model gave no valid answer three steps running, which says nothing about the product.
+export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'model_failed' | 'blocked' | 'incomplete' | 'not_started';
 
 export interface ReportPersona {
   id: string;

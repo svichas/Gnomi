@@ -36,7 +36,7 @@ export function balancedTargetOrder(personas: { id: string; segment_id: string |
 /** A navigator's "done" still needs success evidence. The judge may resolve it after the trace is frozen. */
 export function terminalOutcome(end: EpisodeEnd) {
   switch (end) {
-    case 'done': case 'stopped': return 'incomplete' as const;
+    case 'done': case 'stopped': case 'model_failed': return 'incomplete' as const;
     case 'budget_exceeded': case 'repeated_failure': return 'task_failed' as const;
     case 'blocked': return 'blocked_environment' as const;
     case 'abandoned': return 'abandoned' as const;
@@ -322,6 +322,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
       : end === 'stopped' ? deps.stopReason()
       : end === 'budget_exceeded' ? 'The predeclared task-effort limit was exhausted.'
       : end === 'repeated_failure' ? 'The accessible task ended after repeated action failures.'
+      : end === 'model_failed' ? 'The navigator model gave no valid answer three steps in a row.'
       : end === 'blocked' ? 'The session or challenge prevented this task.' : 'The persona chose to abandon the assigned task.', evidence_seqs: [] };
     const endSeq = deps.events().at(-1)?.seq ?? started.seq;
     pendingEpisodes.set(scope.episode_id, { persona, task, scope, outcome, end, startSeq: started.seq, endSeq });

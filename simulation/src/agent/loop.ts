@@ -1,17 +1,26 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
-import { DEFAULT_SIGNALS, detectSignals, isSubmit, type Step } from '../signals/index.ts';
+import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
+import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
-import type { Action, ActionOutcome, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
+import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
 
-export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'blocked' | 'stopped';
+// model_failed: the model gave no valid answer three steps running; the engine ends it, and it says nothing about the product.
+export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'model_failed' | 'blocked' | 'stopped';
 
-/** Steps a persona gets before giving up, from patience (tech.md §6.4); the engine enforces it, the prompt only mentions it. */
+/** Steps a persona gets before giving up, from patience (tech.md §6.4); the engine enforces it, and the prompt does not show it. */
 export function stepBudget(persona: Persona): number {
   return [12, 20, 30, 45, 60][persona.patience - 1] ?? 30;
+}
+
+/** The role and name of the element with this ref in a snapshot (browser/prune.ts lines), or null when it is not there. */
+export function targetIn(snapshot: string, ref: string): ActionTarget | null {
+  const line = snapshot.split('\n').find((l) => l.includes(`[ref=${ref}]`));
+  const m = line && /- (\S+) "((?:[^"\\]|\\.)*)"/.exec(line);
+  return m ? { role: m[1], name: m[2], box: null } : null;
 }
 
 /** What a POI runner (poi/index.ts) gets for one persona's episode on one POI. */
@@ -24,6 +33,8 @@ export interface EpisodeDeps {
   budget: number;
   /** Steps the persona took on its earlier POIs: step numbers run on across a persona's POIs, so each names one step of the run. */
   stepsBefore: number;
+  /** The persona's opinion of this POI when the episode starts, from an earlier social phase; null or absent when it has none. */
+  opinion?: Opinion | null;
   /** A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely re-recorded. */
   openPage: (poi: WebPoi) => Promise<PageDriver>;
   llm: LlmGateway;
@@ -62,15 +73,19 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const step_budget = deps.budget;
   const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
     record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
-  const system = systemPrompt(persona, config.project, segment, step_budget, poi);
+  const system = systemPrompt(persona, config.project, segment, poi);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
   const history: Step[] = []; // every recorded step, for the signal detectors
   const thresholds = config.signals ?? DEFAULT_SIGNALS;
-  let opinion: Opinion | null = null;
+  let opinion: Opinion | null = deps.opinion ?? null;
   let heard: HeardPost[] = []; // the last feed, for the next step only
   let failKey = '';
   let failStreak = 0;
+  let invalidStreak = 0;
+  const reported = new Set<string>(); // page and normalised text of each friction already recorded this episode
+  // The gateway strips images for DeepSeek (llm/gateway.ts), so the prompt must not say there is a screenshot.
+  const sendShots = settings.screenshots && settings.routing.navigator.provider !== 'deepseek';
 
   // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
@@ -118,7 +133,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const shot = await page.screenshot();
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no - stepsBefore, stepBudget: step_budget, memory, opinion, heard, page: snapshot, screenshot: settings.screenshots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
     heard = [];
     if (signal.aborted) return null;
     try {
@@ -181,7 +196,17 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         opinion = structuredClone(after);
       }
       const friction = output?.friction ?? null;
-      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url: snapshot.url, ref: action.ref }, heard_post_ids });
+      const said = friction && JSON.stringify([snapshot.url, normaliseText(friction.what)]);
+      // The same complaint again on the same page is one friction, not one per step; the step keeps its thought and feeling.
+      if (friction && said && !reported.has(said)) {
+        reported.add(said);
+        const { about_ref, ...report } = friction;
+        // What it is about: the element the persona names, else the last action when it failed or did nothing, else the next action's.
+        const prev = history.at(-2);
+        const about: { ref: string | null; target: ActionTarget | null } = about_ref ? { ref: about_ref, target: targetIn(snapshot.text, about_ref) }
+          : prev && (!prev.result.ok || failedAction(prev)) ? { ref: prev.action.ref, target: prev.target } : { ref: action.ref, target: null };
+        emit('persona.friction_reported', { step_no, ...report, where: { url: snapshot.url, ref: about.ref }, heard_post_ids, ...(about.target && { about: about.target }) });
+      }
 
       if (action.type === 'done') {
         emit('persona.goal_done', { step_no, summary: action.text ?? '' });
@@ -197,6 +222,13 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       const next = await inspect(step_no, result.url_after);
       if (next !== 'go') return next;
 
+      // A model that keeps failing to answer is not the product failing: it ends apart from repeated_failure, with no survey.
+      invalidStreak = output ? 0 : invalidStreak + 1;
+      if (invalidStreak === 3) {
+        emit('signal.repeated_failure', { step_no, action: action.type, error: 'invalid_output' });
+        return 'model_failed';
+      }
+      if (!output) continue; // neither counts towards nor breaks a run of failed actions
       if (result.ok) failStreak = 0;
       else {
         const key = JSON.stringify([action, result.error]);
