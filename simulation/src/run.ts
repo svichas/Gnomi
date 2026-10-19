@@ -165,7 +165,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
   // This estimate can stop admission before the recorded cap. It is a precaution, not a bound on provider billing.
   // Reaching the recorded cap above cancels all model work; browser actions already dispatched still settle and log.
-  // With social rounds whole slices and phases are admitted (admit below), so no step is refused by who answered first.
+  // Outside comparisons whole cohorts, slices and phases are admitted (admit below), so no step is refused by who answered first.
   let inFlight = 0;
   let stepsDone = 0;
   const beginStep = (estimatedCost?: number) => {
@@ -174,7 +174,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (drain.signal.aborted) return false;
     const now = spentUsd();
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
-    if (!rounds && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
+    if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
       halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
       return false;
     }
@@ -563,7 +563,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       if (comparisonAdmissionReason && !halted) halt({ reason: 'cost_budget', detail: comparisonAdmissionReason }, false);
       return;
     }
-    if (!rounds) return inParallel(mixed(config.personas), episode);
+    if (!rounds) {
+      const steps = config.personas.reduce((sum, p) => sum + assigned.get(p.id)!.reduce((own, poi) => own + poiBudget(p, poi), 0), 0);
+      return admit(steps, 'the cohort') ? inParallel(mixed(config.personas), episode) : undefined;
+    }
     // Once every episode is over the swarm keeps talking, within the R rounds, while anyone has something to read or tell: a text
     // read in one sitting is still discussed, and what a persona found in its last stretch of use reaches the feed.
     for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {

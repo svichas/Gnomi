@@ -1,5 +1,5 @@
 import { profileEntries } from '../profile/schema.ts';
-import type { AttributeValue, Persona, PersonaSchema, ProfileAttribute, ReportDimension, ReportPersona } from '../types.ts';
+import { isUnrated, type AttributeValue, type Persona, type PersonaSchema, type ProfileAttribute, type ReportDimension, type ReportPersona } from '../types.ts';
 
 /** A typed key: false, 0 and lists must never collapse into a missing value or a text value. */
 export const attributeKey = (value: AttributeValue): string => JSON.stringify(value);
@@ -41,7 +41,7 @@ export function reportAttributes(persona: Persona, schema: PersonaSchema): Recor
   return Object.fromEntries(profileEntries(persona, schema, 'report').map(({ attribute, value }) => [attribute.id, structuredClone(value)]));
 }
 
-/** Rates use the started personas with this exact value and the report's friction rule; sentiment excludes personas without a step. */
+/** Personas counts everyone with this exact value; rates use the rated ones (as the segment table does) and the report's friction rule; sentiment excludes personas without a step. */
 export function buildDimensions(population: Persona[], personas: ReportPersona[], latestFeeling: Map<string, number>, schema: PersonaSchema, withFriction: Set<string>): ReportDimension[] {
   const byId = new Map(personas.map((persona) => [persona.id, persona]));
   return groupProfiles(population, schema).map(({ attribute, values }) => ({
@@ -51,7 +51,7 @@ export function buildDimensions(population: Persona[], personas: ReportPersona[]
     values: values.map(({ value, personaIds }) => {
       const members = personaIds.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
       const feelings = personaIds.flatMap((id) => latestFeeling.has(id) ? [latestFeeling.get(id)!] : []);
-      const started = members.filter((member) => member.outcome !== 'not_started');
+      const started = members.filter((member) => !isUnrated(member.outcome));
       return {
         value,
         personas: members.length,

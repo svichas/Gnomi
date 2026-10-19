@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
 import type { Action, ActionOutcome, Device } from '../types.ts';
+import { failedAction } from '../signals/index.ts';
 import { launchBrowserPool } from './pool.ts';
 
 const SECRET = 'hunter2-secret';
@@ -43,7 +44,8 @@ const pages: Record<string, string> = {
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
-<button onclick="fetch('/slow').then(() => document.body.append('Saved slowly'))">Slow save</button></body></html>`,
+<button onclick="fetch('/slow', { method: 'POST' }).then(() => document.body.append('Saved slowly'))">Slow save</button>
+<button onclick="fetch('/slow')">Poll</button></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -343,6 +345,14 @@ test('a link that opens a new tab takes the persona there; a slow response marks
   assert.equal((await page.snapshot()).title, 'Next page');
   const plain = await act(page, 'wait');
   assert.equal(plain.pending, undefined, 'only a step that started something carries the flag');
+});
+
+test('a slow GET the click starts, such as a long poll, does not hide that the click changed nothing', async (t) => {
+  const page = await open(t, '/keys-and-tabs');
+  const action: Action = { type: 'click', ref: refOf((await page.snapshot()).text, /button "Poll" \[ref=(\w+)\]/), text: null };
+  const result = await page.act(action);
+  assert.deepEqual([result.ok, result.dom_changed, result.pending], [true, false, undefined]);
+  assert.equal(failedAction({ step_no: 1, action, target: null, result, snapshot_hash: '' })?.payload.error, 'no_effect');
 });
 
 test('a click that can never succeed times out instead of hanging', async (t) => {

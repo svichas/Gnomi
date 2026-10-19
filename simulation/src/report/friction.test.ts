@@ -132,14 +132,12 @@ test('only failed actions, validation errors and HTTP errors confirm; loops, bac
   assert.equal(near('signal.small_target', { box: [0, 0, 10, 10] }), 'reported');
 });
 
-test('an exception in a step where containment refused a request is dropped; an HTTP error there still counts', () => {
+test('an exception in a step where containment refused a request stays a candidate that confirms nothing', () => {
   const candidates = buildCandidates(log(
     ['containment.blocked_request', 'p1', { host: 'cdn.test', url: 'http://cdn.test/app.js', method: 'GET' }],
     ['persona.step', 'p1', step(1)],
+    ['persona.friction_reported', 'p1', friction(1, 'The page broke')],
     ['signal.error', 'p1', { step_no: 1, url: JOBS, ref: 'e1', kind: 'exception', status: null, message: 'x is not defined' }],
-    ['signal.error', 'p1', { step_no: 1, url: JOBS, ref: 'e1', kind: 'http', status: 500, message: 'GET http://gym.test/api' }],
-    ['persona.step', 'p1', step(2)],
-    ['signal.error', 'p1', { step_no: 2, url: JOBS, ref: 'e1', kind: 'exception', status: null, message: 'y is not defined' }],
   ), 'poi');
-  assert.deepEqual(candidates.map((c) => [c.step_no, c.text]), [[1, 'HTTP 500: GET http://gym.test/api'], [2, 'Uncaught exception: y is not defined']]);
+  assert.deepEqual(candidates.map((c) => [c.step_no, c.trust, c.text]), [[1, 'reported', 'The page broke'], [1, 'observed', 'Uncaught exception: x is not defined']]);
 });

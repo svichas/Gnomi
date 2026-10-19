@@ -138,7 +138,7 @@ function dimensionLines(report: Report): string[] {
   if (!report.dimensions?.length) return [];
   return [
     '', '## Results by profile', '',
-    'Each row counts personas with that exact value, without segment weighting. Mean latest feeling uses each persona’s latest valid step feeling, from -2 to 2; personas without one are excluded. Lists are grouped as an ordered whole.',
+    'Each row counts personas with that exact value, without segment weighting; completion and friction rates leave out personas who did not start or got no valid model answer. Mean latest feeling uses each persona’s latest valid step feeling, from -2 to 2; personas without one are excluded. Lists are grouped as an ordered whole.',
     ...report.dimensions.flatMap((dimension) => [
       '', `### ${cell(dimension.name)}`, '',
       '| Value | Personas | Completion | Ran into friction | Mean latest feeling |',
@@ -162,7 +162,7 @@ function themeLines(report: Report): string[] {
   if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
   return [
     '', '## Themes', '',
-    "Ranked by severity first (the median over personas of each one's worst), so a severe problem one persona met ranks above a mild one many met; within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
+    "Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {

@@ -51,3 +51,13 @@ test('a reply about no POI is about its parent’s, and a change at a step hande
     ['a', 'd', 'r1', 'influence'],
   ]);
 });
+
+test('one change citing two posts by the same author is one edge, and a cited post wins over one it was handed', () => {
+  const step: GnomiEvent = {
+    ...base, seq: 3, round: 2, persona_id: 'b', type: 'persona.step',
+    payload: { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: 'u', url_after: 'u', dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 1, heard_post_ids: ['s3'] },
+  };
+  const change = changed(4, 'b', 1, -1, ['s1', 's2']);
+  if (change.type === 'persona.opinion_changed') change.payload.cause.step_ids = [3];
+  assert.deepEqual(influenceEdges([post(1, 'a', 's1'), post(2, 'a', 's2'), post(2, 'a', 's3'), step, change]).map((e) => [e.from, e.to, e.post_id, e.kind]), [['a', 'b', 's1', 'influence']]);
+});

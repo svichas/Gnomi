@@ -40,7 +40,7 @@ export interface ReadMemory {
 }
 
 /** The stable prefix for one persona and text: everything that is the same for every part, so it caches. */
-export function readSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi: TextPoi, budget: number): string {
+export function readSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi: TextPoi): string {
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
   const { locale } = personaEnvironment(persona);
@@ -51,7 +51,7 @@ export function readSystemPrompt(persona: Persona, project: ProjectConfig, segme
     high: `${p} uses products like this every day and knows the jargon.`,
   }[persona.familiarity_with_category];
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}. A long text gets ${budget === 1 ? 'one look' : `at most ${budget} parts read`} before ${p} stops.`,
+    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the part budget; stating it would steer when to stop
     familiarity,
     ...(english ? [] : [`${p}'s first language is ${languageName(locale)}; English is a second language.`]),
     ...(segment?.kind === 'buyer' ? [`${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides.`] : []),

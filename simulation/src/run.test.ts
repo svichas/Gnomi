@@ -489,9 +489,9 @@ test('no survey after a user stop, the wall clock, an unanswered block or a cost
   assert.deepEqual([clock.done, clock.report.stop_reason?.split(':')[0], clock.asked], [1, 'wall_clock', 0]);
   const blocked = await run([step('click', 'e1'), ...posted], { inspect: (n) => (n === 1 ? { challenge: 'recaptcha' } : {}), config: { pause_timeout_ms: 20 } });
   assert.deepEqual([blocked.report.personas[0].outcome, blocked.asked], ['blocked', 0]);
-  // $0.20 spent and $0.20 a call: the survey would reach the $0.40 cap, so it is never sent.
+  // $0.20 spent and $0.20 a call: the survey's call reaches the $0.40 cap, so its answer is never logged.
   const cost = await run(posted, { cost: 0.2, settings: { cost_budget_usd: 0.4 } });
-  assert.deepEqual([cost.done, cost.report.stop_reason?.split(':')[0], cost.asked], [1, 'cost_budget', 0]);
+  assert.deepEqual([cost.done, cost.report.stop_reason?.split(':')[0], cost.asked], [1, 'cost_budget', 1]);
 });
 
 test('survey answers follow the step rules: validated, retried once, cut off at the cap, errors end the run', async () => {
@@ -679,21 +679,43 @@ test('a rate limit halves the concurrency once per burst and records it', async 
   assert.equal(of(r.events, 'persona.goal_done').length, 8);
 });
 
-test('projected cost can stop admission early while already admitted calls and actions settle', async () => {
+test('without social rounds no step is refused by projection: the recorded cap stops the run and admitted work settles', async () => {
   const personas = Array.from({ length: 6 }, (_, i) => persona(`p-${i}`, { patience: 5 }));
   const r = begin(forever, { personas, settings: { concurrency: 3, cost_budget_usd: 1 }, cost: 0.1, delayMs: 2 });
   const report = await r.run.done;
   const spent = r.finished[0].cost_usd;
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
-    [{ reason: 'cost_budget', detail: 'the next steps were projected to reach the $1 budget' }],
+    [{ reason: 'cost_budget', detail: 'the $1 recorded-cost budget was reached' }],
   );
-  assert.ok(spent <= 1 + 1e-9, `spent ${spent}`);
-  assert.ok(spent >= 1 - (3 + 1) * 0.1 - 1e-9, `stopped too early: ${spent}`);
-  assert.equal(of(r.events, 'llm.call').length, of(r.events, 'persona.step').length, 'every call that started finished as a step');
+  assert.ok(spent >= 1 - 1e-9 && spent <= 1 + 3 * 0.1 + 1e-9, `spent ${spent}`); // the cap plus at most the three calls in flight
   assert.ok(r.files.has('runs/r-0001/report.json'));
   assert.equal(report.status, 'stopped');
   assert.ok(r.pages.every((p) => p.closed));
+});
+
+test('without social rounds the cohort is admitted once, so reversing who answers first changes no step count', async () => {
+  const counts = async (slow: string) => {
+    const r = begin([], {
+      // 24 steps at $0.10 stay under $2.45; a free, slow survey keeps one persona in flight while the other takes its last step.
+      personas: [persona('p-0', { patience: 1 }), persona('p-1', { patience: 1 })], settings: { concurrency: 2, cost_budget_usd: 2.45 },
+      llm: (record) => {
+        const steps = createScriptedGateway({ navigator: forever }, record, { costPerCall: 0.1 });
+        const free = createScriptedGateway({ navigator: () => SURVEY, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+        return { async call<T>(req: LlmRequest<T>) {
+          if (req.role !== 'navigator') return free.call(req);
+          if (req.purpose === 'survey') return sleep(50).then(() => free.call(req));
+          await sleep(req.persona_id === slow ? 6 : 5);
+          return steps.call(req);
+        } };
+      },
+    });
+    await r.run.done;
+    return ['p-0', 'p-1'].map((id) => of(r.events, 'persona.step').filter((e) => e.persona_id === id).length);
+  };
+  const first = await counts('p-1');
+  assert.deepEqual(first, [12, 12], 'neither persona is refused a step by the other one being in flight');
+  assert.deepEqual(await counts('p-0'), first);
 });
 
 test('a final done response at the recorded cap stops the run and still writes its report', async () => {

@@ -75,17 +75,14 @@ const bySeverity = (a: ReportFriction, b: ReportFriction) => b.severity - a.seve
 
 // How much a finding rests on (simulation/src/report/themes.ts prevalence). Reports before it only have the persona count.
 const EVIDENCE_LEVEL = {
-  strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it', order: 3 },
-  some: { text: 'Some evidence', plain: 'two or more personas', order: 2 },
-  single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern', order: 1 },
-  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed first', order: 0 },
-} as const satisfies Record<EvidenceLevel, { text: string; plain: string; order: number }>;
+  strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it' },
+  some: { text: 'Some evidence', plain: 'two or more personas' },
+  single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern' },
+  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed first' },
+} as const satisfies Record<EvidenceLevel, { text: string; plain: string }>;
 const evidenceOf = (finding: { prevalence?: Prevalence; personas: number }): EvidenceLevel => finding.prevalence?.level ?? (finding.personas <= 1 ? 'single' : 'some');
-const isSingle = (theme: ReportTheme) => evidenceOf(theme) === 'single';
-
-/** Better evidence first; within it the engine's rank (severity, then the low end of the share × trust). */
-const byPriority = (a: ReportTheme, b: ReportTheme) =>
-  EVIDENCE_LEVEL[evidenceOf(b)].order - EVIDENCE_LEVEL[evidenceOf(a)].order || a.rank - b.rank;
+// One persona or none met it first-hand: worth a look, not a reason to fix something first.
+const isSingle = (theme: ReportTheme) => evidenceOf(theme) === 'single' || evidenceOf(theme) === 'none';
 
 function EvidenceChip({ finding }: { finding: { prevalence?: Prevalence; personas: number } }) {
   const { text, plain } = EVIDENCE_LEVEL[evidenceOf(finding)];
@@ -157,7 +154,7 @@ function Glance({ report, themes: all }: { report: ReportData; themes: ReportThe
   const outcomes = (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => [outcome, report.personas.filter((p) => p.outcome === outcome).length] as const).filter(([, n]) => n > 0);
   const done = outcomes.find(([outcome]) => outcome === 'done')?.[1] ?? 0;
   const started = total - outcomes.reduce((sum, [outcome, n]) => sum + (isUnrated(outcome) ? n : 0), 0);
-  const singles = themes.filter(isSingle).length;
+  const singles = themes.filter((t) => evidenceOf(t) === 'single').length;
   const problems: { severity: number }[] = report.themes ? themes.filter((t) => !isSingle(t)) : report.frictions;
   const levels = LEVELS.map((n) => [n, problems.filter((p) => level(p.severity) === n).length] as const).filter(([, n]) => n > 0);
   const answers = report.sentiment?.filter((row) => row.sentiment !== null && row.surveyed > 0) ?? [];
@@ -165,9 +162,8 @@ function Glance({ report, themes: all }: { report: ReportData; themes: ReportThe
   const feeling = surveyed ? answers.reduce((sum, row) => sum + row.sentiment! * row.surveyed, 0) / surveyed : null;
   const carryOn = surveyed ? answers.reduce((sum, row) => sum + row.would_continue * row.surveyed, 0) / surveyed : 0;
   // The verdict names a problem more than one persona met first-hand; objections only lead when nothing got in the way.
-  const leads = (t: ReportTheme) => !isSingle(t) && evidenceOf(t) !== 'none';
-  const top = themes.find((t) => leads(t) && t.category !== 'objection');
-  const doubt = top ? undefined : themes.find(leads);
+  const top = themes.find((t) => !isSingle(t) && t.category !== 'objection');
+  const doubt = top ? undefined : themes.find((t) => !isSingle(t));
   return (
     <section aria-labelledby="glance-title" className="space-y-3">
       <h3 id="glance-title" className={heading}>At a glance</h3>
@@ -393,7 +389,7 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
         </section>
       )}
       {singles.length > 0 && (
-        <Fold id="singles-title" title={`Met first-hand by one persona (${singles.length})`} hint="Worth a look, not yet a pattern">
+        <Fold id="singles-title" title={`Met first-hand by one persona or none (${singles.length})`} hint="Worth a look, not yet a pattern">
           <Findings themes={singles} empty="" {...props} />
         </Fold>
       )}
@@ -941,7 +937,7 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-stone-500">Full-run groups, without segment weighting. Rates use the personas in each row. Feeling is the mean of each persona's latest valid step feeling, from −2 to 2; personas without one are excluded. Lists match the entire ordered list.</p>
+      <p className="text-xs text-stone-500">Full-run groups, without segment weighting. Personas counts everyone in the row; rates leave out those who did not start or got no valid model answer. Feeling is the mean of each persona's latest valid step feeling, from −2 to 2; personas without one are excluded. Lists match the entire ordered list.</p>
     </section>
   );
 }
@@ -955,7 +951,8 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
   const filtered = !!filter.dimension && !!filter.value;
   const details = filtered ? { ...report, personas: selectedPersonas, frictions: report.frictions.filter((friction) => ids.has(friction.persona_id)) } : report;
   const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
-  const themes = [...(report.themes ?? [])].sort(byPriority);
+  // The engine's rank: evidence, then severity, then the low end of the share × trust (simulation/src/report/themes.ts).
+  const themes = [...(report.themes ?? [])].sort((a, b) => a.rank - b.rank);
   const facts = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],

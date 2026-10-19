@@ -258,3 +258,11 @@ test('influence counts one edge per author, persona and change; a change at a st
   assert.deepEqual(poi.heard?.map((e) => [e.from, e.to, e.kind]), [['b1', 'a3', 'heard']]);
   assert.ok(reportToMarkdown(buildReport(events)).includes('- Heard before a change: Bo → Ari (round 3, -2.00, #'));
 });
+
+test('a parent quoted above a reply in the feed reaches its reader too', () => {
+  const { events, record } = socialRun();
+  record({ ...at(3, 'a2'), type: 'social.feed_viewed', payload: { post_ids: [], parent_ids: ['s4'] } });
+  record({ ...at(3, null), type: 'report.themes', payload: judged });
+  const home = buildReport(events).spread![0].themes[1];
+  assert.deepEqual(home.readers, ['a2', 'a3']); // Abe was shown a feed before Ari was
+});

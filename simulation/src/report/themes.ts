@@ -1,4 +1,4 @@
-import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
+import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
@@ -288,7 +288,7 @@ function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: stri
  * Step 5: affected_s = first-hand personas in segment s ÷ personas in s who reached one of the theme's pages (any page of the POI
  * for a theme of survey answers only). Prevalence is the first-hand personas of those who reached it, or for buyer objections of
  * the buyers surveyed on the POI. Severity is the median over personas of each one's worst; score = the share's low end × the mean
- * trust weight over personas, each at its best trust. Themes rank by severity tier, then score.
+ * trust weight over personas, each at its best trust. Themes rank by evidence level, then severity tier, then score.
  */
 export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id))) {
   const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
@@ -352,6 +352,9 @@ const Z = 1.96; // 95%
  * k of n personas with its 95% Wilson score interval, which stays honest for small n and for 0 or n of n (tech.md §8.2 step 5).
  * Strong: three or more personas and at least a quarter of n; some: two or more; single: one; none: nobody first-hand.
  */
+// The first key of a theme's rank; the app and the markdown export show themes in rank order.
+const EVIDENCE_ORDER: Record<EvidenceLevel, number> = { strong: 3, some: 2, single: 1, none: 0 };
+
 export function prevalence(k: number, n: number): Prevalence {
   const exposed = Math.max(n, k);
   const level = k === 0 ? 'none' : k === 1 ? 'single' : k >= 3 && k / exposed >= 0.25 ? 'strong' : 'some';
@@ -557,6 +560,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       if (sent < own.length) note(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
       if (input.posts.length < talk.length) note(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
       if (unknown.length > 0) note(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
+      if (keys === undefined) note('This log predates group keys, so the judge\'s titles could not be checked against the current grouping and may name other groups.');
     }
 
     // Tagged before ranking: first-hand counts, and so the ranking, depend on which posts discuss which theme.
@@ -602,8 +606,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           suggestion: null,
         };
       })
-      // A severe problem one persona met outranks a mild one many met; within a tier, the share's low end × trust.
-      .sort((a, b) => Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
+      // Evidence first, so one self-report cannot top a problem many met; then severity tier, then the share's low end × trust.
+      .sort((a, b) => EVIDENCE_ORDER[b.prevalence!.level] - EVIDENCE_ORDER[a.prevalence!.level] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
     ranked.forEach((t, i) => (t.rank = i + 1));
 
     const suggested = lastFor(events, 'report.suggestions', poi_id);

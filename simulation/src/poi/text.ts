@@ -69,7 +69,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
   emit('persona.episode_started', { poi_id: poi.id, device: persona.device, start_url: where, ...personaEnvironment(persona) });
 
   const parts = textParts(text);
-  const system = readSystemPrompt(persona, config.project, segment, poi, deps.budget);
+  const system = readSystemPrompt(persona, config.project, segment, poi);
   const memory: ReadMemory[] = [];
   let opinion: Opinion | null = deps.opinion ?? null;
   let heard: HeardPost[] = []; // the last feed, for the next part only

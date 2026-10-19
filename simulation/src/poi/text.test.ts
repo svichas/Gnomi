@@ -112,6 +112,7 @@ test('a run with a buyer segment over the pricing copy yields sentiment by segme
     assert.doesNotMatch(req.shared ?? '', /Persona/, 'nothing about the persona in the shared part, so every reader reuses one cached copy');
     assert.doesNotMatch(said(req), /<text/);
     assert.match(req.system, req.persona_id!.startsWith('b') ? /weighing whether to buy Plotline/ : /^(?![\s\S]*weighing whether to buy)/);
+    assert.doesNotMatch(req.system, /parts read|one look/, 'the engine-enforced budget does not show through');
     return {
       thought: 'Team says SSO, but the FAQ says Business. Which is it?',
       feeling: -1,

@@ -126,12 +126,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
   let popup: Page | null = null; // a tab the current action opened
   let formClick = false; // the current action clicked something inside a form
-  const inflight = new Set<Request>(); // page loads and script requests the current action started that have not finished
+  const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
   page.on('popup', (opened) => {
     popup = opened;
   });
   page.on('request', (request) => {
-    if (ERROR_RESOURCES.has(request.resourceType())) inflight.add(request);
+    // A script's GET (analytics, a long poll) is the page's own traffic and would hide a dead click; a write or a load is the action's.
+    if (request.resourceType() === 'document' || (request.method() !== 'GET' && ERROR_RESOURCES.has(request.resourceType()))) inflight.add(request);
   });
   page.on('requestfinished', (request) => inflight.delete(request));
   const rememberPasswords = () => Promise.all(page.frames().map((frame) => frame.locator(PASSWORD).evaluateAll((inputs) => {

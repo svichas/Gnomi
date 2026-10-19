@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { AttributeValue, GnomiEvent, NewEvent, Persona, PersonaSchema, ProfileAttribute, ProjectConfig, RunConfig } from '../types.ts';
+import type { AttributeValue, GnomiEvent, NewEvent, Persona, PersonaSchema, ProfileAttribute, ProjectConfig, ReportPersona, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
-import { attributeKey, formatAttributeValue } from './dimensions.ts';
+import { attributeKey, buildDimensions, formatAttributeValue } from './dimensions.ts';
 import { reportToMarkdown } from './markdown.ts';
 
 const custom = (id: string, type: ProfileAttribute['type'], enabled = true): ProfileAttribute => ({
@@ -107,4 +107,11 @@ test('Markdown includes dimension denominators and typed labels without exposing
   assert.equal(formatAttributeValue(false), 'false');
   assert.equal(formatAttributeValue(['A', 'B']), 'A, B');
   assert.notEqual(attributeKey(false), attributeKey('false'));
+});
+
+test('a persona the model gave no valid answer for counts in the row but not in its rates, like one that never started', () => {
+  const people = ['p1', 'p2', 'p3'].map((id): Persona => ({ ...BUILTIN_PERSONA, id, attributes: { region: 'EMEA' } }));
+  const outcomes = [['p1', 'done'], ['p2', 'model_failed'], ['p3', 'not_started']].map(([id, outcome]) => ({ id, outcome }) as ReportPersona);
+  const [row] = buildDimensions(people, outcomes, new Map(), schema(), new Set()).find((d) => d.id === 'region')!.values;
+  assert.deepEqual([row.personas, row.completion], [3, 1]);
 });

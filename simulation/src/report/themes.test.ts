@@ -178,6 +178,7 @@ test('limitations say what the analysis could not do', () => {
   const judgedRun = [...run, { ...run[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Save', description: 'd', group_ids: ['g1', 'g4'] }] } } as GnomiEvent];
   assert.deepEqual(analyseFrictions(judgedRun, ctx).limitations, [
     'The judge named unknown group ids (g4); they were ignored.',
+    'This log predates group keys, so the judge\'s titles could not be checked against the current grouping and may name other groups.',
     'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ]);
@@ -259,8 +260,8 @@ test('structured survey answers group by the part of the product they name, and 
   assert.deepEqual(judged.drafts.map((d) => [d.groups.map((g) => g.id), d.named_by]), [[['g1'], 'judge'], [['g2'], 'rules'], [['g3'], 'rules']]);
   const themes = analyseFrictions(events, ctx).themes;
   assert.deepEqual(themes.map((t) => [t.id, t.category, t.prevalence?.personas, t.prevalence?.exposed, t.prevalence?.level]), [
+    ['g1', 'friction', 2, 3, 'some'], // two personas: better evidence than either single report
     ['g2', 'objection', 1, 3, 'single'], // severity 4
-    ['g1', 'friction', 2, 3, 'some'], // a median of 2.5 is in the severity 3 tier, with the larger share
     ['g3', 'objection', 1, 3, 'single'],
   ]);
 });
@@ -290,6 +291,10 @@ test('replayed judge answers and suggestions are dropped when their group ids no
   const moved = analyseFrictions([...run, answer({ g1: '["poi","elsewhere"]' }), suggested], ctx);
   assert.deepEqual([moved.themes[0].named_by, moved.themes[0].suggestion], ['rules', null]);
   assert.ok(moved.limitations.includes('The grouping rules changed after this run, so 1 judge answer and 1 suggested change naming groups that no longer match were dropped.'));
+  const unchecked = 'This log predates group keys, so the judge\'s titles could not be checked against the current grouping and may name other groups.';
+  assert.ok(!same.limitations.includes(unchecked));
+  const old = { ...answer({}), payload: { poi_id: 'poi', themes: [{ title: 'Save is broken', description: 'd', group_ids: ['g1'] }] } } as GnomiEvent;
+  assert.ok(analyseFrictions([...run, old], ctx).limitations.includes(unchecked), 'a log from before keys keeps its titles but says they are unchecked');
 });
 
 test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {
@@ -298,7 +303,7 @@ test('a buyer’s plain answers are objections; an older survey’s are friction
   assert.deepEqual(kinds, [['objection', null, 2], ['survey', null, 2]]);
 });
 
-test('ranking: a severe problem one persona met ranks above a mild one several met; one persona repeating itself counts once', () => {
+test('ranking: evidence first, so a mild problem several met ranks above a severe one one persona met; one persona repeating itself counts once', () => {
   const many = new Map([...'abcdefghij'].map((id) => [id, { name: id, segment_id: 'rec' }]));
   const wide: Context = { poi_id: 'poi', personas: many, segments: [{ id: 'rec', name: 'Recruiters', share: 100 }] };
   const events = log(
@@ -308,10 +313,10 @@ test('ranking: a severe problem one persona met ranks above a mild one several m
   );
   const themes = analyseFrictions(events, wide).themes;
   assert.deepEqual(themes.map((t) => [t.title, t.prevalence?.level, t.rank]), [
-    ['Export crashed and I could not go on', 'single', 1],
-    ['Search ignores the job title', 'strong', 2],
+    ['Search ignores the job title', 'strong', 1],
+    ['Export crashed and I could not go on', 'single', 2],
   ]);
-  assert.deepEqual(themes[1].prevalence, { personas: 3, exposed: 10, share: 0.3, low: 0.1078, high: 0.6032, level: 'strong' });
+  assert.deepEqual(themes[0].prevalence, { personas: 3, exposed: 10, share: 0.3, low: 0.1078, high: 0.6032, level: 'strong' });
   // Persona e reports a blocker eight times; f and g a small irritation once each: the median is over personas, so 1.
   const repeated = log(
     ...[...'efg'].map((id) => ['persona.step', id, step(1)] as [EventType, string, object]),

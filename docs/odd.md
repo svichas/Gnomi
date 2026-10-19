@@ -38,7 +38,7 @@ For each round `1..R` (`run.ts`, `schedule`):
    3. Each persona with more than one persona in the run is *due* if its feed is non-empty, or if it took a step since it last read the feed and a later round remains. Everyone else is skipped.
    4. Due personas make one independent `socialiser` call concurrently.
    5. After every call has settled, validated answers are applied **in population order**, so response speed cannot decide whose post is newest. After a stop, late answers are logged as `llm.call` but not applied.
-3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. Before each usage slice and social phase the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
+3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. Before each usage slice and social phase, or once at the start of a run without social rounds, the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
 
 A persona writes at most one post per round. Silence is a valid action; a failed call is a different outcome.
 

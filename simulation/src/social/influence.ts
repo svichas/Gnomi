@@ -17,13 +17,16 @@ export interface InfluenceEdge {
 /**
  * Influence edges (tech.md §5.5, §6.6): B's opinion change cites A's post about the same POI and B's sentiment moved by at
  * least 0.5. Only a change of a prior opinion is 'influence'; a first opinion citing the post is 'formed' (new_simulation.md §4).
- * Uncited changes, self-citations and posts about other POIs draw no edge. Pure; shared by graph, report and acceptance.
+ * Uncited changes, self-citations and posts about other POIs draw no edge. One edge per author, persona and change of mind,
+ * however many of the author's posts it cites or was handed; a cited post wins over a heard one. Pure; shared by graph,
+ * report and acceptance.
  */
 export function influenceEdges(events: GnomiEvent[]): InfluenceEdge[] {
   const about = postPois(events);
   const posts = new Map<string, { author: string; poi: string | null }>();
   const heard = new Map<number, string[]>(); // step seq → the posts handed to it
   const edges: InfluenceEdge[] = [];
+  const seen = new Set<string>(); // (author, persona, change)
   for (const e of events) {
     if (e.type === 'social.post' && e.persona_id) posts.set(e.payload.post_id, { author: e.persona_id, poi: about.get(e.payload.post_id) ?? null });
     if (e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids)) heard.set(e.seq, e.payload.heard_post_ids);
@@ -34,7 +37,9 @@ export function influenceEdges(events: GnomiEvent[]): InfluenceEdge[] {
     const cited = new Set(cause.post_ids);
     const edge = (post_id: string, kind: InfluenceEdge['kind']) => {
       const post = posts.get(post_id);
-      if (post && post.author !== e.persona_id && post.poi === poi_id) edges.push({ from: post.author, to: e.persona_id!, poi_id, post_id, seq: e.seq, round: e.round, delta, kind });
+      if (!post || post.author === e.persona_id || post.poi !== poi_id || seen.has(`${post.author}\u0000${e.seq}`)) return; // the change's seq names its persona
+      seen.add(`${post.author}\u0000${e.seq}`);
+      edges.push({ from: post.author, to: e.persona_id!, poi_id, post_id, seq: e.seq, round: e.round, delta, kind });
     };
     for (const post_id of cited) edge(post_id, before === null ? 'formed' : 'influence');
     // Product use cites steps, not posts: a post handed to one of those steps was heard before the change, not shown to cause it.

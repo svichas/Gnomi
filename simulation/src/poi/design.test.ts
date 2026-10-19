@@ -35,6 +35,7 @@ const shows = new Map(framePlan().map(({ key, html }) => [sha(frameForModel(read
 function shopper(req: LlmRequest<unknown>) {
   if (req.purpose === 'survey') return DEMO_SURVEY;
   assert.equal(req.purpose, 'design');
+  assert.doesNotMatch(req.system, /no more than about|screens, or fewer/, 'the engine-enforced budget does not show through');
   const images = req.user.filter((p): p is Extract<UserPart, { type: 'image' }> => p.type === 'image');
   assert.ok(images.length >= 1 && images.length <= 2, 'only the current screen and the one before it');
   const screen = shows.get(sha(images.at(-1)!.data));

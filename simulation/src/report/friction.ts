@@ -100,15 +100,7 @@ const isSignal = (e: GnomiEvent): e is SignalEvent => e.type.startsWith('signal.
 export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candidate[] {
   const places = placesOf(events);
   const steps = new Map<string, { seq: number; payload: EventPayloads['persona.step'] }>();
-  // Steps during which containment refused a request: the request is logged before the step that made it.
-  const blocked = new Set<string>();
-  const contained = new Set<string>();
-  for (const e of events) {
-    if (e.type === 'containment.blocked_request') blocked.add(e.persona_id ?? '');
-    if (e.type !== 'persona.step') continue;
-    steps.set(stepKey(e.persona_id ?? '', e.payload.step_no), { seq: e.seq, payload: e.payload });
-    if (blocked.delete(e.persona_id ?? '')) contained.add(stepKey(e.persona_id ?? '', e.payload.step_no));
-  }
+  for (const e of events) if (e.type === 'persona.step') steps.set(stepKey(e.persona_id ?? '', e.payload.step_no), { seq: e.seq, payload: e.payload });
 
   const atStep = (e: GnomiEvent, step_no: number, url: string | null): Candidate => {
     const persona_id = e.persona_id ?? '';
@@ -161,9 +153,9 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       }
     } else if (isSignal(e)) {
       const kind = e.type.slice(7) as SignalKind;
+      // A console line or exception never corroborates. It may come from a script containment refused, but a blocked request
+      // does not log its resource type, so such a step's page errors stay as candidates rather than all being dropped.
       const pageNoise = e.type === 'signal.error' && e.payload.kind !== 'http';
-      // A script containment refused makes the page throw: Gnomi's doing, not the product's.
-      if (pageNoise && contained.has(stepKey(e.persona_id ?? '', e.payload.step_no))) continue;
       const signal: Candidate = { ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind] };
       // A console line or exception is about the page, not the element clicked, so it groups by its text (groupKey).
       if (pageNoise) signal.element = null;

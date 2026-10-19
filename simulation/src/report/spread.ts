@@ -27,9 +27,6 @@ export function sentimentByRound(opinions: Opinion[], rounds: number, who: Set<s
   });
 }
 
-// One edge per author, persona and change of mind, however many of the author's posts it cites.
-const once = (edges: InfluenceEdge[]) => [...new Map(edges.map((e) => [`${e.from}\u0000${e.to}\u0000${e.seq}`, e])).values()];
-
 /** Seeds, first- and second-hand personas, posters, readers and the segments they are in, influence and sentiment for one set of posts. */
 function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<string>>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
   const firstRound = Math.min(...talk.map((p) => p.round));
@@ -65,8 +62,8 @@ function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<st
     posters,
     readers,
     segments,
-    influence: once(edges.filter((e) => e.kind === 'influence')),
-    heard: once(edges.filter((e) => e.kind === 'heard')),
+    influence: edges.filter((e) => e.kind === 'influence'),
+    heard: edges.filter((e) => e.kind === 'heard'),
     sentiment,
   };
 }
@@ -78,10 +75,10 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
   const rounds = events.reduce((max, e) => Math.max(max, e.round), 1);
   const pois = [...new Set([...postPois(events).values()].filter((id) => id !== null))];
-  // Who was shown which posts: in a feed, or handed them at a step.
+  // Who was shown which posts: in a feed, including the parents its replies quoted, or handed them at a step.
   const shown = new Map<string, Set<string>>();
   for (const e of events) {
-    const ids = e.type === 'social.feed_viewed' ? e.payload.post_ids : e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? e.payload.heard_post_ids : [];
+    const ids = e.type === 'social.feed_viewed' ? [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])] : e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? e.payload.heard_post_ids : [];
     if (e.persona_id && ids.length) for (const id of ids) (shown.get(e.persona_id) ?? shown.set(e.persona_id, new Set()).get(e.persona_id)!).add(id);
   }
 

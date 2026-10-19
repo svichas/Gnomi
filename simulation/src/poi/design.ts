@@ -53,7 +53,7 @@ export const design: PoiRunner<DesignPoi> = {
     const poi_id = poi.id;
     const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
       record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
-    const system = designSystemPrompt(persona, config.project, segment, poi, budget);
+    const system = designSystemPrompt(persona, config.project, segment, poi);
     const last = Math.min(budget, poi.frames.length);
     let said: DesignOutput | null = null; // the persona's answer on the screen before
     let opinion: Opinion | null = deps.opinion ?? null;
