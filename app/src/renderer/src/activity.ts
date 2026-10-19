@@ -62,6 +62,8 @@ function describeAction(action: Action, target: ActionTarget | null): string {
       return `Chose "${action.text}" in ${element}`;
     case 'scroll':
       return `Scrolled ${action.text ?? 'down'}`;
+    case 'press':
+      return `Pressed ${action.text}${action.ref ? ` in ${element}` : ''}`;
     case 'back':
       return 'Went back';
     case 'navigate':
@@ -192,6 +194,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
       return { seq, label: `Step ${event.payload.step_no}`, tone: 'bad', title: `Used all ${event.payload.budget} steps` };
     case 'signal.repeated_failure': {
       const { step_no, action, error } = event.payload;
+      if (error === 'invalid_output') return { seq, label: `Step ${step_no}`, tone: 'bad', title: 'The model gave no valid answer' };
       return { seq, label: `Step ${step_no}`, tone: 'bad', title: 'Got stuck', detail: `The same ${action} failed three times in a row (${error})` };
     }
     // Objective signals (tech.md §8.1): what the engine detected, as opposed to what the persona said.
@@ -308,7 +311,9 @@ export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<st
     if (event.type === 'persona.episode_started' || event.type === 'persona.step' || event.type === 'persona.resumed') states.set(event.persona_id, 'active');
     else if (event.type === 'persona.blocked') states.set(event.persona_id, 'blocked');
     else if (event.type === 'persona.goal_done') states.set(event.persona_id, 'done');
-    else if (ENDS_EPISODE.has(event.type)) states.set(event.persona_id, 'abandoned');
+    else if (event.type === 'persona.abandoned') states.set(event.persona_id, 'abandoned');
+    // Running out of steps or getting stuck is the run's limit, not the persona's choice to give up.
+    else if (ENDS_EPISODE.has(event.type)) states.set(event.persona_id, 'unfinished');
   }
   if (events.some(isEnd)) for (const [id, state] of states) if (state === 'waiting' || state === 'active') states.set(id, 'unfinished');
   return states;
@@ -323,7 +328,7 @@ export function countStates(states: Map<string, PersonaState>): Record<PersonaSt
 /** Once everyone ends, the scheduler skips remaining social phases and collects final feedback. */
 export function isPreparingReport(events: GnomiEvent[], states: Map<string, PersonaState>): boolean {
   if (events.some((event) => event.type === 'run.started' && event.payload.config.project.comparison)) return false;
-  return !events.some(isEnd) && states.size > 0 && [...states.values()].every((state) => state === 'done' || state === 'abandoned');
+  return !events.some(isEnd) && states.size > 0 && [...states.values()].every((state) => state === 'done' || state === 'abandoned' || state === 'unfinished');
 }
 
 export interface ReportStatus {

@@ -176,3 +176,9 @@ test('the demo socialiser reads the real social prompt and answers validly, most
   }
   assert.deepEqual(ask('p-7', ['r1-p-a']), ask('p-7', ['r1-p-a']));
 });
+
+test('scripted calls record the request purpose and POI like the real gateway', async () => {
+  const { record, events } = recorder();
+  await createScriptedGateway({ navigator: () => ({ thought: 'x', feeling: 0 }) }, record).call(request({ purpose: 'step', poi_id: 'poi-1' }));
+  assert.deepEqual([events[0].payload.purpose, events[0].poi_id], ['step', 'poi-1']);
+});

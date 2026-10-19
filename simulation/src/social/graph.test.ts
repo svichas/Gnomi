@@ -74,12 +74,28 @@ test('each network policy is deterministic and keeps 6 to 12 follows, never itse
   assert.equal(networkGraph('random', population([1]), 5).get('p-0-0')!.length, 0);
 });
 
+test('the clustered network keeps legacy follow counts but binds about 90% of follows to the own segment', () => {
+  const people = population([30, 30, 20, 20]);
+  const segment = new Map(people.map((p) => [p.id, p.segment_id]));
+  const legacy = followGraph(people, 9);
+  const clustered = networkGraph('clustered', people, 9);
+  let own = 0;
+  let all = 0;
+  for (const [id, follows] of clustered) {
+    assert.equal(follows.length, legacy.get(id)!.length, id);
+    own += follows.filter((f) => segment.get(f) === segment.get(id)).length;
+    all += follows.length;
+  }
+  assert.ok(own / all > 0.85, `own-segment share ${own / all}`);
+  assert.ok(graphMetrics(clustered, people).segment_modularity > graphMetrics(legacy, people).segment_modularity + 0.1);
+});
+
 test('graph metrics on a hand-built graph', () => {
   const people = population([2, 2]);
   const follows = new Map([['p-0-0', ['p-0-1']], ['p-0-1', ['p-0-0']], ['p-1-0', ['p-1-1']], ['p-1-1', ['p-0-0']]]);
   const m = graphMetrics(follows, people);
   assert.equal(m.mean_in_degree, 1);
-  assert.equal(m.segment_assortativity, 0.25); // 3 of 4 follows stay in a segment (0.75) less the 0.5 expected by chance
+  assert.equal(m.segment_modularity, 0.25); // 3 of 4 follows stay in a segment (0.75) less the 0.5 expected by chance
   assert.equal(m.top_decile_in_share, 0.5); // one persona of four, p-0-0, receives two of the four follows
-  assert.equal(graphMetrics(new Map(), people).segment_assortativity, 0);
+  assert.equal(graphMetrics(new Map(), people).segment_modularity, 0);
 });

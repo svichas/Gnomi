@@ -61,8 +61,8 @@ function recorder() {
 
 /**
  * Round 1: Ana (recruiter) and Bo (hiring manager) each hit a friction; Ana posts about hers. Round 2: Abe (recruiter) and
- * Bea (hiring manager) cite Ana's post, change their minds and post; Bo posts about his own; Ari posts about lunch. Round 3:
- * Ana's opinion drops again.
+ * Bea (hiring manager) read and cite Ana's post, change their minds and post; Bo posts about his own; Ari posts about lunch,
+ * which in this one-POI project counts as about Gym. Round 3: Ana's opinion drops again; Bo reads the first three posts, Ari Bo's.
  */
 function socialRun(social = true) {
   const { events, record } = recorder();
@@ -73,6 +73,7 @@ function socialRun(social = true) {
   record({ ...at(1, 'b1'), type: 'persona.friction_reported', payload: friction('Home is empty', HOME) });
   record({ ...at(1, 'a1'), type: 'persona.opinion_changed', payload: changed(null, -1) });
   say(1, 'a1', post('s1', 'Saving a job does nothing at all.'));
+  const read = (round: number, persona_id: string, post_ids: string[]) => social && record({ ...at(round, persona_id), type: 'social.feed_viewed', payload: { post_ids } });
   say(2, 'a2', post('s2', 'Heard the Save button is broken, avoiding it.'));
   record({ ...at(2, 'a2'), type: 'persona.opinion_changed', payload: changed(null, -1, ['s1']) });
   record({ ...at(2, 'b2'), type: 'persona.opinion_changed', payload: changed(1, -1, ['s1']) });
@@ -80,6 +81,10 @@ function socialRun(social = true) {
   say(2, 'b1', post('s4', 'The home page shows nothing useful, and Save looks broken too.'));
   say(2, 'a3', post('s5', 'Lunch was nice today.', null));
   record({ ...at(3, 'a1'), type: 'persona.opinion_changed', payload: changed(-1, -2) });
+  read(2, 'a2', ['s1']);
+  read(2, 'b2', ['s1']);
+  read(3, 'b1', ['s1', 's2', 's3']);
+  read(3, 'a3', ['s4']);
   return { events, record };
 }
 
@@ -92,7 +97,7 @@ const judged: EventPayloads['report.themes'] = {
     { post_id: 's2', group_ids: ['g1', 'g9'] },
     { post_id: 's3', group_ids: ['g1'] },
     { post_id: 'nope', group_ids: ['g1'] },
-    { post_id: 's5', group_ids: ['g1'] }, // not about the POI, so the judge was never shown it
+    { post_id: 's5', group_ids: ['g1'] }, // about no POI in particular, so about the project's only one
     { post_id: 's4', group_ids: ['g2', 'g1'] },
   ],
 };
@@ -106,10 +111,10 @@ function tagged() {
 test('tags keep known posts and group ids only; the rest is dropped and named in the limitations', () => {
   const report = tagged();
   assert.deepEqual(report.spread?.[0].themes.map((t) => [t.theme_id, t.rank, t.title, t.posts]), [
-    ['g1', 1, 'Saving a job fails', 4],
+    ['g1', 1, 'Saving a job fails', 5],
     ['g2', 2, 'Reported friction on /', 1],
   ]);
-  assert.ok(report.methods.limitations?.includes('The judge tagged unknown post or group ids (g9, nope, s5); they were ignored.'));
+  assert.ok(report.methods.limitations?.includes('The judge tagged unknown post or group ids (g9, nope); they were ignored.'));
 });
 
 test('seed posts, repeats and segments crossed, per POI and per theme, with the shared influence edges', () => {
@@ -117,6 +122,9 @@ test('seed posts, repeats and segments crossed, per POI and per theme, with the 
   const [saving, home] = poi.themes;
   assert.equal(poi.name, 'Gym');
   assert.deepEqual(saving.seeds, [{ seq: 10, post_id: 's1', persona_id: 'a1', persona_name: 'Ana', segment_id: 'rec', round: 1, text: 'Saving a job does nothing at all.', injected: false }]);
+  // Reach is who read a post: Abe, Bea, Bo and Ari, in that order; posting is listed apart.
+  assert.deepEqual(saving.readers, ['a2', 'b2', 'b1', 'a3']);
+  assert.deepEqual(saving.posters, ['a1', 'a2', 'b2', 'b1', 'a3']);
   assert.deepEqual(saving.segments, [
     { segment_id: 'rec', name: 'Recruiters', personas: 2, seed: true },
     { segment_id: 'hm', name: 'Hiring managers', personas: 2, seed: false },
@@ -124,9 +132,9 @@ test('seed posts, repeats and segments crossed, per POI and per theme, with the 
   // Abe's first opinion after reading Ana's post is formed, not a shift, so only Bea's change counts as influence.
   assert.deepEqual(saving.influence.map((e) => [e.from, e.to, e.post_id, e.round, e.delta]), [['a1', 'b2', 's1', 2, -2]]);
   assert.deepEqual(home.seeds.map((s) => [s.post_id, s.round]), [['s4', 2]]);
-  assert.deepEqual(home.segments, [{ segment_id: 'hm', name: 'Hiring managers', personas: 1, seed: true }]);
+  assert.deepEqual(home.segments, [{ segment_id: 'rec', name: 'Recruiters', personas: 1, seed: false }], 'only Ari read Bo’s post');
   assert.deepEqual(home.influence, []);
-  assert.equal(poi.posts, 4, "Ari's post is about no POI");
+  assert.equal(poi.posts, 5, "Ari's post about nothing in particular is about the only POI");
   assert.deepEqual(poi.seeds.map((s) => s.post_id), ['s1']);
   assert.equal(poi.influence.length, 1);
 });
@@ -135,11 +143,11 @@ test('first-hand personas had their own friction in the theme; second-hand ones 
   const [poi] = tagged().spread!;
   const [saving, home] = poi.themes;
   assert.deepEqual(saving.first_hand, ['a1']);
-  assert.deepEqual(saving.second_hand, ['a2', 'b2', 'b1'], 'Bo had a friction, but not this one');
+  assert.deepEqual(saving.second_hand, ['a2', 'b2', 'b1', 'a3'], 'Bo had a friction, but not this one');
   assert.deepEqual(home.first_hand, ['b1']);
   assert.deepEqual(home.second_hand, []);
   assert.deepEqual([...poi.first_hand].sort(), ['a1', 'b1']);
-  assert.deepEqual(poi.second_hand, ['a2', 'b2']);
+  assert.deepEqual(poi.second_hand, ['a2', 'b2', 'a3']);
 });
 
 test("sentiment by round carries each persona's latest opinion forward; a theme counts only its own personas", () => {
@@ -189,17 +197,18 @@ async function withModels(social: boolean, judge: Responder) {
     requests.push({ role: req.role, system: req.system, user: JSON.parse(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('')) });
     return respond(req);
   };
-  await runReportModels({ config, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
   return { events, requests, report: buildReport(events) };
 }
 
 test('scripted runs show spread: the demo judge tags every post, the tags are logged, and the log rebuilds the same report', async () => {
   const { events, requests, report } = await withModels(true, DEMO_JUDGE);
   assert.equal(requests[0].system, JUDGE_SYSTEM + JUDGE_POSTS);
-  assert.deepEqual((requests[0].user.posts as { id: string }[]).map((p) => p.id), ['s1', 's2', 's3', 's4']);
+  assert.deepEqual((requests[0].user.posts as { id: string }[]).map((p) => p.id), ['s1', 's2', 's3', 's4', 's5']);
   const logged = events.find((e) => e.type === 'report.themes');
-  assert.deepEqual(logged?.type === 'report.themes' && logged.payload.posts?.map((p) => p.post_id), ['s1', 's2', 's3', 's4']);
-  assert.deepEqual(report.spread?.[0].themes.map((t) => [t.theme_id, t.posts]), [['g1', 4]]);
+  assert.deepEqual(logged?.type === 'report.themes' && logged.payload.posts?.map((p) => p.post_id), ['s1', 's2', 's3', 's4', 's5']);
+  assert.deepEqual(logged?.type === 'report.themes' && Object.keys(logged.payload.keys ?? {}), ['g1', 'g2'], 'each group id is logged with its key');
+  assert.deepEqual(report.spread?.[0].themes.map((t) => [t.theme_id, t.posts]), [['g1', 5]]);
   assert.ok(report.methods.homogeneity);
   assert.deepEqual(buildReport(JSON.parse(JSON.stringify(events))), report, 'the report is a fold of the log alone');
 });
@@ -215,7 +224,7 @@ test('a run without social posts keeps the M3 judge call and gets no spread sect
 
 test('without a judge answer the spread covers the POI only, and says why', async () => {
   const { report } = await withModels(true, () => ({ themes: 'nope' }));
-  assert.deepEqual(report.spread?.map((s) => [s.posts, s.themes.length]), [[4, 0]]);
+  assert.deepEqual(report.spread?.map((s) => [s.posts, s.themes.length]), [[5, 0]]);
   assert.ok(report.methods.limitations?.includes('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.'));
 });
 
@@ -225,7 +234,8 @@ test('Markdown carries the spread per POI and theme, and homogeneity in the meth
     '## Opinion spread',
     '### About Gym',
     '#### 1. Saving a job fails',
-    '- 4 posts; first-hand: 1 persona; second-hand: 3 personas (Abe, Bea, Bo)',
+    '- 5 posts; first-hand: 1 persona; second-hand: 4 personas (Abe, Bea, Bo, Ari)',
+    '- Posted: 5 personas; reached: 4 personas',
     '- Seed post by Ana, round 1: "Saving a job does nothing at all." (#10)',
     '- Segments reached: Recruiters 2 (seed), Hiring managers 2; crossed into 1 other segment',
     '- Mean sentiment by round, -2 to +2: 1: -1.00 (1 persona); 2: -1.00 (3 personas); 3: -1.33 (3 personas)',
@@ -234,4 +244,25 @@ test('Markdown carries the spread per POI and theme, and homogeneity in the meth
   ]) assert.ok(md.includes(expected), expected);
   assert.match(md, /- Influence: Ana → Bea \(round 2, -2\.00, #\d+\)\n/);
   assert.match(md, /- Homogeneity \(mean pairwise TF-IDF cosine, warning at 0\.30\): posts \d\.\d\d \(5 posts\), persona backgrounds \d\.\d\d/);
+});
+
+test('influence counts one edge per author, persona and change; a change at a step handed a post is listed apart as heard', () => {
+  const { events, record } = socialRun();
+  // Bea's change cites two of Ana's posts: one edge. Ari changes his mind at a step that was handed Bo's post, citing no post.
+  record({ ...at(3, 'a1'), type: 'social.post', payload: post('s6', 'Still broken.') });
+  record({ ...at(3, 'b2'), type: 'persona.opinion_changed', payload: changed(-1, 1, ['s1', 's6']) });
+  const handed = record({ ...at(3, 'a3'), type: 'persona.step', payload: { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: HOME, url_after: HOME, dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: 'h', screenshot: null, duration_ms: 1, heard_post_ids: ['s4'] } });
+  record({ ...at(3, 'a3'), type: 'persona.opinion_changed', payload: { ...changed(1, -1), cause: { step_ids: [handed.seq], post_ids: [] } } });
+  const [poi] = buildReport(events).spread!;
+  assert.deepEqual(poi.influence.map((e) => [e.from, e.to, e.round]), [['a1', 'b2', 2], ['a1', 'b2', 3]]);
+  assert.deepEqual(poi.heard?.map((e) => [e.from, e.to, e.kind]), [['b1', 'a3', 'heard']]);
+  assert.ok(reportToMarkdown(buildReport(events)).includes('- Heard before a change: Bo → Ari (round 3, -2.00, #'));
+});
+
+test('a parent quoted above a reply in the feed reaches its reader too', () => {
+  const { events, record } = socialRun();
+  record({ ...at(3, 'a2'), type: 'social.feed_viewed', payload: { post_ids: [], parent_ids: ['s4'] } });
+  record({ ...at(3, null), type: 'report.themes', payload: judged });
+  const home = buildReport(events).spread![0].themes[1];
+  assert.deepEqual(home.readers, ['a2', 'a3']); // Abe was shown a feed before Ari was
 });

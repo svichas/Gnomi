@@ -11,8 +11,8 @@ type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 's
 export type Signal = { [K in Detected]: { type: K; payload: EventPayloads[K] } }[Detected];
 type SignalOf<K extends Detected> = Extract<Signal, { type: K }>;
 
-// The §8.1 failures. Model mistakes and Gnomi's own refusals (other hosts, password fields in older logs) are not the product's.
-const FAILURES = new Set(['ref_not_found', 'not_editable', 'timeout']);
+// The §8.1 failures. Model mistakes (a ref it made up) and Gnomi's own refusals (other hosts, password fields in older logs) are not the product's.
+const FAILURES = new Set(['not_editable', 'timeout']);
 // Validation wording, matched only on lines a button click made appear.
 const ERRORISH = /\b(?:error|invalid|required|incorrect|failed|went wrong|already (?:exists|taken|in use|registered|a user)|must (?:be|contain|match|include|have)|please (?:enter|choose|select|fill|provide|correct)|(?:enter|choose|select|provide) (?:a|an|your|the|at least)|not (?:valid|allowed|found|match))\b/i;
 
@@ -26,12 +26,17 @@ export const isSubmit = (step: Step) => step.action.type === 'click' && step.res
 
 export function failedAction(step: Step): SignalOf<'signal.failed_action'> | null {
   const { action, result } = step;
-  const error = result.error !== null && FAILURES.has(result.error) ? result.error : action.type === 'click' && result.ok && !result.dom_changed && result.url_after === result.url_before ? 'no_effect' : null;
+  // A request still in flight or a tab opened: the click did something the page has not shown yet, or shows elsewhere.
+  const error = result.error !== null && FAILURES.has(result.error) ? result.error : action.type === 'click' && result.ok && !result.dom_changed && !result.pending && result.url_after === result.url_before ? 'no_effect' : null;
   return error ? { type: 'signal.failed_action', payload: { ...base(step), action: action.type, error } } : null;
 }
 
 /** The same page state (URL and snapshot hash) seen loop_visits times within loop_window steps; once per loop, not on every further visit. */
 export function loop(history: Step[], step: Step, t: SignalThresholds): SignalOf<'signal.loop'> | null {
+  // Reading, waiting and a model's unusable answer stay on the page by design: they are not the persona going round.
+  const moved = (s: Step) => s.action.type !== 'read' && s.action.type !== 'wait' && s.result.error !== 'invalid_output';
+  if (!moved(step)) return null;
+  history = history.filter(moved);
   const steps = [...history, step];
   const key = (s: Step) => `${pageKey(s.result.url_before)} ${s.snapshot_hash}`;
   const visits = (end: Step) => within(steps, end, t.loop_window).filter((s) => key(s) === key(end)).length;
@@ -55,7 +60,7 @@ export function backtrack(history: Step[], step: Step, t: SignalThresholds): Sig
 }
 
 // Snapshot lines without what changes on every render (refs, boxes, focus), so the same message reads the same before and after.
-const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]/g, '').trim()));
+const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]| \(off screen, (?:above|below)\)/g, '').trim()));
 const textOf = (line: string) => /: (.+)$/.exec(line)?.[1] ?? /"(.+)"/.exec(line)?.[1] ?? line.replace(/^- /, '');
 
 /** After a button click, a control newly marked aria-invalid, or a new line in error wording. */
@@ -66,7 +71,8 @@ export function validationError(step: Step, before: string | null, after: string
   const samePage = pageKey(step.result.url_after) === pageKey(step.result.url_before);
   const invalid = fresh.find((line) => line.includes(' [invalid]'));
   // A new page's "required" hints are not errors: after a navigation, wording counts only beside an invalid control or in an alert.
-  const worded = fresh.find((line) => ERRORISH.test(textOf(line)) && (samePage || invalid !== undefined || line.startsWith('- alert')));
+  // A field's name is often a placeholder ("Enter a job title"): it counts only when the field is marked invalid.
+  const worded = fresh.find((line) => ERRORISH.test(textOf(line)) && (samePage || invalid !== undefined || line.startsWith('- alert')) && (!/^- (?:text|search)box\b/.test(line) || line.includes(' [invalid]')));
   const message = worded ? textOf(worded) : invalid ? `${invalid.replace(/^- | \[invalid\]/g, '')} is marked invalid` : null;
   return message ? { type: 'signal.validation_error', payload: { ...base(step), message: message.slice(0, 200) } } : null;
 }
@@ -87,7 +93,8 @@ export function detectSignals(input: { history: Step[]; step: Step; device: Devi
   const { history, step, device, errors, before, after, thresholds: t } = input;
   const ended = step.action.type === 'done' || step.action.type === 'abandon';
   const found: (Signal | null)[] = ended ? [] : [failedAction(step), loop(history, step, t), backtrack(history, step, t)];
-  for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), ...error } });
+  // An error belongs to the page it happened on: after a navigation, the one the step landed on.
+  for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), url: step.result.url_after, ...error } });
   if (!ended) found.push(validationError(step, before, after), smallTarget(step, device, t));
   return found.filter((signal): signal is Signal => signal !== null);
 }

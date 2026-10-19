@@ -84,7 +84,11 @@ test('influenced: edges follow the shared rule, one per pair and kind with a cou
 
 test('a persona node follows its episode to an end, and the run ending marks the rest unfinished', () => {
   const { events, created, step, add } = logOf();
-  for (const id of ['a', 'b', 'c', 'd']) created(id, null);
+  for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) created(id, null);
+  step('e', 'poi-1');
+  add('signal.repeated_failure', { step_no: 1, action: 'click', error: 'ref_not_found' }, { persona_id: 'e' });
+  step('f', 'poi-1');
+  add('signal.budget_exceeded', { step_no: 1, budget: 1 }, { persona_id: 'f' });
   step('a', 'poi-1');
   add('persona.goal_done', { step_no: 1, summary: '' }, { persona_id: 'a' });
   step('b', 'poi-1');
@@ -92,10 +96,11 @@ test('a persona node follows its episode to an end, and the run ending marks the
   step('c', 'poi-1');
   add('run.finished', {});
   const status = (id: string) => (buildGraph(events).nodes.get(`persona:${id}`) as PersonaNode).status;
-  assert.deepEqual(['a', 'b', 'c', 'd'].map(status), ['done', 'blocked', 'unfinished', 'unfinished']);
+  // A budget or failure signal is not the persona's own giving up, as in the report's outcomes.
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].map(status), ['done', 'blocked', 'unfinished', 'unfinished', 'unfinished', 'unfinished']);
 });
 
-test("a POI's sentiment by segment is the mean of each persona's latest opinion or survey", () => {
+test("a POI's sentiment by segment is the mean of each persona's latest opinion, and surveys do not count", () => {
   const { events, created, add } = logOf();
   created('a', 'seg-1');
   created('b', 'seg-1');
@@ -105,7 +110,16 @@ test("a POI's sentiment by segment is the mean of each persona's latest opinion 
   opinion('a', -1); // replaces a's first
   opinion('b', 2);
   add('persona.survey', { poi_id: 'poi-1', sentiment: -2, confidence: 1, likes: [], frictions: [], would_continue: false, reason: '' }, { persona_id: 'c' });
-  assert.deepEqual((buildGraph(events).nodes.get('poi:poi-1') as PoiNode).sentiment_by_segment, { 'seg-1': 0.5, '': -2 });
+  assert.deepEqual((buildGraph(events).nodes.get('poi:poi-1') as PoiNode).sentiment_by_segment, { 'seg-1': 0.5 });
+});
+
+test('an opinion citing a reply with no POI of its own inherits the parent post\'s POI', () => {
+  const { events, created, post, add } = logOf();
+  for (const id of ['a', 'b', 'c']) created(id, 'seg-1');
+  post('a', 's1');
+  add('social.post', { post_id: 'r1', parent_id: 's1', text: 'Same here', about_poi_id: null }, { persona_id: 'c' });
+  add('persona.opinion_changed', { poi_id: 'poi-1', before: null, after: view(-1), cause: { step_ids: [], post_ids: ['r1'] } }, { persona_id: 'b' });
+  assert.deepEqual(edgesOf(events, 'influenced').map(({ source, target, kind }) => ({ source, target, kind })), [{ source: 'persona:c', target: 'persona:b', kind: 'formed' }]);
 });
 
 test('the run snapshot names its POI node', () => {

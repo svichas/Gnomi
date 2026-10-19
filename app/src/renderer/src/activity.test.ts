@@ -27,6 +27,13 @@ test('the report is preparing after every episode ends, including final surveys 
   assert.equal(preparing([...social, event(4, 'run.round_ended', {}, null)]), true);
   assert.equal(preparing(social.slice(0, 2)), false, 'Social rounds continue while another persona has not ended.');
   assert.equal(preparing([abandoned, done, event(4, 'run.finished', {}, null)]), false);
+  assert.equal(preparing([event(2, 'signal.budget_exceeded', { step_no: 40, budget: 40 }), done]), true, 'An episode that ran out of steps has ended too.');
+});
+
+test('a repeated model failure reads as no valid answer and leaves the persona unfinished, not gave up', () => {
+  const failed = event(1, 'signal.repeated_failure', { step_no: 3, action: 'wait', error: 'invalid_output' });
+  assert.equal(toRows([failed])[0]?.title, 'The model gave no valid answer');
+  assert.equal(personaStates([failed], [{ ...BUILTIN_PERSONA, id: 'p-001' }]).get('p-001'), 'unfinished');
 });
 
 test('timeline retains event time and puts a persona quote on the line without hiding failures', () => {
@@ -177,10 +184,10 @@ test('each persona is waiting, working, blocked, done or gave up, and a run that
     blocked(7, 'captcha', 'c'),
     event(8, 'signal.repeated_failure', { step_no: 4, action: 'click', error: 'ref_not_found' }, 'e'),
   ];
-  assert.deepEqual([...personaStates(events, people)], [['a', 'done'], ['b', 'abandoned'], ['c', 'blocked'], ['d', 'active'], ['e', 'abandoned'], ['f', 'waiting']]);
-  assert.deepEqual(countStates(personaStates(events, people)), { waiting: 1, active: 1, blocked: 1, done: 1, abandoned: 2, unfinished: 0 });
+  assert.deepEqual([...personaStates(events, people)], [['a', 'done'], ['b', 'abandoned'], ['c', 'blocked'], ['d', 'active'], ['e', 'unfinished'], ['f', 'waiting']]);
+  assert.deepEqual(countStates(personaStates(events, people)), { waiting: 1, active: 1, blocked: 1, done: 1, abandoned: 1, unfinished: 1 });
   const ended = personaStates([...events, event(9, 'run.stopped', { reason: 'user', detail: null }, null)], people);
-  assert.deepEqual([...ended.values()], ['done', 'abandoned', 'blocked', 'unfinished', 'abandoned', 'unfinished']);
+  assert.deepEqual([...ended.values()], ['done', 'abandoned', 'blocked', 'unfinished', 'unfinished', 'unfinished']);
   assert.equal(personaStates([start(1, 'unknown')], people).has('unknown'), false, 'events of someone outside the population are ignored');
 });
 

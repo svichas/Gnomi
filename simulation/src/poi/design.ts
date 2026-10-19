@@ -53,10 +53,10 @@ export const design: PoiRunner<DesignPoi> = {
     const poi_id = poi.id;
     const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
       record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
-    const system = designSystemPrompt(persona, config.project, segment, poi, budget);
+    const system = designSystemPrompt(persona, config.project, segment, poi);
     const last = Math.min(budget, poi.frames.length);
     let said: DesignOutput | null = null; // the persona's answer on the screen before
-    let opinion: Opinion | null = null;
+    let opinion: Opinion | null = deps.opinion ?? null;
     let heard: HeardPost[] = []; // the last feed, for the next screen only
 
     if (signal.aborted) return 'stopped';
@@ -78,7 +78,7 @@ export const design: PoiRunner<DesignPoi> = {
         if (signal.aborted) return 'stopped';
         const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion, heard });
         heard = [];
-        output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', system, user, schema: designSchema, signal })).object;
+        output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', poi_id: poi.id, system, user, schema: designSchema, signal })).object;
       } catch (err) {
         if (signal.aborted) return 'stopped';
         // A second invalid answer is a failed step, as in the web loop; a missing frame or any other model error ends the run.
@@ -112,9 +112,14 @@ export const design: PoiRunner<DesignPoi> = {
         emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recorded.seq], post_ids: [] } });
         opinion = structuredClone(after);
       }
-      // A mismatch is always a friction on this frame, in the persona's words where it gave them, else from what it said it expected.
-      const friction = output?.friction ?? (output?.matched === false ? { severity: 2, what: output.sees, expected: said?.expects_next ?? '' } : null);
-      if (friction) emit('persona.friction_reported', { step_no, ...friction, where: { url, ref: null }, frame: index, heard_post_ids });
+      // A mismatch is always a friction: in the persona's words on this frame where it gave them, else on the frame whose
+      // expectation this one broke, saying what was expected and what the flow showed instead.
+      if (output?.friction) emit('persona.friction_reported', { step_no, ...output.friction, where: { url, ref: null }, frame: index, heard_post_ids });
+      else if (output?.matched === false && index > 0 && said?.expects_next) {
+        const expected = said.expects_next;
+        const what = `Expected ${expected}, but the next screen showed: ${output.sees}`;
+        emit('persona.friction_reported', { step_no: step_no - 1, severity: 2, what, expected, where: { url: `asset:${poi.frames[index - 1].asset}`, ref: null }, frame: index - 1, heard_post_ids });
+      }
 
       if (end === 'abandon') {
         emit('persona.abandoned', { step_no, reason: action.text ?? '' });

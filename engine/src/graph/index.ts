@@ -41,7 +41,7 @@ export interface SwarmEdge {
   last_seq: number;
   round: number; // the round it first appeared in
   last_round: number; // the latest round that added to it, for "only this round"
-  kind?: 'influence' | 'formed'; // influenced edges only: formed is a first opinion after reading, kept apart so it never counts as influence
+  kind?: 'influence' | 'formed' | 'heard'; // influenced edges only: formed is a first opinion after reading, kept apart so it never counts as influence
 }
 
 export interface SwarmGraph {
@@ -49,7 +49,8 @@ export interface SwarmGraph {
   edges: Map<string, SwarmEdge>;
   last_seq: number;
   posts: Map<string, EventOf<'social.post'>>; // authors for replies and reactions, and the influence rule's cited posts
-  sentiments: Map<string, { poi: string; persona: string; sentiment: number }>; // latest per POI and persona
+  sentiments: Map<string, { poi: string; persona: string; sentiment: number }>; // latest opinion per POI and persona, as the report's spread reads it
+  started: EventOf<'run.started'> | null; // the snapshot postPois reads, so a post about nothing in a one-POI project is about that POI
 }
 
 /** The node and edge keys a batch touched. */
@@ -62,12 +63,10 @@ const ENDS: Partial<Record<GnomiEvent['type'], PersonaStatus>> = {
   'persona.blocked': 'blocked',
   'persona.goal_done': 'done',
   'persona.abandoned': 'abandoned',
-  'signal.budget_exceeded': 'abandoned',
-  'signal.repeated_failure': 'abandoned',
 };
 
 export function emptyGraph(): SwarmGraph {
-  return { nodes: new Map(), edges: new Map(), last_seq: 0, posts: new Map(), sentiments: new Map() };
+  return { nodes: new Map(), edges: new Map(), last_seq: 0, posts: new Map(), sentiments: new Map(), started: null };
 }
 
 export function buildGraph(events: GnomiEvent[]): SwarmGraph {
@@ -96,6 +95,7 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
   const who = event.persona_id;
   switch (event.type) {
     case 'run.started': {
+      graph.started = event;
       const project = event.payload.config.project;
       for (const poi of project ? withPois(project).pois : []) Object.assign(poiNode(graph, changes, poi.id), { label: poi.name });
       return;
@@ -144,15 +144,16 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
       return;
     case 'persona.opinion_changed': {
       if (!who) return;
-      // The shared rule over just the cited posts and this change: the same edges influenceEdges finds over the whole log.
-      const cited = [...new Set(event.payload.cause.post_ids)].flatMap((id) => graph.posts.get(id) ?? []);
-      for (const edge of influenceEdges([...cited, event])) bump(graph, changes, 'influenced', personaNode(graph, changes, edge.from).key, personaNode(graph, changes, edge.to).key, 1, event, edge.kind);
+      // The shared rule over the cited posts, their parents (a reply inherits its parent's POI) and this change: the edges influenceEdges finds over the whole log.
+      const cited = new Map<string, EventOf<'social.post'>>();
+      for (const id of event.payload.cause.post_ids) {
+        for (let post = graph.posts.get(id); post && !cited.has(post.payload.post_id); post = post.payload.parent_id ? graph.posts.get(post.payload.parent_id) : undefined) cited.set(post.payload.post_id, post);
+      }
+      const context = [...(graph.started ? [graph.started] : []), ...[...cited.values()].sort((a, b) => a.seq - b.seq), event];
+      for (const edge of influenceEdges(context)) bump(graph, changes, 'influenced', personaNode(graph, changes, edge.from).key, personaNode(graph, changes, edge.to).key, 1, event, edge.kind);
       sentiment(graph, changes, event.payload.poi_id, who, event.payload.after.sentiment);
       return;
     }
-    case 'persona.survey':
-      if (who) sentiment(graph, changes, event.payload.poi_id, who, event.payload.sentiment);
-      return;
     default: {
       const status = ENDS[event.type];
       if (status && who) personaNode(graph, changes, who).status = status;

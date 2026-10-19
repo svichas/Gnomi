@@ -29,7 +29,7 @@ export type DesignOutput = z.infer<typeof designSchema>;
 export const frameLabel = (poi: DesignPoi, index: number) => poi.frames[index].name?.trim() || `Screen ${index + 1}`;
 
 /** The stable prefix for one persona on one design: the same at every screen, so it caches. */
-export function designSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi: DesignPoi, budget: number): string {
+export function designSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi: DesignPoi): string {
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
@@ -41,14 +41,14 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
     high: `${p} uses products like this every day and expects the usual conventions.`,
   }[persona.familiarity_with_category];
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}. In all, ${p} looks at no more than about ${budget} screens, or fewer if annoyed.`,
+    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the screen budget; stating it would steer when to stop
     persona.device === 'mobile' ? `${p} is on a phone, so these are phone screens used by touch.` : `${p} is on a computer with a mouse and a full-size screen.`,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
     ...(locale.toLowerCase().split('-')[0] === 'en' ? [] : [`${p}'s first language is ${languageName(locale)}; English is a second language.`]),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const n = poi.frames.length;
-  return `This is ${persona.name}. ${p} is trying ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Part of the product is still a design: ${n} screen${n === 1 ? '' : 's'} called "${poi.name}", shown one at a time in the order someone using it would meet them. The screens are pictures, so nothing on them can be clicked. Each turn shows ${poss} screen now and, after the first, the screen before it with what ${p} said there. The questions are always the same: is this what ${p} expected, what does ${p} see, what would ${p} do here, and what does ${p} expect to happen next?
+  return `This is ${persona.name}. ${p} is trying ${project.name} to get something done at work. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product. Part of the product is still a design: ${n} screen${n === 1 ? '' : 's'} called "${poi.name}", shown one at a time in the order someone using it would meet them. The screens are pictures, so nothing on them can be clicked. Each turn shows ${poss} screen now and, after the first, the screen before it with what ${p} said there. The questions are always the same: what does ${p} see, what would ${p} do here, and what does ${p} expect to happen next? From the second screen on, ${p} also says whether this screen is what ${p} expected.
 
 People give up on tools that waste their time or confuse them. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 

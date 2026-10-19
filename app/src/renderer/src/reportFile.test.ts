@@ -28,7 +28,7 @@ function fixture(count: number, frictionsEach: number): Report {
   return {
     run_id: 'r-0001', status: 'finished', stop_reason: null, goal: 'Post a job for a "backend" <engineer>', pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/' }],
     personas,
-    segments: [{ id: 'seg-a', name: 'Recruiters', share: 100, personas: count, outcomes: { done: 0, abandoned: count, budget_exceeded: 0, repeated_failure: 0, blocked: 0, incomplete: 0 }, completion: 0, with_friction: 1, frictions: frictions.length }],
+    segments: [{ id: 'seg-a', name: 'Recruiters', share: 100, personas: count, outcomes: { done: 0, abandoned: count, budget_exceeded: 0, repeated_failure: 0, model_failed: 0, blocked: 0, incomplete: 0, not_started: 0 }, completion: 0, with_friction: 1, frictions: frictions.length }],
     weighted: { completion: 0, with_friction: 1 }, steps: count * 40, frictions,
     cost_usd: 4.2, llm_calls: count * 40, input_tokens: 1_000_000, output_tokens: 50_000, started_at: 0, ended_at: 600_000, duration_ms: 600_000, banner: HYPOTHESIS_BANNER,
     methods: { seed: 7, roles: [], models: {}, budgets: { cost_usd: 10, wall_clock_min: 60, concurrency: 4 }, allowed_hosts: ['localhost:3001'], blocked_requests: [], blocked: [], tripwires: [], reset: null, concurrency_changes: [] },
@@ -132,13 +132,13 @@ test('the report puts the most severe problem first and folds each persona, ever
   const report = fixture(1, 2);
   Object.assign(report.frictions[0], { severity: 1, what: 'A small irritation.' });
   Object.assign(report.frictions[1], { severity: 4, what: 'Could not save the job.' });
-  const theme = (id: string, severity: number, score: number) => ({
-    id, poi_id: 'poi-gym', rank: 1, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, impact: 1, score,
+  const theme = (id: string, severity: number, rank: number) => ({
+    id, poi_id: 'poi-gym', rank, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, score: 1,
     personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null,
   });
-  report.themes = [theme('a', 2, 9), theme('b', 3.5, 1)]; // the engine ranks a first; b's median rounds up to a blocker
+  report.themes = [theme('a', 2, 2), theme('b', 3.5, 1)]; // the engine ranks the more severe b first
   const html = await reportFile(report, 'html', thumbnails());
-  assert.ok(html.indexOf('Theme b') < html.indexOf('Theme a'), 'the blocker comes before the moderate problem, whatever its score');
+  assert.ok(html.indexOf('Theme b') < html.indexOf('Theme a'), 'the engine rank orders problems of the same evidence');
   assert.ok(html.indexOf('Could not save the job.') < html.indexOf('A small irritation.'), "a persona's worst friction comes first");
   assert.ok(html.includes('0 of 1 persona reached the goal.'), 'the verdict leads the report');
   assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'every fold prints open');
@@ -147,7 +147,7 @@ test('the report puts the most severe problem first and folds each persona, ever
 test('a problem one persona met is a single report, below and apart from one several met, whatever its severity', async () => {
   const report = fixture(1, 2);
   const theme = (id: string, severity: number, personas: number, exposed: number, category?: 'objection') => ({
-    id, poi_id: 'poi-gym', rank: 1, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, impact: 1, score: 1,
+    id, poi_id: 'poi-gym', rank: 1, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'reported' as const, severity, score: 1,
     personas, frictions: personas, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null, ...(category ? { category } : {}),
     prevalence: { personas, exposed, share: personas / exposed, low: 0.1, high: 0.6, level: personas === 1 ? 'single' as const : 'strong' as const },
   });
@@ -156,8 +156,23 @@ test('a problem one persona met is a single report, below and apart from one sev
   assert.ok(html.includes('Fix first: <span class="font-medium">Theme shared</span>'), 'the verdict names the problem several met');
   assert.ok(html.includes('4 of 10 personas affected (40%, likely 10%–60%)'), 'the share and its range are spelled out');
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Objections (1)') && html.indexOf('Objections (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
-  assert.ok(html.indexOf('Single reports (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
+  assert.ok(html.indexOf('Met first-hand by one persona (1)') < html.indexOf('Theme lone'), 'the blocker one persona met is a single report');
   assert.ok(html.includes('What to fix first (1)'));
+});
+
+test('the share says who read about it first, trust shows its mix, and a competitor never leads the verdict', async () => {
+  const report = fixture(1, 1);
+  report.pois.push({ id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  const theme = (id: string, poi_id: string, rank: number) => ({
+    id, poi_id, rank, title: `Theme ${id}`, description: '', named_by: 'judge' as const, trust: 'confirmed' as const, trust_counts: { confirmed: 1, observed: 0, reported: 3 },
+    severity: 3, score: 1, personas: 4, frictions: 4, heard_first: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null,
+    prevalence: { personas: 2, exposed: 10, share: 0.2, low: 0.06, high: 0.51, level: 'some' as const },
+  });
+  report.themes = [theme('rival', 'rival', 1), theme('ours', 'poi-gym', 1)];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.includes('Fix first: <span class="font-medium">Theme ours</span>'), "the competitor's problem is not the team's to fix");
+  assert.match(html, /2 of 10 personas affected \(20%, likely 6%–51%\)<\/span>, \+2 more after reading the feed/);
+  assert.ok(html.includes('1 confirmed, 3 reported'));
 });
 
 test('comparison HTML leads with the scoped decision, compares every target and keeps valid denominators visible', async () => {

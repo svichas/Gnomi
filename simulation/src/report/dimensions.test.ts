@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { AttributeValue, GnomiEvent, NewEvent, Persona, PersonaSchema, ProfileAttribute, ProjectConfig, RunConfig } from '../types.ts';
+import type { AttributeValue, GnomiEvent, NewEvent, Persona, PersonaSchema, ProfileAttribute, ProjectConfig, ReportPersona, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
-import { attributeKey, formatAttributeValue } from './dimensions.ts';
+import { attributeKey, buildDimensions, formatAttributeValue } from './dimensions.ts';
 import { reportToMarkdown } from './markdown.ts';
 
 const custom = (id: string, type: ProfileAttribute['type'], enabled = true): ProfileAttribute => ({
@@ -58,7 +58,7 @@ test('report dimensions use typed values, persona outcomes and only each persona
   const report = buildReport(events);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'region')?.values, [
     { value: 'Americas', personas: 1, completion: 1, with_friction: 0, sentiment: 0 },
-    { value: 'EMEA', personas: 2, completion: 0.5, with_friction: 0.5, sentiment: 2 },
+    { value: 'EMEA', personas: 2, completion: 0.5, with_friction: 1, sentiment: 2 }, // p2 gave up: a friction theme counts it
   ]);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'consent')?.values.map((group) => group.value), [false, true]);
   assert.deepEqual(report.dimensions?.find((dimension) => dimension.id === 'tenure')?.values.map((group) => group.value), [0, 1]);
@@ -100,11 +100,18 @@ test('synthetic neutral feelings from invalid model output do not change group s
 test('Markdown includes dimension denominators and typed labels without exposing disabled attributes', () => {
   const markdown = reportToMarkdown(buildReport(fixture().events));
   assert.match(markdown, /Results by profile/);
-  assert.match(markdown, /EMEA \| 2 \| 50% \| 50% \| 2\.00/);
+  assert.match(markdown, /EMEA \| 2 \| 50% \| 100% \| 2\.00/);
   assert.match(markdown, /false \| 2/);
   assert.doesNotMatch(markdown, /PRIVATE|secret_note|Hidden title/);
   assert.equal(formatAttributeValue(0), '0');
   assert.equal(formatAttributeValue(false), 'false');
   assert.equal(formatAttributeValue(['A', 'B']), 'A, B');
   assert.notEqual(attributeKey(false), attributeKey('false'));
+});
+
+test('a persona the model gave no valid answer for counts in the row but not in its rates, like one that never started', () => {
+  const people = ['p1', 'p2', 'p3'].map((id): Persona => ({ ...BUILTIN_PERSONA, id, attributes: { region: 'EMEA' } }));
+  const outcomes = [['p1', 'done'], ['p2', 'model_failed'], ['p3', 'not_started']].map(([id, outcome]) => ({ id, outcome }) as ReportPersona);
+  const [row] = buildDimensions(people, outcomes, new Map(), schema(), new Set()).find((d) => d.id === 'region')!.values;
+  assert.deepEqual([row.personas, row.completion], [3, 1]);
 });

@@ -17,6 +17,8 @@ const pages: Record<string, string> = {
   '/password': '<title>Settings</title><form><input type="password" aria-label="Password"></form>',
   '/hidden-password': '<title>Settings</title><form><input type="password" style="display:none"></form>',
   '/framed-login': '<title>Home</title><iframe srcdoc="<input type=password>"></iframe>',
+  '/new-password': '<title>Settings</title><form><input type="password" autocomplete="new-password" aria-label="New password"></form>',
+  '/change-password': '<title>Settings</title><form><input type="password" aria-label="Current"><input type="password" aria-label="New"></form>',
   '/recaptcha': '<title>Contact</title><div class="g-recaptcha" data-sitekey="x"></div>',
   '/recaptcha-frame': '<title>Contact</title><iframe src="/frame"></iframe><iframe src="https://www.google.com/recaptcha/api2/anchor"></iframe>',
   '/hcaptcha': '<title>Contact</title><div class="h-captcha"></div>',
@@ -71,9 +73,12 @@ test('an ordinary page raises nothing', async (t) => {
 });
 
 test('login: a login-like path, or a visible password field in any frame', async (t) => {
-  for (const path of ['/login', '/account/sign-in', '/signin', '/oauth2/callback', '/sso/start', '/auth/callback']) {
+  for (const path of ['/login', '/account/sign-in', '/users/sign_in', '/signin', '/login.html', '/oauth/authorize', '/oauth2/callback', '/sso/start', '/auth/callback']) {
     assert.deepEqual(await flagsAt(t, path), flags({ login: true }), path);
   }
+  for (const path of ['/authors', '/blog/signing-tips', '/catalogin']) assert.deepEqual(await flagsAt(t, path), flags(), `${path} only contains a login word`);
+  assert.deepEqual(await flagsAt(t, '/new-password'), flags(), 'setting a new password is not logging in');
+  assert.deepEqual(await flagsAt(t, '/change-password'), flags(), 'two password fields side by side change a password');
   assert.deepEqual(await flagsAt(t, '/password'), flags({ login: true }));
   assert.deepEqual(await flagsAt(t, '/framed-login'), flags({ login: true }));
   assert.deepEqual(await flagsAt(t, '/hidden-password'), flags()); // not visible, so nobody is being asked to log in

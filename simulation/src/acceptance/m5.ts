@@ -79,8 +79,9 @@ export function buyerTextCriterion(mode: Mode, report: TextReport | undefined): 
   const id = 'buyer_text';
   if (report?.status !== 'finished') return { id, status: 'NOT_RUN', live_required: true, detail: 'The pricing-page run with D28 did not finish.' };
   const sentiment = new Map((report.sentiment ?? []).map((s) => [s.segment_id, s]));
-  const unrated = report.segments.filter((s) => !sentiment.get(s.id)?.surveyed || sentiment.get(s.id)?.sentiment == null).map((s) => s.name);
   const buyers = (report.buyers ?? []).filter((b) => b.surveyed > 0);
+  // Users' sentiment is by segment; a buyer segment's is in its buying survey.
+  const unrated = report.segments.filter((s) => (!sentiment.get(s.id)?.surveyed || sentiment.get(s.id)?.sentiment == null) && !buyers.some((b) => b.segment_id === s.id)).map((s) => s.name);
   const themes = report.themes ?? [];
   const quoted = themes.filter((t) => t.evidence.some((e) => e.passage?.text));
   const problems = [

@@ -162,6 +162,7 @@ export interface LlmRequest<T> {
   persona_id: string | null;
   round: number;
   purpose?: string; // a label for logs and scripted responders, e.g. 'propose_audience'
+  poi_id?: string; // the POI the call is about, recorded on the llm.call event so cost can be attributed per POI
   /**
    * A prefix many personas send unchanged, such as the text of a text POI: it goes before `system` with a cache breakpoint of its
    * own, so every persona reading it shares one cached copy instead of each paying for it in full.

@@ -175,3 +175,18 @@ test('snapshotTargets names an unlabelled target by its inline text, never by a 
   assert.equal(targets.get('e1')?.name, '101 - 200 employees');
   assert.equal(targets.get('e2')?.name, '');
 });
+
+test('marks lines off the viewport as off screen, above or below, and leaves what is on screen alone', () => {
+  const out = pruneSnapshot(lines(
+    '- heading "Top" [ref=e1] [box=0,-200,100,40]',
+    '- button "Save" [ref=e2] [box=0,100,80,40]',
+    '- link "Pricing" [ref=e3] [box=0,1200,80,20]:',
+    '  - /url: /pricing',
+  ), { viewportHeight: 800 });
+  assert.equal(out, lines(
+    '- heading "Top" [ref=e1] [box=0,-200,100,40] (off screen, above)',
+    '- button "Save" [ref=e2] [box=0,100,80,40]',
+    '- link "Pricing" [ref=e3] [box=0,1200,80,20] (off screen, below):',
+    '  - /url: /pricing',
+  ));
+});

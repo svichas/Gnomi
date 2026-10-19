@@ -114,7 +114,11 @@ export function withBuyers(base: Fixture, count: number, goal: string): Fixture 
   };
 }
 
-/** The generic-persona control (new_simulation.md §9): the same people and seeds with profile attributes and biography stripped to their segment's defaults. */
+/**
+ * The generic-persona control (new_simulation.md §9): the same people and seeds, with every prompt-visible trait set to one
+ * constant and the biography stripped to the segment, so prompts differ by segment alone. Names stay distinct because the
+ * social feed attributes posts by name; they are assigned by index, not sampled from traits.
+ */
 export function generic(base: Fixture): Fixture {
   const segments = new Map(base.project.audience!.segments.map((s) => [s.id, s]));
   const middle = ([lo, hi]: [number, number]) => Math.round((lo + hi) / 2);
@@ -123,6 +127,8 @@ export function generic(base: Fixture): Fixture {
     return {
       ...persona, attributes: {}, job_title: `${segment.name} team member`, industry: 'Business services', background: segment.description,
       context_of_use: 'At work.', voice: 'Plain and brief.', tech_skill: middle(segment.tech_skill), patience: middle(segment.patience),
+      device: 'desktop', accessibility_needs: 'none', pronouns: 'they', seniority: 'mid', motivation: 3, familiarity_with_category: 'medium', company_size: 500,
+      country: 'US', city: 'New York', timezone: 'America/New_York', languages: ['en-US'], language: 'en-US', employer: 'Example Works',
     };
   }) };
 }

@@ -566,7 +566,7 @@ test('M3: a broken link and a rejected form raise signal.error and signal.valida
   );
   const steps = of(events, 'persona.step');
   const [broken] = of(events, 'signal.error');
-  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
+  assert.deepEqual(broken.payload, { step_no: 1, url: `${w.gym.url}/job`, ref: steps[0].payload.action.ref, kind: 'http', status: 404, message: `GET ${w.gym.url}/job` });
   assert.equal(broken.seq, steps[0].seq + 1, 'written right after its step');
   assert.equal(of(events, 'signal.error').length, 1, "Chromium's console line for the 404 is not a second error");
   const [rejected] = of(events, 'signal.validation_error');
@@ -589,7 +589,7 @@ test('a persona runs Gym / and then Gym /locale, with a survey and themes for ea
     (req) => say('All the jobs are one click away.', { type: 'click', ref: ref(req, 'link', 'View all jobs') }, friction('The jobs link is easy to miss')),
     say('That is the list.', { type: 'done', text: 'Reached the jobs list' }),
     (req) => {
-      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1 of \d+\./m, 'the second POI counts its own steps in the prompt');
+      assert.match(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n'), /^Step 1\./m, 'the second POI counts its own steps in the prompt');
       return say('Which language is this?', { type: 'done', text: 'Read the locale' }, friction('The page does not say what it is for'));
     },
   ]), { project });
