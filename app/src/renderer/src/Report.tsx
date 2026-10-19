@@ -1,8 +1,9 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
+import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { BLOCK_REASON_TEXT, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { BLOCK_REASON_TEXT, COST_SCOPE_TEXT, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonReport } from './ComparisonReport.tsx';
@@ -155,7 +156,7 @@ function Glance({ report, themes: all }: { report: ReportData; themes: ReportThe
   const total = report.personas.length;
   const outcomes = (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => [outcome, report.personas.filter((p) => p.outcome === outcome).length] as const).filter(([, n]) => n > 0);
   const done = outcomes.find(([outcome]) => outcome === 'done')?.[1] ?? 0;
-  const started = total - (outcomes.find(([outcome]) => outcome === 'not_started')?.[1] ?? 0);
+  const started = total - outcomes.reduce((sum, [outcome, n]) => sum + (isUnrated(outcome) ? n : 0), 0);
   const singles = themes.filter(isSingle).length;
   const problems: { severity: number }[] = report.themes ? themes.filter((t) => !isSingle(t)) : report.frictions;
   const levels = LEVELS.map((n) => [n, problems.filter((p) => level(p.severity) === n).length] as const).filter(([, n]) => n > 0);
@@ -171,7 +172,7 @@ function Glance({ report, themes: all }: { report: ReportData; themes: ReportThe
     <section aria-labelledby="glance-title" className="space-y-3">
       <h3 id="glance-title" className={heading}>At a glance</h3>
       <p className="text-base text-stone-900">
-        {done} of {count(started, 'persona')} reached the goal.{started < total && ` ${total - started} did not start.`}
+        {done} of {count(started, 'persona')} reached the goal.{started < total && ` ${total - started} did not start or got no valid model answer.`}
         {top ? <> Fix first: <span className="font-medium">{top.title}</span> (<Share finding={top} />).</>
           : doubt ? <> Biggest objection: <span className="font-medium">{doubt.title}</span> (<Share finding={doubt} />).</>
           : themes.length > 0 ? ' No problem came up for more than one persona.' : report.frictions.length === 0 && ' Nobody reported any friction.'}
@@ -464,8 +465,9 @@ function SegmentTable({ report }: { report: ReportData }) {
   const surveys = report.sentiment && report.sentiment.length > 0 ? report.sentiment : null;
   const pois = report.segments[0]?.pois ?? []; // only with several POIs of the team's own
   const name = (id: string) => report.pois.find((poi) => poi.id === id)?.name ?? id;
-  const started = (segment: ReportData['segments'][number]) => segment.personas - (segment.outcomes.not_started ?? 0);
-  const notStarted = report.segments.reduce((sum, segment) => sum + segment.personas - started(segment), 0);
+  const started = (segment: ReportData['segments'][number]) => segment.personas - (segment.outcomes.not_started ?? 0) - (segment.outcomes.model_failed ?? 0);
+  const notStarted = report.segments.reduce((sum, segment) => sum + (segment.outcomes.not_started ?? 0), 0);
+  const noAnswer = report.segments.reduce((sum, segment) => sum + (segment.outcomes.model_failed ?? 0), 0);
   return (
     <section aria-labelledby="segments-title" className="space-y-3">
       <h3 id="segments-title" className={heading}>Results by segment</h3>
@@ -517,6 +519,7 @@ function SegmentTable({ report }: { report: ReportData }) {
         The weighted row counts each segment by its share of the audience, not by how many personas it has. Ran into friction: a self-report, survey friction or browser signal in one of the problems; objections are not counted.
         {pois.length > 0 && ' A persona reached the goal only when it did so on every text, design or site it was given.'}
         {notStarted > 0 && ` ${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of the rates.`}
+        {noAnswer > 0 && ` ${count(noAnswer, 'persona')} got no valid model answer three steps in a row and ${noAnswer === 1 ? 'is' : 'are'} left out of the rates; that says nothing about the product.`}
         {surveys && ' Mood and carrying on come from users’ surveys at the end, one answer per persona and point of interest, 0 is neutral, without weighting.'}
       </p>
     </section>
@@ -982,6 +985,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
           ))}
         </dl>
         <Note tone="info">{report.banner}</Note>
+        <Note tone="info">{COST_SCOPE_TEXT}</Note>
         {missingUsageText(report.unreported_usage_calls) && <Note tone="info">{missingUsageText(report.unreported_usage_calls)}</Note>}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under How each persona did. Everything else describes the full run.`}</p>}

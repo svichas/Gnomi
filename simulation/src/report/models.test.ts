@@ -26,7 +26,7 @@ const who = { run_id: 'r-1', round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: '
 const where = (url: string) => ({ url, ref: null });
 
 /** A finished episode with frictions on two pages, then the report models with the given responders. */
-async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: NewEvent[] = []) {
+async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: NewEvent[] = [], round = 1) {
   const events: GnomiEvent[] = [];
   const record: Recorder = (event: NewEvent) => {
     const stored = { ...event, seq: events.length + 1, ts: events.length } as GnomiEvent;
@@ -46,7 +46,7 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: N
     }])),
     record,
   );
-  await runReportModels({ config, llm, record, events: () => events });
+  await runReportModels({ config, round, llm, record, events: () => events });
   return { events, requests, types: events.slice(4 + extra.length).map((e) => e.type), report: buildReport(events) };
 }
 
@@ -126,7 +126,7 @@ test('every POI is judged at once, and the author writes in parallel batches of 
       return { object: { suggestions: ids.map((theme_id: string) => ({ theme_id, change: `Fix ${theme_id}.`, solution: 'Make it work.' })) }, cost_usd: 0 } as never;
     },
   };
-  await runReportModels({ config: two, llm, record, events: () => events });
+  await runReportModels({ config: two, round: 1, llm, record, events: () => events });
 
   assert.deepEqual(events.find((e) => e.type === 'report.started')?.payload, { pois: ['poi', 'poi-b'] });
   assert.equal(peakJudges, 2, 'both POIs were judged at the same time');
@@ -151,4 +151,10 @@ test('survey likes go to the same judge call, which merges and names them for wh
   assert.ok(events.some((e) => e.type === 'report.themes' && e.payload.likes?.length === 1));
   assert.deepEqual(report.went_well?.map((l) => [l.text, l.personas]), [['Scripted demo like 1: no model named it', 1]]);
   assert.equal(report.themes?.find((t) => t.id === 'g3')?.category, 'objection');
+});
+
+test('judge and author calls record the round the run reached and the POI they are about', async () => {
+  const { events } = await analyse({ judge: DEMO_JUDGE, author: DEMO_AUTHOR }, [], 3);
+  const calls = events.filter((e) => e.type === 'llm.call');
+  assert.deepEqual(calls.map((e) => [e.payload.purpose, e.round, e.poi_id]).sort(), [['report_suggestions', 3, 'poi'], ['report_themes', 3, 'poi']]);
 });

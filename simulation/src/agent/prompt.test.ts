@@ -4,6 +4,7 @@ import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import { z } from 'zod';
+import { buyerSystemPrompt } from './buyer.ts';
 import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveyItems, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 
@@ -260,6 +261,15 @@ test('a competitor survey names the competitor throughout and says it was only b
   assert.match(system, /would_continue: whether Priya would keep using Peer ATS/);
   assert.match(system, /not adopt Peer ATS/);
   assert.doesNotMatch(system, /keep using Gym ATS|adopt Gym ATS|view of Gym ATS/);
+});
+
+test('a buyer survey on a competitor names the competitor, not the team product', () => {
+  const peer = { ...project.pois[0], id: 'peer', name: 'Peer ATS', mode: 'observe_only' as const };
+  const system = buyerSystemPrompt(BUILTIN_PERSONA, project, null, peer);
+  assert.match(system, /weighing whether to buy Peer ATS/);
+  assert.match(system, /would_buy: whether Priya would buy Peer ATS/);
+  assert.doesNotMatch(system, /buy Gym ATS|view of Gym ATS/);
+  assert.match(buyerSystemPrompt(BUILTIN_PERSONA, project, null), /weighing whether to buy Gym ATS/);
 });
 
 test('the persona prompt leaves out connectivity, which is not simulated', () => {

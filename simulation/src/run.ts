@@ -298,6 +298,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         persona_id: persona.id,
         round: base.round,
         purpose: 'survey',
+        poi_id: poi.id,
         system: surveySystemPrompt(persona, project, segmentOf(persona, project), poi),
         user: surveyParts({
           persona,
@@ -616,7 +617,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
     try {
-      if (!halted && !comparison) await runReportModels({ config, llm: budgetedLlm, record, events: () => store.events(run_id) });
+      if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, record, events: () => store.events(run_id) });
     } finally {
       clearTimeout(clock); // Comparison analysis remains under the run's wall-clock allowance.
     }

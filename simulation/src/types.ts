@@ -412,6 +412,7 @@ export interface EventPayloads {
   };
   'llm.call': {
     role: LlmRole;
+    purpose?: string | null; // the request's label (step, survey, social, ...); absent in older logs
     provider: string;
     model: string;
     input_tokens: number;
@@ -522,6 +523,8 @@ export type ReportFriction = {
 // not_started: the run never got to the persona (no step, no episode); it is left out of every rate.
 // model_failed: the model gave no valid answer three steps running, which says nothing about the product.
 export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'model_failed' | 'blocked' | 'incomplete' | 'not_started';
+/** Neither says anything about the product, so the completion and friction rates leave them out. */
+export const isUnrated = (outcome: Outcome) => outcome === 'not_started' || outcome === 'model_failed';
 
 export interface ReportPersona {
   id: string;

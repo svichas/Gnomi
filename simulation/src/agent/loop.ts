@@ -137,7 +137,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     heard = [];
     if (signal.aborted) return null;
     try {
-      const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), system, user, schema, signal });
+      const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'step', poi_id, system, user, schema, signal });
       return { snapshot, screenshot, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;

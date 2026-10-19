@@ -1,3 +1,4 @@
+import { isUnrated } from '../types.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
@@ -44,7 +45,7 @@ export function reportToMarkdown(report: Report): string {
     '',
     '## Cost and time',
     '',
-    `- Recorded cost: $${report.cost_usd.toFixed(4)}`,
+    `- Recorded cost: $${report.cost_usd.toFixed(4)}. ${COST_SCOPE_TEXT}`,
     ...((report.unreported_usage_calls ?? 0) > 0 ? [
       `- ${report.unreported_usage_calls} model call${report.unreported_usage_calls === 1 ? '' : 's'} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`,
     ] : []),
@@ -126,7 +127,7 @@ function comparisonToMarkdown(report: Report): string {
     '', '### Recorded target orders', '', ...comparison.orders.map((order) => `- ${line(order.persona_id)}, ${line(order.task_id)}: ${order.target_order.map(target).map(line).join(' → ')}`),
     '', '### Limitations', '', ...comparison.limitations.map((item) => `- ${line(item)}`),
     ...comparison.rejected_assessments.map((item) => `- Rejected assessment #${item.seq}: ${line(item.reason)}`),
-    '', '## Cost and methods', '', `- Recorded cost: $${report.cost_usd.toFixed(4)}`,
+    '', '## Cost and methods', '', `- Recorded cost: $${report.cost_usd.toFixed(4)}. ${COST_SCOPE_TEXT}`,
     `- Model calls: ${report.llm_calls}; tokens: ${report.input_tokens} in / ${report.output_tokens} out`,
     ...((report.unreported_usage_calls ?? 0) > 0 ? [`- ${report.unreported_usage_calls} calls did not report complete usage; actual charges may exceed recorded cost.`] : []),
     ...methodsToMarkdown(report.methods), '',
@@ -146,6 +147,9 @@ function dimensionLines(report: Report): string[] {
     ]),
   ];
 }
+
+/** Persona writing happens before the run, so its calls are in the project's setup log, not the run's. */
+export const COST_SCOPE_TEXT = 'Writing the personas is recorded separately and is not included in this cost.';
 
 export const TRUST_TEXT = {
   confirmed: 'a self-report backed by an objective signal',
@@ -299,8 +303,9 @@ function spreadToMarkdown(s: SpreadStats, name: (id: string) => string): string[
 function segmentLines(report: Report): string[] {
   const pois = report.segments[0]?.pois ?? [];
   const name = (id: string) => cell(report.pois.find((poi) => poi.id === id)?.name ?? id);
-  const started = report.personas.filter((p) => p.outcome !== 'not_started');
-  const notStarted = report.personas.length - started.length;
+  const started = report.personas.filter((p) => !isUnrated(p.outcome));
+  const notStarted = report.personas.filter((p) => p.outcome === 'not_started').length;
+  const noAnswer = report.personas.length - started.length - notStarted;
   return [
     `| Segment | Share | Personas | Completion | Ran into friction |${pois.map((p) => ` Completion: ${name(p.poi_id)} |`).join('')}`,
     `| --- | --- | --- | --- | --- |${pois.map(() => ' --- |').join('')}`,
@@ -309,6 +314,7 @@ function segmentLines(report: Report): string[] {
     'Ran into friction: a self-report, survey friction or browser signal in one of the problem themes; objections are not counted.',
     ...(pois.length ? ['A persona reached the goal only when it did so on every text, design or site it was given.'] : []),
     ...(notStarted ? [`${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of these rates.`] : []),
+    ...(noAnswer ? [`${count(noAnswer, 'persona')} got no valid model answer three steps in a row and ${noAnswer === 1 ? 'is' : 'are'} left out of these rates; that says nothing about the product.`] : []),
     '',
     `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}. **Unweighted:** completion ${pct(started.length ? started.filter((p) => p.outcome === 'done').length / started.length : 0)}.`,
   ];

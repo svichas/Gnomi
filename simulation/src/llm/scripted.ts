@@ -227,7 +227,7 @@ export function createScriptedGateway(script: Script | Partial<Record<LlmRole, R
         spent += costPerCall;
         const attempt: LlmAttempt = {
           payload: {
-            role: req.role, provider: 'scripted', model: req.model.model,
+            role: req.role, purpose: req.purpose ?? null, provider: 'scripted', model: req.model.model,
             input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0,
             cost_usd: costPerCall, latency_ms: 0, usage_reported: true,
             status: parsed.success ? 'ok' : 'invalid_output', error,
@@ -240,7 +240,7 @@ export function createScriptedGateway(script: Script | Partial<Record<LlmRole, R
               run_id: req.run_id,
               round: req.round,
               persona_id: req.persona_id,
-              poi_id: null,
+              poi_id: req.poi_id ?? null,
               type: 'llm.call',
               payload: attempt.payload,
             },

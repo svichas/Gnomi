@@ -126,7 +126,7 @@ test('reportToMarkdown carries the banner, the goal, the segment table and the t
     '| Recruiters | 60% | 2 | 50% | 100% |',
     '| Hiring managers | 40% | 1 | 0% | 100% |',
     '**Weighted by share:** completion 30%, with friction 100%. **Unweighted:** completion 33%.',
-    '- Recorded cost: $0.7500',
+    '- Recorded cost: $0.7500. Writing the personas is recorded separately and is not included in this cost.',
     '- Tokens: 2000 in, 400 out',
     '- LLM calls: 2',
     '- Duration: 8.0 s',

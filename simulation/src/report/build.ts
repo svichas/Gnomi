@@ -26,6 +26,7 @@ import type {
   RunConfig,
   SessionInfo,
 } from '../types.ts';
+import { isUnrated } from '../types.ts';
 
 export const HYPOTHESIS_BANNER =
   'These findings come from simulated users. Treat them as hypotheses and validate the top items with real users before committing to changes.';
@@ -105,13 +106,13 @@ function endingsOf(own: GnomiEvent[], given: string[], defaultPoi: string): Endi
   return { ...(endings.find((e) => e.outcome === worst) ?? { outcome: 'incomplete', outcome_text: null }), pois };
 }
 
-// Rates leave out personas the run never started: their gap is scheduling, not the product.
+// Rates leave out personas the run never started and ones the model never answered: neither says anything about the product.
 function segmentOf(id: string | null, name: string, share: number, members: ReportPersona[], withFriction: Set<string>, pois: string[]): ReportSegment {
   const outcomes = Object.fromEntries(OUTCOMES.map((o) => [o, 0])) as Record<Outcome, number>;
   for (const p of members) outcomes[p.outcome] += 1;
-  const started = members.filter((p) => p.outcome !== 'not_started');
+  const started = members.filter((p) => !isUnrated(p.outcome));
   const perPoi = pois.map((poi_id) => {
-    const on = members.filter((p) => p.pois?.[poi_id] !== undefined && p.pois[poi_id] !== 'not_started');
+    const on = members.filter((p) => p.pois?.[poi_id] !== undefined && !isUnrated(p.pois[poi_id]));
     return { poi_id, personas: on.length, completion: rate(on.filter((p) => p.pois?.[poi_id] === 'done').length, on.length) };
   });
   return {
@@ -218,8 +219,8 @@ export function buildReport(events: GnomiEvent[]): Report {
     segmentOf(s.id, s.name, s.share, audience ? personas.filter((p) => p.segment_id === s.id) : personas, withFriction, ourPois.map((poi) => poi.id)),
   );
 
-  // Each segment counts by its share; the shares are renormalised over the segments with a persona that started.
-  const counted = segments.filter((s) => s.personas > s.outcomes.not_started);
+  // Each segment counts by its share; the shares are renormalised over the segments with a persona that started and got model answers.
+  const counted = segments.filter((s) => s.personas > s.outcomes.not_started + s.outcomes.model_failed);
   const weight = counted.reduce((sum, s) => sum + s.share, 0);
   const weighted = (pick: (s: ReportSegment) => number) =>
     weight === 0 ? 0 : counted.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;

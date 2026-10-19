@@ -267,7 +267,7 @@ test('an invalid navigator response is missing model work rather than task-effor
 test('a matched block collects every target before paying for either semantic assessment', async () => {
   const f = fixture();
   await f.runtime.runPersona(f.person);
-  assert.deepEqual(f.requests.map((request) => request.purpose ?? request.role), ['navigator', 'navigator', 'comparison_assessment', 'comparison_verification', 'comparison_assessment', 'comparison_verification']);
+  assert.deepEqual(f.requests.map((request) => request.purpose ?? request.role), ['step', 'step', 'comparison_assessment', 'comparison_verification', 'comparison_assessment', 'comparison_verification']);
   for (const request of f.requests.filter((item) => item.purpose === 'comparison_assessment')) {
     const packet = JSON.parse(request.user.find((part) => part.type === 'text')!.text);
     assert.ok(packet.sources.every((source: { target_id: string }) => source.target_id === packet.target.id));

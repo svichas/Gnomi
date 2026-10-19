@@ -731,3 +731,23 @@ test('a persona is done only when every POI it was given ended done, else its wo
   assert.ok(md.includes('**Unweighted:** completion 50%.'));
   assert.ok(report.methods.limitations?.includes('Gym: The author model wrote no suggested changes (no key, a model failure, or the run stopped first).'), 'with several POIs each note names its POI');
 });
+
+test('personas the model never answered are counted apart and left out of the completion and friction rates', () => {
+  const three: RunConfig = { ...config, personas: [person('p-a', null, 'Ana'), person('p-b', null, 'Ben'), person('p-c', null, 'Cleo')] };
+  const on = (persona_id: string) => ({ run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-gym' }) as const;
+  const report = buildReport(stored([
+    [1000, { ...runEnv, type: 'run.started', payload: { config: three } }],
+    ...three.personas.map((p, i): [number, NewEvent] => [1001 + i, { ...on(p.id), type: 'persona.created', payload: { persona: p } }]),
+    [1100, { ...on('p-a'), type: 'persona.step', payload: stepPayload(1, 'Posting.', null) }],
+    [1110, { ...on('p-a'), type: 'persona.goal_done', payload: { step_no: 1, summary: 'Posted.' } }],
+    [1200, { ...on('p-b'), type: 'persona.step', payload: stepPayload(1, '', null) }],
+    [1210, { ...on('p-b'), type: 'signal.repeated_failure', payload: { step_no: 3, action: 'click', error: 'invalid_output' } }],
+    [1300, { ...on('p-c'), type: 'persona.step', payload: stepPayload(1, 'Looking.', null) }],
+    [1310, { ...on('p-c'), type: 'persona.abandoned', payload: { step_no: 1, reason: 'No form.' } }],
+    [9000, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.personas.map((p) => p.outcome), ['done', 'model_failed', 'abandoned']);
+  const [segment] = report.segments;
+  assert.deepEqual([segment.personas, segment.outcomes.model_failed, segment.completion], [3, 1, 0.5], 'Ben is out of the denominator, not a failure');
+  assert.equal(report.weighted.completion, 0.5);
+});

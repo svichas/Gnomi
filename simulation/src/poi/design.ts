@@ -78,7 +78,7 @@ export const design: PoiRunner<DesignPoi> = {
         if (signal.aborted) return 'stopped';
         const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion, heard });
         heard = [];
-        output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', system, user, schema: designSchema, signal })).object;
+        output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', poi_id: poi.id, system, user, schema: designSchema, signal })).object;
       } catch (err) {
         if (signal.aborted) return 'stopped';
         // A second invalid answer is a failed step, as in the web loop; a missing frame or any other model error ends the run.

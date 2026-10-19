@@ -6,7 +6,7 @@ import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { LlmGateway, UserPart } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { profileBlock, sawLines, wordsFor, type SurveyedEnd } from './prompt.ts';
+import { profileBlock, sawLines, surveyedName, wordsFor, type SurveyedEnd } from './prompt.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const BUYER_SURVEY = 'buyer_survey';
@@ -23,9 +23,10 @@ export const buyerSurveySchema = z.object({
   reason: english(z.string().trim().min(1).max(500)),
 }).strict();
 
-export function buyerSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null): string {
+export function buyerSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: Poi): string {
   const { p, obj, poss } = wordsFor(persona, project);
-  return `This is ${persona.name}. ${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides, and has just looked at what ${project.name} shows people like ${obj}. Now ${p} answers a few questions about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
+  const product = surveyedName(project, poi); // a competitor's site is surveyed by its own name
+  return `This is ${persona.name}. ${p} is weighing whether to buy ${product}, or to recommend it to whoever decides, and has just looked at what ${product} shows people like ${obj}. Now ${p} answers a few questions about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
 <persona>
 ${profileBlock(persona, project, segment, obj)}
@@ -36,13 +37,13 @@ How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
-- objections: what would stop ${p} buying ${project.name} or recommending it, most important first, up to 5 short statements (at most 500 characters each); empty when nothing would.
+- objections: what would stop ${p} buying ${product} or recommending it, most important first, up to 5 short statements (at most 500 characters each); empty when nothing would.
 - unclear: what ${p} could not work out from what ${p} saw, such as a price, a limit or what a plan includes, up to 5 short statements; empty when everything was clear.
 - likes: what speaks for buying, up to 5 short statements; empty when nothing stood out.
 - price: how the price looks to ${p} for what it offers: "low", "fair" or "high", or "unclear" when ${p} could not tell what it would cost.
-- sentiment: ${poss} overall view of ${project.name}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
+- sentiment: ${poss} overall view of ${product}, an integer from -2 (very negative) to 2 (very positive); 0 is neutral.
 - confidence: how sure ${p} is of that view, from 0 to 1.
-- would_buy: whether ${p} would buy ${project.name}, or recommend that whoever decides buys it.
+- would_buy: whether ${p} would buy ${product}, or recommend that whoever decides buys it.
 - reason: why, as ${p} would say it, in at most 40 words.
 Answer from what ${p} saw in this session only. Do not invent praise, objections or certainty: when ${p} stopped early or found it confusing, the true answer says so.`;
 }
@@ -81,7 +82,8 @@ export async function askBuyer(opts: { llm: LlmGateway; config: RunConfig; perso
     persona_id: persona.id,
     round: opts.round,
     purpose: BUYER_SURVEY,
-    system: buyerSystemPrompt(persona, config.project, opts.segment),
+    poi_id: poi.id,
+    system: buyerSystemPrompt(persona, config.project, opts.segment, poi),
     user: buyerParts({
       persona,
       poi,

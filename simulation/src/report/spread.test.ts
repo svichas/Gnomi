@@ -197,7 +197,7 @@ async function withModels(social: boolean, judge: Responder) {
     requests.push({ role: req.role, system: req.system, user: JSON.parse(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('')) });
     return respond(req);
   };
-  await runReportModels({ config, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
   return { events, requests, report: buildReport(events) };
 }
 

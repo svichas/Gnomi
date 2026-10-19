@@ -290,7 +290,7 @@ export function createGateway({
         const cost_usd = costUsd(req.model, tokens);
         spent += cost_usd;
         const attempt: LlmAttempt = {
-          payload: { role: req.role, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error, temperature: accepted(temperature, 'temperature', warnings), seed: accepted(seed, 'seed', warnings), response_model },
+          payload: { role: req.role, purpose: req.purpose ?? null, provider, model: req.model.model, ...tokens, reasoning_tokens: reasoningTokens(provider, usage), queue_ms: started - queued, cost_usd, latency_ms: clock.now() - started, usage_reported: usageReported(provider, usage), status, error, temperature: accepted(temperature, 'temperature', warnings), seed: accepted(seed, 'seed', warnings), response_model },
           transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, shared, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;
@@ -301,7 +301,7 @@ export function createGateway({
               run_id: req.run_id,
               round: req.round,
               persona_id: req.persona_id,
-              poi_id: null,
+              poi_id: req.poi_id ?? null,
               type: 'llm.call',
               payload: attempt.payload,
             },

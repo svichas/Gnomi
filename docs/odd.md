@@ -8,7 +8,7 @@ This describes the model as implemented on branch `claude/simulation-workspace`,
 
 **Intended population and environment.** A frozen audience of personas, grouped in segments, using web apps in a contained browser, reading texts and looking through static design frames (POIs), with social rounds in between.
 
-**Patterns it should reproduce (checks, not claims).** Same-segment spread of a complaint exceeds cross-segment spread under the legacy network (the M4 regression check, [m4-acceptance.md](m4-acceptance.md)); budgets stop a persona within one step; recorded answers replay to the same state whatever the response timing.
+**Patterns it should reproduce (checks, not claims).** Same-segment spread of a complaint exceeds cross-segment spread under the legacy network (the M4 regression check, [m4-acceptance.md](m4-acceptance.md)); budgets stop a persona within one step; for a run that is not stopped, recorded answers replay to the same state whatever the response timing (a stop cuts the log where the timing of calls in flight put it).
 
 **Known limits.** Personas are language-model outputs and share model bias; the follow graph is imposed, not observed; opinion transitions are the model's own proposal; influence edges are provenance, not causal effects; a synthetic interval describes this simulator, not the human population.
 
@@ -22,7 +22,7 @@ This describes the model as implemented on branch `claude/simulation-workspace`,
 | Follow edge | Directed, unweighted: follower to followed; realized once per run from the seed and persisted as the graph. |
 | Post | `post_id`, author, `parent_id`, text, `about_poi_id`, event `seq`, running `agree` and `disagree` counts. |
 | Opinion | Per persona and POI: `sentiment` integer -2 to 2, `confidence` 0-1, up to 5 likes and 5 frictions (500 characters each). |
-| Influence edge | `from` author, `to` persona, POI, post, `delta`, `kind` `influence` or `formed`. |
+| Influence edge | `from` author, `to` persona, POI, post, `delta`, `kind` `influence`, `formed` or `heard`. |
 | Event | Append-only log with `seq`, `round`, persona and POI; all state is a fold of the log. |
 
 **Scales.** Time is logical: a *step* is one model decision of one persona on one POI; a *round* is one usage slice followed by one social phase. A round is not a claim about elapsed human time. The run has 0 rounds (social off, or no audience) or 1 to 10.
@@ -31,14 +31,14 @@ This describes the model as implemented on branch `claude/simulation-workspace`,
 
 For each round `1..R` (`run.ts`, `schedule`):
 
-1. **Usage slice.** Every persona still using a POI takes up to `ceil(sum of its POI budgets / R)` steps, personas in parallel up to `concurrency`, steps within a persona sequential. A persona that heard posts gets them in its next step prompt only.
+1. **Usage slice.** Every persona still using a POI takes up to `ceil(sum of its POI budgets / R)` steps, personas in parallel up to `concurrency`, steps within a persona sequential. Personas start in a seeded order that mixes segments (`order/<seed>/<persona>`), so a stop part-way does not cut the population by segment. A persona that heard posts gets them in its next step prompt only.
 2. **Social phase.**
    1. Harness-injected posts are recorded first.
    2. One snapshot of the log is folded into the board (posts, reactions, per-persona seen sets). Nothing written in this phase is visible in it.
    3. Each persona with more than one persona in the run is *due* if its feed is non-empty, or if it took a step since it last read the feed and a later round remains. Everyone else is skipped.
    4. Due personas make one independent `socialiser` call concurrently.
    5. After every call has settled, validated answers are applied **in population order**, so response speed cannot decide whose post is newest. After a stop, late answers are logged as `llm.call` but not applied.
-3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. A hard stop (user, tripwire, cost, wall clock) ends the run with partial results.
+3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. Before each usage slice and social phase the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
 
 A persona writes at most one post per round. Silence is a valid action; a failed call is a different outcome.
 
@@ -75,7 +75,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Follow graph, `legacy` (`followGraph`).** Each persona follows a count drawn uniformly from 6-12, capped at the population minus one. 70% of its follows come from its own segment and 30% from other segments (a pool too small for its share hands the rest to the other). 10% of personas, chosen by seeded order, are hubs drawn with weight 3 in weighted sampling without replacement (Efraimidis-Spirakis: the k largest `u^(1/w)`). Nobody follows themselves.
 
-**Network policies (`networkGraph`).** `legacy` as above. `rewired` swaps the targets of random follow pairs for `10 x edges` attempts, rejecting a swap that would create a self-follow or duplicate, so every out-degree and in-degree is kept and segment is ignored: the primary null for "does segment homophily drive spread". `random` is a graphology Erdos-Renyi digraph with mean out-degree about 9, trimmed to 12 and topped up to 6 follows each. `clustered` is a graphology clustered digraph with one cluster per segment, density 0.7 and 9 edges per persona, with the same trim and top-up. A population of one persona uses `legacy`. `graphMetrics` reports segment assortativity (directed modularity of the segment partition), mean in-degree, and the share of follows received by the top tenth by in-degree.
+**Network policies (`networkGraph`).** `legacy` as above. `rewired` swaps the targets of random follow pairs for `10 x edges` attempts, rejecting a swap that would create a self-follow or duplicate, so every out-degree and in-degree is kept and segment is ignored: the primary null for "does segment homophily drive spread". `random` is a graphology Erdos-Renyi digraph with mean out-degree about 9, trimmed to 12 and topped up to 6 follows each. `clustered` keeps each persona's legacy follow count and draws 90% of its follows uniformly from its own segment and the rest from others, with no hubs, so it differs from `legacy` only in how segment-bound the follows are. A population of one persona uses `legacy`. `graphMetrics` reports `segment_modularity` (directed modularity of the segment partition), mean in-degree, and the share of follows received by the top tenth by in-degree.
 
 **Feed (`selectFeed`).** Posts the persona has not seen and did not write. `ranked`: posts by followed personas first rank (relevance to the persona's own POIs, then reactions `agree + disagree` descending, then a seeded per-persona, per-round shuffle), the top 10 are kept; then 2 trending posts ranked the same way from anyone, followed or not. At most 12 posts and about 2,500 tokens, estimated as `ceil((chars + 100) / 4)`; a post that does not fit is skipped and a smaller later one may still fit. `chronological`: followed posts in event order, up to 12 and the same token cap, no ranking and no trending. Order of the list is the position shown and is logged. Ties never fall back to event sequence.
 
@@ -85,9 +85,13 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Opinion (`opinion/index.ts`).** Sentiment is an integer -2 to 2 (very negative to very positive); confidence 0-1 is the persona's own certainty, not a statistical quantity. `sameOpinion` suppresses unchanged snapshots. `foldOpinions` keeps the latest per run, persona and POI by `seq`.
 
-**Influence and formed edges (`influenceEdges`).** For a `persona.opinion_changed` event citing post ids: `delta = after.sentiment - before.sentiment`, with a missing prior opinion counted from 0. A change with `|delta| < 0.5` draws nothing; with integer sentiment that threshold never binds. For each distinct cited post by another persona and about the same POI, one edge. The kind is `formed` when there was no prior opinion and `influence` otherwise; only `influence` edges are counted as influence. Uncited changes, self-citations and cross-POI citations draw no edge. Product steps record the heard post ids on the step and friction events.
+**Influence and formed edges (`influenceEdges`).** For a `persona.opinion_changed` event citing post ids: `delta = after.sentiment - before.sentiment`, with a missing prior opinion counted from 0. A change with `|delta| < 0.5` draws nothing; with integer sentiment a change of a prior opinion always clears it, but a neutral first opinion (delta 0) does not, so the threshold binds for would-be `formed` edges. For each distinct cited post by another persona and about the same POI, one edge; a reply with no POI of its own takes its parent's, and a post with none in a one-POI project is about that POI. The kind is `formed` when there was no prior opinion and `influence` otherwise; only `influence` edges are counted as influence. Uncited changes, self-citations and cross-POI citations draw no edge. Product steps record the heard post ids on the step and friction events; a change that cites steps instead of posts draws a `heard` edge from each post handed to one of those steps. `formed` edges appear in the engine's live graph (kept apart from `influence` edges); the report's spread section leaves them out and shows `heard` edges, which the live graph does not.
 
-**Echo handling in findings.** The call is made per persona, not per friction. A persona is first-hand on a theme when any of its reports on the theme precedes its first exposure to a post the judge tagged with the theme, or when any of its reports has `confirmed` or `observed` trust; otherwise it is *heard first* and is kept out of k and ranking. Without judge tags, a reported friction logged at a step whose heard post ids include a post by a persona already counted in the theme is heard first; without either, the report says echoes could not be separated ([new_simulation.md §4](new_simulation.md#social-echo-in-finding-counts)).
+**Echo handling in findings.** The call is made per persona, not per friction. A persona is first-hand on a theme when any of its reports on the theme precedes its first exposure to a post the judge tagged with the theme (a feed that showed a reply also counts as showing its quoted parent), or when any of its reports has `confirmed` or `observed` trust; otherwise it is *heard first* and is kept out of k and ranking. The heard ids are checked whether or not the judge tagged posts: a reported friction logged at a step whose heard post ids include a post by a persona already counted in the theme is heard first; with neither tags nor heard ids, the report says echoes could not be separated ([new_simulation.md §4](new_simulation.md#social-echo-in-finding-counts)).
+
+**Episode outcomes (`report/build.ts`).** Each persona ends per POI as `done`, `abandoned`, `budget_exceeded`, `repeated_failure`, `model_failed` (three invalid model answers in a row), `blocked`, `incomplete` or `not_started` (the run never reached it); a persona is done only when it is done on every POI it was given, else it takes its worst. `not_started` and `model_failed` say nothing about the product, so they are left out of the completion and friction rates and counted apart.
+
+**Theme trust, ranking and prevalence (`report/themes.ts`).** A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
 
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
 
@@ -104,13 +108,12 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `MIN_FOLLOWS` | follows per persona | 6 | A small feed-sized neighbourhood. | `social/graph.ts`; tech.md §6.6 | assumed |
 | `MAX_FOLLOWS` | follows per persona | 12 | Same; keeps an average persona near a dozen sources. | `social/graph.ts`; tech.md §6.6 | assumed |
 | `OWN_SHARE` | share 0-1 | 0.7 | Segment-biased ties, so homophily is present to test against the null. | `social/graph.ts` | assumed |
-| `HUB_SHARE` | share of personas | 0.1 | A few accounts attract most follows. | `social/graph.ts` | assumed |
+| `CLUSTER_OWN_SHARE` | share 0-1 | 0.9 | The `clustered` control is more segment-bound than `legacy`, with no hubs. | `social/graph.ts` | assumed |
+| `HUB_SHARE` | share of personas | 0.1 | A few accounts attract most follows (`legacy` only). | `social/graph.ts` | assumed |
 | `HUB_WEIGHT` | sampling weight | 3 | Hubs gain about three times the followers. | `social/graph.ts` | assumed |
 | `network_policy` | `legacy`, `rewired`, `random`, `clustered` | `legacy` | Legacy is the baseline; the others are controls. | `settings.ts` | assumed |
 | rewire attempts | swaps per edge | 10 | Enough mixing for a degree-preserving null. | `rewireAcrossSegments` | assumed |
 | `random` mean out-degree | follows | about 9 | Midpoint of 6-12. | `networkGraph` | assumed |
-| `clustered` density | 0-1 | 0.7 | Dense within-segment clusters. | `networkGraph` | assumed |
-| `clustered` edges per persona | edges | 9 | Same mean degree as `random`. | `networkGraph` | assumed |
 
 ### Feed
 
@@ -155,7 +158,7 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | sentiment | integer | -2 to 2 | Explicit claim, not inferred from text. | `opinion/index.ts` | assumed |
 | confidence | 0-1 | model-reported | Self-report; not a statistical interval. | `opinion/index.ts` | assumed |
 | likes and frictions per opinion | count, characters | 5 each, 500 characters | Bounded output. | `opinion/index.ts` | assumed |
-| edge threshold | sentiment units | 0.5 | A no-op while sentiment is an integer (any change is at least 1). | `social/influence.ts` | assumed |
+| edge threshold | sentiment units | 0.5 | Binds for a neutral first opinion (delta 0); any change of a prior integer opinion is at least 1. | `social/influence.ts` | assumed |
 | `influence` rule | prior opinion required | yes | A first view is not a changed view. | `social/influence.ts`, new_simulation.md §4 | assumed |
 | `formed` rule | no prior opinion | first opinion cites a post | Shown separately, not counted as influence. | `social/influence.ts` | assumed |
 | echo discount | `reported` frictions only | heard first leaves k | Browser signals cannot echo a post. | `report/themes.ts` | assumed |

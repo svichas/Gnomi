@@ -2,6 +2,8 @@
 
 Reviewed 2026-10-19 on `main` at `a8a90cd` (PR #40 merged plus later commits), by four independent readers with separate lenses: the report pipeline, social scheduling and reproducibility, persona behaviour and evidence, and statistics. Each finding names its file and line, what goes wrong, and the smallest fix. "Verified" means the orchestrator re-read the code on `main`; "probed" means the reviewer reproduced it with a throwaway script. Severity: **high** = a number or label in the report is wrong or systematically biased; **medium** = wrong in some runs or a missing safeguard; **low** = clarity or rare.
 
+Every finding below was addressed on branch `claude/report-accuracy-fixes`, except three limits. Defect matching pairs themes and Gym defects on page only, because the defect catalogue has no element field, so recall and precision stay `NOT_RUN`. Projects whose saved persona schema still carries the old patience text keep it in their prompts until the schema is re-saved. No live run has exercised the Gym reset, the seeded arm order or cohort admission; they are covered by scripted tests only.
+
 ## 1. Trust and corroboration
 
 | Sev | Where | What happens | Smallest fix |
