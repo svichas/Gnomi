@@ -36,7 +36,7 @@ interface PoiRunner<P extends Poi> {
 
 | Type | File | Today |
 | --- | --- | --- |
-| `web` | `web.ts` | The browsing loop (`agent/loop.ts`); budget is the patience budget; preflight is the production guard (`checkTarget`). Observe-only POIs run with no session. |
+| `web` | `web.ts` | The browsing loop (`agent/loop.ts`); budget is the patience budget; preflight is the production-domain guard (`checkTarget`). Observe-only POIs run with no session. |
 | `text` | `text.ts` | Read and rate, below; budget is one part per 15 steps of patience budget; preflight refuses a text without its `.md` or `.txt` asset. |
 | `design` | `design.ts` | The expectation loop below; budget is the number of frames, capped by the patience budget; preflight refuses an empty design, a missing frame and a navigator that cannot see images. |
 
@@ -84,7 +84,7 @@ An episode runner must:
 
 The Points of interest section offers four ways to add material: a web app, pasted or uploaded text, design images, or frames from Figma. Numbered rows show the order personas try them. Open a row to edit it, use the arrow controls to reorder it, or remove it with the trash control. Adding an item opens its editor and focuses its name. Collapsing an editor preserves unfinished text and ongoing imports. Changes are saved with **Save project** or **Continue to audience**.
 
-Names are optional. Audience selection is under **Who tries this?**, and website restrictions are under **Website access & safety**. Product sites still require the existing staging/production confirmation; competitor sites remain observe-only. The design picker accepts multiple PNG, JPEG, or WebP files, either selected or dropped.
+Names are optional. Audience selection is under **Who tries this?**, and website restrictions are under **Website access & safety**. Product sites need no staging confirmation; competitor sites remain observe-only. The design picker accepts multiple PNG, JPEG, or WebP files, either selected or dropped.
 
 `npm run smoke:poi -w @gnomi/app` checks adding, collapsing without losing text, keyboard focus, reordering, removing, saving, the Figma entry point, and narrow layouts in a disposable Electron project.
 
@@ -103,7 +103,7 @@ A web POI with `mode: 'observe_only'` is browsed without writes (tech.md §7 "Co
 - **robots.txt**: `run.ts` fetches `/robots.txt` from the POI's start origin once per run (`observeOptions`), with Node's fetch, not the browser. A 2xx is parsed (RFC 9309: the groups naming `gnomi`, else those for `*`; the longest matching rule wins, allow wins a tie; `*` and a final `$` work); a 4xx means no rules; a 5xx, a timeout or no answer keeps Gnomi off the whole origin. Only page loads on the start origin are checked; other allowed hosts are not.
 - **What the persona hears**: an action that set off a blocked write (a form post, or a script's POST from a click) fails with `submit_blocked`; a page load robots.txt disallows fails with `robots_disallowed`. The page goes back from the browser's error page, as with `host_not_allowed`. The navigator prompt (`systemPrompt(…, poi)`) says the site is a competitor being looked at and that nothing may be submitted, and explains both errors. A start page robots.txt disallows ends the run with an error that says so.
 - **No login**: no recorded session is loaded for an observe-only POI, and a login page there is a page, not an expired session. The app offers the login recorder only when the project has a web POI in full mode.
-- **Production**: an observe-only POI may be a production site (no "not production" confirmation, and a live payment key on its pages is no tripwire), but listed production domains stay blocked and it may not have a reset hook.
+- **Production**: an observe-only POI may be a production site (a live payment key on its pages is no tripwire), but listed production domains stay blocked and it may not have a reset hook.
 - **Survey** (`poi/compare.ts`): `run.ts` passes the survey request through `comparisonFor(project, persona, poi, surveys).ask(…)`. For an observe-only POI, when the persona answered the team's product's survey earlier in the run, the survey also asks for `comparison: { prefers: 'product' | 'competitor' | 'no_preference', reason }`, and `persona.survey` records it with `with_poi_id`. List the competitor after the product: a persona that reaches the competitor first is not asked.
 - **Report**: `pois[].competitor` marks observe-only POIs; `comparisons` gives each competitor's answers counted by segment, with the reasons. When a run also has a POI of the team's own, competitor events stay out of persona outcomes, step and friction counts, the frictions list, feelings, sentiment by segment and "what went well"; the competitor's own themes are ranked in its own section, as every POI's are.
 

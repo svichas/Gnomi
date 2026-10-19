@@ -180,7 +180,6 @@ export interface WebPoi extends PoiBase {
   start_url: string; // where the login recorder opens and where logged-out personas begin
   allowed_hosts: string[]; // hosts personas may reach besides start_url's own; every other request is blocked (tech.md §9.3)
   production_domains: string[]; // never reachable, subdomains included; a run never starts against them
-  not_production: boolean; // the user confirmed that a host without a staging marker is not production
   reset_hook_url: string | null; // POSTed before a run when the user ticks it in the pre-run summary
 }
 

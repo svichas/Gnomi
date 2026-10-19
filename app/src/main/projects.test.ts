@@ -11,7 +11,7 @@ import { ProjectLibrary } from './projects.ts';
 
 const config: ProjectConfig = {
   name: 'Gym', description: 'Hiring software', goal: 'Post a job', role: 'recruiter', audience: null, settings: DEFAULT_SETTINGS,
-  pois: [{ id: 'web', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: 'http://localhost:3001', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
+  pois: [{ id: 'web', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: 'http://localhost:3001', allowed_hosts: [], production_domains: [], reset_hook_url: null }],
 };
 
 function setup(t: TestContext) {

@@ -1,5 +1,5 @@
 // One persona, one URL, one goal, from a terminal: the headless entry point of tech.md §16.2.
-// node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]
+// node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--project <dir>] [--fake-llm] [--headed]
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { DEFAULT_SETTINGS } from './settings.ts';
 import type { GnomiEvent, ProjectConfig } from './types.ts';
 
 const USAGE =
-  'Usage: node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--not-production] [--project <dir>] [--fake-llm] [--headed]';
+  'Usage: node simulation/src/cli.ts --url <start url> --goal "<goal>" [--allow host1,host2] [--project <dir>] [--fake-llm] [--headed]';
 
 function describe(e: GnomiEvent): string {
   switch (e.type) {
@@ -115,7 +115,6 @@ const OPTIONS = {
   url: { type: 'string' },
   goal: { type: 'string' },
   allow: { type: 'string', default: '' },
-  'not-production': { type: 'boolean', default: false },
   project: { type: 'string' },
   'fake-llm': { type: 'boolean', default: false },
   headed: { type: 'boolean', default: false },
@@ -151,7 +150,6 @@ async function main(): Promise<void> {
       start_url: start.href,
       allowed_hosts: values.allow.split(',').map((h) => h.trim()).filter(Boolean),
       production_domains: [],
-      not_production: values['not-production'],
       reset_hook_url: null,
     }],
     goal: values.goal,
@@ -160,7 +158,7 @@ async function main(): Promise<void> {
     settings: DEFAULT_SETTINGS,
   };
   const refusal = preflight(project);
-  if (refusal) throw new Error(values['not-production'] ? refusal : `${refusal}\nOn the command line, confirm with --not-production.`);
+  if (refusal) throw new Error(refusal);
 
   const dir = values.project ?? mkdtempSync(join(tmpdir(), 'gnomi-'));
   const store = openProject(dir);

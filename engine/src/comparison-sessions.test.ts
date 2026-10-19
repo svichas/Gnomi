@@ -7,7 +7,7 @@ import { comparisonSessionPois, comparisonSessionTarget } from './comparison-ses
 
 test('recording and verification only use the explicitly bound tool, not the first full-mode site', () => {
   const config: ProjectConfig = { name: 'Comparison', description: '', goal: 'Try the workflow', role: null, audience: null, settings: DEFAULT_SETTINGS,
-    pois: ['one', 'two'].map((id) => ({ id, name: id, type: 'web', mode: 'full', start_url: `https://staging.${id}.example/`, segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
+    pois: ['one', 'two'].map((id) => ({ id, name: id, type: 'web', mode: 'full', start_url: `https://staging.${id}.example/`, segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null })) };
   config.comparison = draftComparison(config);
   const target = config.comparison.targets[1]!;
   target.access_scope = 'authenticated_workflow';

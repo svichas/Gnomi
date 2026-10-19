@@ -21,7 +21,7 @@ mkdirSync(shots, { recursive: true });
 const gym = await startGym({ port: 0, captcha: true });
 const settings = { ...structuredClone(DEFAULT_SETTINGS), social: false };
 const base = { description: 'Disposable background simulation fixture', role: null, audience: null, settings };
-const hiring: ProjectConfig = { ...base, name: 'Hiring workspace', goal: 'Review candidates', pois: [{ id: 'hiring', type: 'web', mode: 'full', segments: null, name: 'Candidates', start_url: `${gym.url}/candidates`, allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null }] };
+const hiring: ProjectConfig = { ...base, name: 'Hiring workspace', goal: 'Review candidates', pois: [{ id: 'hiring', type: 'web', mode: 'full', segments: null, name: 'Candidates', start_url: `${gym.url}/candidates`, allowed_hosts: [], production_domains: [], reset_hook_url: null }] };
 const pricingDir = join(library, 'pricing.gnomi');
 const asset = await importText(createFsBlobStore(pricingDir), '# Pricing\nStarter costs $10 per month. Includes unlimited projects. Cancel at any time.', 'pricing.md');
 const pricing: ProjectConfig = { ...base, name: 'Pricing & plans', goal: 'Understand the Starter plan', pois: [{ id: 'pricing', type: 'text', segments: null, name: 'Pricing page', asset: asset.id }] };

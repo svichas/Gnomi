@@ -334,7 +334,7 @@ The following is an illustrative synthetic report, not a human study. All counts
 
 - **Replacing user research.** Gnomi produces hypotheses with simulation records, not evidence about real users or validated findings, and says so in every report.
 - **Quantitative prediction.** Gnomi does not predict conversion rates, NPS or market size. Sentiment scores are relative within a run and between runs of the same project.
-- **Testing production.** Gnomi refuses to run against hosts the user has not marked as staging and contains outbound traffic. It is not a monitoring or load-testing tool.
+- **Testing production.** Gnomi blocks the production domains a project lists and contains outbound traffic, but it cannot know that an unlisted host is production: choose the target deliberately. It is not a monitoring or load-testing tool.
 - **Defeating bot protection.** Gnomi never attempts CAPTCHAs, MFA or any bot-detection bypass. The human does these in the login recorder.
 - **Functional QA.** Gnomi reports broken things it meets, but it is not a regression test suite and does not assert expected outputs.
 - **A hosted service.** v1 is local only. Team sharing is done by exporting reports and zipping projects.

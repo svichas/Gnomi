@@ -5,15 +5,15 @@ import type { ProjectConfig, RunSettings, SessionInfo, WebPoi } from '@gnomi/sim
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import { blankAudience } from './audience.ts';
-import { hostOf, hostToConfirm, initialDraft, offeredHosts, problemFor, rolesInUse, startHost, toConfig } from './form.ts';
+import { hostOf, initialDraft, offeredHosts, problemFor, rolesInUse, startHost, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { nextPoiId, POI_KINDS, type PoiDraft } from './poi/index.ts';
 import type { WebDraft } from './poi/web.ts';
 
 /** A project with one web app; `changes` may set the project's fields and that web app's. */
 const form = (changes: Partial<Omit<Form, 'pois'> & Omit<WebDraft, 'id' | 'type'>> = {}, rest: Partial<Omit<Draft, 'form'>> = {}): Draft => {
-  const { url = 'http://localhost:3000', confirmedHost, production, reset, allowed, mode, segments, ...project } = changes;
-  const web = { ...POI_KINDS.web.blank('poi-1'), url, ...(confirmedHost !== undefined && { confirmedHost }), ...(production !== undefined && { production }), ...(reset !== undefined && { reset }), ...(allowed && { allowed }), ...(mode && { mode }), ...(segments !== undefined && { segments }) };
+  const { url = 'http://localhost:3000', production, reset, allowed, mode, segments, ...project } = changes;
+  const web = { ...POI_KINDS.web.blank('poi-1'), url, ...(production !== undefined && { production }), ...(reset !== undefined && { reset }), ...(allowed && { allowed }), ...(mode && { mode }), ...(segments !== undefined && { segments }) };
   return { form: { ...initialDraft(null).form, name: 'Gym', goal: 'Post a job', ...project, pois: [web] }, settings: DEFAULT_SETTINGS, audience: null, ...rest };
 };
 const only = (config: ProjectConfig | string) => {
@@ -60,16 +60,10 @@ test('startHost is only for http(s) addresses', () => {
   assert.equal(startHost('ftp://example.com'), null);
 });
 
-test('a host without a staging marker has to be confirmed, and the confirmation belongs to that host', () => {
-  assert.equal(hostToConfirm('http://localhost:3000'), null);
-  assert.equal(hostToConfirm('https://staging.acme.com'), null);
-  assert.equal(hostToConfirm('https://app.acme.com'), 'app.acme.com');
-
-  const prod = form({ url: 'https://app.acme.com' });
-  assert.equal(toConfig(prod), 'Confirm that this is not a production site.');
-  assert.equal(toConfig(form({ url: 'https://app.acme.com', confirmedHost: 'other.acme.com' })), 'Confirm that this is not a production site.');
-  assert.equal(only(toConfig(form({ url: 'https://app.acme.com', confirmedHost: 'app.acme.com' }))).not_production, true);
-  assert.equal(only(toConfig(form({ confirmedHost: 'localhost' }))).not_production, false, 'a staging-looking host is never marked as confirmed');
+test('a public host needs no staging marker or confirmation', () => {
+  const config = toConfig(form({ url: 'https://app.acme.com' }));
+  assert.ok(typeof config !== 'string', String(config));
+  assert.equal(only(config).start_url, 'https://app.acme.com');
 });
 
 test('toConfig builds the POI with its safety settings and names what is missing', () => {
@@ -92,7 +86,6 @@ test('toConfig builds the POI with its safety settings and names what is missing
     start_url: 'http://localhost:3000',
     allowed_hosts: ['cdn.example.com'], // the start page's own host is always allowed, so it is not listed
     production_domains: ['acme.com', 'app.acme.com'],
-    not_production: false,
     reset_hook_url: 'http://localhost:3000/reset',
   });
   assert.equal(config.role, 'recruiter');
@@ -107,7 +100,7 @@ test('a project saved before M1 or M5 opens with its one web app, empty safety s
       description: 'd',
       goal: 'g',
       role: null,
-      pois: [{ id: 'poi-1', type: 'web', name: '', segments: null, mode: 'full', url: 'http://localhost:3000', confirmedHost: null, production: '', reset: '', allowed: [] }],
+      pois: [{ id: 'poi-1', type: 'web', name: '', segments: null, mode: 'full', url: 'http://localhost:3000', production: '', reset: '', allowed: [] }],
     },
     settings: DEFAULT_SETTINGS,
     audience: null,
@@ -115,14 +108,14 @@ test('a project saved before M1 or M5 opens with its one web app, empty safety s
   assert.equal(only(toConfig(draft)).name, 'localhost', 'a web app named after its host keeps following it');
 });
 
-test('a competitor, observed only, needs no not-production confirmation and drops its reset hook', () => {
+test('a competitor, observed only, drops its reset hook while our own product keeps it', () => {
   const rival = only(toConfig(form({ url: 'https://rival.com/pricing', mode: 'observe_only', reset: 'https://rival.com/reset' })));
-  assert.deepEqual([rival.mode, rival.not_production, rival.reset_hook_url], ['observe_only', false, null]);
-  assert.match(String(toConfig(form({ url: 'https://rival.com/pricing', mode: 'full' }))), /Confirm that this is not a production site/, 'our own product still needs it');
+  assert.deepEqual([rival.mode, rival.reset_hook_url], ['observe_only', null]);
+  assert.equal(only(toConfig(form({ url: 'https://rival.com/pricing', mode: 'full' }))).mode, 'full');
 });
 
 test('POIs keep their order, names, modes and segments, and a problem says which POI has it', () => {
-  const web = (id: string, url: string, over: Partial<WebPoi> = {}): WebPoi => ({ id, type: 'web', name: id, mode: 'full', segments: null, start_url: url, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, ...over });
+  const web = (id: string, url: string, over: Partial<WebPoi> = {}): WebPoi => ({ id, type: 'web', name: id, mode: 'full', segments: null, start_url: url, allowed_hosts: [], production_domains: [], reset_hook_url: null, ...over });
   const pois = [
     web('poi-2', 'http://localhost:3000/locale', { name: 'Locale', segments: ['seg-a'] }),
     { id: 'poi-3', type: 'text' as const, name: 'Pricing copy', segments: null, asset: '0123456789abcdef.md' },

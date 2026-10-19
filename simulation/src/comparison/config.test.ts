@@ -9,7 +9,7 @@ export const comparisonProject = (): ProjectConfig => ({
   role: null, audience: null, settings: DEFAULT_SETTINGS,
   pois: ['Workable', 'Lever', 'Ashby', 'Teamtailor'].map((name, i) => ({
     id: `poi-${i}`, name, type: 'web', start_url: `https://vendor${i}.example/`, mode: 'observe_only',
-    segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null,
+    segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null,
   })),
 });
 

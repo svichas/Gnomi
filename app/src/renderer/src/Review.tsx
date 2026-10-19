@@ -256,7 +256,6 @@ export function Review(props: {
               ];
             })}
           </div>
-          {webPois(sources).filter((poi) => poi.mode === 'full' && poi.not_production).map((poi) => <p key={poi.id} className="review-note">You confirmed that {poi.name} is not a production site.</p>)}
           {webPois(sources).some((poi) => poi.reset_hook_url !== null) && (
             <div className="space-y-1">
               <Check checked={reset} onChange={setReset}>

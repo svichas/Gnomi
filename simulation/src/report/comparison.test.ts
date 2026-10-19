@@ -25,7 +25,7 @@ test('comparison reports and Markdown disclose the frozen verifier model, includ
 
 function fixture() {
   const project: ProjectConfig = { name: 'Tools', description: 'tools', goal: 'Choose ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
-    pois: ['Alpha', 'Beta'].map((name, i) => ({ id: `poi-${i}`, name, type: 'web', mode: 'observe_only', segments: null, start_url: `https://v${i}.example/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
+    pois: ['Alpha', 'Beta'].map((name, i) => ({ id: `poi-${i}`, name, type: 'web', mode: 'observe_only', segments: null, start_url: `https://v${i}.example/`, allowed_hosts: [], production_domains: [], reset_hook_url: null })) };
   const study = draftComparison(project);
   study.criteria = [study.criteria[0], study.criteria[1]];
   study.tasks[0].criterion_ids = study.criteria.map((c) => c.id);

@@ -150,7 +150,7 @@ All M5 criteria are unmeasured live: the frame-mismatch check needs a vision-cap
 - CAPTCHA and bot-protection detection during a run: the step fails with a `blocked` event, the persona pauses, the user is told. No bypass attempts, ever.
 - Credential guards: password values stripped from snapshots, password fields masked in screenshots, and typing into a password field refused by the action layer.
 - Containment: per-POI allowed hosts (the POI origin plus the hosts the user ticks from a list Gnomi builds by observing the recorder session); every other request is blocked at the browser and logged; the pre-run summary shows the list; the report's methods appendix lists blocked requests.
-- Production tripwires: a confirmation is required when the host has no staging-like marker; a run is halted when a page contains a live payment-provider key pattern or when the host matches a domain the user listed as production.
+- Production tripwires: a run never starts against a host that matches a domain the user listed as production, and is halted when a page contains a live payment-provider key pattern.
 - Reset hook: an optional URL the engineer provides that Gnomi calls before each run (with a confirmation in the UI) to reset staging data.
 - Per-persona browser contexts (cookie isolation) from the recorded session.
 

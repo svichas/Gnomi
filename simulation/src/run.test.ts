@@ -45,7 +45,6 @@ const project: ProjectConfig = {
     start_url: 'http://gym.test/',
     allowed_hosts: ['cdn.gym.test'],
     production_domains: ['gym.com'],
-    not_production: false,
     reset_hook_url: null,
     mode: 'full',
     segments: null,

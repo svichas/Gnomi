@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, Card, Check, Field, inputClass, Note } from '../ui.tsx';
 import { Icon } from '../Icon.tsx';
 import type { PoiFormProps } from './index.ts';
-import { hostOf, hostToConfirm, offeredHosts, startHost, type WebDraft } from './web.ts';
+import { hostOf, offeredHosts, startHost, type WebDraft } from './web.ts';
 
 function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string | null; onToggle(host: string, on: boolean): void; onAdd(host: string): void }) {
   const { hosts, allowed, start, onToggle, onAdd } = props;
@@ -63,12 +63,11 @@ function AllowedHosts(props: { hosts: string[]; allowed: string[]; start: string
   );
 }
 
-/** A web app: whose it is, its start page, the production guard, and what personas may reach. */
+/** A web app: whose it is, its start page, the production-domain guard, and what personas may reach. */
 export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>) {
   const set = <K extends keyof WebDraft>(key: K, value: WebDraft[K]) => onChange((was) => ({ ...was, [key]: value }));
   const [added, setAdded] = useState<string[]>([]); // hosts typed in by hand, kept in the list even when unticked
   const observing = draft.mode === 'observe_only';
-  const confirmHost = observing ? null : hostToConfirm(draft.url);
   const start = startHost(draft.url);
   return (
     <div className="space-y-4">
@@ -87,20 +86,9 @@ export function WebPoiForm({ draft, onChange, sessions }: PoiFormProps<WebDraft>
             : 'Personas use it as your users would: they click, type and submit, and can log in with a recorded login.'}
         </p>
       </div>
-      <Field label="Start page URL" hint={observing ? 'The persona starts here and can reach this host.' : 'The persona starts here and can reach this host. Use your staging address.'}>
+      <Field label="Start page URL" hint="The persona starts here and can reach this host.">
         <input type="url" value={draft.url} onChange={(e) => set('url', e.target.value)} placeholder={observing ? 'https://competitor.example.com' : 'https://staging.example.com'} spellCheck={false} className={inputClass} />
       </Field>
-      {confirmHost !== null && (
-        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm text-amber-900">
-            {confirmHost} does not look like a staging site. Gnomi must never run against production, because personas click, type and submit like real
-            users.
-          </p>
-          <Check checked={draft.confirmedHost === confirmHost} onChange={(on) => set('confirmedHost', on ? confirmHost : null)}>
-            This is not a production site
-          </Check>
-        </div>
-      )}
       <details className="disclosure">
         <summary><Icon name="settings" />Website access & safety<span>Optional settings</span></summary>
         <div className="space-y-5 disclosure-body">

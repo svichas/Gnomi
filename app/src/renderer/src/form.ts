@@ -9,7 +9,7 @@ import { profileProblem } from './profile.ts';
 
 import { startHost } from './poi/web.ts';
 
-export { hostOf, hostToConfirm, offeredHosts, startHost } from './poi/web.ts';
+export { hostOf, offeredHosts, startHost } from './poi/web.ts';
 
 // The Project screen's form and its rules, kept free of React so they can be tested on their own.
 

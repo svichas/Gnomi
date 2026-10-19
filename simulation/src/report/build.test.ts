@@ -34,7 +34,6 @@ const project: ProjectConfig = {
     start_url: startUrl,
     allowed_hosts: [],
     production_domains: [],
-    not_production: false,
     reset_hook_url: null,
     mode: 'full',
     segments: null,
@@ -627,7 +626,7 @@ const oldConfig = {
   project: {
     name: 'Gym',
     description: 'A demo ATS.',
-    pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
+    pois: [{ id: 'poi-gym', type: 'web', name: 'Gym', start_url: startUrl, allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null }],
     goal: 'Post a job for a backend engineer',
     role: 'recruiter',
   },

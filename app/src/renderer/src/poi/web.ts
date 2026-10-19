@@ -1,4 +1,3 @@
-import { looksLikeStaging } from '@gnomi/simulation/safety.ts';
 import type { SessionInfo, WebPoi } from '@gnomi/simulation/types.ts';
 import type { PoiKind } from './index.ts';
 
@@ -11,8 +10,6 @@ export interface WebDraft {
   segments: string[] | null;
   mode: WebPoi['mode'];
   url: string;
-  /** The host the user confirmed is not production; the confirmation lapses when the start page's host changes. */
-  confirmedHost: string | null;
   production: string; // production domains as typed, comma-separated
   reset: string;
   allowed: string[];
@@ -26,12 +23,6 @@ export function startHost(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-/** The start page's host when it has no staging marker, so the user has to confirm it is not production. */
-export function hostToConfirm(url: string): string | null {
-  const host = startHost(url);
-  return host !== null && !looksLikeStaging(host) ? host : null;
 }
 
 /** A hostname from what people paste: a bare host, a host with a port, or a whole address. */
@@ -64,7 +55,7 @@ export function offeredHosts(sessions: SessionInfo[], allowed: string[], added: 
 
 export const web: PoiKind<WebDraft, WebPoi> = {
   label: 'Web app',
-  blank: (id) => ({ id, type: 'web', name: '', segments: null, mode: 'full', url: '', confirmedHost: null, production: '', reset: '', allowed: [] }),
+  blank: (id) => ({ id, type: 'web', name: '', segments: null, mode: 'full', url: '', production: '', reset: '', allowed: [] }),
   draft: (poi) => ({
     id: poi.id,
     type: 'web',
@@ -73,7 +64,6 @@ export const web: PoiKind<WebDraft, WebPoi> = {
     segments: poi.segments,
     mode: poi.mode,
     url: poi.start_url,
-    confirmedHost: poi.not_production ? startHost(poi.start_url) : null,
     production: poi.production_domains.join(', '),
     reset: poi.reset_hook_url ?? '',
     allowed: poi.allowed_hosts,
@@ -83,10 +73,7 @@ export const web: PoiKind<WebDraft, WebPoi> = {
     const reset = draft.reset.trim();
     const host = startHost(url);
     if (host === null) return 'The start page needs a full web address, such as https://staging.example.com.';
-    // A competitor's site is browsed without writes, so it needs no "not production" confirmation and never a reset hook.
     const full = draft.mode === 'full';
-    const confirm = full ? hostToConfirm(url) : null;
-    if (confirm !== null && draft.confirmedHost !== confirm) return 'Confirm that this is not a production site.';
     const production = hostList(draft.production);
     if (typeof production === 'string') return production;
     if (full && reset && startHost(reset) === null) return 'The reset hook needs a full web address, or leave it empty.';
@@ -99,7 +86,6 @@ export const web: PoiKind<WebDraft, WebPoi> = {
       start_url: url,
       allowed_hosts: [...new Set(draft.allowed)].filter((allowed) => allowed !== host),
       production_domains: production,
-      not_production: confirm !== null,
       reset_hook_url: (full && reset) || null,
     };
   },

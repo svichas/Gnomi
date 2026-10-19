@@ -50,7 +50,7 @@ const key = randomBytes(32).toString('hex');
 const project = (poi: Partial<WebPoi> = {}, more: Partial<ProjectConfig> = {}): ProjectConfig => ({
   name: 'Acme',
   description: 'An applicant tracking system.',
-  pois: [{ id: 'poi-1', type: 'web', name: 'Acme', start_url: 'https://staging.acme.io/', allowed_hosts: [], production_domains: ['acme.com'], not_production: false, reset_hook_url: null, ...poi, mode: 'full', segments: null }],
+  pois: [{ id: 'poi-1', type: 'web', name: 'Acme', start_url: 'https://staging.acme.io/', allowed_hosts: [], production_domains: ['acme.com'], reset_hook_url: null, ...poi, mode: 'full', segments: null }],
   goal: 'Post a job',
   role: null,
   audience: null,
@@ -82,12 +82,10 @@ const audience = (segments: Segment[], persona_count: number): Audience => ({
   accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 },
 });
 
-test('start_run refuses production, an unconfirmed host, a reset with no hook and an audience with no personas', async () => {
+test('start_run refuses a listed production domain, a reset with no hook and an audience with no personas', async () => {
   await call('open_project', { dir });
   await call('save_project', { project: project({ start_url: 'https://app.acme.com/' }) });
   await assert.rejects(call('start_run', { reset: false }), /app\.acme\.com is on acme\.com, which this project lists as production/);
-  await call('save_project', { project: project({ start_url: 'https://acme.io/' }) });
-  await assert.rejects(call('start_run', { reset: false }), /does not look like a staging or test address/);
   await call('save_project', { project: project() });
   await assert.rejects(call('start_run', { reset: true }), /This project has no reset hook/);
   await call('save_project', { project: project({}, { audience: audience([segment('seg-1', { share: 100 })], 3) }) });
