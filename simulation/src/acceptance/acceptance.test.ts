@@ -7,7 +7,8 @@ import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
 import { assess, createAllowance, defectScores, executionCriterion, observeAttempt, pairedDifference, parseOptions, t95, validateOptions } from './checks.ts';
 import { runEvaluation } from './run.ts';
 import type { LlmAttempt } from '../seams.ts';
-import type { ReportTheme } from '../types.ts';
+import { profileBlock } from '../agent/prompt.ts';
+import type { Persona, ReportTheme } from '../types.ts';
 
 test('the frozen acceptance fixture is deterministic, has fifty people and a guaranteed German probe', () => {
   const first = fixture('http://localhost:4317');
@@ -119,8 +120,10 @@ test('the paired difference is the mean of per-replicate differences with a t in
   assert.equal(d.n, 3);
   assert.equal(d.mean, 2);
   assert.ok(Math.abs(d.lower! - (2 - 4.303 / Math.sqrt(3))) < 1e-9 && Math.abs(d.upper! - (2 + 4.303 / Math.sqrt(3))) < 1e-9);
-  assert.deepEqual(pairedDifference([5], [3]), { n: 1, mean: 2, lower: null, upper: null }, 'one pair has no interval');
-  assert.deepEqual(pairedDifference([null], [3]), { n: 0, mean: null, lower: null, upper: null });
+  assert.equal(d.note, null);
+  assert.deepEqual(pairedDifference([5, 6], [3, 3]), { n: 2, mean: 2.5, lower: null, upper: null, note: 'fewer than three pairs' }, 'two pairs have no interval');
+  assert.deepEqual(pairedDifference([3, 3, 3], [1, 1, 1]), { n: 3, mean: 2, lower: null, upper: null, note: 'no variation' });
+  assert.deepEqual(pairedDifference([null], [3]), { n: 0, mean: null, lower: null, upper: null, note: 'no pairs' });
 });
 
 test('defect scores map themes to enabled web defects by the catalogue pages they reached; only confirmed or observed themes find one', () => {
@@ -129,6 +132,15 @@ test('defect scores map themes to enabled web defects by the catalogue pages the
   const themes = [theme(1, 'observed', ['localhost:1/jobs/new']), theme(2, 'reported', ['localhost:1/']), theme(3, 'confirmed', ['localhost:1/candidates'])];
   assert.deepEqual(defectScores(themes, catalogue, ['D01', 'D02', 'D28']), { found: 1, defects: 2, recall: 0.5, matched: 2, top: 3, precision: 2 / 3 });
   assert.deepEqual(defectScores([], catalogue, []), { found: 0, defects: 0, recall: null, matched: 0, top: 0, precision: null });
+});
+
+test('defect scores assign themes and defects one-to-one, so one theme on a shared page credits one defect', () => {
+  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new, jobs]\n- id: D04\n  poi: web\n  pages: [jobs/new]\n';
+  const theme = (rank: number, pages: string[]) => ({ rank, trust: 'observed', pages }) as ReportTheme;
+  assert.deepEqual(defectScores([theme(1, ['h/jobs/new'])], catalogue, ['D01', 'D04']), { found: 1, defects: 2, recall: 0.5, matched: 1, top: 1, precision: 1 });
+  // The first theme takes D01, then gives it up for D04 so the second theme, which reaches only D01, is matched too.
+  assert.equal(defectScores([theme(1, ['h/jobs/new']), theme(2, ['h/jobs'])], catalogue, ['D01', 'D04']).found, 2);
+  assert.equal(defectScores([theme(1, ['h/jobs']), theme(2, ['h/jobs'])], catalogue, ['D01', 'D04']).precision, 0.5);
 });
 
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
@@ -149,26 +161,42 @@ test('the generic persona keeps the person and seed but strips attributes and bi
   assert.equal(after.patience, 3);
 });
 
-test('a scripted evaluation of two replicates and two arms writes matched results labelled unvalidated and inconclusive', async (t) => {
+test("the generic persona's prompt block differs only by segment, besides its name and seed", () => {
+  const plain = generic(fixture('http://localhost:4317'));
+  const segments = plain.project.audience!.segments;
+  const block = (p: Persona) => profileBlock(p, plain.project, segments.find((s) => s.id === p.segment_id)!, 'them').split('\n').filter((line) => !/^ {2}(name|seed): /.test(line)).join('\n');
+  for (const segment of segments) {
+    const blocks = new Set(plain.personas.filter((p) => p.segment_id === segment.id).map(block));
+    assert.equal(blocks.size, 1, segment.id);
+  }
+  assert.equal(new Set(plain.personas.map(block)).size, segments.length);
+});
+
+test('a scripted evaluation of two replicates and two arms writes matched results in a seeded arm order, labelled not run', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const out = join(dir, 'run');
   const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '2', '--arms', 'baseline,chronological_feed', '--personas', '4', '--out', out]));
   assert.equal(result.error, null);
   assert.equal(result.status, 'NOT_RUN');
-  assert.deepEqual(result.labels, { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' });
+  assert.deepEqual(result.labels, { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' });
+  assert.deepEqual([result.defect_metrics.recall, result.defect_metrics.precision, result.defect_metrics.status], [null, null, 'NOT_RUN']);
   assert.ok(result.missing_benchmark.includes('human_reference_dataset'));
   assert.equal(result.recorded_cost_usd, 0);
-  assert.deepEqual(result.replicates.map((r) => [r.seed - result.replicates[0].seed, Object.keys(r.arms)]), [[0, ['baseline', 'chronological_feed']], [1, ['baseline', 'chronological_feed']]]);
+  assert.deepEqual(result.replicates.map((r) => [r.seed - result.replicates[0].seed, [...r.order].sort()]), [[0, ['baseline', 'chronological_feed']], [1, ['baseline', 'chronological_feed']]]);
+  for (const r of result.replicates) assert.deepEqual(Object.keys(r.arms), r.order, 'arms ran in the recorded order');
+  assert.ok(result.replicates.every((r) => Object.values(r.arms).every((a) => a.duration_ms >= 0)));
   const outcomes = result.replicates[0].arms.baseline!.outcomes!;
   assert.equal(outcomes.personas, 4);
   assert.equal(outcomes.segments.reduce((sum, s) => sum + s.personas, 0), 4);
-  assert.equal(outcomes.defects.defects, 25);
-  assert.equal(typeof outcomes.segment_assortativity, 'number');
+  assert.equal(outcomes.defect_proxy.defects, 25);
+  assert.equal(typeof outcomes.segment_modularity, 'number');
   assert.equal(result.means.baseline.completion_rate.n, 2);
   assert.deepEqual(Object.keys(result.differences), ['chronological_feed']);
   assert.equal(result.differences.chronological_feed.llm_calls.n, 2);
   assert.deepEqual(readdirSync(out).sort(), ['defects.yaml', 'fixture.json', 'manifest.json', 'price-table.ts', 'r1-baseline', 'r1-chronological_feed', 'r2-baseline', 'r2-chronological_feed', 'results.json', 'results.md']);
   assert.equal(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).suite, 'evaluate');
-  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /NOT_VALIDATED[\s\S]*INCONCLUSIVE[\s\S]*human_reference_dataset/);
+  const md = readFileSync(join(out, 'results.md'), 'utf8');
+  assert.match(md, /Behavioural validity: NOT_RUN[\s\S]*primary_metrics[\s\S]*Defect recall: n\/a \(NOT_RUN\)[\s\S]*Intervals: exploratory/);
+  assert.match(md, /\| n\/a \(fewer than three pairs\) \| 2 \|/);
 });
