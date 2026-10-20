@@ -211,6 +211,7 @@ test('each provider gets its own client, key, schema format and token accounting
   assert.match(local.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
   assert.match(calls[3].transcript, /Answer with one JSON object that matches this JSON Schema/, 'the transcript shows the prompt that was sent');
   assert.equal(anthropic.output_config.effort, 'low');
+  assert.deepEqual(anthropic.thinking, { type: 'disabled' }, 'a routine step on Haiku does not think');
 
   // Sampling: a navigator's temperature where the route takes one, a seed where the SDK passes one, and the model each answer named.
   assert.deepEqual([anthropic.temperature, openai.temperature, google.generationConfig.temperature, local.temperature], [undefined, 1, 1, 1], 'Claude reasons, so no temperature is sent');
@@ -279,6 +280,8 @@ test('a role sets how hard the model thinks and how much room it has', async () 
     () => openaiResponse(OK),
     () => openaiResponse(OK),
     () => googleResponse(OK),
+    () => anthropicMessage(OK),
+    () => anthropicMessage(OK),
   );
   const { gateway } = setup();
   await gateway.call(request({ role: 'author', model: { provider: 'anthropic', model: 'claude-opus-5-5' } }));
@@ -286,10 +289,13 @@ test('a role sets how hard the model thinks and how much room it has', async () 
   await gateway.call(request({ role: 'navigator', model: { provider: 'openai', model: 'gpt-6.1-sol' } }));
   await gateway.call(request({ role: 'judge', model: { provider: 'openai', model: 'gpt-6-luna' } }));
   await gateway.call(request({ role: 'author', model: { provider: 'google', model: 'gemini-4-argon' } }));
-  assert.deepEqual([sent.bodies[0].output_config.effort, sent.bodies[0].max_tokens], ['high', 16_384]);
+  await gateway.call(request({ role: 'judge', model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } }));
+  await gateway.call(request({ role: 'navigator', model: { provider: 'anthropic', model: 'claude-opus-5-5' } }));
+  assert.deepEqual([sent.bodies[0].output_config.effort, sent.bodies[0].max_tokens, sent.bodies[0].thinking], ['high', 16_384, undefined], 'the author thinks as before');
+  assert.deepEqual(sent.bodies.slice(5).map((b) => [b.output_config.effort, b.thinking]), [['low', { type: 'between_tools' }], ['low', undefined]], 'Sonnet 5.5 at its lowest setting; Opus 5.5 always thinks, at low effort');
   assert.deepEqual(sent.bodies.slice(1, 4).map((b) => b.reasoning.effort), ['high', 'low', 'none'], 'GPT-6.1 Sol cannot switch reasoning off, so a routine step on it is low; the judge thinks little');
   assert.deepEqual(sent.bodies[4].generationConfig.thinkingConfig, { thinkingLevel: 'high' });
-  assert.deepEqual(sent.bodies.slice(1).map((b) => b.temperature ?? b.generationConfig?.temperature), [undefined, undefined, 0.5, 1], 'reasoning OpenAI routes get none; the judge runs cooler');
+  assert.deepEqual(sent.bodies.slice(1, 5).map((b) => b.temperature ?? b.generationConfig?.temperature), [undefined, undefined, 0.5, 1], 'reasoning OpenAI routes get none; the judge runs cooler');
 });
 
 test('explicit DeepSeek effort overrides control thinking and reserve room for reasoning', async () => {

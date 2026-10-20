@@ -34,6 +34,9 @@ const TEMPERATURE: Record<LlmRole, number> = { navigator: 1, socialiser: 1, pers
 const SEEDED: ReadonlySet<ProviderId> = new Set(['google', 'deepseek', 'openai_compatible']);
 // GPT-5.6, GPT-6 Sol and GPT-6 Luna accept reasoning effort 'none'; GPT-6 Astra and 6.1 Sol start at 'low' (@ai-sdk/openai docs).
 const CAN_SKIP_REASONING = /^gpt-(5\.6|6-(sol|luna))/;
+// Claude's lowest thinking setting where it is below adaptive: Haiku 5.5 turns it off, Sonnet 5.5 thinks only between tool calls,
+// which a call without tools never makes. Opus 5.5 and Fable 5.1 always think; low effort is their floor (claude-api skill, 2026-10-06).
+const THINKING_OFF: Partial<Record<string, 'disabled' | 'between_tools'>> = { 'claude-haiku-5-5': 'disabled', 'claude-sonnet-5-5': 'between_tools' };
 
 const MAX_RETRIES = 3; // after the first attempt, for 429, 5xx and overloaded
 const BACKOFF_MS = 1000; // 1 s, 2 s, 4 s before jitter
@@ -100,8 +103,11 @@ function languageModel({ provider, model }: ModelChoice, credential: string): La
 function providerOptions({ provider, model }: ModelChoice, role: LlmRole, override?: LlmRequest<unknown>['effort']): Record<string, Record<string, JSONValue>> {
   const effort = override ?? EFFORT[role];
   switch (provider) {
-    case 'anthropic':
-      return { anthropic: { effort: effort === 'none' ? 'low' : effort } };
+    case 'anthropic': {
+      // Routine roles think as little as the model allows, as on OpenAI and DeepSeek, where low-effort thinking was two thirds of their output.
+      const off = (effort === 'none' || effort === 'low') && THINKING_OFF[model];
+      return { anthropic: { effort: effort === 'none' ? 'low' : effort, ...(off && { thinking: { type: off } }) } };
+    }
     case 'openai':
       return { openai: { reasoningEffort: (effort === 'none' || effort === 'low') ? (CAN_SKIP_REASONING.test(model) ? 'none' : 'low') : effort, strictJsonSchema: true } };
     case 'google':
