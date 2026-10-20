@@ -12,11 +12,9 @@ const TRUNCATED = '… (truncated)';
 // Roles that repeat as items. A run of `generic` wrappers (card grids, div-soup rows) collapses too, unless it holds form fields.
 const REPEATED = new Set(['listitem', 'row', 'option', 'article']);
 const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'spinbutton', 'slider']);
+const TAPPABLE = new Set(['button', 'link', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
 // Worth showing even with no name or text: an unlabelled button is a finding, not noise.
-const CONTROLS = new Set([
-  'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'slider', 'spinbutton',
-  'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'treeitem',
-]);
+const CONTROLS = new Set([...TAPPABLE, ...FIELDS, 'option']);
 
 const LINE = /^( *)- (?:'((?:[^']|'')*)'|((?:[^:]|:(?!\s|$))*))(?::(?: (.*))?)?$/;
 const NAME = /^(\S+ )"((?:[^"\\]|\\.)*)"/;
@@ -60,6 +58,7 @@ function parse(raw: string): Line[] {
 
 const clip = (s: string) => (s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) + '…' : s);
 const hasField = (line: Line): boolean => FIELDS.has(line.role) || line.kids.some(hasField);
+const hasRef = (line: Line): boolean => REF.test(line.head) || line.kids.some(hasRef);
 const collapsible = (line: Line) => REPEATED.has(line.role) || (line.role === 'generic' && !hasField(line));
 
 function onScreen(line: Line, viewportHeight: number): boolean {
@@ -77,6 +76,9 @@ function keep(line: Line, opts: Options): Line[] {
     kids = kids.filter((kid) => kid.role !== 'text');
   }
   kids = visit(kids, opts);
+  // Playwright refs every element that is visible and takes pointer events, so a link or button without one cannot be
+  // tapped: a collapsed menu (pointer-events: none) would otherwise read as open. Keep only what inside it can be.
+  if (!ref && TAPPABLE.has(line.role)) return kids.filter(hasRef);
   if (!NAME.test(line.head) && value === undefined && !line.head.includes('[cursor=pointer]')) {
     if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
     if (!kids.length && !CONTROLS.has(line.role)) return [];

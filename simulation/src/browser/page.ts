@@ -123,6 +123,7 @@ export async function settle(page: Page): Promise<void> {
 export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => []): Promise<PageDriver> {
   const page = await openPage(context);
   let targets = new Map<string, ActionTarget>();
+  let shown = ''; // the snapshot text the persona was last given
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
   let popup: Page | null = null; // a tab the current action opened
   let formClick = false; // the current action clicked something inside a form
@@ -179,8 +180,10 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
 
   async function locate(ref: string | null) {
     if (!ref) throw new Error('missing ref');
+    // Playwright still resolves refs the pruned snapshot left out, so a guessed one would tap something the persona never saw.
+    if (!REF.test(ref) || !shown.includes(`[ref=${ref}]`)) throw new Error('ref_not_found');
     const locator = page.getByRef(ref);
-    if (!REF.test(ref) || (await locator.count().catch(() => 0)) === 0) throw new Error('ref_not_found');
+    if ((await locator.count().catch(() => 0)) === 0) throw new Error('ref_not_found');
     return locator;
   }
 
@@ -289,6 +292,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       states.forEach((state, i) => { if (state !== null) passwordFields.set(textboxes[i], state); });
       const viewportHeight = await page.evaluate(() => window.innerHeight);
       const text = pruneSnapshot(raw, { passwordFields, viewportHeight });
+      shown = text;
       return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
     },
 
