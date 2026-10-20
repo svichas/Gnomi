@@ -181,7 +181,7 @@ test('comparison HTML leads with the scoped decision, compares every target and 
   const html = await reportFile(report, 'html', thumbnails());
   const sections = ['Decision and scope', 'Side-by-side comparison', 'Where each tool fits', 'Next checks before choosing', 'Coverage and limitations', 'Evidence behind the comparison'];
   for (let i = 1; i < sections.length; i++) assert.ok(html.indexOf(sections[i - 1]) < html.indexOf(sections[i]), `${sections[i - 1]} precedes ${sections[i]}`);
-  for (const target of report.comparison.study.targets) assert.ok(html.includes(`<th scope="col" class="p-3 align-top font-medium text-stone-900">${target.name}</th>`));
+  for (const target of report.comparison.study.targets) assert.ok(html.includes(`<th scope="col">${target.name}</th>`));
   for (const text of ['Public-site evaluation', '3 / 4', '75% of valid attempts', '2 / 3', '67% of valid attempts', 'Environment blocked', 'Incomplete', 'Invalid task', 'Not attempted', '2 matched persona/task pairs', '3 / 5 eligible episodes assessed · 1 distinct source', 'Vendor claim', 'Unknown', 'Expected benefit (hypothesis)', 'Validate:', 'Evidence excluded from conclusions', 'Preference collection was not performed.']) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /At a glance|What to fix first|How each persona did|persona reached the goal/);
   assert.doesNotMatch(html, /<(?:button|select|script)\b/);
@@ -205,7 +205,7 @@ test('comparison scenarios and access scopes stay separate, with all targets pre
   assert.ok(html.includes('Prototype evaluation'));
   assert.ok(html.includes('Different access scope'));
   assert.equal(html.split('>Shared criterion</th>').length - 1, 3, 'scenario and access differences get separate matrices');
-  for (const target of report.comparison.study.targets) assert.equal(html.split(`<th scope="col" class="p-3 align-top font-medium text-stone-900">${target.name}</th>`).length - 1, 3);
+  for (const target of report.comparison.study.targets) assert.equal(html.split(`<th scope="col">${target.name}</th>`).length - 1, 3);
 });
 
 test('comparison text and evidence stay escaped, including target names, sources and proposed actions', async () => {
