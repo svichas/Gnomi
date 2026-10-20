@@ -2,7 +2,7 @@ import type { Poi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
 // Pure (no Node imports): the renderer uses these for the Project screen and to read old runs.
 
-type LegacyWebPoi = Omit<WebPoi, 'mode' | 'segments' | 'allowed_hosts' | 'production_domains' | 'not_production' | 'reset_hook_url'> &
+type LegacyWebPoi = Omit<WebPoi, 'mode' | 'segments' | 'allowed_hosts' | 'production_domains' | 'reset_hook_url'> &
   Partial<WebPoi>;
 
 type Saved = { pois?: Poi[]; poi?: LegacyWebPoi };
@@ -18,7 +18,6 @@ export function withPois<T extends Saved>(project: T): Omit<T, 'poi' | 'pois'> &
     segments: poi.segments ?? null,
     allowed_hosts: poi.allowed_hosts ?? [],
     production_domains: poi.production_domains ?? [],
-    not_production: poi.not_production ?? false,
     reset_hook_url: poi.reset_hook_url ?? null,
   }] : []);
   return { ...rest, pois: migrated };

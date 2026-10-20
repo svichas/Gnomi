@@ -25,7 +25,7 @@ const shots = join(import.meta.dirname, 'test-results');
 mkdirSync(shots, { recursive: true });
 const project: ProjectConfig = {
   name: 'All personas abandoned', description: 'Disposable run completion regression', goal: 'Complete an unavailable task', role: null, audience: null,
-  pois: [{ id: 'fixture', type: 'web', mode: 'full', segments: null, name: 'Fixture', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null }],
+  pois: [{ id: 'fixture', type: 'web', mode: 'full', segments: null, name: 'Fixture', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], reset_hook_url: null }],
   settings: { ...structuredClone(DEFAULT_SETTINGS), social: false },
 };
 const personas = ['Alex', 'Casey', 'Robin'].map((name, index) => ({ ...BUILTIN_PERSONA, id: `p-${index + 1}`, name }));

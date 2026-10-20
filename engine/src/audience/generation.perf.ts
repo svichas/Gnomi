@@ -19,7 +19,7 @@ if (!ref) throw new Error('Pass the baseline git ref to compare against.');
 const baselineFile = join(import.meta.dirname, `.generation-baseline-${randomUUID()}.ts`);
 const project: ProjectConfig = {
   name: 'Benchmark', description: 'Scheduling', goal: 'Book a meeting', role: null, audience: null, settings: DEFAULT_SETTINGS,
-  pois: [{ id: 'poi', type: 'web', name: 'Benchmark', start_url: 'http://localhost/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
+  pois: [{ id: 'poi', type: 'web', name: 'Benchmark', start_url: 'http://localhost/', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null }],
 };
 const audience = defaultAudience(project);
 const segment = audience.segments[0];

@@ -106,7 +106,6 @@ npm run cli -w @gnomi/simulation -- \
   --url http://localhost:4317 \
   --goal "Create a job post" \
   --allow localhost \
-  --not-production \
   --fake-llm \
   --project ./demo.gnomi
 ```

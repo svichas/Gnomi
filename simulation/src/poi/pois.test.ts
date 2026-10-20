@@ -8,7 +8,7 @@ import { poiBudget, preflight, RUNNERS } from './index.ts';
 import { assetPlaces, isEligible, loginPoi, placeName, poisFor, withPois } from './pois.ts';
 
 const web = (id: string, over: Partial<WebPoi> = {}): WebPoi => ({
-  id, type: 'web', name: id, mode: 'full', segments: null, start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, ...over,
+  id, type: 'web', name: id, mode: 'full', segments: null, start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], reset_hook_url: null, ...over,
 });
 const text: TextPoi = { id: 'copy', type: 'text', name: 'Pricing copy', segments: null, asset: '0123456789abcdef.md' };
 const design: DesignPoi = { id: 'frames', type: 'design', name: 'Checkout frames', segments: null, frames: [{ asset: '0123456789abcdef.png', name: null }] };
@@ -27,7 +27,7 @@ test('a project or run saved with one poi reads as a list of that one POI, in fu
   const legacy = { name: 'Gym', poi: { id: 'poi-1', type: 'web' as const, name: 'Gym', start_url: 'http://gym.test/' } };
   assert.deepEqual(withPois(legacy), {
     name: 'Gym',
-    pois: [{ ...legacy.poi, mode: 'full', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
+    pois: [{ ...legacy.poi, mode: 'full', segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null }],
   });
   const current = { name: 'Gym', pois: [web('a'), text] };
   assert.deepEqual(withPois(current), current, 'a project with pois is left as it is');
@@ -61,20 +61,23 @@ test('the registry lets a text run and blocks a run with a reason, such as a seg
   assert.equal(preflight(project([web('app')])), null);
   assert.equal(preflight(project([web('app'), text])), null, 'a text with its text runs');
   assert.equal(preflight(project([])), 'Add a point of interest for the personas to try.');
-  assert.match(preflight(project([web('app', { start_url: 'https://acme.com/' })])) ?? '', /does not look like a staging or test address/, 'the web runner keeps the production guard');
+  assert.equal(preflight(project([web('app', { start_url: 'https://acme.com/' })])), null, 'a public host runs without a staging marker');
+  assert.match(preflight(project([web('app', { start_url: 'https://acme.com/', production_domains: ['acme.com'] })])) ?? '', /lists as production/, 'the web runner still refuses a listed production domain');
   const buyers = audience([segment('seg-a'), segment('seg-buyers', { name: 'Buyers', kind: 'buyer' })]);
   assert.equal(preflight(project([web('app')], { audience: buyers })), 'No point of interest is open to the "Buyers" segment. Choose one for it, or give the segment no share.');
   const idle = audience([segment('seg-a'), segment('seg-buyers', { kind: 'buyer', share: 0 })]);
   assert.equal(preflight(project([web('app')], { audience: idle })), null, 'a segment without a share runs no personas');
 });
 
-test('comparison preflight admits public buyer tasks and missing materials while preserving full-access guards', () => {
+test('comparison preflight admits public buyer tasks and missing materials while still refusing listed production domains', () => {
   const configured = project([web('public', { start_url: 'https://acme.com/' }), text], { audience: audience([segment('buyer', { kind: 'buyer' })]) });
   configured.comparison = draftComparison(configured);
   assert.equal(preflight(configured, () => false), null, 'public buyer tasks use explicit comparison eligibility; missing files are per-task limitations');
   configured.comparison.targets[0].access_scope = 'authenticated_workflow';
   configured.comparison.targets[0].session_role = 'acme-test';
-  assert.match(preflight(configured) ?? '', /does not look like a staging or test address/);
+  assert.equal(preflight(configured), null, 'authenticated full access needs no staging marker');
+  configured.pois[0] = web('public', { start_url: 'https://acme.com/', production_domains: ['acme.com'] });
+  assert.match(preflight(configured) ?? '', /lists as production/);
 });
 
 test('step budgets scale by POI type: web keeps the patience budget, text and designs take far fewer', () => {

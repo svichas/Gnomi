@@ -11,7 +11,7 @@ import { getPersonaSchema } from '../profile/schema.ts';
 const project: ProjectConfig = {
   name: 'Gym ATS',
   description: 'An applicant tracking system for mid-size companies.',
-  pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null, mode: 'full', segments: null }],
+  pois: [{ id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null }],
   goal: 'Post a job for a backend engineer',
   role: null,
   audience: null,

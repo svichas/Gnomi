@@ -50,7 +50,7 @@ export function fixture(url: string): Fixture {
   const schema = getPersonaSchema();
   const project: ProjectConfig = {
     name: 'Gym ATS', description: 'An applicant tracking system for companies with 50 to 2,000 employees.',
-    pois: [{ id: 'poi-gym', type: 'web', mode: 'full', segments: null, name: 'Gym v1', start_url: `${url}/`, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
+    pois: [{ id: 'poi-gym', type: 'web', mode: 'full', segments: null, name: 'Gym v1', start_url: `${url}/`, allowed_hosts: [], production_domains: [], reset_hook_url: null }],
     goal: 'Use the applicant tracking system for the task assigned to your role.', role: null, audience, persona_schema: schema,
     settings: { ...structuredClone(DEFAULT_SETTINGS), wall_clock_budget_min: 30 },
   };

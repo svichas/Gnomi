@@ -35,7 +35,7 @@ import { buildComparison } from '../report/comparison.ts';
 
 function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boolean; exhausted?: boolean; blocked?: boolean; challengeAfterAction?: boolean; interrupted?: boolean; fixtureMissing?: boolean; judgeFailure?: boolean; invalidNavigator?: boolean; propose?: (proposal: AssessedEpisode) => AssessedEpisode; verificationFailure?: boolean; verificationUnavailable?: boolean } = {}) {
   const project: ProjectConfig = { name: 'Compare ATS tools', description: '', goal: 'Choose an ATS', role: null, audience: null, settings: DEFAULT_SETTINGS,
-    pois: ['Alpha', 'Beta'].map((name) => ({ id: name, name, type: 'web', start_url: `https://${name.toLowerCase()}.example/`, mode: 'observe_only', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null })) };
+    pois: ['Alpha', 'Beta'].map((name) => ({ id: name, name, type: 'web', start_url: `https://${name.toLowerCase()}.example/`, mode: 'observe_only', segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null })) };
   const study = draftComparison(project);
   study.tasks[0].prerequisites = [];
   study.tasks[0].max_steps = 2;

@@ -30,7 +30,7 @@ const config: RunConfig = {
       seed: 1, persona_count: 5, segments: [segment('rec', 'Recruiters', 60), segment('hm', 'Hiring managers', 40)], company_size: [50, 500],
       languages: { en: 1 }, accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 },
     },
-    pois: [{ id: 'poi', type: 'web', name: 'Gym', start_url: HOME, allowed_hosts: [], production_domains: [], not_production: true, reset_hook_url: null, mode: 'full', segments: null }],
+    pois: [{ id: 'poi', type: 'web', name: 'Gym', start_url: HOME, allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null }],
   },
   personas: POPULATION,
   sessions: [],

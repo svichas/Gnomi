@@ -21,7 +21,6 @@ const project: ProjectConfig = {
     start_url: 'http://localhost:3001/',
     allowed_hosts: ['cdn.example.com'],
     production_domains: ['ats.example.com'],
-    not_production: false,
     reset_hook_url: null,
     mode: 'full',
     segments: null,
@@ -219,7 +218,7 @@ test('a project saved before M1, M2 or M5 reads back with the defaults and its o
     audience: null,
     settings: DEFAULT_SETTINGS,
     role: null,
-    pois: [{ ...poi, mode: 'full', segments: null, allowed_hosts: [], production_domains: [], not_production: false, reset_hook_url: null }],
+    pois: [{ ...poi, mode: 'full', segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null }],
   });
   // Each read gets its own copy of the defaults, so a caller cannot change the shared constant.
   assert.notEqual(read?.settings, DEFAULT_SETTINGS);
