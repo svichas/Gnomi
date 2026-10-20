@@ -20,11 +20,8 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
   taskName: (id: string) => string;
   inFile: boolean;
 }) {
-  return <section aria-labelledby="comparison-coverage-title" className="space-y-4">
-    <div className="space-y-1">
-      <h3 id="comparison-coverage-title" className="text-base font-semibold text-stone-900">Coverage and limitations</h3>
-      <p className="text-sm text-stone-600">Completion uses completed, failed and abandoned valid attempts. Environment blocks, incomplete or invalid tasks and unattempted work are excluded and remain visible below.</p>
-    </div>
+  return <div className="space-y-4">
+    <p className="text-sm text-stone-600">Completion uses completed, failed and abandoned valid attempts. Environment blocks, incomplete or invalid tasks and unattempted work are excluded and remain visible below.</p>
     <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label="Task coverage by target" tabIndex={0}>
       <table className="w-full min-w-160 text-left text-sm">
         <thead className="bg-stone-50 text-xs text-stone-600"><tr>
@@ -61,5 +58,5 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
         {comparison.study.assumptions.length > 0 && <><h4 className="font-medium">Frozen assumptions</h4><ul className="list-disc space-y-1 pl-5">{comparison.study.assumptions.map((assumption, i) => <li key={i}>{assumption}</li>)}</ul></>}
       </div>
     </details>
-  </section>;
+  </div>;
 }

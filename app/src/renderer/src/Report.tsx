@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/simulation/types.ts';
@@ -6,11 +6,13 @@ import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dim
 import { BLOCK_REASON_TEXT, COST_SCOPE_TEXT, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
-import { ComparisonReport } from './ComparisonReport.tsx';
+import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
 import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
+import { Fold, InFile, Tile } from './reportParts.tsx';
+import type { Tone } from './reportParts.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -23,8 +25,6 @@ const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
 const heading = 'text-base font-semibold text-stone-900';
 
-// Tones are styled in styles.css; a tone always sits beside its label, never stands in for it (brand.md §5).
-type Tone = 'good' | 'warn' | 'high' | 'bad' | 'neutral';
 
 const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
   done: { text: 'Reached the goal', tone: 'good' },
@@ -107,8 +107,6 @@ type Inspect = (personaId: string, seq?: number) => void;
 // Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
 type RenderScreenshot = (path: string, alt: string) => ReactNode;
 
-/** True while the report is drawn into an exported file, which has no inspector to open and prints every fold open. */
-export const InFile = createContext(false);
 
 function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
   if (useContext(InFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>;
@@ -116,32 +114,6 @@ function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; s
     <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
       {name}
     </button>
-  );
-}
-
-/** A section that starts closed in the app: secondary detail stays one click away. */
-function Fold({ id, title, hint, icon = 'report', children }: { id: string; title: string; hint: string; icon?: Parameters<typeof Icon>[0]['name']; children: ReactNode }) {
-  const inFile = useContext(InFile);
-  return (
-    <section aria-labelledby={id}>
-      <details className="report-fold" open={inFile}>
-        <summary>
-          <span className="report-fold-icon"><Icon name={icon} size={18} /></span>
-          <div className="report-fold-copy"><h3 id={id}>{title}</h3><span>{hint}</span></div>
-          <Icon name="chevron" size={16} />
-        </summary>
-        <div className="report-fold-body">{children}</div>
-      </details>
-    </section>
-  );
-}
-
-function Tile({ label, value, detail, icon, tone }: { label: string; value: string; detail?: string; icon: Parameters<typeof Icon>[0]['name']; tone: Tone }) {
-  return (
-    <div className="report-stat">
-      <span className="report-stat-icon" data-tone={tone}><Icon name={icon} size={18} /></span>
-      <div><p className="report-stat-label">{label}</p><p className="report-stat-value">{value}</p>{detail && <p className="report-stat-detail">{detail}</p>}</div>
-    </div>
   );
 }
 
@@ -931,6 +903,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
           <Fold id="journeys-title" title={`User journeys (${details.personas.length})`} hint="Individual experiences, screenshots, and timelines" icon="activity"><div className="space-y-5">{audienceFilters}<Personas report={details} onInspect={onInspect} renderScreenshot={renderScreenshot} /></div></Fold>
           {report.spread && <Fold id="spread-title" title="Opinion spread" hint="How conversations shaped the simulated experience" icon="message"><Spread spread={report.spread} personas={report.personas} onInspect={onInspect} /></Fold>}
         </>}
+        {report.comparison && <ComparisonDetails comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} />}
         <Fold id="methods-title" title="Run details & methodology" hint="Usage, settings, and how to read these findings" icon="settings">
           <div className="space-y-5">
             <dl className="report-run-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

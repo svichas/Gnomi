@@ -36,10 +36,9 @@ export function ComparisonEvidence({ catalog, targetName, criterionName, persona
   onInspect: (personaId: string, seq?: number) => void;
   renderScreenshot: (path: string, alt: string) => ReactNode;
 }) {
-  return <section aria-labelledby="comparison-evidence-title" className="space-y-3">
-    <h3 id="comparison-evidence-title" className="text-base font-semibold text-stone-900">Evidence behind the comparison</h3>
+  return <>
     {catalog.length === 0 ? <p className="text-sm text-stone-600">No validated citations were captured. Unknown criteria remain unresolved.</p> :
-      <ol className="space-y-3">{catalog.map(({ id, evidence, cell }, i) => <li key={id} id={id} tabIndex={-1} className="scroll-mt-4 space-y-2 rounded-lg border border-stone-200 p-4">
+      <ol className="space-y-3">{catalog.map(({ id, evidence, cell }, i) => <li key={id} id={id} tabIndex={-1} className="comparison-evidence">
         <h4 className="text-sm font-medium text-stone-900">Evidence {i + 1} · {targetName(cell.target_id)} · {criterionName(cell.criterion_id)}</h4>
         <p className="text-xs text-stone-600">{BASIS_LABELS[evidence.basis]} · {personaName(evidence.persona_id)} · captured {new Date(evidence.captured_at).toISOString()} · event {evidence.event_seq}</p>
         <p className="text-sm text-stone-900">{evidence.proposition}</p>
@@ -48,5 +47,5 @@ export function ComparisonEvidence({ catalog, targetName, criterionName, persona
         {evidence.screenshot && renderScreenshot(evidence.screenshot, `Evidence ${i + 1}: ${targetName(cell.target_id)}, ${criterionName(cell.criterion_id)}`)}
         {!inFile && <button type="button" onClick={() => onInspect(evidence.persona_id, evidence.event_seq)} className="text-link">Inspect {personaName(evidence.persona_id)}’s evidence</button>}
       </li>)}</ol>}
-  </section>;
+  </>;
 }

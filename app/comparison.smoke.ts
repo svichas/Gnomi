@@ -86,6 +86,7 @@ try {
   for (const name of ['Decision and scope', 'Side-by-side comparison', 'Coverage and limitations']) {
     await report.getByRole('heading', { name, exact: true }).waitFor({ timeout: 60_000 });
   }
+  await report.getByRole('heading', { name: 'Coverage and limitations', exact: true }).click();
   const reportText = await report.innerText();
   assert.match(reportText, /Insufficient evidence/);
   assert.match(reportText, /Configured semantic verifier: navigator model/);
