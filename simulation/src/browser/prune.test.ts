@@ -190,3 +190,20 @@ test('marks lines off the viewport as off screen, above or below, and leaves wha
     '  - /url: /pricing',
   ));
 });
+
+test('drops a link or button Playwright gave no ref, as in a collapsed menu, keeping any ref inside it', () => {
+  // Line shapes from workable.com on a phone: the closed menu's links are pointer-events: none, so they carry no ref.
+  const out = pruneSnapshot(lines(
+    '- navigation [box=0,90,393,0]:',
+    '  - button "menu button" [ref=e14] [cursor=pointer] [box=359,114,18,18]',
+    '  - link "Pricing" [box=54,486,345,48]:',
+    '    - /url: /pricing',
+    '  - button "Flip card back" [box=24,500,0,272]:',
+    '    - generic [ref=e178] [cursor=pointer] [box=34,510,24,24]',
+  ));
+  assert.equal(out, lines(
+    '- navigation [box=0,90,393,0]:',
+    '  - button "menu button" [ref=e14] [cursor=pointer] [box=359,114,18,18]',
+    '  - generic [ref=e178] [cursor=pointer] [box=34,510,24,24]',
+  ));
+});

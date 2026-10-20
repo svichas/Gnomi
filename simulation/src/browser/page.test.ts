@@ -41,6 +41,11 @@ const pages: Record<string, string> = {
 <div role="combobox" aria-label="Dropdown"><button type="button" onclick="this.nextElementSibling.style.opacity = '1'; this.nextElementSibling.style.pointerEvents = 'auto'">1 - 20 employees</button>
 <div style="opacity:0;pointer-events:none"><ol><li>1 - 20 employees</li><li>21 - 50 employees</li></ol></div></div>
 <label><input type="checkbox" style="opacity:0"> Annual billing</label></body></html>`,
+  // A phone menu collapsed as workable.com builds it: zero height and pointer-events: none, its links still in the accessibility tree.
+  '/mobile-menu': `<!doctype html><html><head>${head}<title>Mobile menu</title></head><body>
+<header><div><button aria-label="menu button" onclick="const n = document.querySelector('nav'); n.style.height = 'auto'; n.style.pointerEvents = 'auto'">☰</button></div>
+<nav style="height:0;overflow:hidden;pointer-events:none"><div><a href="/next">Pricing</a></div></nav></header>
+<main><div><h1>Home</h1></div></main></body></html>`,
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
@@ -207,6 +212,20 @@ test('content at opacity 0 stays out of the snapshot until it shows, a transpare
   await act(page, 'click', refOf(closed, /button "1 - 20 employees" \[ref=(\w+)\]/));
   // Shows once the page's own style opens it: the snapshot put the page's styles back.
   assert.match((await page.snapshot()).text, /listitem \[ref=\w+\].*: 21 - 50 employees/);
+});
+
+test('a collapsed menu stays out of the snapshot, and a ref the persona was not shown taps nothing', async (t) => {
+  const page = await open(t, '/mobile-menu', 'mobile');
+  const closed = (await page.snapshot()).text;
+  assert.doesNotMatch(closed, /Pricing/);
+  // A ref Playwright still resolves but the snapshot left out (a hoisted wrapper), as a model guessing one would send.
+  const refs = [...closed.matchAll(/\[ref=e(\d+)\]/g)].map((m) => +m[1]);
+  const unseen = Array.from({ length: Math.max(...refs) - Math.min(...refs) }, (_, i) => Math.min(...refs) + i).find((n) => !refs.includes(n));
+  assert.ok(unseen, closed);
+  assert.equal((await act(page, 'click', `e${unseen}`)).error, 'ref_not_found');
+  await act(page, 'click', refOf(closed, /button "menu button" \[ref=(\w+)\]/));
+  const opened = (await page.snapshot()).text;
+  assert.match((await act(page, 'click', refOf(opened, /link "Pricing" \[ref=(\w+)\]/))).url_after, /\/next$/);
 });
 
 test('personas can type passwords while existing and entered values stay out of snapshots', async (t) => {
