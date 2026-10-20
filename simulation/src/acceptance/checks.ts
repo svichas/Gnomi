@@ -23,6 +23,9 @@ export const ARMS = {
   random_network: { settings: { network_policy: 'random' } },
   clustered_network: { settings: { network_policy: 'clustered' } },
   generic_persona: { generic: true },
+  // Cost arms: what each saving does to the outcomes. A DeepSeek navigator never gets screenshots, so text_only needs --provider anthropic.
+  text_only: { settings: { screenshots: false } },
+  fewer_rounds: { settings: { rounds: 3 } },
 } satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true }>;
 export type Arm = keyof typeof ARMS;
 

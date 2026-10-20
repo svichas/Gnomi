@@ -146,7 +146,8 @@ test('defect scores assign themes and defects one-to-one, so one theme on a shar
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 7);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 9);
+  assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,text_only,fewer_rounds']).arms, ['baseline', 'text_only', 'fewer_rounds']);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'baseline,other']), /got other/);
   assert.throws(() => parseOptions(['--evaluate', '--m4']), /one of/);
