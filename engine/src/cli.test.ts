@@ -141,6 +141,16 @@ test('--settings routing for one role keeps the default for the others, and a ro
   assert.match(result.stderr, /"routing\.judge" must be/);
 });
 
+test('run checks the key of every role it calls before it writes anything, naming the variable to set', () => {
+  const settings = join(dir, 'judge-openai.json');
+  writeFileSync(settings, JSON.stringify({ routing: { judge: { provider: 'openai', model: 'gpt-6-luna' } } }));
+  const { OPENAI_API_KEY: _, ...env } = process.env;
+  const args = ['run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings, '--project', join(dir, 'judge-key')];
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8', env: { ...env, ANTHROPIC_API_KEY: 'test-key' } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set OPENAI_API_KEY \(the judge runs on openai\)/);
+});
+
 test('runs, report and rejudge leave a run still live in another process running', () => {
   const project = join(dir, 'live');
   cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);

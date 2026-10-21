@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, cappedGateway, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, type Secrets } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, runRoles, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -344,6 +344,8 @@ async function runSimulation(v: Values): Promise<void> {
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
+    // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
+    for (const role of runRoles(config)) requireKey(settings, role, fake);
     store.saveProject(config);
     note(`Project folder: ${dir}`);
     const record = timeline(store);

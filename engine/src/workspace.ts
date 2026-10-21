@@ -100,6 +100,12 @@ export const estimateFor = (config: ProjectConfig, personas: Persona[]) =>
   estimateRun({ personas, settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
 
 /** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
+/** Every role a run of `config` calls a model for, as the Review step lists them. */
+export function runRoles(config: ProjectConfig): LlmRole[] {
+  const social = !config.comparison && socialRounds(config.settings, config.audience) > 0;
+  return ['navigator', ...(social ? ['socialiser' as const] : []), 'judge', ...(config.comparison ? [] : ['author' as const])];
+}
+
 export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
   checkComparison(config);
   const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
@@ -115,10 +121,8 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
     // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
     !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
-  // Every role the run calls, as the Review step lists them: a missing key would fail mid-run or quietly drop the report's analysis.
-  const social = !config.comparison && socialRounds(config.settings, config.audience) > 0;
-  const roles: LlmRole[] = ['navigator', ...(social ? ['socialiser' as const] : []), 'judge', ...(config.comparison ? [] : ['author' as const])];
-  for (const role of roles) {
+  // A missing key for any role the run calls would fail mid-run or quietly drop the report's analysis.
+  for (const role of runRoles(config)) {
     const provider = config.settings.routing[role].provider;
     if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
