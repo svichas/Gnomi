@@ -9,6 +9,15 @@ export function effectiveComparisonPoi(poi: Poi, target: ComparisonTarget): Poi 
     : poi;
 }
 
+/** Whether a study scenario covers a persona's segment (null for the built-in persona); false for a scenario the study lacks. */
+export function inScenario(study: ComparisonStudy, scenarioId: string, segmentId: string | null): boolean {
+  const scenario = study.scenarios.find((s) => s.id === scenarioId);
+  return !!scenario && (scenario.segment_ids === null || scenario.segment_ids.includes(segmentId ?? ''));
+}
+
+/** Whether a study source takes a persona's segment: every one when it lists none, never the built-in persona when it does. */
+export const admits = (poi: Pick<Poi, 'segments'>, segmentId: string | null): boolean => poi.segments === null || poi.segments.includes(segmentId ?? '');
+
 /** Sources actually used by this study, with their narrowed permissions; legacy projects keep their sources. */
 export function effectiveComparisonPois(project: ProjectConfig): Poi[] {
   if (!project.comparison) return project.pois;

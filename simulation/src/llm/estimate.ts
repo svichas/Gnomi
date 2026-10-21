@@ -4,6 +4,7 @@ import { poisFor } from '../poi/pois.ts';
 import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
+import { admits, inScenario } from '../comparison/config.ts';
 import { costUsd, isPriced } from './prices.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
@@ -72,11 +73,10 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
 /** Comparison episodes collect evidence before assessment and optional verification; budget for both passes. */
 function estimateComparison({ personas, settings, pois, study, at }: { personas: Persona[]; settings: RunSettings; pois?: Poi[]; study: ComparisonStudy; at: Date }): RunEstimate {
   const tasks = personas.flatMap((persona) => study.tasks.flatMap((task) => {
-    const scenario = study.scenarios.find((candidate) => candidate.id === task.scenario_id);
-    if (!scenario || (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? ''))) return [];
+    if (!inScenario(study, task.scenario_id, persona.segment_id)) return [];
     return task.entries.filter((entry) => {
       const source = pois?.find((poi) => poi.id === entry.poi_id);
-      return !pois || (source && (source.segments === null || source.segments.includes(persona.segment_id ?? '')));
+      return !pois || (!!source && admits(source, persona.segment_id));
     }).map(() => task);
   }));
   const episodes = tasks.length;

@@ -1,5 +1,5 @@
 import { createComparisonRuntime, comparisonSession, ComparisonEnvironmentError } from './comparison/runtime.ts';
-import { effectiveComparisonPois, validateComparison } from './comparison/config.ts';
+import { admits, effectiveComparisonPois, inScenario, validateComparison } from './comparison/config.ts';
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
@@ -211,12 +211,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
     if (drain.signal.aborted) return false;
     const now = spentUsd();
-    const scenario = project.comparison!.scenarios.find((item) => item.id === task.scenario_id)!;
-    if (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? '')) return true;
-    const targetCount = task.entries.filter((entry) => {
-      const poi = project.pois.find((item) => item.id === entry.poi_id)!;
-      return poi.segments === null || poi.segments.includes(persona.segment_id ?? '');
-    }).length;
+    if (!inScenario(project.comparison!, task.scenario_id, persona.segment_id)) return true;
+    const targetCount = task.entries.filter((entry) => admits(project.pois.find((item) => item.id === entry.poi_id)!, persona.segment_id)).length;
     // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
     // observed charges take over once available, retaining the existing support for unpriced model routes.
     const navigatorCost = comparisonCallCost('navigation') ?? 0;

@@ -2,7 +2,7 @@ import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import type { EpisodeEnd } from '../agent/loop.ts';
 import { readAsset } from '../assets.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
-import { effectiveComparisonPoi } from './config.ts';
+import { admits, effectiveComparisonPoi, inScenario } from './config.ts';
 import { runnerFor } from '../poi/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { EventOf, EventType, GnomiEvent, PageSnapshot, Persona, Poi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
@@ -216,10 +216,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
   const pendingEpisodes = new Map<string, Pending>();
   const episodeId = (p: Persona, task: ComparisonTask, target: ComparisonTarget) => JSON.stringify([study.execution.replicate_id, p.id, task.scenario_id, task.id, target.id]);
   const scopeFor = (p: Persona, task: ComparisonTask, target: ComparisonTarget): ComparisonScope => ({ episode_id: episodeId(p, task, target), replicate_id: study.execution.replicate_id, target_id: target.id, scenario_id: task.scenario_id, task_id: task.id, segment_id: p.segment_id, access_scope: target.access_scope });
-  const eligible = (p: Persona, task: ComparisonTask) => {
-    const scenario = study.scenarios.find((s) => s.id === task.scenario_id)!;
-    return scenario.segment_ids === null || (p.segment_id !== null && scenario.segment_ids.includes(p.segment_id));
-  };
+  const eligible = (p: Persona, task: ComparisonTask) => inScenario(study, task.scenario_id, p.segment_id);
   const finish = (persona: Persona, payload: ComparisonEpisodeFinished) => {
     completed.add(payload.episode_id);
     record({ run_id: config.run_id, round: 1, persona_id: persona.id, poi_id: study.tasks.find((task) => task.id === payload.task_id)?.entries.find((entry) => entry.target_id === payload.target_id)?.poi_id ?? null, type: 'comparison.episode_finished', payload });
@@ -233,7 +230,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
     if (!entry) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'No target entry is assigned for this task.', evidence_seqs: [] }); return stepsBefore; }
     if (deps.stopped()) { finish(persona, { ...scope, outcome: 'not_attempted', reason: deps.stopReason(), evidence_seqs: [] }); return stepsBefore; }
     const entryPoi = config.project.pois.find((poi) => poi.id === entry.poi_id)!;
-    if (entryPoi.segments !== null && !entryPoi.segments.includes(persona.segment_id ?? '')) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'The target entry explicitly excludes this segment.', evidence_seqs: [] }); return stepsBefore; }
+    if (!admits(entryPoi, persona.segment_id)) { finish(persona, { ...scope, outcome: 'not_applicable', reason: 'The target entry explicitly excludes this segment.', evidence_seqs: [] }); return stepsBefore; }
     const started = record({ ...base, poi_id: entry.poi_id, type: 'comparison.episode_started', payload: { ...scope, poi_id: entry.poi_id, order: targetOrder.indexOf(target.id), target_order: targetOrder } });
     const { session, reason } = comparisonSession(config, target);
     if (reason || (task.requires_fixture && !entry.fixture)) {
@@ -242,7 +239,7 @@ export function createComparisonRuntime(deps: ComparisonRuntimeDeps) {
     }
     const segment = config.project.audience?.segments.find((s) => s.id === persona.segment_id) ?? null;
     const context = taskContext(config, persona, target, task, segment, prior);
-    const orderedPois = [entry.poi_id, ...target.poi_ids.filter((id) => id !== entry.poi_id)].map((id) => config.project.pois.find((poi) => poi.id === id)!).filter((poi) => poi.segments === null || poi.segments.includes(persona.segment_id ?? ''));
+    const orderedPois = [entry.poi_id, ...target.poi_ids.filter((id) => id !== entry.poi_id)].map((id) => config.project.pois.find((poi) => poi.id === id)!).filter((poi) => admits(poi, persona.segment_id));
     let end: EpisodeEnd = 'done';
     let failure: string | null = null;
     let environmentFailure = false;
