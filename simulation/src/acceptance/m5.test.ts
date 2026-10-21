@@ -148,7 +148,8 @@ test('the design runner\'s preflight refuses a navigator that cannot read images
   const frames = Array.from({ length: 6 }, (_, i) => `${String(i).repeat(16)}.png`);
   const project = designCase(fixture('http://localhost'), frames).project;
   assert.equal(preflight(project), null);
-  const text = { ...project, settings: { ...project.settings, routing: PROVIDER_DEFAULTS.deepseek } };
+  assert.equal(preflight({ ...project, settings: { ...project.settings, routing: PROVIDER_DEFAULTS.deepseek } }), null, 'DeepSeek V4.1-Flash reads images');
+  const text = { ...project, settings: { ...project.settings, routing: { ...PROVIDER_DEFAULTS.deepseek, navigator: { provider: 'deepseek' as const, model: 'deepseek-v4-pro' } } } };
   assert.match(preflight(text) ?? '', /reads text only/);
   assert.deepEqual(designSkipped('reads text only').map((c) => [c.id, c.status]), [['frame_mismatch', 'NOT_RUN'], ['design_control', 'NOT_RUN']]);
 });
@@ -181,15 +182,11 @@ test('a scripted rehearsal runs both text cases and the design cases end to end 
   await assert.rejects(runM5Acceptance(parseOptions(['--m5', '--out', out])), /already exists/);
 });
 
-test('with a navigator that reads text only, the design case is skipped with the preflight\'s reason and nothing is spent on it', async () => {
-  const out = join(dir, 'text-only');
+test('on DeepSeek both cases run: its Flash navigator reads the frames', async () => {
+  const out = join(dir, 'deepseek');
   const result = await runM5Acceptance(parseOptions(['--m5', '--provider', 'deepseek', '--out', out]));
   assert.equal(result.error, null);
-  const design = result.criteria.filter((c) => c.id === 'frame_mismatch' || c.id === 'design_control');
-  assert.equal(design.length, 2);
-  for (const c of design) assert.match(c.detail, /^Design case not run: "Checkout" is a design, and the navigator model \(DeepSeek deepseek-flash\) reads text only\./);
-  assert.match(result.design.skipped ?? '', /reads text only/);
-  assert.deepEqual(readdirSync(out).filter((file) => file.startsWith('design-')), [], 'no design run was started');
-  assert.deepEqual(readdirSync(out).filter((file) => file.startsWith('text-')).sort(), ['text-control', 'text-d28']);
-  assert.equal(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).design.skipped, result.design.skipped);
+  assert.equal(result.design.skipped ?? null, null);
+  assert.deepEqual(result.design.seeds.map((s) => s.run_status), Array(5).fill('finished'));
+  assert.equal(result.design.control.run_status, 'finished');
 });

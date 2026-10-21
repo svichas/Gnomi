@@ -1,5 +1,5 @@
 import { assetPlaces, placeName, poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
-import { DEFAULT_SETTINGS } from '../settings.ts';
+import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
@@ -277,8 +277,8 @@ export function buildReport(events: GnomiEvent[]): Report {
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
   const discarded = ofType(events, 'social.discarded');
   const runNotes = [
-    // DeepSeek takes no images (llm/gateway.ts), so its navigator is text-only whatever the setting says.
-    ...(webPois(pois).length && settings && (!settings.screenshots || settings.routing.navigator.provider === 'deepseek') ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
+    // A text-only navigator model gets no images (llm/gateway.ts), whatever the setting says.
+    ...(webPois(pois).length && settings && (!settings.screenshots || !readsImages(settings.routing.navigator)) ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
     ...(discarded.length ? [`The run stopped in round ${discarded[0].round} before applying ${discarded.length} paid social answer${discarded.length === 1 ? '' : 's'}, so the feed and opinions miss ${discarded.length === 1 ? 'it' : 'them'}.`] : []),
   ];
 

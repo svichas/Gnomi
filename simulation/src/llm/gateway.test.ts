@@ -132,7 +132,7 @@ test('a shared prefix goes first with a cache breakpoint of its own; a chat-comp
   await gateway.call(request({ model: { provider: 'openai_compatible', model: 'gemma4:e4b' }, shared: '<text>The pricing copy.</text>', user: [{ type: 'text', text: 'Go on.' }] }));
   const system = sent.bodies[1].messages.filter((m: { role: string }) => m.role === 'system');
   assert.equal(system.length, 1);
-  assert.match(system[0].content, /^<text>The pricing copy\.<\/text>\n\nThis is Priya\.\n\nAnswer with one JSON object/);
+  assert.match(system[0].content, /^<text>The pricing copy\.<\/text>\n\nAnswer with one JSON object.*\}\n\nThis is Priya\.$/s);
 });
 
 test('one call: cached system prefix, screenshot, low effort, native schema, cost and raw usage from the answer', async () => {
@@ -208,7 +208,7 @@ test('each provider gets its own client, key, schema format and token accounting
   assert.deepEqual(google.generationConfig.thinkingConfig, { thinkingLevel: 'low' });
   // Local: json_schema output, and the schema again in the prompt (tech.md §10.6).
   assert.equal(local.response_format.type, 'json_schema');
-  assert.match(local.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
+  assert.match(local.messages[0].content, /^Answer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling".*\}\n\nThis is Priya\.$/s, 'the schema, the same for every persona, comes before the persona');
   assert.match(calls[3].transcript, /Answer with one JSON object that matches this JSON Schema/, 'the transcript shows the prompt that was sent');
   assert.equal(anthropic.output_config.effort, 'low');
   assert.deepEqual(anthropic.thinking, { type: 'disabled' }, 'a routine step on Haiku does not think');
@@ -239,7 +239,7 @@ test('each provider gets its own client, key, schema format and token accounting
   costs.forEach((cost, i) => assert.ok(Math.abs(cost - expected[i]) < 1e-12, `${models[i].model}: ${cost} ≠ ${expected[i]}`));
 });
 
-test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema in the prompt, text only, its own price', async () => {
+test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema in the prompt, Flash sees the screenshot, its own price', async () => {
   const warnings = mock.method(process, 'emitWarning', () => {});
   // DeepSeek's usage: 1,000 tokens in, 400 of them cache hits, 200 out.
   const completion = (text: string) =>
@@ -258,10 +258,9 @@ test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema
   const [first, retry] = sent.bodies;
   assert.equal(first.model, 'deepseek-flash');
   assert.deepEqual(first.response_format, { type: 'json_object' }, 'JSON mode: DeepSeek enforces no schema');
-  assert.match(first.messages[0].content, /^This is Priya\.\n\nAnswer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling"/s);
-  assert.equal(first.messages[1].content, 'What does Priya do next?', 'the screenshot is left out');
-  assert.deepEqual(retry.messages[1].content.map((part: { type: string }) => part.type), ['text', 'text'], 'the retry is text only too');
-  assert.doesNotMatch(JSON.stringify(sent.bodies), /image_url/);
+  assert.match(first.messages[0].content, /^Answer with one JSON object that matches this JSON Schema:\n\{.*"thought".*"feeling".*\}\n\nThis is Priya\.$/s);
+  assert.deepEqual(first.messages[1].content.map((part: { type: string }) => part.type), ['image_url', 'text'], 'V4.1-Flash reads images');
+  assert.deepEqual(retry.messages[1].content.map((part: { type: string }) => part.type), ['image_url', 'text', 'text']);
 
   // 600 × $0.30 + 400 hits × $0.006 + 200 × $1.20, per million, for each of the two attempts.
   assert.deepEqual(calls.map((c) => [c.event.payload.provider, c.event.payload.status, c.event.payload.input_tokens, c.event.payload.cache_read_tokens, c.event.payload.output_tokens, c.event.payload.usage_reported]), [
@@ -271,6 +270,13 @@ test('DeepSeek goes the chat-completions way: its key, JSON mode with the schema
   assert.ok(Math.abs(result.cost_usd - 2 * 0.0004224) < 1e-12, `${result.cost_usd}`);
   assert.doesNotMatch(calls[1].transcript, new RegExp(KEYS.deepseek));
   assert.deepEqual(warnings.mock.calls.map(({ arguments: [warning] }) => String(warning)), [], 'DeepSeek JSON mode must not request unsupported structured outputs');
+});
+
+test('a text-only DeepSeek model gets the request without its screenshot', async () => {
+  const sent = stubFetch(() => chatCompletion(OK));
+  const { gateway } = setup();
+  await gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-v4-pro' } }));
+  assert.equal(sent.bodies[0].messages[1].content, 'What does Priya do next?');
 });
 
 test('a role sets how hard the model thinks and how much room it has', async () => {
@@ -378,6 +384,24 @@ test('an invalid output is retried once with the validation error appended', asy
   const retry = sent.bodies[1].messages[0].content.at(-1);
   assert.match(retry.text, /^That answer did not match the required format: .*feeling/s);
   assert.ok(Math.abs(result.cost_usd - 2 * 0.00023) < 1e-12, 'both attempts are paid for');
+});
+
+test('a JSON-mode answer whose only fault is extra keys is kept without them, not retried', async () => {
+  const strict = z.object({ thought: z.string(), opinion: z.object({ feeling: z.number() }).strict() }).strict();
+  const sent = stubFetch(() => chatCompletion('{"thought":"Hmm","opinions":null,"opinion":{"feeling":1,"note":"x"}}'));
+  const { gateway, calls } = setup();
+  const result = await gateway.call({ ...request({ model: { provider: 'deepseek', model: 'deepseek-flash' } }), schema: strict });
+  assert.deepEqual(result.object, { thought: 'Hmm', opinion: { feeling: 1 } });
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['ok']);
+  assert.equal(sent.urls.length, 1);
+});
+
+test('an answer with extra keys and a wrong value is still retried', async () => {
+  const strict = schema.strict();
+  stubFetch(() => chatCompletion('{"thought":"Hmm","feeling":9,"extra":1}'), () => chatCompletion(OK));
+  const { gateway, calls } = setup();
+  await gateway.call({ ...request({ model: { provider: 'deepseek', model: 'deepseek-flash' } }), schema: strict });
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['invalid_output', 'ok']);
 });
 
 test('each paid attempt notifies after recording, and cancellation suppresses an invalid-output retry', async () => {

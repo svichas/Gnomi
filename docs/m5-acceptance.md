@@ -6,7 +6,7 @@ The M5 mode of the [acceptance runner](m2-acceptance.md) checks the new point-of
 2. **Design** (`design-<seed>`, `design-control`). The people walk Gym v3's six checkout frames, D26 on (frame 4 is a sign-in prompt where an order confirmation is expected), once for each run seed 20261015 to 20261019, at most 20 personas each, then the control frames once. The frames carry no names, so a label cannot hint at the defect.
 3. **Figma listing**, which this runner never measures.
 
-The fixture's goals are for its applicant tracking system, so each case gives the same people another product and task (the traits and prose stay). Users are asked to work out which plan a team of 20 that needs single sign-on would use, buyers to decide which plan to buy for such a team, and shoppers to buy the rain jacket in their cart as a guest. The single sign-on need is the harness's choice, as the injected complaint is M4's: it points the readers at the question D28 contradicts. The control copy answers the same question consistently.
+The fixture's goals are for its applicant tracking system, so each case gives the same people another product and task (the traits and prose stay). Users are asked to work out which plan a team of 20 that needs single sign-on would use, buyers to decide which plan to buy for such a team, and shoppers to buy the rain jacket and socks in their cart as a guest. The single sign-on need is the harness's choice, as the injected complaint is M4's: it points the readers at the question D28 contradicts. The control copy answers the same question consistently.
 
 ## Run without provider calls
 
@@ -28,7 +28,7 @@ The allowance works as in M2: a recorded-spend threshold shared by all eight run
 
 - `--personas N` keeps the first N of the fixture's people for the text case (buyers in addition) and the first N, at most 20, for the design case.
 - `--seeds N` runs the first N of the five design seeds. The text and control runs use seed 20261015 whatever N is.
-- `--provider deepseek` cannot run the design case. Design POIs need a navigator that reads images, and the design runner's preflight refuses a DeepSeek navigator. The runner then skips the design case: it starts none of its runs, spends nothing on it, and reports `frame_mismatch` and `design_control` as `NOT_RUN` with the preflight's own sentence. The text case runs as usual, on DeepSeek.
+- `--provider deepseek` runs both cases: its navigator, V4.1-Flash, reads the frames. Design POIs need a navigator that reads images; when the design runner's preflight refuses one (a text-only model such as DeepSeek V4-Pro, or a local endpoint), the runner skips the design case: it starts none of its runs, spends nothing on it, and reports `frame_mismatch` and `design_control` as `NOT_RUN` with the preflight's own sentence.
 
 With fewer than 20 design personas or fewer than 5 seeds, `frame_mismatch` and `design_control` report their figures as `NOT_RUN` with a "Reduced scale" note, because the roadmap's claim is about five seeds of a 20-person run.
 
@@ -54,4 +54,4 @@ The design runner records every expectation mismatch as a friction on its frame,
 node --test simulation/src/acceptance/m5.test.ts
 ```
 
-These tests run the criteria on hand-built logs and reports (pass, fail, missing seeds, a run that did not finish, frictions on other frames, a reduced scale), the case builders, and two scripted rehearsals: the full one, and one on DeepSeek that skips the design case.
+These tests run the criteria on hand-built logs and reports (pass, fail, missing seeds, a run that did not finish, frictions on other frames, a reduced scale), the case builders, and two scripted rehearsals: the full one, and one on DeepSeek.

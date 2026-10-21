@@ -10,7 +10,7 @@ export const SEEDS_NEEDED = 4; // of five
 // The product and task each case gives the fixture's people. The buyers' task says what a buyer of a team plan needs; D28 is about exactly that.
 const PRICING = { name: 'Plotline', description: 'Project planning for teams.', goal: 'Read the pricing page and work out which plan a team of 20 that needs single sign-on would use.' };
 const BUYING = 'Decide which Plotline plan to buy for a team of 20 that needs single sign-on, and what it would cost.';
-const CHECKOUT = { name: 'Fieldhouse', description: 'An online shop for outdoor clothing.', goal: 'Buy the rain jacket in your cart as a guest.' };
+const CHECKOUT = { name: 'Fieldhouse', description: 'An online shop for outdoor clothing.', goal: 'Buy the rain jacket and socks in your cart as a guest.' };
 
 /** Gym v3's pricing copy as a text POI read by the fixture's people (users) and a buyer segment, one in five of them and at least three. */
 export function textCase(base: Fixture, asset: string): Fixture {

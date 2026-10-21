@@ -83,7 +83,7 @@ In the app, open **Settings** to add and test a provider, then select the models
 | Anthropic | API key in Settings |
 | OpenAI | API key in Settings |
 | Google | API key in Settings |
-| DeepSeek | API key in Settings; text-only navigation |
+| DeepSeek | API key in Settings; V4.1-Flash navigates with screenshots |
 | Local OpenAI-compatible server | A project-specific endpoint, such as an Ollama or LM Studio server |
 
 Static-design inputs require an image-capable navigator; the current preflight accepts Anthropic, OpenAI, and Google routes for them. For Figma imports, add and test a personal access token under **Settings → Figma**, then choose **Add from Figma** in the project's inputs.

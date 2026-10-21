@@ -1,4 +1,7 @@
-import type { Audience, ProviderId, Routing, RunSettings } from './types.ts';
+import type { Audience, ModelChoice, ProviderId, Routing, RunSettings } from './types.ts';
+
+/** Whether a model takes image parts. DeepSeek's V4.1-Flash reads images (checked 2026-10-21); its other models read text only. */
+export const readsImages = ({ provider, model }: ModelChoice) => provider !== 'deepseek' || model === 'deepseek-flash';
 
 // Model defaults per provider and role (tech.md §10.2). Pure: the renderer imports these too.
 export const PROVIDER_DEFAULTS: Record<ProviderId, Routing> = {
@@ -23,7 +26,7 @@ export const PROVIDER_DEFAULTS: Record<ProviderId, Routing> = {
     judge: { provider: 'google', model: 'gemini-3.8-flash' },
     author: { provider: 'google', model: 'gemini-4-argon' },
   },
-  // Text only (tech.md §10.2): a DeepSeek navigator never sees the screenshots.
+  // V4.1-Flash reads images, V4-Pro text only (see readsImages).
   deepseek: {
     navigator: { provider: 'deepseek', model: 'deepseek-flash' },
     socialiser: { provider: 'deepseek', model: 'deepseek-flash' },
