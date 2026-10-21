@@ -58,7 +58,7 @@ const PRONOUNS: Record<Persona['pronouns'], { obj: string; poss: string }> = {
 // Sentences use the first name as their subject and pronouns only as object or possessive, so verbs agree for they.
 type Words = { p: string; obj: string; poss: string };
 
-export const PATIENCE = [
+const PATIENCE = [
   ({ p }: Words) => `${p} has very little patience and gives up after one or two steps that lead nowhere`,
   ({ p }: Words) => `${p} has short patience and gives up after a couple of dead ends`,
   ({ p }: Words) => `${p} has ordinary patience: retries something once or twice, then tries another way or gives up`,
@@ -91,7 +91,7 @@ const ACTION_HELP: Record<ActionType, string> = {
 const ACCOUNT: Record<Segment['account_state'], string> = { empty: 'new and empty, nothing set up yet', populated: 'already in use, with the team’s existing data' };
 const ENTRY: Record<Segment['entry'], string> = { direct: 'directly', email_link: 'from a link in an email', shared_link: 'from a link a colleague shared' };
 
-const first = (persona: Persona) => persona.name.split(' ')[0];
+export const firstName = (persona: Persona) => persona.name.split(' ')[0];
 
 export const languageName = (tag: string) => {
   try {
@@ -102,13 +102,13 @@ export const languageName = (tag: string) => {
 };
 
 /** Restates English here: saved profiles may still describe the first language as the one used for thinking aloud. */
-export const firstLanguage = (p: string, locale: string) =>
+const firstLanguage = (p: string, locale: string) =>
   `${p}'s first language is ${languageName(locale)}; English is a second language, and ${p}'s thoughts and opinions are still written in English.`;
 
 /** The first name as subject; pronouns only when the profile schema lets them into prompts. */
 export function wordsFor(persona: Persona, project: ProjectConfig): Words {
   const pronouns = isAttributeEnabled(project.persona_schema, 'pronouns', 'prompt') ? persona.pronouns : 'they';
-  return { p: first(persona), ...PRONOUNS[pronouns] };
+  return { p: firstName(persona), ...PRONOUNS[pronouns] };
 }
 
 /** The profile as prompts see it: only attributes the schema enables for prompts, grouped, plus the segment's context. */
@@ -138,12 +138,27 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
   return [...groups].map(([group, rows]) => `${group}:\n${rows.join('\n')}`).join('\n');
 }
 
+/** The profile block every persona prompt carries, delimited. */
+export const personaSection = (persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string) =>
+  `<persona>\n${profileBlock(persona, project, segment, obj)}\n</persona>`;
+
+/** The task, how the persona reads it and the product, as every persona prompt states them. */
+export const taskSection = (persona: Persona, project: ProjectConfig, segment: Segment | null, p: string) =>
+  `${p}'s task: "${segment?.goal_override ?? project.goal}"
+How ${p} reads it: ${persona.goal_interpretation}
+The product: ${project.name}${project.description ? `. ${project.description}` : ''}`;
+
+/** The patience rule; the engine enforces the step budget, so the prompt never states it. */
+export const patienceRule = (persona: Persona, w: Words) => `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`;
+
+/** The first-language rule, for a persona whose locale is not English. */
+export const languageRules = (p: string, locale: string): string[] => (locale.toLowerCase().split('-')[0] === 'en' ? [] : [firstLanguage(p, locale)]);
+
 /** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). An observe-only POI is a competitor's site. */
 export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: WebPoi): string {
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
-  const goal = segment?.goal_override ?? project.goal;
   const skill =
     persona.tech_skill <= 2
       ? `${p} is not technical: never types web addresses, uses no keyboard shortcuts, tends to skip small grey text and rarely scrolls far.`
@@ -160,17 +175,14 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
       ? `${p} is on a phone, using a smaller screen and touch controls.`
       : `${p} is on a computer with a mouse and a full-size screen.`;
   const access = ACCESSIBILITY[persona.accessibility_needs];
-  const environment = personaEnvironment(persona);
-  const english = environment.locale.toLowerCase().split('-')[0] === 'en';
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`,
+    patienceRule(persona, w),
     skill,
     device,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
-    ...(english ? [] : [firstLanguage(p, environment.locale)]),
+    ...languageRules(p, personaEnvironment(persona).locale),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
-  const profile = profileBlock(persona, project, segment, obj);
   const comparison = !!project.comparison;
   const competitor = poi?.mode === 'observe_only' ? poi.name : null;
   const site = competitor ?? project.name;
@@ -185,16 +197,12 @@ ${competitor} ${comparison ? 'is the current comparison target' : `is a competit
 
 People give up on tools that waste their time. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 
-<persona>
-${profile}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
 How ${p} behaves:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${p}'s task: "${goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}
+${taskSection(persona, project, segment, p)}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud, in ${poss} own voice, in at most 40 words.
@@ -313,7 +321,7 @@ export function userParts(opts: {
   screenshot: Uint8Array | null;
 }): UserPart[] {
   const { persona, memory, page } = opts;
-  const p = first(persona);
+  const p = firstName(persona);
   const recent = memory.slice(-6);
   const older = memory.slice(0, -6);
   const history = memory.length
@@ -393,13 +401,9 @@ export function surveySystemPrompt(persona: Persona, project: ProjectConfig, seg
     : `has just used ${project.name} to get something done at work`;
   return `This is ${persona.name}. ${p} ${met} and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
-<persona>
-${profileBlock(persona, project, segment, obj)}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
-${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+${taskSection(persona, project, segment, p)}
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}. Each list holds up to 5 items, one specific point per item, and is empty when there is nothing to say:
 - frictions: what got in ${poss} way while doing the task: something ${p} could not find, did not understand, that did not work or took too long.
@@ -426,7 +430,7 @@ export function sawLines(p: string, product: string, thoughts: string[], opinion
 
 /** The volatile part: how the episode ended, how long it took, what the persona thought and reported on the way, and its opinion. */
 export function surveyParts(opts: { persona: Persona; product: string; end: SurveyedEnd; detail: string | null; steps: number; frictions: string[]; thoughts: string[]; opinion: Opinion | null }): UserPart[] {
-  const p = first(opts.persona);
+  const p = firstName(opts.persona);
   const text = [
     `The session is over after ${opts.steps} step${opts.steps === 1 ? '' : 's'}: ${ENDING[opts.end](p)}${opts.detail ? ` ("${opts.detail}")` : ''}.`,
     ...(opts.frictions.length ? [`Frictions ${p} reported along the way:`, ...opts.frictions.map((f) => `- "${f}"`)] : [`${p} reported no frictions along the way.`]),
@@ -500,13 +504,9 @@ export function socialSystemPrompt(persona: Persona, project: ProjectConfig, seg
 
 Most people read a feed like this and move on without writing anything: doing nothing is the usual answer. ${posting}. When ${p} does write, it is about ${poss} own experience or an answer to someone, in ${poss} own voice.
 
-<persona>
-${profileBlock(persona, project, segment, obj)}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
-${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+${taskSection(persona, project, segment, p)}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud while reading, in ${poss} own voice, in ${ENGLISH}, in at most 40 words.
