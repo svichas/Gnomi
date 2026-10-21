@@ -3,7 +3,8 @@ import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
 import { placeName } from '@gnomi/simulation/poi/pois.ts';
-import type { PersonaStatus } from '@gnomi/engine/graph/index.ts';
+import { emptyStatuses, foldStatus, statusOf } from '@gnomi/engine/graph/index.ts';
+import type { PersonaStatus, PersonaStatuses } from '@gnomi/engine/graph/index.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -284,34 +285,17 @@ export const STATE_WORDS: Record<PersonaState, string> = {
 /** A persona's state in words; once the run is over, one still waiting for the user is simply blocked. */
 export const stateWord = (state: PersonaState, ended: boolean) => (ended && state === 'blocked' ? 'Blocked' : STATE_WORDS[state]);
 
+/** Each persona's status by the fold the swarm graph uses; `ended` also cuts short a run whose log has no end, such as an interrupted one. */
+const statesOf = (statuses: PersonaStatuses, personas: Persona[], ended = false) => new Map(personas.map((persona): [string, PersonaState] => {
+  const state = statusOf(statuses, persona.id);
+  return [persona.id, ended && (state === 'waiting' || state === 'active') ? 'unfinished' : state];
+}));
+
 /** Where each persona stands, from the log alone. Once the run has ended, those still working or queued were cut short. */
-export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<string, PersonaState> {
-  const states = new Map<string, PersonaState>(personas.map((persona) => [persona.id, 'waiting']));
-  const comparison = events.find((event) => event.type === 'run.started')?.payload.config.project.comparison;
-  const resolved = new Map<string, Set<string>>();
-  const unfinished = new Set<string>();
-  for (const event of events) {
-    if (event.persona_id === null || !states.has(event.persona_id)) continue;
-    if (comparison) {
-      if (event.type === 'comparison.episode_started' || event.type === 'comparison.assessment') states.set(event.persona_id, 'active');
-      if (event.type === 'comparison.episode_finished') {
-        const own = resolved.get(event.persona_id) ?? new Set<string>();
-        own.add(event.payload.episode_id);
-        resolved.set(event.persona_id, own);
-        if (event.payload.outcome === 'incomplete' || event.payload.outcome === 'not_attempted') unfinished.add(event.persona_id);
-        states.set(event.persona_id, own.size === comparison.targets.length * comparison.tasks.length ? unfinished.has(event.persona_id) ? 'unfinished' : 'done' : 'active');
-      }
-      continue;
-    }
-    if (event.type === 'persona.episode_started' || event.type === 'persona.step' || event.type === 'persona.resumed') states.set(event.persona_id, 'active');
-    else if (event.type === 'persona.blocked') states.set(event.persona_id, 'blocked');
-    else if (event.type === 'persona.goal_done') states.set(event.persona_id, 'done');
-    else if (event.type === 'persona.abandoned') states.set(event.persona_id, 'abandoned');
-    // Running out of steps or getting stuck is the run's limit, not the persona's choice to give up.
-    else if (ENDS_EPISODE.has(event.type)) states.set(event.persona_id, 'unfinished');
-  }
-  if (events.some(isEnd)) for (const [id, state] of states) if (state === 'waiting' || state === 'active') states.set(id, 'unfinished');
-  return states;
+export function personaStates(events: GnomiEvent[], personas: Persona[], ended = false): Map<string, PersonaState> {
+  const statuses = emptyStatuses();
+  for (const event of events) foldStatus(statuses, event);
+  return statesOf(statuses, personas, ended);
 }
 
 export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'social' | 'outcomes' | 'blocks' | 'containment' | 'run';

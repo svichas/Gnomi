@@ -95,9 +95,10 @@ test('a persona node follows its episode to an end, and the run ending marks the
   add('persona.blocked', { step_no: 1, reason: 'captcha', detail: '' }, { persona_id: 'b' });
   step('c', 'poi-1');
   add('run.finished', {});
-  const status = (id: string) => (buildGraph(events).nodes.get(`persona:${id}`) as PersonaNode).status;
+  const status = (id: string, log = events) => (buildGraph(log).nodes.get(`persona:${id}`) as PersonaNode).status;
+  assert.deepEqual(['e', 'f'].map((id) => status(id, events.slice(0, -1))), ['unfinished', 'unfinished'], 'stopped early before the run ends too');
   // A budget or failure signal is not the persona's own giving up, as in the report's outcomes.
-  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].map(status), ['done', 'blocked', 'unfinished', 'unfinished', 'unfinished', 'unfinished']);
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].map((id) => status(id)), ['done', 'blocked', 'unfinished', 'unfinished', 'unfinished', 'unfinished']);
 });
 
 test("a POI's sentiment by segment is the mean of each persona's latest opinion, and surveys do not count", () => {

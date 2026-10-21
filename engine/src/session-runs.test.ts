@@ -27,6 +27,18 @@ test('session completion waits for saved results and historical events do not ad
   assert.equal(emitted[0].status, 'running', 'previously emitted snapshots do not change underneath clients');
 });
 
+test('a blocked persona needs the user until she resumes, but never in a comparison, whose blocked tasks end at once', () => {
+  const blocked = { ...event({ type: 'persona.blocked', payload: { step_no: 2, reason: 'captcha', detail: '' } }), persona_id: 'p-1' } as GnomiEvent;
+  const runs = new SessionRuns(() => {});
+  runs.record('/pricing', event({ type: 'run.started', payload: { config } }));
+  runs.record('/pricing', blocked);
+  assert.equal(runs.list()[0].waiting, 1);
+  const comparison = { ...config, project: { ...config.project, comparison: { targets: [], tasks: [] } } } as unknown as typeof config;
+  runs.record('/compare', event({ type: 'run.started', payload: { config: comparison } }));
+  runs.record('/compare', blocked);
+  assert.equal(runs.list().find((run) => run.project_dir === '/compare')?.waiting, 0);
+});
+
 test('report persistence failures end the affected run without contaminating another project', () => {
   const runs = new SessionRuns(() => {});
   for (const dir of ['/one', '/two']) runs.record(dir, event({ type: 'run.started', payload: { config } }));

@@ -153,7 +153,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
 
   const { personas, segments } = setup;
   const personaById = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
-  const states = useMemo(() => personaStates(events, personas), [events, personas]);
+  const states = useMemo(() => personaStates(events, personas, ended), [events, personas, ended]);
   const progress = useMemo(() => personaProgress(events), [events]);
   const groups = useMemo(() => setup.schema ? groupProfiles(personas, setup.schema) : [], [personas, setup.schema]);
   const profileFilter = useMemo(() => ({ dimension: filters.dimension, value: filters.value }), [filters.dimension, filters.value]);
@@ -248,6 +248,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          state={states.get(inspected.id) ?? 'waiting'}
           events={inspectedEvents}
           social={social}
           names={names}

@@ -51,6 +51,7 @@ export interface SwarmGraph {
   posts: Map<string, EventOf<'social.post'>>; // authors for replies and reactions, and the influence rule's cited posts
   sentiments: Map<string, { poi: string; persona: string; sentiment: number }>; // latest opinion per POI and persona, as the report's spread reads it
   started: EventOf<'run.started'> | null; // the snapshot postPois reads, so a post about nothing in a one-POI project is about that POI
+  statuses: PersonaStatuses;
 }
 
 /** The node and edge keys a batch touched. */
@@ -59,14 +60,64 @@ export interface GraphChanges {
   edges: Set<string>;
 }
 
-const ENDS: Partial<Record<GnomiEvent['type'], PersonaStatus>> = {
+/** Where each persona stands, folded one event at a time: the swarm graph, the persona grid and the inspector all read this one. */
+export interface PersonaStatuses {
+  states: Map<string, PersonaStatus>; // personas with a status event of their own; statusOf answers for the rest
+  ended: boolean;
+  episodes: number | null; // a comparison's targets × tasks, all of which a persona finishes before she is done; null outside one
+  finished: Map<string, Set<string>>; // comparison episodes finished, by persona
+  incomplete: Set<string>; // personas with a comparison task left incomplete or not attempted
+}
+
+const STATUS_OF: Partial<Record<GnomiEvent['type'], PersonaStatus>> = {
+  'persona.episode_started': 'active',
+  'persona.step': 'active',
+  'persona.resumed': 'active',
   'persona.blocked': 'blocked',
   'persona.goal_done': 'done',
   'persona.abandoned': 'abandoned',
+  // Running out of steps or getting stuck is the run's limit, not the persona's choice to give up.
+  'signal.budget_exceeded': 'unfinished',
+  'signal.repeated_failure': 'unfinished',
 };
 
+export function emptyStatuses(): PersonaStatuses {
+  return { states: new Map(), ended: false, episodes: null, finished: new Map(), incomplete: new Set() };
+}
+
+export const statusOf = (statuses: PersonaStatuses, id: string): PersonaStatus => statuses.states.get(id) ?? (statuses.ended ? 'unfinished' : 'waiting');
+
+/** Folds one event in; true when it changed its persona's status. Once the run has ended, those still working or queued were cut short. */
+export function foldStatus(statuses: PersonaStatuses, event: GnomiEvent): boolean {
+  const { states } = statuses;
+  if (event.type === 'run.started') {
+    const comparison = event.payload.config.project?.comparison;
+    statuses.episodes = comparison ? comparison.targets.length * comparison.tasks.length : null;
+  }
+  if (event.type === 'run.finished' || event.type === 'run.stopped') {
+    statuses.ended = true;
+    for (const [id, state] of states) if (state === 'waiting' || state === 'active') states.set(id, 'unfinished');
+  }
+  const who = event.persona_id;
+  if (!who) return false;
+  let next: PersonaStatus | undefined;
+  // A comparison counts only its own episodes: a goal reached in one task is not the end of the others.
+  if (statuses.episodes === null) next = STATUS_OF[event.type];
+  else if (event.type === 'comparison.episode_started' || event.type === 'comparison.assessment') next = 'active';
+  else if (event.type === 'comparison.episode_finished') {
+    const own = statuses.finished.get(who) ?? new Set<string>();
+    statuses.finished.set(who, own.add(event.payload.episode_id));
+    if (event.payload.outcome === 'incomplete' || event.payload.outcome === 'not_attempted') statuses.incomplete.add(who);
+    next = own.size < statuses.episodes ? 'active' : statuses.incomplete.has(who) ? 'unfinished' : 'done';
+  }
+  if (statuses.ended && (next === 'waiting' || next === 'active')) next = 'unfinished';
+  if (!next || states.get(who) === next) return false;
+  states.set(who, next);
+  return true;
+}
+
 export function emptyGraph(): SwarmGraph {
-  return { nodes: new Map(), edges: new Map(), last_seq: 0, posts: new Map(), sentiments: new Map(), started: null };
+  return { nodes: new Map(), edges: new Map(), last_seq: 0, posts: new Map(), sentiments: new Map(), started: null, statuses: emptyStatuses() };
 }
 
 export function buildGraph(events: GnomiEvent[]): SwarmGraph {
@@ -93,6 +144,7 @@ export function applyEvents(graph: SwarmGraph, events: GnomiEvent[]): GraphChang
 
 function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
   const who = event.persona_id;
+  if (foldStatus(graph.statuses, event) && who) personaNode(graph, changes, who).status = statusOf(graph.statuses, who);
   switch (event.type) {
     case 'run.started': {
       graph.started = event;
@@ -103,8 +155,8 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
     case 'run.finished':
     case 'run.stopped':
       for (const node of graph.nodes.values()) {
-        if (node.kind === 'persona' && (node.status === 'waiting' || node.status === 'active')) {
-          node.status = 'unfinished';
+        if (node.kind === 'persona' && node.status !== statusOf(graph.statuses, node.id)) {
+          node.status = statusOf(graph.statuses, node.id);
           changes.nodes.add(node.key);
         }
       }
@@ -112,14 +164,9 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
     case 'persona.created':
       if (who) Object.assign(personaNode(graph, changes, who), { label: event.payload.persona.name, segment_id: event.payload.persona.segment_id });
       return;
-    case 'persona.episode_started':
-    case 'persona.resumed':
-      if (who) personaNode(graph, changes, who).status = 'active';
-      return;
     case 'persona.step': {
       if (!who) return;
       const node = personaNode(graph, changes, who);
-      node.status = 'active';
       node.step_count += 1;
       if (event.poi_id) bump(graph, changes, 'used', `persona:${who}`, poiNode(graph, changes, event.poi_id).key, 1, event);
       return;
@@ -154,17 +201,13 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
       sentiment(graph, changes, event.payload.poi_id, who, event.payload.after.sentiment);
       return;
     }
-    default: {
-      const status = ENDS[event.type];
-      if (status && who) personaNode(graph, changes, who).status = status;
-    }
   }
 }
 
 function personaNode(graph: SwarmGraph, changes: GraphChanges, id: string): PersonaNode {
   const key = `persona:${id}`;
   let node = graph.nodes.get(key) as PersonaNode | undefined;
-  if (!node) graph.nodes.set(key, (node = { kind: 'persona', key, id, label: id, segment_id: null, status: 'waiting', step_count: 0, friction_count: 0 }));
+  if (!node) graph.nodes.set(key, (node = { kind: 'persona', key, id, label: id, segment_id: null, status: statusOf(graph.statuses, id), step_count: 0, friction_count: 0 }));
   changes.nodes.add(key);
   return node;
 }
