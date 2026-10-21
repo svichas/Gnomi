@@ -5,7 +5,9 @@ import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import { z } from 'zod';
 import { buyerSystemPrompt } from './buyer.ts';
-import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveyItems, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { stepSchema, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt } from './social.ts';
+import { surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './survey.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 
 const project: ProjectConfig = {

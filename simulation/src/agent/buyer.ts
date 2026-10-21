@@ -6,7 +6,8 @@ import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { LlmGateway, UserPart } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { firstName, personaSection, sawLines, surveyedName, taskSection, wordsFor, type SurveyedEnd } from './prompt.ts';
+import { firstName, personaSection, taskSection, wordsFor } from './prompt.ts';
+import { sawLines, surveyedName, type SurveyedEnd } from './survey.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const BUYER_SURVEY = 'buyer_survey';

@@ -3,7 +3,9 @@ import { effectiveComparisonPois, validateComparison } from './comparison/config
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyedName, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, type HeardPost } from './agent/prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt } from './agent/social.ts';
+import { surveyedName, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';

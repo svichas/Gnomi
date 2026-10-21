@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { createGateway, InvalidOutputError } from './llm/gateway.ts';
-import { surveySchema } from './agent/prompt.ts';
+import { surveySchema } from './agent/survey.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { buildReport } from './report/build.ts';
