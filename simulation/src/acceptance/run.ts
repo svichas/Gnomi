@@ -5,8 +5,8 @@ import { arch, cpus, platform } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { mean } from 'simple-statistics';
-import { gymAssets } from '../../../gym/assets.ts';
-import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../gym/server.ts';
+import { gymAssets } from '../../../demo/GymSite/assets.ts';
+import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../demo/GymSite/server.ts';
 import { importLocalFile } from '../assets.ts';
 import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import { launchBrowserPool } from '../browser/pool.ts';
@@ -121,7 +121,7 @@ function provenance(out: string) {
   let dirty: boolean | null = null;
   try { revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* a source archive may have no Git metadata */ }
   try { dirty = execFileSync('git', ['status', '--porcelain'], { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0; } catch { /* source archive */ }
-  const sourceFiles = readdirSync(join(source, 'simulation/src'), { recursive: true, encoding: 'utf8' }).filter((file) => file.endsWith('.ts')).map((file) => `simulation/src/${file}`).concat(['gym/server.ts', 'simulation/package.json']).sort();
+  const sourceFiles = readdirSync(join(source, 'simulation/src'), { recursive: true, encoding: 'utf8' }).filter((file) => file.endsWith('.ts')).map((file) => `simulation/src/${file}`).concat(['demo/GymSite/server.ts', 'simulation/package.json']).sort();
   return {
     revision, dirty, source_sha256: hash(JSON.stringify(sourceFiles.map((file) => [file, hash(readFileSync(join(source, file)))]))),
     package_lock_sha256: hash(readFileSync(join(source, 'package-lock.json'))),
@@ -388,7 +388,7 @@ export async function runM3Acceptance(options: Options, env: Record<string, stri
   mkdirSync(dirname(options.out), { recursive: true });
   mkdirSync(options.out);
   const source = provenance(options.out);
-  copyFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), join(options.out, 'defects.yaml'));
+  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const seeds = M3_SEEDS.slice(0, options.seeds ?? M3_SEEDS.length);
   const runs: { name: string; run?: SeedRun }[] = [...seeds.map((seed) => ({ name: `seed-${seed}` })), { name: 'control' }];
@@ -499,7 +499,7 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
   mkdirSync(dirname(options.out), { recursive: true });
   mkdirSync(options.out);
   const source = provenance(options.out);
-  copyFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), join(options.out, 'defects.yaml'));
+  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const live = options.mode === 'live';
   const pool = { newPage: () => Promise.reject(new Error('A text or design POI opened a browser page.')) } as unknown as BrowserPool;
@@ -608,8 +608,8 @@ export async function runEvaluation(options: Options, env: Record<string, string
   mkdirSync(dirname(options.out), { recursive: true });
   mkdirSync(options.out);
   const source = provenance(options.out);
-  const catalogue = readFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), 'utf8');
-  copyFileSync(resolve(import.meta.dirname, '../../../gym/defects.yaml'), join(options.out, 'defects.yaml'));
+  const catalogue = readFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), 'utf8');
+  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const arms: Arm[] = options.arms ?? (Object.keys(ARMS) as Arm[]);
   const seeds = Array.from({ length: options.repeats ?? 5 }, (_, r) => SEED + r);

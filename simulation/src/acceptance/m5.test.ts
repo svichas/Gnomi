@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { gymAssets } from '../../../gym/assets.ts';
+import { gymAssets } from '../../../demo/GymSite/assets.ts';
 import { preflight } from '../poi/index.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import type { GnomiEvent, Report } from '../types.ts';
@@ -43,7 +43,7 @@ test('D26_FRAME is the frame the Gym changes: only checkout frame 4 differs betw
   const [defect, control] = [gymAssets({ defects: 'D26' }).frames.checkout, gymAssets({ defects: 'none' }).frames.checkout];
   assert.equal(defect.length, 6);
   assert.deepEqual(defect.flatMap((file, i) => (readFileSync(file).equals(readFileSync(control[i])) ? [] : [i]) ), [D26_FRAME]);
-  assert.match(readFileSync(new URL('../../../gym/defects.yaml', import.meta.url), 'utf8'), /id: D26[\s\S]*?frames: \[checkout\/4\]/);
+  assert.match(readFileSync(new URL('../../../demo/GymSite/defects.yaml', import.meta.url), 'utf8'), /id: D26[\s\S]*?frames: \[checkout\/4\]/);
 });
 
 test('frame_mismatch passes only live, in four of five seeds; two seeds without it fail; missing seeds leave it undecided', () => {

@@ -1,4 +1,4 @@
-// The static-design POI on Gym v3's frames (gym/defects.yaml D26): a scripted "vision" model reads each frame through a lookup of
+// The static-design POI on Gym v3's frames (demo/GymSite/defects.yaml D26): a scripted "vision" model reads each frame through a lookup of
 // what the frame's HTML says, so the test checks the expectation loop, not a model.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -6,8 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { assetFile, gymAssets } from '../../../gym/assets.ts';
-import { framePlan } from '../../../gym/design.ts';
+import { assetFile, gymAssets } from '../../../demo/GymSite/assets.ts';
+import { framePlan } from '../../../demo/GymSite/design.ts';
 import { importLocalFile } from '../assets.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';

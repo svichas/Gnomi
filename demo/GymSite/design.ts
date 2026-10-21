@@ -113,7 +113,7 @@ const inviteFrames = (defect: boolean) => [
 
 const DESIGN_FRAMES = { checkout: checkoutFrames, invite: inviteFrames };
 
-// Every frame of every variant: its key under gym/assets and its HTML.
+// Every frame of every variant: its key under demo/GymSite/assets and its HTML.
 export function framePlan() {
   return (Object.keys(FRAME_SEQUENCES) as (keyof typeof FRAME_SEQUENCES)[]).flatMap((sequence) =>
     [false, true].flatMap((defect) =>

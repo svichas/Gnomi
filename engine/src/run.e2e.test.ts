@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test, type TestContext } from 'node:test';
 import type { Page } from 'playwright-core';
-import { GYM_ACCOUNTS, startGym } from '../../gym/server.ts';
+import { GYM_ACCOUNTS, startGym } from '../../demo/GymSite/server.ts';
 import { DEMO_PERSONA_WRITER, syncPersonas } from './audience/index.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER, DEMO_SURVEY, findRef } from '@gnomi/simulation/llm/scripted.ts';

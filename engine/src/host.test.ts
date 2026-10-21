@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
-import { startGym } from '../../gym/server.ts';
+import { startGym } from '../../demo/GymSite/server.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
