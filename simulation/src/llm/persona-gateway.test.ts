@@ -84,7 +84,7 @@ test('routine DeepSeek roles disable thinking while the report author reserves r
   const cases: Array<[LlmRole, 'disabled' | 'enabled', 'high' | undefined, number]> = [
     ['navigator', 'disabled', undefined, 4096],
     ['socialiser', 'disabled', undefined, 4096],
-    ['judge', 'disabled', undefined, 4096],
+    ['judge', 'disabled', undefined, 16_384],
     ['author', 'enabled', 'high', 16_384],
   ];
 
