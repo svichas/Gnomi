@@ -1292,6 +1292,16 @@ test('two invalid socialiser answers leave the persona silent for that phase, an
   assert.equal(of(r.events, 'social.feed_viewed').filter((e) => e.round === 3).length, 0, 'nothing new to read in the last round');
 });
 
+test('a timed-out socialiser call leaves the persona silent for that phase, and the run goes on', async () => {
+  const social = (req: LlmRequest<unknown>) => {
+    if (req.round === 1 && req.persona_id === 'p-0') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    return req.round === 1 ? { ...QUIET, action: 'post', text: 'Fine so far.', about_poi_id: null } : QUIET;
+  };
+  const r = begin(swarmAnswers(social), { personas: swarm(2), project: SWARM, settings: rounds(3) });
+  assert.equal((await r.run.done).status, 'finished');
+  assert.deepEqual(of(r.events, 'social.post').map((e) => e.persona_id), ['p-1']);
+});
+
 test('the cost cap reached in a social phase stops the run there: no later round or step, and every page closes', async () => {
   // Sixteen $0.01 steps make the first slice; the whole phase of four socialiser calls would reach the budget, so none starts.
   const budget = 0.18;

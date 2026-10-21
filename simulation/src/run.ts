@@ -469,8 +469,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         }
       };
     } catch (err) {
-      // Two invalid answers leave the persona silent for this phase (tech.md §10.6); any other model error ends the run.
-      if (!(err instanceof InvalidOutputError) && !hard.signal.aborted) throw err;
+      // Two invalid answers or a timeout leave the persona silent for this phase (tech.md §10.6); any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError') && !hard.signal.aborted) throw err;
       return null;
     } finally {
       endStep();
