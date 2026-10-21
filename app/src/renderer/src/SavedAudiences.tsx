@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SavedAudience } from '../../audiences.ts';
+import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
 import { errorText } from './engine.ts';
 import { Icon } from './Icon.tsx';
 import { Button, Dialog, Field, inputClass, Note, when } from './ui.tsx';

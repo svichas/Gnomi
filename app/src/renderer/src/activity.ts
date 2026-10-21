@@ -3,6 +3,7 @@ import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
 import { placeName } from '@gnomi/simulation/poi/pois.ts';
+import type { PersonaStatus } from '@gnomi/engine/graph/index.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -269,7 +270,7 @@ export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[
   return [...waiting.values()];
 }
 
-export type PersonaState = import('@gnomi/engine/graph/index.ts').PersonaStatus;
+export type PersonaState = PersonaStatus;
 
 export const STATE_WORDS: Record<PersonaState, string> = {
   waiting: 'Waiting to start',

@@ -4,7 +4,7 @@ import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import type { SavedAudience } from '../../audiences.ts';
+import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
 import { addSegment, audienceProblem, blankAudience, cleanAudience, generatedCount, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, segmentVar, setShare, staleProfiles } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
