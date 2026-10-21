@@ -1,9 +1,8 @@
 import { personaEnvironment } from '../audience/locations.ts';
 import { fnv1a } from '../audience/sample.ts';
 import { readAsset } from '../assets.ts';
-import type { EpisodeDeps, EpisodeEnd } from '../agent/loop.ts';
-import { sameOpinion } from '../opinion/index.ts';
-import type { Action, EventPayloads, EventType, NewEvent, Opinion, TextPoi } from '../types.ts';
+import { atSliceEnd, episodeLog, type EpisodeDeps, type EpisodeEnd } from '../agent/loop.ts';
+import type { Action, Opinion, TextPoi } from '../types.ts';
 import type { PoiRunner } from './index.ts';
 import type { HeardPost } from '../agent/prompt.ts';
 import { READ_TEXT, readParts, readSchema, readShared, readSystemPrompt, type ReadMemory, type ReadOutput } from './text-prompt.ts';
@@ -57,11 +56,11 @@ export function locatePassage(text: string, quote: string, start: number, end: n
  * confusion is a friction with the passage it quotes; the read that reaches the end says what the persona would do next.
  */
 async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
-  const { config, persona, segment, llm, record, signal, stepsBefore } = deps;
+  const { config, persona, segment, llm, signal, stepsBefore } = deps;
   const { run_id } = config;
   const where = `asset:${poi.asset}`;
-  const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
-    record({ run_id, round: deps.round(), persona_id: persona.id, poi_id: poi.id, type, payload } as NewEvent);
+  const log = episodeLog(deps, poi.id);
+  const { emit } = log;
 
   if (signal.aborted) return 'stopped';
   const text = await readAsset(deps.blobs, poi.asset).then((data) => new TextDecoder().decode(data), () => null);
@@ -76,8 +75,8 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
   let index = 0;
   const last = stepsBefore + deps.budget;
   for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
-    if (deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0) {
-      const next = await deps.slice.next();
+    if (atSliceEnd(deps, step_no)) {
+      const next = await deps.slice!.next();
       if (!next) return 'stopped';
       opinion = next.opinion;
       heard = next.heard ?? [];
@@ -107,24 +106,15 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     const result = { ok: true, error: null, url_before: where, url_after: where, dom_changed: false };
     const snapshot_hash = fnv1a(text.slice(part.start, part.end)).toString(16);
     const step = emit('persona.step', { step_no, action, target: null, result, thought: output.thought, feeling: output.feeling, snapshot_hash, screenshot: null, duration_ms: Date.now() - started, passage: part, heard_post_ids });
-    if (!sameOpinion(opinion, output.opinion)) {
-      emit('persona.opinion_changed', { poi_id: poi.id, before: opinion, after: structuredClone(output.opinion), cause: { step_ids: [step.seq], post_ids: [] } });
-      opinion = structuredClone(output.opinion);
-    }
+    opinion = log.opinion(opinion, output.opinion, step.seq);
     // A quote may come from any part read so far; one the text does not hold keeps its friction, flagged, but loses the passage.
     const read = text.slice(0, part.end);
     for (const c of output.confusions) {
       const passage = locatePassage(read, c.quote, c.start, c.end);
       emit('persona.friction_reported', { step_no, severity: c.severity, what: c.what, expected: c.expected, where: { url: where, ref: null }, heard_post_ids, ...(passage ? { passage } : { quote_unverified: true }) });
     }
-    if (action.type === 'done') {
-      emit('persona.goal_done', { step_no, summary: action.text ?? '' });
-      return 'done';
-    }
-    if (action.type === 'abandon') {
-      emit('persona.abandoned', { step_no, reason: action.text ?? '' });
-      return 'abandoned';
-    }
+    const own = log.ended(step_no, action);
+    if (own) return own;
     memory.push({ part: index + 1, thought: output.thought, confusions: output.confusions.map((c) => c.what) });
     index++;
   }

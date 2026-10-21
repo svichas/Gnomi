@@ -1,12 +1,11 @@
-import type { EpisodeEnd } from '../agent/loop.ts';
+import { atSliceEnd, episodeLog, type EpisodeEnd } from '../agent/loop.ts';
 import type { HeardPost } from '../agent/prompt.ts';
 import { assetMime, assetPath, readAsset } from '../assets.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
-import { sameOpinion } from '../opinion/index.ts';
 import { readsImages } from '../settings.ts';
 import type { BlobStore, UserPart } from '../seams.ts';
-import type { Action, DesignPoi, EventPayloads, EventType, NewEvent, Opinion } from '../types.ts';
+import type { Action, DesignPoi, Opinion } from '../types.ts';
 import { designParts, designSchema, designSystemPrompt, frameLabel, type DesignOutput } from './design-prompt.ts';
 import { frameForModel, type ImageType } from './frames.ts';
 import type { PoiRunner } from './index.ts';
@@ -49,11 +48,11 @@ export const design: PoiRunner<DesignPoi> = {
   },
 
   async episode(poi, deps): Promise<EpisodeEnd> {
-    const { config, persona, segment, llm, blobs, record, signal, stepsBefore, budget } = deps;
+    const { config, persona, segment, llm, blobs, signal, stepsBefore, budget } = deps;
     const { run_id } = config;
     const poi_id = poi.id;
-    const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
-      record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
+    const log = episodeLog(deps, poi_id);
+    const { emit } = log;
     const system = designSystemPrompt(persona, config.project, segment, poi);
     const last = Math.min(budget, poi.frames.length);
     let said: DesignOutput | null = null; // the persona's answer on the screen before
@@ -64,8 +63,8 @@ export const design: PoiRunner<DesignPoi> = {
     emit('persona.episode_started', { poi_id, device: persona.device, start_url: `asset:${poi.frames[0].asset}`, ...personaEnvironment(persona) });
     for (let index = 0; index < last; index++) {
       const step_no = stepsBefore + index + 1;
-      if (deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0) {
-        const next = await deps.slice.next();
+      if (atSliceEnd(deps, step_no)) {
+        const next = await deps.slice!.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
         heard = next.heard ?? [];
@@ -108,11 +107,7 @@ export const design: PoiRunner<DesignPoi> = {
         frame: index,
         heard_post_ids,
       });
-      if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
-        const after = structuredClone(output.opinion);
-        emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recorded.seq], post_ids: [] } });
-        opinion = structuredClone(after);
-      }
+      opinion = log.opinion(opinion, output?.opinion, recorded.seq);
       // A mismatch is always a friction: in the persona's words on this frame where it gave them, else on the frame whose
       // expectation this one broke, saying what was expected and what the flow showed instead.
       if (output?.friction) emit('persona.friction_reported', { step_no, ...output.friction, where: { url, ref: null }, frame: index, heard_post_ids });
@@ -122,14 +117,8 @@ export const design: PoiRunner<DesignPoi> = {
         emit('persona.friction_reported', { step_no: step_no - 1, severity: 2, what, expected, where: { url: `asset:${poi.frames[index - 1].asset}`, ref: null }, frame: index - 1, heard_post_ids });
       }
 
-      if (end === 'abandon') {
-        emit('persona.abandoned', { step_no, reason: action.text ?? '' });
-        return 'abandoned';
-      }
-      if (end === 'done') {
-        emit('persona.goal_done', { step_no, summary });
-        return 'done';
-      }
+      const own = log.ended(step_no, action);
+      if (own) return own;
       said = output;
     }
     emit('signal.budget_exceeded', { step_no: stepsBefore + last, budget });

@@ -61,19 +61,49 @@ export interface EpisodeDeps {
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
 }
 
+/** What every POI runner records the same way, each event stamped with the run, round, persona and this POI. */
+export function episodeLog(deps: EpisodeDeps, poi_id: string) {
+  const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
+    deps.record({ run_id: deps.config.run_id, round: deps.round(), persona_id: deps.persona.id, poi_id, type, payload } as NewEvent);
+  return {
+    emit,
+    /** The opinion after the step recorded as `seq`: `after`, recorded as a change, when the step gave one that differs from `before`. */
+    opinion(before: Opinion | null, after: Opinion | null | undefined, seq: number): Opinion | null {
+      if (!after || sameOpinion(before, after)) return before;
+      emit('persona.opinion_changed', { poi_id, before, after: structuredClone(after), cause: { step_ids: [seq], post_ids: [] } });
+      return structuredClone(after);
+    },
+    /** Records the persona's own end when the step's action is done or abandon; null when the episode goes on. */
+    ended(step_no: number, action: Action): 'done' | 'abandoned' | null {
+      if (action.type === 'done') {
+        emit('persona.goal_done', { step_no, summary: action.text ?? '' });
+        return 'done';
+      }
+      if (action.type === 'abandon') {
+        emit('persona.abandoned', { step_no, reason: action.text ?? '' });
+        return 'abandoned';
+      }
+      return null;
+    },
+  };
+}
+
+/** Whether this step starts a new usage slice, so the episode first waits for it (EpisodeDeps.slice). */
+export const atSliceEnd = (deps: EpisodeDeps, step_no: number) => !!deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0;
+
 /**
  * One persona's episode on a web POI: snapshot → screenshot → model → execute → record → inspect, until done, abandon or an
  * engine-enforced stop. Budgets live here, not in the prompt, because asking simulated users to give up barely
  * changes their behaviour (tech.md §2.4, §6.7).
  */
 export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
-  const { config, persona, segment, session, llm, blobs, record, signal, stepsBefore } = deps;
+  const { config, persona, segment, session, llm, blobs, signal, stepsBefore } = deps;
   const { run_id } = config;
   const { settings } = config.project;
   const poi_id = poi.id;
   const step_budget = deps.budget;
-  const emit = <K extends EventType>(type: K, payload: EventPayloads[K]) =>
-    record({ run_id, round: deps.round(), persona_id: persona.id, poi_id, type, payload } as NewEvent);
+  const log = episodeLog(deps, poi_id);
+  const { emit } = log;
   const system = systemPrompt(persona, config.project, segment, poi);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
@@ -157,8 +187,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
 
     const last = stepsBefore + step_budget;
     for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
-      if (deps.slice && step_no > 1 && (step_no - 1) % deps.slice.steps === 0) {
-        const next = await deps.slice.next();
+      if (atSliceEnd(deps, step_no)) {
+        const next = await deps.slice!.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
         heard = next.heard ?? [];
@@ -191,11 +221,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
       for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds })) emit(s.type, s.payload);
       history.push(step);
-      if (output?.opinion && !sameOpinion(opinion, output.opinion)) {
-        const after = structuredClone(output.opinion);
-        emit('persona.opinion_changed', { poi_id, before: opinion, after, cause: { step_ids: [recordedStep.seq], post_ids: [] } });
-        opinion = structuredClone(after);
-      }
+      opinion = log.opinion(opinion, output?.opinion, recordedStep.seq);
       const friction = output?.friction ?? null;
       const said = friction && JSON.stringify([snapshot.url, normaliseText(friction.what)]);
       // The same complaint again on the same page is one friction, not one per step; the step keeps its thought and feeling.
@@ -209,14 +235,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         emit('persona.friction_reported', { step_no, ...report, where: { url: snapshot.url, ref: about.ref }, heard_post_ids, ...(about.target && { about: about.target }) });
       }
 
-      if (action.type === 'done') {
-        emit('persona.goal_done', { step_no, summary: action.text ?? '' });
-        return 'done';
-      }
-      if (action.type === 'abandon') {
-        emit('persona.abandoned', { step_no, reason: action.text ?? '' });
-        return 'abandoned';
-      }
+      const own = log.ended(step_no, action);
+      if (own) return own;
       // A step the model failed to answer is not something the persona did, so it stays out of the persona's memory.
       if (output) memory.push({ step_no: step_no - stepsBefore, action, target, result, thought, friction: friction?.what ?? null, text });
 
