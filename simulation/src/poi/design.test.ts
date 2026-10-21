@@ -100,7 +100,8 @@ test('a design run refuses a navigator that cannot see images, an empty design a
   const poi: DesignPoi = { id: 'd', type: 'design', name: 'Checkout', segments: null, frames: [{ asset: '0123456789abcdef.png', name: null }] };
   const has = () => true;
   assert.equal(preflight(project([poi]), has), null);
-  assert.match(preflight(project([poi], PROVIDER_DEFAULTS.deepseek.navigator), has) ?? '', /^"Checkout" is a design, and the navigator model \(DeepSeek deepseek-flash\) reads text only\./);
+  assert.equal(preflight(project([poi], PROVIDER_DEFAULTS.deepseek.navigator), has), null, 'DeepSeek V4.1-Flash reads images');
+  assert.match(preflight(project([poi], { provider: 'deepseek', model: 'deepseek-v4-pro' }), has) ?? '', /^"Checkout" is a design, and the navigator model \(DeepSeek deepseek-v4-pro\) reads text only\./);
   assert.match(preflight(project([poi], PROVIDER_DEFAULTS.openai_compatible.navigator), has) ?? '', /cannot tell whether the local endpoint's navigator model \(gemma4:e4b\) can see images/);
   assert.equal(preflight(project([{ ...poi, frames: [] }]), has), '"Checkout" has no frames. Add at least one image, or remove it.');
   assert.equal(preflight(project([poi]), () => false), 'Frame 1 of "Checkout" is missing from the project\'s assets. Add the image again, or remove the frame.');

@@ -627,8 +627,8 @@ test('screenshots are always kept, and sent to the model only when enabled', asy
   const s = begin([step('done', null, 'Done')]);
   await s.run.done;
   assert.match(s.transcripts[0].request_json, /"type":"image","bytes":3/);
-  // DeepSeek takes no images, so its prompt must not mention one; the report says the navigator saw text only.
-  const d = begin([step('done', null, 'Done')], { settings: { routing: { ...DEFAULT_SETTINGS.routing, navigator: PROVIDER_DEFAULTS.deepseek.navigator } } });
+  // A text-only model takes no images, so its prompt must not mention one; the report says the navigator saw text only.
+  const d = begin([step('done', null, 'Done')], { settings: { routing: { ...DEFAULT_SETTINGS.routing, navigator: { provider: 'deepseek', model: 'deepseek-v4-pro' } } } });
   const textOnly = await d.run.done;
   assert.ok(d.files.has('runs/r-0001/shots/p-001-0001.jpg'));
   assert.doesNotMatch(d.transcripts[0].request_json, /"type":"image"|screenshot is/);

@@ -9,6 +9,7 @@ import type { LlmRole, ModelChoice, ProviderId } from '../types.ts';
 import { createLimiter, DEFAULT_LIMITS, realClock, type Clock, type Limit } from './limiter.ts';
 import { costUsd, type TokenUsage } from './prices.ts';
 import { fnv1a } from '../audience/sample.ts';
+import { readsImages } from '../settings.ts';
 
 /** The model gave no schema-valid answer on either attempt. */
 export class InvalidOutputError extends Error {}
@@ -77,6 +78,20 @@ export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
 /** The appended turn of the one retry after an invalid output (tech.md §10.6). */
 export function retryParts(user: UserPart[], error: string): UserPart[] {
   return [...user, { type: 'text', text: `That answer did not match the required format: ${error}\nAnswer again with one JSON object that matches the schema.` }];
+}
+
+/** JSON-mode providers (DeepSeek, local) add keys the schema lacks; an answer whose only fault is those keys is kept without them. */
+export function withoutUnknownKeys<T>(schema: z.ZodType<T>, text: string | null): T | undefined {
+  let value: unknown;
+  try { value = JSON.parse(text ?? ''); } catch { return undefined; }
+  const first = schema.safeParse(value);
+  if (first.success || !first.error.issues.every((i) => i.code === 'unrecognized_keys')) return undefined;
+  for (const issue of first.error.issues) {
+    const owner = issue.path.reduce<any>((o, k) => o?.[k], value);
+    for (const key of issue.keys) delete owner[key];
+  }
+  const second = schema.safeParse(value);
+  return second.success ? second.data : undefined;
 }
 
 /** `credential` is the provider's API key, or for the local endpoint its base URL. */
@@ -209,11 +224,12 @@ export function createGateway({
       // Local models and DeepSeek also get the schema in the prompt, which grounds their answers (tech.md §10.6).
       // Chat Completions endpoints get one system message (some local chat templates refuse a second), with the shared prefix first.
       const shared = chatCompletions(provider) ? undefined : req.shared;
-      const own = chatCompletions(provider) && req.shared ? `${req.shared}\n\n${req.system}` : req.system;
-      const system = chatCompletions(provider) ? `${own}\n\nAnswer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}` : own;
+      // The schema is the same for every persona, so it goes ahead of the persona's own prompt: DeepSeek caches by prefix.
+      const answer = `Answer with one JSON object that matches this JSON Schema:\n${JSON.stringify(z.toJSONSchema(req.schema))}`;
+      const system = chatCompletions(provider) ? [req.shared, answer, req.system].filter(Boolean).join('\n\n') : req.system;
       const cached = { anthropic: { cacheControl: { type: 'ephemeral' as const } } };
-      // DeepSeek's chat models read text only (tech.md §10.2): a DeepSeek navigator runs without the screenshots.
-      const parts = provider === 'deepseek' ? req.user.filter((p) => p.type === 'text') : req.user;
+      // A text-only model (DeepSeek V4-Pro) runs without the screenshots.
+      const parts = readsImages(req.model) ? req.user : req.user.filter((p) => p.type === 'text');
 
       let user = parts;
       let spent = 0;
@@ -267,12 +283,15 @@ export function createGateway({
         } catch (err) {
           thrown = err;
           if (NoObjectGeneratedError.isInstance(err)) {
-            status = 'invalid_output';
             usage = err.usage;
             response_model = err.response?.modelId ?? null;
             text = err.text ?? null;
             finish = err.finishReason ?? null;
-            error = hideKey(err.cause instanceof Error ? err.cause.message : err.message);
+            object = withoutUnknownKeys(req.schema, text);
+            if (object === undefined) {
+              status = 'invalid_output';
+              error = hideKey(err.cause instanceof Error ? err.cause.message : err.message);
+            }
           } else if (NoOutputGeneratedError.isInstance(err)) {
             // A paid call with no answer in it, such as a refusal: retried like any invalid output.
             status = 'invalid_output';

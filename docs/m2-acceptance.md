@@ -28,7 +28,7 @@ The manifest records the selected default routing, price-table snapshot, source/
 
 Three options trade coverage for spend. They work in every mode (M2, `--m3`, `--m4`, `--m5`):
 
-- `--provider deepseek` routes every role to DeepSeek's defaults and reads `DEEPSEEK_API_KEY` instead of `ANTHROPIC_API_KEY`. A DeepSeek navigator reads text only, so visual-only defects cannot be found.
+- `--provider deepseek` routes every role to DeepSeek's defaults and reads `DEEPSEEK_API_KEY` instead of `ANTHROPIC_API_KEY`. Its navigator, V4.1-Flash, reads the screenshots as other providers' navigators do.
 - `--personas N` runs the first personas of each segment of the same frozen fixture, apportioned by share with at least one per segment (4 to 50). The people do not change, only how many of them run.
 - `--seeds N` runs the first N seeds of the M3 or M4 suite, or of M5's design runs.
 

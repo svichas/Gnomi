@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { MAX_ROUNDS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import { MAX_ROUNDS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
 import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/simulation/types.ts';
 import { configuredProviders, egressList, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
@@ -12,7 +12,7 @@ import './audience-settings.css';
 
 // What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
 const PROVIDER_NOTES: Partial<Record<ProviderId | 'figma', string>> = {
-  deepseek: 'Its servers are in China. It reads text only, so it never sees screenshots, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
+  deepseek: 'Its servers are in China. Its Flash model sees screenshots, V4 Pro reads text only, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
 };
 
@@ -379,7 +379,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
             const choice = settings.routing[role];
             const text = ROLE_TEXT[role];
             const warning = configured && routeProblem(choice.provider, configured);
-            const blind = role === 'navigator' && choice.provider === 'deepseek' && settings.screenshots;
+            const blind = role === 'navigator' && !readsImages(choice) && settings.screenshots;
             return (
               <div key={role} className="settings-model-row">
                 <div>
@@ -401,7 +401,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
                 <div>
                   <ModelSelect key={`${role}-${choice.provider}`} role={role} choice={choice} onChange={(model) => set('routing', { ...settings.routing, [role]: { ...choice, model } })} />
                   {warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
-                  {blind && <p className="mt-1 text-xs text-stone-500">DeepSeek reads text only, so the navigator will not see the screenshots.</p>}
+                  {blind && <p className="mt-1 text-xs text-stone-500">This model reads text only, so the navigator will not see the screenshots.</p>}
                 </div>
               </div>
             );

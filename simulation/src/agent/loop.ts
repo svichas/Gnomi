@@ -6,6 +6,7 @@ import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
+import { readsImages } from '../settings.ts';
 import { stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
 
 // model_failed: the model gave no valid answer three steps running; the engine ends it, and it says nothing about the product.
@@ -85,7 +86,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   let invalidStreak = 0;
   const reported = new Set<string>(); // page and normalised text of each friction already recorded this episode
   // The gateway strips images for DeepSeek (llm/gateway.ts), so the prompt must not say there is a screenshot.
-  const sendShots = settings.screenshots && settings.routing.navigator.provider !== 'deepseek';
+  const sendShots = settings.screenshots && readsImages(settings.routing.navigator);
 
   // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;

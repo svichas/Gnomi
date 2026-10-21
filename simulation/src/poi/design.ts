@@ -4,6 +4,7 @@ import { assetMime, assetPath, readAsset } from '../assets.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { sameOpinion } from '../opinion/index.ts';
+import { readsImages } from '../settings.ts';
 import type { BlobStore, UserPart } from '../seams.ts';
 import type { Action, DesignPoi, EventPayloads, EventType, NewEvent, Opinion } from '../types.ts';
 import { designParts, designSchema, designSystemPrompt, frameLabel, type DesignOutput } from './design-prompt.ts';
@@ -41,8 +42,8 @@ export const design: PoiRunner<DesignPoi> = {
     const missing = poi.frames.findIndex((frame) => !hasAsset(frame.asset));
     if (missing >= 0) return `Frame ${missing + 1} of "${poi.name}" is missing from the project's assets. Add the image again, or remove the frame.`;
     const { provider, model } = project.settings.routing.navigator;
-    const choose = 'Choose a navigator from Anthropic, OpenAI or Google under Model choices.';
-    if (provider === 'deepseek') return `"${poi.name}" is a design, and the navigator model (DeepSeek ${model}) reads text only. ${choose}`;
+    const choose = 'Choose a navigator from Anthropic, OpenAI or Google, or DeepSeek deepseek-flash, under Model choices.';
+    if (!readsImages({ provider, model })) return `"${poi.name}" is a design, and the navigator model (DeepSeek ${model}) reads text only. ${choose}`;
     if (provider === 'openai_compatible') return `"${poi.name}" is a design, and Gnomi cannot tell whether the local endpoint's navigator model (${model}) can see images. ${choose}`;
     return null;
   },
