@@ -27,7 +27,7 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Sessio
 
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
-const MODEL_TIMEOUT_MS = 120_000; // the whole call, retries included
+const MODEL_TIMEOUT_MS = 180_000; // the whole call, retries included; as long as the report's calls get
 
 /** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
 export type RunStore = Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>;
@@ -166,7 +166,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       return llm.call({
         ...req,
         // The wall clock only stops new work, so a call without its own deadline (steps, social) gets one: a stalled provider ends.
-        timeout_ms: req.timeout_ms ?? MODEL_TIMEOUT_MS,
+        // A local server answers one request at a time, so a long wait there is its queue, not a stall.
+        ...(req.timeout_ms === undefined && req.model.provider !== 'openai_compatible' && { timeout_ms: MODEL_TIMEOUT_MS }),
         signal: req.signal ? AbortSignal.any([req.signal, hard.signal]) : hard.signal,
         onAttempt(attempt) {
           // The gateway has committed this attempt before notifying us; paid retries pass through here too.
@@ -597,17 +598,25 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const resetStaging = async (url: string) => {
     let status: number | null = null;
     let error: string | null = null;
-    const { origin, pathname } = new URL(url); // logged without the query string, which may carry a token
+    let to = '';
+    // Shown without the query string, which may carry a token.
+    const bare = (href: string | null, base?: string) => {
+      const at = href === null ? null : URL.parse(href, base);
+      return at ? at.origin + at.pathname : '';
+    };
     try {
       // A redirect fails rather than being followed: an SSO proxy's 302 to a login page would read as a reset that succeeded.
       const res = await fetch(url, { method: 'POST', redirect: 'manual', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
       status = res.status;
+      to = bare(res.headers.get('location'), url);
       await res.body?.cancel();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
-    record({ ...base, type: 'run.reset_called', payload: { url: origin + pathname, status, error } });
-    if (error !== null || status === null || status < 200 || status > 299) throw new Error(`The reset hook ${error ? `failed: ${error}` : `answered ${status}`}`);
+    record({ ...base, type: 'run.reset_called', payload: { url: bare(url), status, error } });
+    if (error !== null || status === null || status < 200 || status > 299) {
+      throw new Error(`The reset hook ${error ? `failed: ${error}` : `answered ${status}${to ? ` with a redirect to ${to}; point it at an endpoint that answers 2xx` : ''}`}`);
+    }
   };
 
   const execute = async (): Promise<Report> => {

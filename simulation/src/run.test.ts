@@ -1091,7 +1091,7 @@ test('a reset hook that redirects fails without following, and its query string 
   const calls: string[] = [];
   const server = createServer((req, res) => {
     calls.push(`${req.method} ${req.url}`);
-    if (req.url?.startsWith('/__reset')) res.writeHead(302, { location: '/login' }).end();
+    if (req.url?.startsWith('/__reset')) res.writeHead(302, { location: '/login?next=s3cret' }).end();
     else res.writeHead(200).end();
   });
   const url = `${await listen(server)}/__reset`;
@@ -1099,7 +1099,7 @@ test('a reset hook that redirects fails without following, and its query string 
   const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois: [{ ...web, reset_hook_url: `${url}?token=s3cret` }] } });
   const report = await r.run.done;
   assert.deepEqual(calls, ['POST /__reset?token=s3cret']);
-  assert.equal(report.stop_reason, 'error: The reset hook answered 302');
+  assert.equal(report.stop_reason, `error: The reset hook answered 302 with a redirect to ${new URL(url).origin}/login; point it at an endpoint that answers 2xx`);
   assert.deepEqual(report.methods.reset, { url, status: 302, error: null });
   assert.deepEqual(of(r.events, 'run.reset_called').map((e) => e.payload.url), [url]);
   assert.ok(!new TextDecoder().decode(r.files.get('runs/r-0001/report.json')).includes('s3cret'), 'the token stays out of the report');
@@ -1322,7 +1322,16 @@ test('step and social calls get a default deadline, so a stalled provider cannot
   const deadlines = new Set<string>();
   const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(2), onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
   await r.run.done;
-  assert.deepEqual([...deadlines].sort(), ['report_suggestions 180000', 'report_themes 180000', 'social 120000', 'step 120000', 'survey 30000']);
+  assert.deepEqual([...deadlines].sort(), ['report_suggestions 180000', 'report_themes 180000', 'social 180000', 'step 180000', 'survey 30000']);
+});
+
+test('steps and social calls on a local model server get no default deadline, since it answers one request at a time', async () => {
+  const deadlines = new Set<string>();
+  const local = { provider: 'openai_compatible' as const, model: 'gemma4:e4b' };
+  const settings = { ...rounds(2), routing: { ...DEFAULT_SETTINGS.routing, navigator: local, socialiser: local } };
+  const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings, onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
+  await r.run.done;
+  assert.deepEqual([...deadlines].filter((d) => /^(step|social) /.test(d)).sort(), ['social undefined', 'step undefined']);
 });
 
 test('a failure between rounds ends the episodes waiting for a slice and closes their pages', async () => {
