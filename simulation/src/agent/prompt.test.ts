@@ -169,7 +169,7 @@ test('pronouns, background, a second language and the segment shape the card wit
   const system = systemPrompt(kai, project, reviewers);
   assert.match(system, /pronouns: they\/them/);
   assert.match(system, /background: Runs hiring for a 60-person robotics startup in Munich\./);
-  assert.match(system, /Kai's first language is German; English is a second language\./);
+  assert.match(system, /Kai's first language is German; English is a second language, and Kai's thoughts and opinions are still written in English\./);
   assert.match(system, /Kai is red–green colour-blind, so colour alone tells them nothing/);
   assert.match(system, /leaves them stuck/);
   assert.match(system, /in their own voice/);
@@ -219,7 +219,7 @@ test('the survey schema takes bounded answers and rejects malformed or out-of-ra
   const slow = { where: 'search', what: 'Slow', severity: 2 };
   for (const change of [
     { sentiment: 3 }, { sentiment: -0.5 }, { confidence: -0.1 }, { confidence: 1.5 }, { would_continue: 'yes' }, { reason: ' ' }, { reason: 'x'.repeat(501) },
-    { likes: Array(6).fill(like) }, { frictions: Array(6).fill(slow) }, { objections: Array(6).fill(slow) }, { frictions: [{ ...slow, what: 'x'.repeat(301) }] },
+    { frictions: [{ ...slow, what: 'x'.repeat(301) }] },
     { likes: [{ ...like, what: '' }] }, { likes: ['Fine'] }, { frictions: ['Slow'] }, { frictions: [{ ...slow, severity: 5 }] }, { frictions: [{ where: 'search', what: 'Slow' }] },
     { objections: [{ ...slow, where: 'x'.repeat(81) }] }, { likes: [{ ...like, severity: 2 }] }, { thought: 'extra' },
   ]) assert.equal(surveySchema.safeParse({ ...answer, ...change }).success, false, JSON.stringify(change));
@@ -310,7 +310,6 @@ test('the socialiser schema accepts silence and each action with what it needs, 
   bad({ action: 'post', text: 'x'.repeat(501) }, /500/);
   bad({ action: 'post', text: '   ' }, /too_small|>=1/);
   bad({ about_poi_id: 'poi-9' }, /poi-1/);
-  bad({ opinion_updates: [{ poi_id: 'poi-1', ...opinion, likes: ['a', 'b', 'c', 'd', 'e', 'f'], post_ids: [] }] }, /5/);
   bad({ opinion_updates: [{ poi_id: 'poi-1', ...opinion, post_ids: [] }, { poi_id: 'poi-1', ...opinion, post_ids: [] }] }, /<=1 items/);
   bad({ extra: true }, /extra|unrecognized/i);
   assert.ok(!socialSchema([], ['poi-1']).safeParse({ ...quiet, action: 'react', post_id: 'anything', reaction: 'agree' }).success, 'an empty feed has nothing to answer');

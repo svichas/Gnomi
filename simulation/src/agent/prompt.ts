@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { countryName, personaEnvironment } from '../audience/locations.ts';
 import { ENGLISH, english, isEnglish } from '../llm/english.ts';
 import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
-import { opinionSchema } from '../opinion/index.ts';
+import { opinionSchema, upTo5 } from '../opinion/index.ts';
 import { poisFor } from '../poi/pois.ts';
 import { FEED_POSTS } from '../social/feed.ts';
 import { ACTION_TYPES } from '../types.ts';
@@ -101,6 +101,10 @@ export const languageName = (tag: string) => {
   }
 };
 
+/** Restates English here: saved profiles may still describe the first language as the one used for thinking aloud. */
+export const firstLanguage = (p: string, locale: string) =>
+  `${p}'s first language is ${languageName(locale)}; English is a second language, and ${p}'s thoughts and opinions are still written in English.`;
+
 /** The first name as subject; pronouns only when the profile schema lets them into prompts. */
 export function wordsFor(persona: Persona, project: ProjectConfig): Words {
   const pronouns = isAttributeEnabled(project.persona_schema, 'pronouns', 'prompt') ? persona.pronouns : 'they';
@@ -163,7 +167,7 @@ export function systemPrompt(persona: Persona, project: ProjectConfig, segment: 
     skill,
     device,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
-    ...(english ? [] : [`${p}'s first language is ${languageName(environment.locale)}; English is a second language.`]),
+    ...(english ? [] : [firstLanguage(p, environment.locale)]),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const profile = profileBlock(persona, project, segment, obj);
@@ -348,9 +352,9 @@ const likeItem = z.object({ where: itemWhere, what: itemWhat }).strict();
  * specific item tied to a part of the product, so the report can count how many personas name the same thing.
  */
 export const surveySchema = z.object({
-  frictions: z.array(problemItem).max(5),
-  objections: z.array(problemItem).max(5),
-  likes: z.array(likeItem).max(5),
+  frictions: upTo5(problemItem),
+  objections: upTo5(problemItem),
+  likes: upTo5(likeItem),
   sentiment: opinionSchema.shape.sentiment,
   confidence: opinionSchema.shape.confidence,
   would_continue: z.boolean(),

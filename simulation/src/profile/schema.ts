@@ -25,7 +25,7 @@ export const DEFAULT_PERSONA_SCHEMA: PersonaSchema = {
     attribute('country', 'Country', 'identity', 'text', 'The ISO country where the person lives; shapes familiar formats and conventions.'),
     attribute('city', 'City', 'identity', 'text', 'The city where the person lives.'),
     attribute('timezone', 'Timezone', 'identity', 'text', 'The IANA timezone used by their browser.'),
-    attribute('languages', 'Languages', 'identity', 'list', 'Ordered language preferences; the first is used for thinking aloud and the browser locale.'),
+    attribute('languages', 'Languages', 'identity', 'list', 'Ordered language preferences; the first is their first language and sets the browser locale.'),
     attribute('language', 'First language (legacy)', 'identity', 'text', 'The first-language value retained for older saved profiles.'),
     attribute('education', 'Education', 'identity', 'choice', 'Education and training history; not a proxy for competence.', ['vocational training', 'undergraduate degree', 'postgraduate degree', 'workplace learning'], choices(['vocational training', 'undergraduate degree', 'postgraduate degree', 'workplace learning'], [2, 4, 1, 3])),
     attribute('job_title', 'Job title', 'work', 'text', 'The person’s job title.'),

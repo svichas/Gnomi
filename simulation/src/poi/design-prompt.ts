@@ -1,7 +1,7 @@
 // The static-design prompt of tech.md §7: the expectation loop. Each screen asks what the persona sees, what they would do and
 // what they expect next; the next screen asks whether it matched. Same third-person persona and question form as the web steps.
 import { z } from 'zod';
-import { ACCESSIBILITY, heardLines, languageName, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { ACCESSIBILITY, firstLanguage, heardLines, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { english, ENGLISH } from '../llm/english.ts';
@@ -44,7 +44,7 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
     `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the screen budget; stating it would steer when to stop
     persona.device === 'mobile' ? `${p} is on a phone, so these are phone screens used by touch.` : `${p} is on a computer with a mouse and a full-size screen.`,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
-    ...(locale.toLowerCase().split('-')[0] === 'en' ? [] : [`${p}'s first language is ${languageName(locale)}; English is a second language.`]),
+    ...(locale.toLowerCase().split('-')[0] === 'en' ? [] : [firstLanguage(p, locale)]),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const n = poi.frames.length;

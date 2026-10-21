@@ -3,7 +3,7 @@
 // persona block as the browsing prompt (agent/prompt.ts, §6.1); the engine checks every quoted passage against the text.
 import { z } from 'zod';
 import { personaEnvironment } from '../audience/locations.ts';
-import { heardLines, languageName, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { firstLanguage, heardLines, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
@@ -53,7 +53,7 @@ export function readSystemPrompt(persona: Persona, project: ProjectConfig, segme
   const rules = [
     `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the part budget; stating it would steer when to stop
     familiarity,
-    ...(english ? [] : [`${p}'s first language is ${languageName(locale)}; English is a second language.`]),
+    ...(english ? [] : [firstLanguage(p, locale)]),
     ...(segment?.kind === 'buyer' ? [`${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides.`] : []),
   ];
   return `This is ${persona.name}. ${p} is reading "${poi.name}", a text about ${project.name}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking it. Each turn shows the next part of the text, above these notes, and the question is always the same: what does ${p} make of it, and what does ${p} do next?

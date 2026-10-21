@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { stepSchema } from '../agent/prompt.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { EventOf, GnomiEvent, Opinion } from '../types.ts';
-import { foldOpinions, sameOpinion } from './index.ts';
+import { foldOpinions, opinionSchema, sameOpinion } from './index.ts';
 
 const opinion: Opinion = { sentiment: -1, confidence: 0.6, likes: ['Clear navigation'], frictions: ['No save confirmation'] };
 const step = { thought: 'I am unsure.', feeling: -1, action: { type: 'read', ref: null, text: null }, friction: null };
@@ -14,7 +14,7 @@ test('opinions are bounded explicit snapshots, while older step outputs remain v
   assert.deepEqual(schema.parse(step), step);
   assert.equal(schema.safeParse({ ...step, opinion: null }).success, true);
   assert.deepEqual(schema.parse({ ...step, opinion }).opinion, opinion);
-  for (const change of [{ sentiment: 3 }, { sentiment: 0.5 }, { confidence: -0.1 }, { confidence: 1.1 }, { confidence: Infinity }, { likes: Array(6).fill('One') }, { frictions: [' '] }, { likes: ['x'.repeat(501)] }, { surprise: true }]) {
+  for (const change of [{ sentiment: 3 }, { sentiment: 0.5 }, { confidence: -0.1 }, { confidence: 1.1 }, { confidence: Infinity }, { frictions: [' '] }, { likes: ['x'.repeat(501)] }, { surprise: true }]) {
     assert.equal(schema.safeParse({ ...step, opinion: { ...opinion, ...change } }).success, false, JSON.stringify(change));
   }
   assert.equal(schema.safeParse({ ...step, opinion: { sentiment: 0, confidence: 0, likes: [], frictions: [] } }).success, true);
@@ -50,4 +50,12 @@ test('current opinions fold by run, persona and POI, using event sequence across
   result[0].opinion.likes.push('Changed outside the log');
   assert.deepEqual(latest.payload.after.likes, opinion.likes, 'projection must not expose mutable log references');
   assert.deepEqual(foldOpinions([changed(2, { persona_id: null })]), []);
+});
+
+test('a sixth like or friction is dropped instead of failing the answer, and the schema still asks for five', () => {
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+  const parsed = opinionSchema.parse({ sentiment: -1, confidence: 0.8, likes: six, frictions: six });
+  assert.deepEqual(parsed.frictions, ['a', 'b', 'c', 'd', 'e']);
+  assert.deepEqual(parsed.likes, ['a', 'b', 'c', 'd', 'e']);
+  assert.equal((z.toJSONSchema(opinionSchema) as unknown as { properties: { frictions: { maxItems: number } } }).properties.frictions.maxItems, 5);
 });
