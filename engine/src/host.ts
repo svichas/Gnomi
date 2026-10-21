@@ -1,29 +1,25 @@
 // Engine entry inside Electron's utilityProcess. No Electron imports (the engine stays a plain Node
 // library, tech.md §16.2): the parent port is a global on `process`, and main hands over one
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
-import { addPersona, DEMO_PERSONA_WRITER, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
+import { addPersona, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
-import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import { validateComparison } from '@gnomi/simulation/comparison/config.ts';
 import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
-import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
-import { createGateway, testProviderKey } from '@gnomi/simulation/llm/gateway.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
+import { testProviderKey } from '@gnomi/simulation/llm/gateway.ts';
 import { figmaClient } from './figma/client.ts';
 import { fakeFigma } from './figma/fake.ts';
 import { importFrames, listFrames, previews } from './figma/frames.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
-import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { audienceDeps, checkRun, KEYS, population, projectGateway } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
@@ -46,13 +42,6 @@ const FAKE_LLM = process.env.GNOMI_FAKE_LLM === '1';
 // value is that fixture's options as JSON, e.g. '{"nullRender":["1:5"]}' for a frame Figma cannot render.
 const fakeFigmaApi = process.env.GNOMI_FAKE_FIGMA ? fakeFigma(process.env.GNOMI_FAKE_FIGMA === '1' ? {} : JSON.parse(process.env.GNOMI_FAKE_FIGMA)) : undefined;
 const figma = () => figmaClient({ token: secrets.get('figma_token') ?? null, fetch: fakeFigmaApi });
-
-const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
-  anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
-  openai: { secret: 'openai_api_key', label: 'an OpenAI' },
-  google: { secret: 'google_api_key', label: 'a Google' },
-  deepseek: { secret: 'deepseek_api_key', label: 'a DeepSeek' },
-};
 
 const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
@@ -105,15 +94,10 @@ function pool(): Promise<BrowserPool> {
   return browsers;
 }
 
-/** The model gateway for this project's routing; onThrottle tells a run to back off (tech.md §9.5). */
-function gateway(record: Recorder, onThrottle?: (provider: ProviderId) => void): LlmGateway {
-  if (FAKE_LLM) return createScriptedGateway({ navigator: DEMO_NAVIGATOR, socialiser: DEMO_SOCIALISER, persona_writer: DEMO_PERSONA_WRITER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
-  return createGateway({ secrets: { get: (name) => secrets.get(name) ?? null }, localBaseUrl: project().settings.local_base_url, record, onThrottle });
-}
+const secret = (name: SecretName) => secrets.get(name) ?? null;
 
-/** Who runs: the generated population, or the built-in persona when the project has no audience. */
-function population(config: ProjectConfig): Persona[] {
-  return config.audience ? current().store.listPersonas() : [BUILTIN_PERSONA];
+function gateway(config: ProjectConfig, record: Recorder, onThrottle?: (provider: ProviderId) => void): LlmGateway {
+  return projectGateway({ fake: FAKE_LLM, secrets: secret, config, record, onThrottle });
 }
 
 function withAudience(): { config: ProjectConfig; audience: Audience } {
@@ -123,31 +107,7 @@ function withAudience(): { config: ProjectConfig; audience: Audience } {
 }
 
 function writer(config: ProjectConfig, emit?: (progress: PersonaProgress) => void): AudienceDeps {
-  // Proposed segments may only use logins that were actually recorded (metadata only, no session key needed).
-  const roles = current().store.listSessions().map((s) => s.role);
-  const store = current().store;
-  const task_id = randomUUID();
-  const started = Date.now();
-  const progress: PersonaProgress = { done: 0, total: 0, calls: 0, failed_attempts: 0, stage: 'sketching' };
-  const notify = () => emit?.({ ...progress, elapsed_ms: Date.now() - started });
-  return {
-    llm: gateway(current().record), model: config.settings.routing.persona_writer, project: config, roles,
-    signal: setupTask?.stop.signal,
-    cache: { get: (key) => store.getPersonaDraft(key), set: (key, value) => store.putPersonaDraft(key, value) },
-    onProgress(done, total, persona) {
-      Object.assign(progress, { done, total });
-      if (persona) progress.recent = [persona.name, ...(progress.recent ?? [])].slice(0, 3);
-      notify();
-    },
-    onSketched(sketched) { progress.sketched = sketched; notify(); },
-    onStage(stage) { progress.stage = stage; notify(); },
-    onAttempt(req, attempt) {
-      store.recordSetupCall({ task_id, persona_id: req.persona_id, purpose: req.purpose ?? 'setup' }, attempt);
-      progress.calls!++;
-      if (attempt.payload.status !== 'ok') progress.failed_attempts!++;
-      notify();
-    },
-  };
+  return audienceDeps(current().store, config, gateway(config, current().record), { signal: setupTask?.stop.signal, emit });
 }
 
 function persona(id: string): { people: Persona[]; persona: Persona } {
@@ -351,34 +311,15 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(config), settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
+    return estimateRun({ personas: population(current().store, config), settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
   },
   async start_run({ reset }) {
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     const { store, blobs, record } = current();
     const config = project();
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
-    const comparisonProblems = validateComparison(config);
-    if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
-    // The preflight of tech.md §9.1 and §9.3: never production, never with a login that no longer works; and every POI's own.
-    const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
-    if (refusal) throw new Error(refusal);
-    if (reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
-    const personas = population(config);
-    if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
-    const generatedCount = store.getGeneratedPersonaCount();
-    if (config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
-    if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
-    if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
-    if (config.audience && personas.some((person) =>
-      // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
-      !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
-    )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
-    for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
-      const provider = config.settings.routing[role].provider;
-      if (!FAKE_LLM && provider === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
-      if (!FAKE_LLM && provider !== 'openai_compatible' && !secrets.get(KEYS[provider].secret)) throw new Error(`Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
-    }
+    const personas = checkRun(store, config, { reset, fake: FAKE_LLM, secrets: secret });
+    // Never with a login that no longer works (tech.md §9.1).
     const verified: SessionInfo[] = [];
     if (config.comparison) {
       const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
@@ -399,7 +340,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
     if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
     let run: RunHandle | undefined;
-    const llm = gateway(record, (provider) => run?.throttle(provider));
+    const llm = gateway(config, record, (provider) => run?.throttle(provider));
     run = startRun(store.createRun(newRunConfig(config, { personas, sessions: verified, reset })), { store, blobs, browsers: browserPool, llm, record, sessions });
     const started = run;
     const key = runKey(store.dir, started.run_id);

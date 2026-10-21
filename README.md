@@ -101,15 +101,17 @@ npm run gym
 Use `http://localhost:4317` as a web input in Gnomi. To exercise the engine without model calls, leave Gym running and use the scripted CLI:
 
 ```sh
-npm run cli -w @gnomi/simulation -- \
-  --url http://localhost:4317 \
-  --goal "Create a job post" \
-  --allow localhost \
-  --fake-llm \
-  --project ./demo.gnomi
+npm run gnomi -- audience create --out ./gym-audience.json \
+  --name Gym --product "An applicant tracking system." --goal "Create a job post" \
+  --url http://localhost:4317 --count 6 --fake-llm
+
+npm run gnomi -- run --url http://localhost:4317 --allow localhost \
+  --audience ./gym-audience.json --fake-llm --project ./demo.gnomi
 ```
 
-This writes a local project, events, screenshots, and report artifacts. Scripted answers are fixtures for checking the workflow, not model-generated research findings. The CLI runs one built-in persona; audience setup and login recording are available in the desktop app. For a live CLI run, supply `ANTHROPIC_API_KEY` in your environment and omit `--fake-llm`.
+`audience create` writes the audience and its personas to a file (`--propose` asks the model for segments instead of one "Everyone" segment). `run` reuses those personas while they are current for the product, name and goal, and writes any that are not again without saving them back. It prints the timeline as it goes and leaves the events, screenshots, `report.json` and `report.md` in the project folder (`./gnomi-runs/<time>` without `--project`). Without `--audience` it runs one built-in persona. Pass `--pois <file.json>` instead of `--url` for text, design or several inputs, and `--settings <file.json>` to change routing, rounds or budgets; `node engine/src/cli.ts` with no command lists every option.
+
+Scripted answers are fixtures for checking the workflow, not model-generated research findings. Login recording and HTML or PDF reports are available in the desktop app only. For a live CLI run, supply `ANTHROPIC_API_KEY` (or the key of the provider your routing uses) in your environment and omit `--fake-llm`.
 
 See the [Gym guide](demo/GymSite/README.md) for the design and text fixtures, or start the web control with `GYM_DEFECTS=none npm run gym`.
 
