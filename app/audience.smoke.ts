@@ -232,8 +232,39 @@ try {
   await panel.getByRole('heading', { name: 'Personas (1)', exact: true }).waitFor();
   await page.locator('#tab-settings').click();
   assert.equal(await page.getByLabel('Writer concurrency (1-32)', { exact: true }).inputValue(), '4');
+  // A saved audience outlives this one: save it, start over, start from it, replace it by name, then delete it.
+  await page.locator('#tab-audience').click();
+  const segmentList = panel.getByRole('list', { name: 'Segments', exact: true }).locator(':scope > li');
+  const segmentCount = await segmentList.count();
+  await panel.getByRole('button', { name: 'Save to library', exact: true }).click();
+  const saveDialog = page.getByRole('dialog', { name: 'Save to your audience library' });
+  await saveDialog.getByLabel('Audience name', { exact: true }).fill('Smoke audience');
+  await saveDialog.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: 'Saved “Smoke audience” to your audience library.' }).waitFor();
+  await panel.getByRole('button', { name: 'Start over', exact: true }).click();
+  await panel.getByText(`${segmentCount} segments · 1 persona · Saved`).waitFor();
+  for (const width of [1100, 320]) {
+    await page.setViewportSize({ width, height: 960 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `saved audiences overflow at ${width}`);
+    await page.screenshot({ path: join(shots, `audience-saved-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await panel.getByRole('button', { name: 'Use Smoke audience', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: 'Started from “Smoke audience”.' }).waitFor();
+  assert.equal(await segmentList.count(), segmentCount);
+  assert.equal(await count.inputValue(), '1');
+  await panel.getByRole('button', { name: 'Save to library', exact: true }).click();
+  assert.equal(await saveDialog.getByLabel('Audience name', { exact: true }).inputValue(), 'Smoke audience', 'saving again offers the name it came from');
+  await saveDialog.getByText('An audience with this name is already saved. Saving replaces it.').waitFor();
+  await saveDialog.getByRole('button', { name: 'Replace saved audience', exact: true }).click();
+  await panel.getByRole('status').filter({ hasText: 'Saved “Smoke audience”' }).waitFor();
+  await panel.getByRole('button', { name: 'Start over', exact: true }).click();
+  assert.equal(await panel.getByRole('button', { name: 'Use Smoke audience', exact: true }).count(), 1, 'replacing does not add a second entry');
+  await panel.getByRole('button', { name: 'Delete Smoke audience', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Delete saved audience?' }).getByRole('button', { name: 'Delete', exact: true }).click();
+  await panel.getByRole('heading', { name: 'Or start from a saved audience' }).waitFor({ state: 'detached' });
   assert.deepEqual(errors, []);
-  console.log('ok    audience planning, stages/attempts, failure/retry, completion, call diagnostics, count-change and stale-profile regeneration gates, single-persona generation/review/persistence, saved concurrency, responsive layouts and reduced motion');
+  console.log('ok    audience planning, stages/attempts, failure/retry, completion, call diagnostics, count-change and stale-profile regeneration gates, single-persona generation/review/persistence, saved concurrency, saved-audience library, responsive layouts and reduced motion');
   passed = true;
 } finally {
   await app.close();

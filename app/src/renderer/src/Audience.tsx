@@ -3,14 +3,18 @@ import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
-import { addSegment, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
+import type { SavedAudience } from '../../audiences.ts';
+import { addSegment, audienceProblem, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
 import { PersonaList } from './Personas.tsx';
+import { profileProblem } from './profile.ts';
 import { ProfileEditor } from './ProfileEditor.tsx';
 import { CountryMix } from './CountryMix.tsx';
+import { SavedAudienceList, SaveToLibrary } from './SavedAudiences.tsx';
 import { SegmentCard } from './Segments.tsx';
 import { SocialRounds } from './SocialRounds.tsx';
 import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
@@ -98,6 +102,7 @@ export function AudienceTab(props: {
   const busy = plan.busy || people.busy;
   const stage = building === 'audience' || audience === null ? 1 : building === 'personas' || needsPersonas ? 2 : 3;
   const [estimate, setEstimate] = useState<RunEstimate | null>(null);
+  const [libraryName, setLibraryName] = useState<string | null>(null); // the saved audience this one came from or was saved as
 
   // A run estimate for the personas already written; none while they are missing or out of date, as it would describe other people.
   useEffect(() => {
@@ -130,6 +135,27 @@ export function AudienceTab(props: {
       } finally {
         setBuilding(null);
       }
+    });
+
+  // Like a proposal, a saved audience only fills the editor; the project keeps it once it is saved.
+  const startFrom = (saved: SavedAudience) =>
+    plan.run(async () => {
+      onAudience(saved.audience);
+      onSchema(saved.schema);
+      setLibraryName(saved.name);
+      const missing = [...new Set(saved.audience.segments.flatMap((segment) => segment.role && !sessions.some((session) => session.role === segment.role) ? [segment.role] : []))];
+      const logins = missing.length ? ` Record a login for ${missing.join(', ')} before running, or set those segments to logged out.` : '';
+      return { ok: true, text: `Started from “${saved.name}”. Review the mix, then generate personas for this project.${logins}` };
+    });
+
+  const saveToLibrary = (name: string) =>
+    plan.run(async () => {
+      const clean = cleanAudience(audience!);
+      const problem = audienceProblem(clean) ?? profileProblem(schema);
+      if (problem) return { ok: false, text: problem };
+      const saved = await window.gnomi.saveAudience(name, clean, getPersonaSchema(schema));
+      setLibraryName(saved.name);
+      return { ok: true, text: `Saved “${saved.name}” to your audience library. Any project can start from it on its Audience tab.` };
     });
 
   const onSave = () =>
@@ -206,6 +232,7 @@ export function AudienceTab(props: {
                 <Icon name="plus" size={22} /><strong>Build my own</strong><span id="audience-build-hint">Start with one group and shape it yourself.</span>
               </button>
             </div>
+            <SavedAudienceList onUse={startFrom} />
             <p className="audience-start-note">{schema ? 'Your saved profile attributes will be included.' : 'Just taking a quick look? You can also run with the built-in persona.'}</p>
           </div>
         ) : (
@@ -228,6 +255,7 @@ export function AudienceTab(props: {
                 </details>
               </div>
               <div className="audience-toolbar-actions">
+                <SaveToLibrary defaultName={libraryName ?? `${projectName.trim() || 'Untitled'} audience`} disabled={plan.busy} onSave={saveToLibrary} />
                 <Button onClick={propose} disabled={plan.busy} loading={building === 'audience'} small>
                   <Icon name="spark" size={14} />Propose segments again
                 </Button>

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { FigmaFile, FigmaImport } from '@gnomi/engine/figma/frames.ts';
 import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call } from '../engine.ts';
-import { Button, Check, Field, inputClass, Note, useAction } from '../ui.tsx';
+import { Button, Check, Field, inputClass, Note, OpenSettings, useAction } from '../ui.tsx';
 
 /** What the dialog hands back: the design to add, with the Figma frames as its steps. The engine has already stored the images. */
 export type FigmaDesign = Pick<DesignPoi, 'name' | 'frames'>;
@@ -91,7 +91,10 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
 
   const pages = file ? [...new Set(file.frames.map((frame) => (frame.section ? `${frame.page} › ${frame.section}` : frame.page)))] : [];
   const linked = file?.node && !file.frames.some((frame) => frame.id === file.node);
+  const openSettings = useContext(OpenSettings);
   return (
+    // A token problem closes the dialog on its way to Settings.
+    <OpenSettings.Provider value={openSettings && ((section) => { onClose(); openSettings(section); })}>
     <dialog ref={element} aria-label="Add from Figma" onCancel={(event) => { event.preventDefault(); onClose(); }} className="m-auto max-h-[90vh] w-full max-w-3xl space-y-4 overflow-auto rounded-xl border border-stone-200 bg-white p-6 shadow-xl backdrop:bg-stone-900/30">
       <h2 className="text-base font-semibold text-stone-900">Add from Figma</h2>
       <form onSubmit={find} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -177,5 +180,6 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
         )}
       </div>
     </dialog>
+    </OpenSettings.Provider>
   );
 }

@@ -105,8 +105,8 @@ export function Project(props: {
         </div>
       </details>}
 
-      <ActionBar>
-        {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+      <ActionBar notice={outcome && !outcome.ok && <Note tone="error">{outcome.text}</Note>}>
+        {outcome?.ok && <Note tone="ok">{outcome.text}</Note>}
         <Button onClick={onSave} disabled={busy}>Save project</Button>
         <Button onClick={continueToAudience} disabled={busy} variant="primary">{busy ? 'Saving…' : 'Continue to audience'}<Icon name="arrow" size={18} /></Button>
       </ActionBar>

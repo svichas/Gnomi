@@ -17,6 +17,12 @@ interface Window {
     clearFigmaToken(): Promise<void>;
     /** The engine asks Figma whether it accepts the saved token; main keeps the result. */
     testFigmaToken(): Promise<import('../../providers.ts').KeyTest>;
+    /** Audiences saved for any project to start from, newest first. */
+    listAudiences(): Promise<import('../../audiences.ts').SavedAudience[]>;
+    /** Saving under a name already saved replaces that audience. */
+    saveAudience(name: string, audience: import('@gnomi/simulation/types.ts').Audience, schema: import('@gnomi/simulation/types.ts').PersonaSchema): Promise<import('../../audiences.ts').SavedAudience>;
+    /** The saved audiences that remain. */
+    deleteAudience(id: string): Promise<import('../../audiences.ts').SavedAudience[]>;
     listProjects(): Promise<import('../../projects.ts').ProjectCatalog>;
     projectAction(action: import('../../projects.ts').ProjectAction): Promise<import('../../projects.ts').ProjectActionResult>;
     /** Shrunk evidence screenshots as data URLs, by blob path; one that cannot be read is absent. */

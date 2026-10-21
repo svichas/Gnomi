@@ -1,8 +1,8 @@
-// Run after the app build: node app/text.smoke.ts. A text point of interest added by pasting Gym v3's pricing copy, a segment
+// Run after the app build: node app/text.smoke.ts. A text point of interest added from Gym v3's pricing copy as a .md file, a segment
 // marked as buyers in the audience editor, then a scripted run (GNOMI_FAKE_LLM=1, no key, no cost) whose report quotes the text
 // and shows the buying survey.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ const dir = mkdtempSync(join(tmpdir(), 'gnomi-text-'));
 const projectDir = join(dir, 'text.gnomi');
 const shots = join(import.meta.dirname, 'test-results');
 mkdirSync(shots, { recursive: true });
-const pricing = readFileSync(gymAssets({ defects: 'D28' }).copy.pricing, 'utf8');
+const pricing = gymAssets({ defects: 'D28' }).copy.pricing;
 
 // Two segments of users, as every project before M5 has them; the smoke makes one of them buyers.
 const segment = (id: string, name: string, share: number): Segment => ({
@@ -50,18 +50,22 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
 
-  // A text POI by pasting: the form keeps the text as an asset and shows it as personas will read it.
+  // A text POI from a .md file: the editor formats it, the form keeps it as a Markdown asset and shows it formatted.
   const pois = page.getByRole('list', { name: 'Points of interest', exact: true });
   await page.getByRole('button', { name: 'Add text', exact: true }).click();
   await page.getByRole('button', { name: 'Remove Web app 1', exact: true }).click(); // the blank web app a new project starts with
-  const item = pois.getByRole('listitem').last();
+  const item = pois.locator(':scope > li').last(); // the editor's own list items are listitems too
   await item.getByLabel('Text name').fill('Pricing page');
-  await item.getByLabel('Paste the text').fill(pricing);
+  await item.getByLabel('Write or paste the text').fill('Draft copy');
+  await item.getByLabel('Text file').setInputFiles(pricing); // a .md file opens formatted in the editor
+  await item.getByLabel('Write or paste the text').getByRole('heading', { name: 'Plotline pricing', level: 1 }).waitFor();
   await item.getByRole('button', { name: 'Use this text', exact: true }).click();
   const preview = item.getByLabel('Text preview');
-  await preview.waitFor();
-  const shown = await preview.innerText();
-  for (const line of ['# Plotline pricing', '- Single sign-on (SAML SSO)', 'No. Single sign-on (SAML SSO) is part of Business.']) assert.ok(shown.includes(line), `the preview shows "${line}"`);
+  await preview.getByRole('heading', { name: 'Plotline pricing', level: 1 }).waitFor();
+  await preview.getByRole('listitem').filter({ hasText: 'Single sign-on (SAML SSO)' }).first().waitFor();
+  await preview.getByRole('table').waitFor();
+  assert.match(await preview.innerText(), /No\. Single sign-on \(SAML SSO\) is part of Business\./);
+  assert.doesNotMatch(await preview.innerText(), /Draft copy/, 'the file replaces what was typed');
   await item.getByText(/^[\d.,\s]+ characters$/).waitFor();
   await page.screenshot({ path: join(shots, 'text-poi.png'), fullPage: true });
   await page.getByRole('button', { name: 'Save project', exact: true }).click();
@@ -107,7 +111,7 @@ try {
   assert.ok(existsSync(assets), 'the pasted text is in the project folder');
   assert.deepEqual(errors, []);
   passed = true;
-  console.log('ok    a text POI added by pasting, a buyer segment and a scripted run report the buying survey and quoted passages');
+  console.log('ok    a text POI added from a .md file, a buyer segment and a scripted run report the buying survey and quoted passages');
 } finally {
   await app.close();
   rmSync(dir, { recursive: true, force: true });

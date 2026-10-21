@@ -9,6 +9,7 @@ import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../proj
 import type { KeyTest } from '../providers.ts';
 import { REPORT_FORMATS } from '../reports.ts';
 import type { ReportFormat } from '../reports.ts';
+import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { keyedProvider, ProviderKeys } from './providers.ts';
 
@@ -29,6 +30,7 @@ let engine: UtilityProcess | undefined;
 let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
 let library: ProjectLibrary;
+let audiences: AudienceLibrary;
 let providers: ProviderKeys;
 let currentProjectId = '';
 let changingProject = false;
@@ -111,6 +113,7 @@ async function startEngine(): Promise<Startup> {
     });
     const override = process.env.GNOMI_PROJECT_DIR;
     library = new ProjectLibrary(join(app.getPath('userData'), 'projects'), override);
+    audiences = new AudienceLibrary(join(app.getPath('userData'), 'audiences.json'));
     providers = new ProviderKeys(app.getPath('userData'), { read: readSecret, write: writeSecret, canRemember }, (name, value) => request('set_secret', { name, value }));
     const sessionKey = await loadSessionKey();
     sessionsPersist = sessionKey.remembered;
@@ -155,6 +158,10 @@ ipcMain.handle('test-figma-token', async (): Promise<KeyTest> => {
   providers.recordTest('figma', test);
   return test;
 });
+
+ipcMain.handle('list-audiences', () => audiences.list());
+ipcMain.handle('save-audience', (_event, name: unknown, audience: unknown, schema: unknown) => audiences.save(name, audience, schema));
+ipcMain.handle('delete-audience', (_event, id: unknown) => audiences.remove(id));
 
 ipcMain.handle('list-projects', () => catalog());
 ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<ProjectActionResult> => {

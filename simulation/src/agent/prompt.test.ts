@@ -353,6 +353,10 @@ test('the social turn shows the round, the persona\'s own use and opinion, and t
   const going = textOf(socialParts({ persona: BUILTIN_PERSONA, project, round: 1, rounds: 5, end: null, steps: 1, frictions: [], pois: [{ name: 'Gym ATS', opinion: null }], posted: [], feed: [] }));
   assert.match(going, /Priya has taken 1 step in Gym ATS so far and goes back to it after this\./);
   assert.match(going, /<feed>\n\(nothing new\)\n<\/feed>/);
+  assert.match(going, /a short post is how the conversation starts/, 'an empty first feed invites a first impression');
+  assert.match(going, /Does Priya share a first impression of Gym ATS, or move on\?$/);
+  const quiet = textOf(socialParts({ persona: BUILTIN_PERSONA, project, round: 2, rounds: 5, end: null, steps: 2, frictions: [], pois: [{ name: 'Gym ATS', opinion: null }], posted: ['Fine so far.'], feed: [] }));
+  assert.doesNotMatch(quiet, /first impression/, 'once it has posted, an empty feed is just an empty feed');
 });
 
 test('report text must be English in Latin letters; what a persona types may be any script', () => {

@@ -1,7 +1,9 @@
-import { cloneElement, useEffect, useId, useRef, useState } from 'react';
+import { cloneElement, createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import { call, errorText } from './engine.ts';
 import { Icon } from './Icon.tsx';
+import { credentialProblem } from './credentials.ts';
+import type { SettingsSection } from './credentials.ts';
 
 export const inputClass = 'field-input w-full';
 const buttonBase = 'button disabled:cursor-not-allowed disabled:opacity-50';
@@ -21,7 +23,7 @@ export function Button({ variant = 'secondary', small, loading, disabled, classN
 
 export function Card({ title, children, description, id, className }: { title: string; children: ReactNode; description?: string; id?: string; className?: string }) {
   return (
-    <section id={id} className={['content-panel', className].filter(Boolean).join(' ')}>
+    <section id={id} tabIndex={id ? -1 : undefined} className={['content-panel', className].filter(Boolean).join(' ')}>
       <h2>{title}</h2>{description && <p className="panel-description">{description}</p>}
       {children}
     </section>
@@ -81,9 +83,12 @@ export function NumberInput(props: { value: number; onChange(value: number): voi
 /**
  * A step's actions, floating at the foot of the window. It is rendered where the buttons were, so the focus order is unchanged,
  * and the page is padded by its measured height (styles.css) so it never covers the last fields.
+ * An error goes in `notice`, above the bar in the page, where it has room for its explanation; it scrolls into view when it appears.
  */
-export function ActionBar({ children }: { children: ReactNode }) {
+export function ActionBar({ notice, children }: { notice?: ReactNode; children: ReactNode }) {
   const bar = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { noticeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [!!notice]);
   useEffect(() => {
     const element = bar.current;
     if (!element) return;
@@ -94,7 +99,10 @@ export function ActionBar({ children }: { children: ReactNode }) {
     watcher.observe(element);
     return () => watcher.disconnect();
   }, []);
-  return <div ref={bar} className="action-bar">{children}</div>;
+  return <>
+    {notice && <div ref={noticeRef} className="action-bar-notice">{notice}</div>}
+    <div ref={bar} className="action-bar">{children}</div>
+  </>;
 }
 
 /**
@@ -164,19 +172,30 @@ export const usd = (amount: number) => `$${amount.toFixed(amount < 1 ? 4 : 2)}`;
 
 export const when = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
-const noteTone = {
-  ok: 'border-green-200 bg-green-50 text-green-900',
-  error: 'border-red-200 bg-red-50 text-red-900',
-  info: 'border-amber-200 bg-amber-50 text-amber-900',
-};
+const NOTE_ICONS = { ok: 'check', error: 'alert', info: 'alert' } as const;
 
-/** A short message; results of an action are announced to screen readers, a standing notice is not. */
-export function Note({ tone, children }: { tone: keyof typeof noteTone; children: ReactNode }) {
+/** Opens Settings at a card. Null where there is nowhere to go: in Settings itself and in an exported report. */
+export const OpenSettings = createContext<((section: SettingsSection) => void) | null>(null);
+
+/**
+ * A short message; results of an action are announced to screen readers, a standing notice is not.
+ * An error about a missing, rejected or exhausted key says what happened in plain words and links to its Settings card.
+ */
+export function Note({ tone, children }: { tone: keyof typeof NOTE_ICONS; children: ReactNode }) {
+  const openSettings = useContext(OpenSettings);
   const role = { ok: 'status', error: 'alert', info: undefined }[tone];
+  const problem = tone === 'error' && typeof children === 'string' ? credentialProblem(children) : null;
   return (
-    <p role={role} className={`rounded-lg border px-3 py-2 text-sm ${noteTone[tone]}`}>
-      {children}
-    </p>
+    <div role={role} className="note" data-tone={tone}>
+      <span className="note-icon"><Icon name={problem ? (problem.section === 'figma' ? 'figma' : 'settings') : NOTE_ICONS[tone]} size={16} /></span>
+      <div className="note-copy">
+        {problem ? <>
+          <p className="note-title">{problem.title}</p>
+          {problem.hint ? <><p>{problem.hint}</p><p className="note-detail">{children}</p></> : <p>{children}</p>}
+        </> : <p>{children}</p>}
+      </div>
+      {problem && openSettings && <Button small className="note-action" onClick={() => openSettings(problem.section)}>Open Settings<Icon name="arrow" size={14} /></Button>}
+    </div>
   );
 }
 

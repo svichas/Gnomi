@@ -885,7 +885,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         </div>
         <p className="report-goal">{report.goal}</p>
         <p className="report-context"><Icon name="people" size={14} />{count(report.personas.length, 'simulated user')}<span aria-hidden="true">·</span>Findings to validate with real people</p>
-        {report.status === 'stopped' && report.stop_reason && <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>}
+        {report.status === 'stopped' && report.stop_reason && (report.stop_reason.startsWith('error: ') ? <Note tone="error">{stopText(report.stop_reason)}</Note> : <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>)}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}
       </header>

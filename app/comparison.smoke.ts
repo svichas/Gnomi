@@ -49,7 +49,7 @@ try {
     await page.getByRole('button', { name: 'Add text', exact: true }).click();
     const item = pois.getByRole('listitem').last();
     await item.getByLabel('Text name', { exact: true }).fill(name);
-    await item.getByLabel('Paste the text', { exact: true }).fill(text);
+    await item.getByLabel('Write or paste the text', { exact: true }).fill(text);
     await item.getByRole('button', { name: 'Use this text', exact: true }).click();
     await item.getByLabel('Text preview', { exact: true }).waitFor();
     assert.ok((await item.getByLabel('Text preview', { exact: true }).innerText()).includes(name));
