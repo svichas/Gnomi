@@ -1,0 +1,192 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Gnomi README animation</title>
+<style>
+  @font-face { font-family: 'Inter'; src: url('../../assets/brand/fonts/InterVariable.woff2') format('woff2'); font-weight: 100 900; }
+  :root {
+    --paper: #f6f5f0; --ink: #222823; --olive: #58684e; --sage: #e7ebdd; --stone: #686d65;
+    --line: #d8dcd2; --warning: #a27b36; --success: #34704f;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1200px; height: 600px; overflow: hidden; background: var(--paper); font-family: 'Inter', sans-serif; color: var(--ink); position: relative; }
+  .abs { position: absolute; }
+  svg.graph { position: absolute; inset: 0; }
+  header { position: absolute; left: 32px; right: 32px; top: 24px; display: flex; justify-content: space-between; align-items: center; }
+  header img { height: 34px; }
+  .status { font-size: 14px; color: var(--stone); display: flex; align-items: center; gap: 8px; }
+  .status b { color: var(--ink); font-weight: 600; }
+  .live { width: 9px; height: 9px; border-radius: 50%; background: var(--olive); }
+
+  .card { left: 440px; top: 185px; width: 320px; height: 230px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(34,40,35,.08); overflow: hidden; }
+  .chrome { height: 30px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+  .chrome i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .chrome span { margin-left: 10px; font-size: 11px; color: var(--stone); }
+  .plan { padding: 18px 20px; }
+  .plan small { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--stone); font-weight: 600; }
+  .plan h3 { font-size: 30px; font-weight: 650; margin: 4px 0 2px; }
+  .plan h3 span { font-size: 14px; font-weight: 450; color: var(--stone); }
+  .bar { height: 7px; border-radius: 4px; background: var(--sage); margin-top: 9px; }
+  .btn { margin-top: 18px; height: 38px; border-radius: 8px; background: var(--olive); color: var(--paper); font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .ripple { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: rgba(246,245,240,.45); }
+
+  .persona { width: 140px; margin-left: -70px; margin-top: -32px; text-align: center; }
+  .avatar { width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 650; font-size: 20px; box-shadow: 0 0 0 4px var(--paper), 0 0 0 7px var(--ring, var(--line)); }
+  .persona b { display: block; margin-top: 14px; font-size: 15px; font-weight: 600; }
+  .persona span { font-size: 12px; color: var(--stone); }
+
+  .bubble { width: 228px; padding: 10px 14px 12px; border-radius: 14px; font-size: 15px; line-height: 1.35; }
+  .bubble small { display: block; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
+  .say { background: #fff; border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(34,40,35,.08); }
+  .think { background: var(--sage); font-style: italic; border-radius: 22px; }
+  .think::before, .think::after { content: ''; position: absolute; border-radius: 50%; background: var(--sage); }
+  .think.l::before { width: 14px; height: 14px; left: -10px; bottom: -6px; } .think.l::after { width: 8px; height: 8px; left: -24px; bottom: -16px; }
+  .think.r::before { width: 14px; height: 14px; right: -10px; bottom: -6px; } .think.r::after { width: 8px; height: 8px; right: -24px; bottom: -16px; }
+  .say.l { border-bottom-left-radius: 3px; } .say.r { border-bottom-right-radius: 3px; }
+  .ghost { color: transparent; }
+  .dots { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 4px; }
+  .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--stone); }
+
+  .cursor { width: 22px; }
+  .tag { position: absolute; left: 18px; top: 20px; font-size: 11px; font-weight: 600; color: #fff; background: #8a6a83; padding: 2px 6px; border-radius: 4px; }
+
+  .insight { left: 340px; top: 462px; width: 520px; background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--olive); border-radius: 10px; padding: 12px 16px; box-shadow: 0 10px 28px rgba(34,40,35,.10); }
+  .insight small { font-size: 10px; font-weight: 700; letter-spacing: .1em; color: var(--olive); }
+  .insight p { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .insight span { font-size: 13px; color: var(--stone); }
+
+  .watch { right: 28px; bottom: 22px; font-size: 13px; font-weight: 600; color: var(--olive); display: flex; align-items: center; gap: 7px; }
+  .watch i { width: 22px; height: 22px; border-radius: 50%; background: var(--olive); display: flex; align-items: center; justify-content: center; }
+</style>
+
+<header>
+  <img src="../../assets/brand/gnomi-logo.svg" alt="">
+  <div class="status"><span class="live" id="live"></span><b>Simulating</b> · Pricing page · 5 personas</div>
+</header>
+
+<svg class="graph" width="1200" height="600" id="graph"></svg>
+
+<div class="abs card">
+  <div class="chrome"><i></i><i></i><i></i><span>staging.acme.app/pricing</span></div>
+  <div class="plan">
+    <small>Team plan</small>
+    <h3>€29 <span>per seat / month</span></h3>
+    <div class="bar" style="width: 82%"></div><div class="bar" style="width: 64%"></div>
+    <div class="btn" id="btn">Start trial<span class="ripple" id="ripple"></span></div>
+  </div>
+</div>
+
+<div id="layer"></div>
+
+<div class="abs watch"><i><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="#f6f5f0"/></svg></i>Watch the introduction · 1:27</div>
+
+<script>
+const PERSONAS = {
+  A: { name: 'Maya', role: 'Designer · Lisbon', x: 150, y: 215, color: '#58684e' },
+  B: { name: 'Ruth', role: 'Ops lead · Leeds', x: 150, y: 420, color: '#a27b36' },
+  C: { name: 'Tomás', role: 'Founder · Madrid', x: 1050, y: 215, color: '#56768a' },
+  D: { name: 'Aiko', role: 'PM · Osaka', x: 1050, y: 420, color: '#8a6a83' },
+  E: { name: 'Dev', role: 'Engineer · Pune', x: 600, y: 108, color: '#417f78' },
+};
+// who, kind, side, bubble position, start, end, text
+const LINES = [
+  ['A', 'think', 'l', 205, 120, 1.2, 4.0, 'Where’s the free plan? I just want to try it first.'],
+  ['B', 'say', 'l', 205, 318, 2.2, 5.0, '€29 a seat, times 40 of us… that’s steep.'],
+  ['E', 'say', 'r', 326, 44, 4.2, 6.8, 'Does SSO cost extra? I can’t find it.'],
+  ['C', 'think', 'r', 768, 120, 5.4, 8.0, 'If annual is cheaper, I’d pitch it to the team.'],
+  ['D', 'say', 'r', 768, 318, 6.0, 8.6, 'The trial button is clear. Clicking it.'],
+];
+// influence pulses travel along social edges: from, to, start
+const PULSES = [['B', 'A', 3.3], ['E', 'C', 4.9], ['A', 'E', 5.6]];
+const MOODS = { A: [1.6, 'warning'], B: [2.6, 'warning'], E: [4.6, 'warning'], C: [5.8, 'warning'], D: [6.6, 'success'] };
+const EDGES = [['A', 'B'], ['C', 'D'], ['E', 'A'], ['E', 'C']];
+const RING = { warning: '#a27b36', success: '#34704f' };
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = (v) => 1 - Math.pow(1 - clamp(v), 3);
+const span = (t, a, b) => clamp((t - a) / (b - a));
+// fades in over `fin` after a, out over `fout` before b
+const win = (t, a, b, fin = 0.35, fout = 0.35) => Math.min(ease(span(t, a, a + fin)), 1 - span(t, b - fout, b));
+
+const edgePath = ([p, q]) => {
+  const a = PERSONAS[p], b = PERSONAS[q];
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const bend = a.x === b.x ? 0 : -60;
+  return `M${a.x} ${a.y} Q${mx} ${my + bend} ${b.x} ${b.y}`;
+};
+
+const graph = document.getElementById('graph');
+graph.innerHTML =
+  Object.values(PERSONAS).map((p) => `<line x1="${p.x}" y1="${p.y}" x2="600" y2="300" stroke="#d8dcd2" stroke-width="1.5" stroke-dasharray="4 6" class="spoke"/>`).join('') +
+  EDGES.map((e) => `<path d="${edgePath(e)}" fill="none" stroke="#c6ccbf" stroke-width="2" class="edge" data-k="${e.join('')}"/>`).join('') +
+  PULSES.map(() => `<circle r="6" fill="#58684e" class="pulse"/><circle r="12" fill="#58684e" class="halo"/>`).join('');
+const edgeEls = [...graph.querySelectorAll('.edge')];
+const findEdge = (p, q) => edgeEls.find((el) => el.dataset.k === p + q || el.dataset.k === q + p);
+
+function render(t) {
+  const T = 12, out = 1 - span(t, 11.2, 11.9); // whole simulation layer fades before the loop restarts
+  const spokes = ease(span(t, 0.5, 1.4));
+  graph.querySelectorAll('.spoke').forEach((s) => (s.style.opacity = spokes * out));
+  edgeEls.forEach((el, i) => {
+    const len = el.getTotalLength();
+    el.style.strokeDasharray = len;
+    el.style.strokeDashoffset = len * (1 - ease(span(t, 0.7 + i * 0.12, 1.5 + i * 0.12)));
+    el.style.opacity = out;
+  });
+
+  const pulses = graph.querySelectorAll('.pulse'), halos = graph.querySelectorAll('.halo');
+  PULSES.forEach(([p, q, s], i) => {
+    const el = findEdge(p, q), len = el.getTotalLength();
+    const k = ease(span(t, s, s + 0.9));
+    const forward = el.dataset.k === p + q;
+    const pt = el.getPointAtLength(len * (forward ? k : 1 - k));
+    const vis = win(t, s, s + 1.1, 0.15, 0.25) * out;
+    for (const c of [pulses[i], halos[i]]) { c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); }
+    pulses[i].style.opacity = vis;
+    halos[i].style.opacity = vis * 0.18;
+  });
+
+  let html = '';
+  Object.entries(PERSONAS).forEach(([k, p], i) => {
+    const pop = ease(span(t, 0.1 + i * 0.12, 0.6 + i * 0.12));
+    const mood = MOODS[k], m = mood && t >= mood[0] ? RING[mood[1]] : '#d8dcd2';
+    const ringPulse = mood ? 1 + 0.12 * Math.sin(Math.PI * span(t, mood[0], mood[0] + 0.4)) : 1;
+    html += `<div class="abs persona" style="left:${p.x}px;top:${p.y}px;opacity:${pop * out};transform:scale(${(0.6 + 0.4 * pop) * ringPulse})">
+      <div class="avatar" style="background:${p.color};--ring:${m}">${p.name[0]}</div><b>${p.name}</b><span>${p.role}</span></div>`;
+  });
+
+  LINES.forEach(([who, kind, side, x, y, a, b, text]) => {
+    const v = win(t, a, b) * out;
+    if (v <= 0) return;
+    const n = Math.round( // typing dots first, then the text types out
+      text.length * span(t, a + 0.75, a + 0.75 + text.length * 0.025));
+    const label = kind === 'say' ? 'says' : 'thinks';
+    html += `<div class="abs bubble ${kind} ${side}" style="left:${x}px;top:${y}px;opacity:${v};transform:translateY(${(1 - v) * 8}px)">
+      <small style="color:${PERSONAS[who].color}">${PERSONAS[who].name} ${label}</small>
+      <span>${text.slice(0, n)}</span><span class="ghost">${text.slice(n)}</span>
+      ${n === 0 ? `<div class="dots">${[0, 1, 2].map((d) => `<i style="opacity:${0.35 + 0.65 * Math.abs(Math.sin((t * 6) - d))}"></i>`).join('')}</div>` : ''}
+    </div>`;
+  });
+
+  // Aiko's cursor heads for the trial button and clicks it
+  const c0 = { x: 1000, y: 470 }, c1 = { x: 612, y: 372 };
+  const mv = ease(span(t, 6.4, 7.2));
+  const cx = c0.x + (c1.x - c0.x) * mv, cy = c0.y + (c1.y - c0.y) * mv - Math.sin(Math.PI * mv) * 40;
+  const cv = win(t, 6.3, 8.8, 0.2, 0.4) * out;
+  if (cv > 0) html += `<div class="abs" style="left:${cx}px;top:${cy}px;opacity:${cv}">
+    <svg class="cursor" viewBox="0 0 22 28"><path d="M2 2l17 13-8 1-4 8z" fill="#222823" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg><span class="tag">Aiko</span></div>`;
+  const rp = span(t, 7.25, 7.85);
+  const ripple = document.getElementById('ripple');
+  ripple.style.opacity = rp > 0 && rp < 1 ? 1 - rp : 0;
+  ripple.style.transform = `scale(${1 + rp * 14})`;
+  ripple.style.left = '150px'; ripple.style.top = '9px';
+  document.getElementById('btn').style.background = t > 7.25 && t < 8.4 ? '#47573e' : '';
+
+  const iv = win(t, 7.9, 11.2, 0.45, 0.01) * out;
+  if (iv > 0) html += `<div class="abs insight" style="opacity:${iv};transform:translateY(${(1 - iv) * 16}px)">
+    <small>FINDING</small><p>4 of 5 personas hesitated at per-seat pricing</p><span>Hypothesis to test · show an annual plan and SSO pricing up front</span></div>`;
+
+  document.getElementById('layer').innerHTML = html;
+  document.getElementById('live').style.opacity = 0.35 + 0.65 * Math.abs(Math.cos(t * Math.PI));
+}
+render(0);
+</script>
