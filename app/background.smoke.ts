@@ -151,18 +151,12 @@ try {
   assert.equal(await historyRows.count(), 2, 'previous app sessions remain available in project history');
   assert.match(await historyRows.nth(0).innerText(), /r-0002/);
   assert.match(await historyRows.nth(1).innerText(), /r-0001/);
-  await history.press('Tab');
-  assert.equal(await historyRows.nth(0).evaluate((button) => button === document.activeElement), true);
-  await page.keyboard.press('Escape');
-  assert.equal(await history.getAttribute('aria-expanded'), 'false');
-  assert.equal(await history.evaluate((button) => button === document.activeElement), true);
-  await history.press('Enter');
   await historyRows.nth(1).click();
   await page.getByRole('heading', { name: 'Report', exact: true }).waitFor();
-  assert.equal(await history.getAttribute('aria-expanded'), 'false');
+  assert.equal(await history.getAttribute('aria-pressed'), 'false', 'opening a run leaves the history page');
   await history.click();
+  assert.equal(await history.getAttribute('aria-pressed'), 'true');
   assert.match(await historyPanel.locator('[aria-current="true"]').innerText(), /r-0001/);
-  await page.keyboard.press('Escape');
   await page.locator('#tab-project').click();
   await page.getByLabel('Goal', { exact: true }).fill('An unsaved follow-up question');
   await history.click();
@@ -174,16 +168,13 @@ try {
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 780 });
     await history.click();
-    const box = (await historyPanel.boundingBox())!;
-    assert.ok(box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 780, `history fits ${width}px`);
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await historyPanel.waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `history fits ${width}px`);
     await page.screenshot({ path: join(shots, `project-history-${width}.png`) });
-    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Back to project', exact: true }).click();
+    assert.equal(await page.locator('#tab-project').getAttribute('aria-current'), 'step', 'back returns to where history was opened');
   }
   await page.setViewportSize({ width: 1100, height: 780 });
-  await history.click();
-  await page.locator('.header-project').click();
-  assert.equal(await history.getAttribute('aria-expanded'), 'false', 'outside click dismisses history');
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
   assert.equal(await history.count(), 0, 'history belongs to the open project');
   await page.getByRole('button', { name: 'Open Hiring workspace', exact: true }).click();

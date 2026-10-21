@@ -27,7 +27,7 @@ const TABS = [
   { id: 'review', label: 'Review', description: 'Readiness & run limits' },
   { id: 'run', label: 'Simulation', description: 'Activity & findings' },
 ] as const;
-type Tab = (typeof TABS)[number]['id'] | 'settings';
+type Tab = (typeof TABS)[number]['id'] | 'settings' | 'runs';
 
 function rememberedProject(): string | null {
   try { return localStorage.getItem('gnomi.open-project'); } catch { return null; }
@@ -188,10 +188,14 @@ export function App() {
   };
   /** From an error anywhere in the workspace to the Settings card that fixes it; Back returns to where it was. */
   const openSettings = (section: SettingsSection | null) => {
-    if (tab !== 'settings') setReturnTab(tab);
+    if (tab !== 'settings' && tab !== 'runs') setReturnTab(tab);
     setSettingsSection(section);
     setHome(false);
     setTab('settings');
+  };
+  const openRuns = () => {
+    if (tab !== 'settings' && tab !== 'runs') setReturnTab(tab);
+    setTab('runs');
   };
 
   const setForm = (update: (form: Form) => Form) => setDraft((was) => was && { ...was, form: update(was.form) });
@@ -220,7 +224,7 @@ export function App() {
     return true;
   }
   const back = () => {
-    if (tab === 'settings') go(returnTab);
+    if (tab === 'settings' || tab === 'runs') go(returnTab);
     else if (tab === 'run') go('review');
     else if (tab === 'review') setTab('audience');
     else if (tab === 'audience') setTab('project');
@@ -232,6 +236,7 @@ export function App() {
     review: ['One last look before you start.', 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
     run: ['Simulation', 'Follow your audience’s experience, from first impressions to final findings.'],
     settings: ['Make Gnomi work for you.', 'Connect an AI provider and choose your limits.'],
+    runs: ['Past runs', 'Every simulation saved in this project, newest first. Open one to see its report.'],
   };
 
   return (
@@ -243,7 +248,7 @@ export function App() {
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
         {!home && <div className="header-actions">
-          <ProjectRunHistory key={revision} runs={info?.runs ?? []} selected={tab === 'run' ? runId : null} onSelect={showRun} />
+          <Button id="tab-runs" variant="quiet" className="header-runs" aria-label="Past runs" aria-pressed={tab === 'runs'} onClick={() => { if (tab === 'runs') go(returnTab); else openRuns(); }}><Icon name="clock" /><span>Past runs</span><span className="project-history-count">{info?.runs.length ?? 0}</span></Button>
           <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else openSettings(null); }}><Icon name="settings" /><span>Settings</span></Button>
         </div>}
       </header>
@@ -261,7 +266,7 @@ export function App() {
           // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
           <div key={revision} hidden={home} className="project-workspace">
             <div className="journey-nav">
-              <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</Button>
+              <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' || tab === 'runs' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</Button>
               <p className="workflow-label">Your workflow</p>
               <nav aria-label="Project steps" className="step-nav">
                 {TABS.map(({ id, label, description }, index) => <button key={id} type="button" id={`tab-${id}`} aria-label={label} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span><span className="step-copy"><strong>{label}</strong><small>{description}</small></span><Icon name="chevron" size={14} /></button>)}
@@ -269,11 +274,14 @@ export function App() {
               <div className="workflow-note"><Icon name="leaf" size={20} /><p>Different perspectives. Better questions.</p><span>Findings are hypotheses to explore with real people.</span></div>
             </div>
             <div className="workspace-content">
-            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : tab === 'project' ? 'Study setup' : tab === 'audience' ? 'Audience builder' : tab === 'review' ? 'Ready to run' : 'Simulation workspace'}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
+            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : tab === 'runs' ? 'Project history' : tab === 'project' ? 'Study setup' : tab === 'audience' ? 'Audience builder' : tab === 'review' ? 'Ready to run' : 'Simulation workspace'}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <OpenSettings.Provider value={null}>
                 <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
               </OpenSettings.Provider>
+            </div>
+            <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
+              <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={showRun} />
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>
               <Project
