@@ -63,10 +63,14 @@ export function population(store: ProjectStore, config: ProjectConfig): Persona[
   return config.audience ? store.listPersonas() : [BUILTIN_PERSONA];
 }
 
-/** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
-export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
+export function checkComparison(config: ProjectConfig) {
   const comparisonProblems = validateComparison(config);
   if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
+}
+
+/** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
+export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
+  checkComparison(config);
   const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
   if (refusal) throw new Error(refusal);
   if (opts.reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
