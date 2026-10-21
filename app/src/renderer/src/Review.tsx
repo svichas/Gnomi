@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import { loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { effectiveComparisonPois } from '@gnomi/simulation/comparison/config.ts';
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
-import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
+import { generatedCount, staleProfiles } from './audience.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';
 import { call, errorText } from './engine.ts';
@@ -65,8 +65,8 @@ export function Review(props: {
     onRecheck(); // a new login: save and check everything again
   });
   const personas = info?.personas ?? [];
-  const countChanged = !!saved?.audience && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count);
-  const profilesStale = !!saved?.audience && personas.some((persona) => !personaProfileIsCurrent(persona, saved));
+  const countChanged = !!saved?.audience && saved.audience.persona_count !== generatedCount(info);
+  const profilesStale = useMemo(() => !!saved?.audience && staleProfiles(personas, saved).size > 0, [saved, personas]);
   const audienceReady = personas.length > 0 && !countChanged && !profilesStale;
 
   useEffect(() => {

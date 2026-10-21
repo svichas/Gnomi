@@ -1,5 +1,6 @@
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
+import { generatedCount } from './audience.ts';
 import type { Draft, Form } from './form.ts';
 import { Logins } from './Logins.tsx';
 import { PoiList } from './poi/PoiList.tsx';
@@ -27,7 +28,7 @@ export function Project(props: {
   const set = <K extends keyof Form>(key: K, value: Form[K]) => onForm((was) => ({ ...was, [key]: value }));
   const { busy, outcome, run } = useAction();
   const sessions = info?.sessions ?? [];
-  const needsPersonas = audience !== null && (!info?.personas.length || audience.persona_count !== (info.generated_persona_count ?? info.project?.audience?.persona_count));
+  const needsPersonas = audience !== null && (!info?.personas.length || audience.persona_count !== generatedCount(info));
 
   const saveFirst = async () => {
     const saved = await save();

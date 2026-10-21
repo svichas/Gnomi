@@ -1,12 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import type { SavedAudience } from '../../audiences.ts';
-import { addSegment, audienceProblem, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
+import { addSegment, audienceProblem, blankAudience, cleanAudience, generatedCount, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare, staleProfiles } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
@@ -93,11 +92,12 @@ export function AudienceTab(props: {
   const savedSettings = info?.project?.settings;
   const socialChanged = !!savedSettings && ((settings.social ?? false) !== (savedSettings.social ?? false) || (settings.rounds ?? 5) !== (savedSettings.rounds ?? 5));
   const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema) || socialChanged;
-  const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
-  const stale = new Set(personas.filter((persona) => {
-    try { return !!profileProject && !personaProfileIsCurrent(persona, profileProject); } catch { return true; }
-  }).map((persona) => persona.id));
-  const countChanged = audience !== null && personas.length > 0 && audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count);
+  // Checking a profile samples it again, for up to 200 personas: only when an input changes, not on every render.
+  const stale = useMemo(() => {
+    const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
+    return staleProfiles(personas, profileProject);
+  }, [personas, info?.project, projectName, description, goal, audience, schema]);
+  const countChanged = audience !== null && personas.length > 0 && audience.persona_count !== generatedCount(info);
   const needsPersonas = audience !== null && (personas.length === 0 || stale.size > 0 || countChanged);
   const busy = plan.busy || people.busy;
   const stage = building === 'audience' || audience === null ? 1 : building === 'personas' || needsPersonas ? 2 : 3;
