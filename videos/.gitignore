@@ -30,3 +30,7 @@ simulation-explainer/*
 !simulation-explainer/assets/
 simulation-explainer/assets/*
 !simulation-explainer/assets/simulation-models.glb
+
+# README animation: the GIF and the scene that renders it.
+!readme-gif/
+!readme-gif/*
