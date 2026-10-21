@@ -551,7 +551,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const comparison = project.comparison ? createComparisonRuntime({
-    config, llm: budgetedLlm, blobs, record, events: () => store.events(run_id), signal: hard.signal,
+    config, llm: budgetedLlm, blobs, record, events: (opts) => store.events(run_id, opts), signal: hard.signal,
     openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
     beginBlock: beginComparisonBlock,
     endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
