@@ -591,6 +591,34 @@ test('stop() cancels a model call in flight', async () => {
   assert.deepEqual([report.status, report.stop_reason], ['stopped', 'user']);
 });
 
+test('stop() while the judge answers still ends the run as a user stop, with its report', async () => {
+  const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };
+  const steps = [step('click', 'e1', null, friction), step('done', null, 'Posted the job')];
+  const judged = { themes: [{ title: 'The Jobs link leads nowhere', description: 'Jobs opens a page that is not found.', group_ids: ['g1'] }] };
+  const r = begin((req, n) => (req.role === 'judge' ? judged : req.role === 'author' ? { suggestions: [] } : steps[n]), {
+    onCall: (req, run) => void (req.role === 'judge' && run.stop()),
+  });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'llm.call').filter((e) => e.payload.role === 'author').length, 0, 'no author call starts after the stop');
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload), [{ reason: 'user', detail: null }]);
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'user', cost_usd: 0 }]);
+  assert.equal(report.status, 'stopped');
+  assert.equal(r.types().at(-1), 'report.generated');
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+});
+
+test('a failure in the report phase ends the run as stopped(error), with its report', async () => {
+  const r = begin([step('done', null, 'Posted the job')], {
+    onEvent: (e) => {
+      if (e.type === 'report.started') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'error: disk full', cost_usd: 0 }]);
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.equal(r.types().at(-1), 'report.generated');
+});
+
 test('a browser failure ends the run as stopped(error), closes the page and still reports', async () => {
   const r = begin([step('click', 'e1')], {
     act: () => {
@@ -1057,6 +1085,25 @@ test('a reset hook that fails stops the run before any persona starts', async (t
   assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
 });
 
+test('a reset hook that redirects fails without following, and its query string stays out of the reset record and the report', async (t) => {
+  // An SSO proxy answers the POST with a redirect to its login page, which answers a GET with 200.
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    calls.push(`${req.method} ${req.url}`);
+    if (req.url?.startsWith('/__reset')) res.writeHead(302, { location: '/login' }).end();
+    else res.writeHead(200).end();
+  });
+  const url = `${await listen(server)}/__reset`;
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois: [{ ...web, reset_hook_url: `${url}?token=s3cret` }] } });
+  const report = await r.run.done;
+  assert.deepEqual(calls, ['POST /__reset?token=s3cret']);
+  assert.equal(report.stop_reason, 'error: The reset hook answered 302');
+  assert.deepEqual(report.methods.reset, { url, status: 302, error: null });
+  assert.deepEqual(of(r.events, 'run.reset_called').map((e) => e.payload.url), [url]);
+  assert.ok(!new TextDecoder().decode(r.files.get('runs/r-0001/report.json')).includes('s3cret'), 'the token stays out of the report');
+});
+
 // —— Social rounds (M4) ——
 
 const QUIET = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
@@ -1258,6 +1305,27 @@ test('the cost cap reached in a social phase stops the run there: no later round
   assert.equal(of(r.events, 'persona.survey').length, 0);
   assert.equal(r.finished[0].status, 'stopped');
   assert.ok(report.cost_usd <= budget + 12 * 0.01 + 1e-9);
+});
+
+test('step and social calls get a default deadline, so a stalled provider cannot hold a round past the wall clock', async () => {
+  const deadlines = new Set<string>();
+  const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(2), onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
+  await r.run.done;
+  assert.deepEqual([...deadlines].sort(), ['report_suggestions 180000', 'report_themes 180000', 'social 120000', 'step 120000', 'survey 30000']);
+});
+
+test('a failure between rounds ends the episodes waiting for a slice and closes their pages', async () => {
+  const r = begin(swarmAnswers(), {
+    personas: swarm(2),
+    project: SWARM,
+    settings: rounds(3),
+    onEvent: (e) => {
+      if (e.type === 'run.round_ended') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.ok(r.pages.length === 2 && r.pages.every((p) => p.closed), 'episodes waiting for a slice end and close their pages');
 });
 
 test('a usage slice is admitted whole: when its steps would reach the budget, none of them starts', async () => {

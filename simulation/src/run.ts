@@ -27,6 +27,8 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Sessio
 
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
+const MODEL_TIMEOUT_MS = 120_000; // the whole call, retries included
+
 /** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
 export type RunStore = Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>;
 
@@ -158,10 +160,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return now;
   };
   const budgetedLlm: LlmGateway = {
-    call(req) {
+    // async, so a stop rejects the call as the gateway contract says, rather than throwing out of a caller's map or allSettled.
+    async call(req) {
       hard.signal.throwIfAborted();
       return llm.call({
         ...req,
+        // The wall clock only stops new work, so a call without its own deadline (steps, social) gets one: a stalled provider ends.
+        timeout_ms: req.timeout_ms ?? MODEL_TIMEOUT_MS,
         signal: req.signal ? AbortSignal.any([req.signal, hard.signal]) : hard.signal,
         onAttempt(attempt) {
           // The gateway has committed this attempt before notifying us; paid retries pass through here too.
@@ -571,32 +576,37 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     // Once every episode is over the swarm keeps talking, within the R rounds, while anyone has something to read or tell: a text
     // read in one sitting is still discussed, and what a persona found in its last stretch of use reaches the feed.
-    for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
-      const using = config.personas.filter((p) => !ends.has(p.id));
-      if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
-      if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
-      base.round = round;
-      record({ ...base, type: 'run.round_started', payload: {} });
-      if (using.length) await inParallel(mixed(using), turn);
-      if (!drain.signal.aborted) await socialPhase(round);
-      record({ ...base, type: 'run.round_ended', payload: {} });
+    try {
+      for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
+        const using = config.personas.filter((p) => !ends.has(p.id));
+        if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
+        if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
+        base.round = round;
+        record({ ...base, type: 'run.round_started', payload: {} });
+        if (using.length) await inParallel(mixed(using), turn);
+        if (!drain.signal.aborted) await socialPhase(round);
+        record({ ...base, type: 'run.round_ended', payload: {} });
+      }
+    } finally {
+      // A stop or a failure leaves episodes waiting for a slice that will not come: they end now and close their pages.
+      for (const wake of waiting.values()) wake(false);
+      await Promise.allSettled(tasks.values());
     }
-    // A stop leaves episodes waiting for a slice that will not come: they end now and close their pages.
-    for (const wake of waiting.values()) wake(false);
-    await Promise.allSettled(tasks.values());
   };
 
   const resetStaging = async (url: string) => {
     let status: number | null = null;
     let error: string | null = null;
+    const { origin, pathname } = new URL(url); // logged without the query string, which may carry a token
     try {
-      const res = await fetch(url, { method: 'POST', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
+      // A redirect fails rather than being followed: an SSO proxy's 302 to a login page would read as a reset that succeeded.
+      const res = await fetch(url, { method: 'POST', redirect: 'manual', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
       status = res.status;
       await res.body?.cancel();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
-    record({ ...base, type: 'run.reset_called', payload: { url, status, error } });
+    record({ ...base, type: 'run.reset_called', payload: { url: origin + pathname, status, error } });
     if (error !== null || status === null || status < 200 || status > 299) throw new Error(`The reset hook ${error ? `failed: ${error}` : `answered ${status}`}`);
   };
 
@@ -623,6 +633,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
     try {
       if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, record, events: () => store.events(run_id) });
+    } catch (err) {
+      fail(err); // the run still ends, logged and reported, rather than staying 'running'
     } finally {
       clearTimeout(clock); // Comparison analysis remains under the run's wall-clock allowance.
     }
