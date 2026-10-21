@@ -21,7 +21,7 @@ import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
-import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
+import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
 import type { Audience, GnomiEvent, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
@@ -96,9 +96,14 @@ function readJson(path: string, what: string): unknown {
 
 function settingsFrom(v: Values): RunSettings {
   if (!v.settings) return DEFAULT_SETTINGS;
-  const over = readJson(v.settings, 'Settings file');
+  const over = readJson(v.settings, 'Settings file') as Partial<RunSettings> | null;
   if (!over || typeof over !== 'object' || Array.isArray(over)) throw new Error(`Settings file ${v.settings} must hold a JSON object.`);
-  return { ...DEFAULT_SETTINGS, ...over };
+  // A routing that names some roles keeps the default model for the rest.
+  const settings = { ...DEFAULT_SETTINGS, ...over, routing: { ...DEFAULT_SETTINGS.routing, ...over.routing } };
+  for (const [role, choice] of Object.entries(settings.routing)) {
+    if (!Object.hasOwn(PROVIDER_DEFAULTS, choice?.provider) || typeof choice.model !== 'string') throw new Error(`Settings file ${v.settings}: "routing.${role}" must be { "provider": "${Object.keys(PROVIDER_DEFAULTS).join('" | "')}", "model": "<model id>" }.`);
+  }
+  return settings;
 }
 
 /** Fails early with the variable to set, rather than on the first model call. */

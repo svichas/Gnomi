@@ -131,6 +131,16 @@ test('rejudge spends within what is left of the run budget unless --budget allow
   }
 });
 
+test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
+  const settings = join(dir, 'navigator.json');
+  writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));
+  assert.match(cli('estimate', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings), /model calls/);
+  writeFileSync(settings, JSON.stringify({ routing: { judge: { model: 'gpt-6-luna' } } }));
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'estimate', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /"routing\.judge" must be/);
+});
+
 test('runs, report and rejudge leave a run still live in another process running', () => {
   const project = join(dir, 'live');
   cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
