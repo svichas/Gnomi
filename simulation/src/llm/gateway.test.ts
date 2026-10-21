@@ -397,6 +397,15 @@ test('a JSON-mode answer whose only fault is extra keys is kept without them, no
   assert.equal(sent.urls.length, 1);
 });
 
+test("a JSON-mode answer with an escaped apostrophe (\\') is kept, not retried", async () => {
+  const sent = stubFetch(() => chatCompletion(String.raw`{"thought":"It'\''s fine, a \\' stays","feeling":0}`));
+  const { gateway, calls } = setup();
+  const result = await gateway.call(request({ model: { provider: 'deepseek', model: 'deepseek-flash' } }));
+  assert.deepEqual(result.object, { thought: String.raw`It'''s fine, a \' stays`, feeling: 0 });
+  assert.deepEqual(calls.map((c) => c.event.payload.status), ['ok']);
+  assert.equal(sent.urls.length, 1);
+});
+
 test('an answer with extra keys and a wrong value is still retried', async () => {
   const strict = schema.strict();
   stubFetch(() => chatCompletion('{"thought":"Hmm","feeling":9,"extra":1}'), () => chatCompletion(OK));

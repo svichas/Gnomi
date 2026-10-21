@@ -100,12 +100,17 @@ export function retryParts(user: UserPart[], error: string): UserPart[] {
   return [...user, { type: 'text', text: `That answer did not match the required format: ${error}\nAnswer again with one JSON object that matches the schema.` }];
 }
 
-/** JSON-mode providers (DeepSeek, local) add keys the schema lacks; an answer whose only fault is those keys is kept without them. */
+/**
+ * JSON-mode providers (DeepSeek, local) add keys the schema lacks, or escape an apostrophe as \' (not valid JSON); an
+ * answer whose only fault is those is kept without them.
+ */
 export function withoutUnknownKeys<T>(schema: z.ZodType<T>, text: string | null): T | undefined {
   let value: unknown;
-  try { value = JSON.parse(text ?? ''); } catch { return undefined; }
+  // Pairs are matched left to right, so an escaped backslash before an apostrophe (\\') is left alone.
+  try { value = JSON.parse((text ?? '').replace(/\\[\s\S]/g, (pair) => (pair === "\\'" ? "'" : pair))); } catch { return undefined; }
   const first = schema.safeParse(value);
-  if (first.success || !first.error.issues.every((i) => i.code === 'unrecognized_keys')) return undefined;
+  if (first.success) return first.data;
+  if (!first.error.issues.every((i) => i.code === 'unrecognized_keys')) return undefined;
   for (const issue of first.error.issues) {
     const owner = issue.path.reduce<Record<PropertyKey, unknown>>((o, k) => o?.[k] as Record<PropertyKey, unknown>, value as Record<PropertyKey, unknown>);
     for (const key of issue.keys) delete owner[key];
@@ -232,7 +237,8 @@ export function createGateway({
       const model = languageModel(req.model, credential);
       const options = providerOptions(req.model, req.role, req.effort);
       const effort = req.effort ?? EFFORT[req.role];
-      let maxOutputTokens = req.max_output_tokens ?? (effort === 'none' || effort === 'low' ? 4096 : 16_384);
+      // The judge's answer grows with the run's frictions, so it gets the larger room even at low effort; the cap costs nothing unused.
+      let maxOutputTokens = req.max_output_tokens ?? ((effort === 'none' || effort === 'low') && req.role !== 'judge' ? 4096 : 16_384);
       // Reasoning routes reject temperature (Claude with effort, OpenAI reasoning, DeepSeek thinking), so they get none rather than a dropped one.
       const reasoning = provider === 'anthropic' || (provider === 'openai' && options.openai.reasoningEffort !== 'none') || (provider === 'deepseek' && effort !== 'none' && effort !== 'low');
       const temperature = reasoning ? null : TEMPERATURE[req.role];

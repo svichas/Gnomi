@@ -46,6 +46,22 @@ const pages: Record<string, string> = {
 <header><div><button aria-label="menu button" onclick="const n = document.querySelector('nav'); n.style.height = 'auto'; n.style.pointerEvents = 'auto'">☰</button></div>
 <nav style="height:0;overflow:hidden;pointer-events:none"><div><a href="/next">Pricing</a></div></nav></header>
 <main><div><h1>Home</h1></div></main></body></html>`,
+  // Custom selects as react-select builds them, opening on mousedown: a searchable one's search box covers its placeholder,
+  // and a plain one's input is a 0×0 dummy pushed off to the left.
+  '/react-select': `<!doctype html><html><head>${head}<title>React select</title></head><body>
+<div onmousedown="document.getElementById('categories').hidden = false" style="width:300px;border:1px solid #888">
+<div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3;cursor:default">Choose a category</div>
+<div style="grid-area:1/1/2/3"><input aria-label="Category" style="width:100%;border:0;padding:0;background:transparent"></div></div></div>
+<ul id="categories" role="listbox" hidden><li role="option">Hiking</li></ul>
+<div onmousedown="document.getElementById('sizes').hidden = false" style="width:300px;border:1px solid #888;margin-top:20px">
+<div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3">Choose a size</div>
+<input role="combobox" aria-label="Size" readonly style="grid-area:1/1/2/3;width:1px;padding:0;border:0;position:relative;left:-100px;transform:scale(.01)"></div></div>
+<ul id="sizes" role="listbox" hidden><li role="option">Large</li></ul></body></html>`,
+  '/dates': `<!doctype html><html><head>${head}<title>Dates</title></head><body>
+<input type="date" aria-label="Day"> <input type="time" aria-label="Start time"> <input type="datetime-local" aria-label="When" value="2020-01-01T10:00"></body></html>`,
+  '/time-list': `<!doctype html><html><head>${head}<title>Time list</title></head><body><h1>Pick a time</h1>
+<ul role="listbox" aria-label="Time" style="height:100px;overflow-y:auto;margin:0">${Array.from({ length: 12 }, (_, h) => `<li role="option" style="height:30px">${String(h).padStart(2, '0')}:00</li>`).join('')}</ul>
+<div style="height:3000px"></div></body></html>`,
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
@@ -379,6 +395,52 @@ test('a click that can never succeed times out instead of hanging', async (t) =>
   const outcome = await act(page, 'click', refOf((await page.snapshot()).text, /button "Disabled" \[disabled\] \[ref=(\w+)\]/));
   assert.deepEqual([outcome.ok, outcome.error], [false, 'timeout']);
   assert.ok(Date.now() - started < 9_000);
+});
+
+test('a click on a control that is covered or has no size lands where it shows, as a person taps it', async (t) => {
+  const page = await open(t, '/react-select');
+  const { text } = await page.snapshot();
+  for (const [line, option] of [[/generic \[ref=(\w+)\][^\n]*: Choose a category/, /option "Hiking"/], [/combobox "Size" \[ref=(\w+)\]/, /option "Large"/]] as const) {
+    const outcome = await act(page, 'click', refOf(text, line));
+    assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], String(line));
+    assert.match((await page.snapshot()).text, option);
+  }
+});
+
+test('type into a native date or time field goes in key by key, in the order the field shows', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/dates', device);
+    const { text } = await page.snapshot();
+    const ref = (name: string) => refOf(text, new RegExp(`textbox "${name}" \\[ref=(\\w+)\\]`));
+    // Day equals month so either locale order reads the same; a 24-hour field ignores the AM.
+    if (device === 'mobile') await act(page, 'click', ref('When')); // a tap opens the picker first, as it did for personas
+    for (const [name, typed] of [['Day', '05/05/2026'], ['Start time', '9:30 AM'], ['When', '5/5/2026, 9:30 AM'], ['When', '6/6/2026 10:15 AM']]) {
+      const outcome = await act(page, 'type', ref(name), typed);
+      assert.deepEqual([outcome.ok, outcome.error], [true, null], `${device} ${name} ${typed}`);
+    }
+    const after = (await page.snapshot()).text;
+    assert.match(after, /textbox "Day" [^\n]*: 2026-05-05/, device);
+    assert.match(after, /textbox "Start time" [^\n]*: 09:30/, device);
+    assert.match(after, /textbox "When" [^\n]*: 2026-06-06T10:15/, device); // the second typing replaced the first and the old value
+    if (device === 'mobile') continue;
+    // Digits with no separators only keys can enter: they read as no date to the phone's picker fallback.
+    await act(page, 'type', ref('Day'), '07072026');
+    assert.match((await page.snapshot()).text, /textbox "Day" [^\n]*: 2026-07-07/);
+  }
+});
+
+test('scroll up or down on a list that scrolls moves the list under the wheel, not the page', async (t) => {
+  const page = await open(t, '/time-list');
+  const y = async (line: RegExp) => Number(line.exec((await page.snapshot()).text)![1]);
+  const heading = /heading "Pick a time".*?\[box=-?\d+,(-?\d+),/;
+  const late = /option "11:00".*?\[box=-?\d+,(-?\d+),/;
+  const [top, before] = [await y(heading), await y(late)];
+  const list = refOf((await page.snapshot()).text, /listbox "Time" \[ref=(\w+)\]/);
+  assert.equal((await act(page, 'scroll', list, 'down')).ok, true);
+  assert.equal(await y(heading), top);
+  assert.ok((await y(late)) < before - 50, `${before} -> ${await y(late)}`);
+  await act(page, 'scroll', list, 'up');
+  assert.equal(await y(late), before);
 });
 
 test('done and abandon never reach act', async (t) => {
