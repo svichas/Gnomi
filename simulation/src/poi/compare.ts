@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { LlmRequest } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Persona, Poi, ProjectConfig } from '../types.ts';
+import { firstName } from '../agent/prompt.ts';
 import { loginPoi } from './pois.ts';
 
 // A competitor's site in the end-of-episode survey (tech.md §7 "Competitor site"): run.ts's survey passes its request through here.
@@ -32,7 +33,7 @@ export function comparisonFor(project: ProjectConfig, persona: Persona, poi: Poi
   const team = loginPoi(project.pois);
   const earlier = team && poi.type === 'web' && poi.mode === 'observe_only' ? surveys.findLast((e) => e.type === 'persona.survey' && e.payload.poi_id === team.id) : undefined;
   if (!team || earlier?.type !== 'persona.survey') return NONE;
-  const p = persona.name.split(' ')[0];
+  const p = firstName(persona);
   const { sentiment, likes, frictions, reason } = earlier.payload;
   const text = [
     `This session was on ${poi.name}, a competitor's site ${p} looked at beside ${team.name}. Every answer above is about ${poi.name}.`,

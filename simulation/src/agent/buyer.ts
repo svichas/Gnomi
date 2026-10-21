@@ -6,7 +6,8 @@ import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { LlmGateway, UserPart } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { profileBlock, sawLines, surveyedName, wordsFor, type SurveyedEnd } from './prompt.ts';
+import { firstName, personaSection, taskSection, wordsFor } from './prompt.ts';
+import { sawLines, surveyedName, surveyFacts, type SurveyedEnd } from './survey.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const BUYER_SURVEY = 'buyer_survey';
@@ -28,13 +29,9 @@ export function buyerSystemPrompt(persona: Persona, project: ProjectConfig, segm
   const product = surveyedName(project, poi); // a competitor's site is surveyed by its own name
   return `This is ${persona.name}. ${p} is weighing whether to buy ${product}, or to recommend it to whoever decides, and has just looked at what ${product} shows people like ${obj}. Now ${p} answers a few questions about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
-<persona>
-${profileBlock(persona, project, segment, obj)}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
-${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+${taskSection(persona, project, segment, p)}
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
 - objections: what would stop ${p} buying ${product} or recommending it, most important first, up to 5 short statements (at most 500 characters each); empty when nothing would.
@@ -56,7 +53,7 @@ const ENDING: Record<SurveyedEnd, (p: string) => string> = {
 };
 
 export function buyerParts(opts: { persona: Persona; poi: Poi; end: SurveyedEnd; detail: string | null; steps: number; frictions: string[]; thoughts: string[]; opinion: Opinion | null }): UserPart[] {
-  const p = opts.persona.name.split(' ')[0];
+  const p = firstName(opts.persona);
   const text = [
     `${p} is done with ${opts.poi.name} after ${opts.steps} step${opts.steps === 1 ? '' : 's'}: ${ENDING[opts.end](p)}${opts.detail ? ` ("${opts.detail}")` : ''}.`,
     ...(opts.frictions.length ? [`What confused or put ${p} off along the way:`, ...opts.frictions.map((f) => `- "${f}"`)] : [`${p} reported nothing confusing along the way.`]),
@@ -73,8 +70,6 @@ export function buyerParts(opts: { persona: Persona; poi: Poi; end: SurveyedEnd;
  */
 export async function askBuyer(opts: { llm: LlmGateway; config: RunConfig; persona: Persona; segment: Segment | null; poi: Poi; end: SurveyedEnd; own: GnomiEvent[]; opinion: Opinion | null; round: number; signal: AbortSignal }): Promise<EventPayloads['persona.survey']> {
   const { config, persona, poi, own } = opts;
-  const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
-  const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
   const { object } = await opts.llm.call({
     role: 'navigator',
     model: config.project.settings.routing.navigator,
@@ -88,10 +83,7 @@ export async function askBuyer(opts: { llm: LlmGateway; config: RunConfig; perso
       persona,
       poi,
       end: opts.end,
-      detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
-      steps: steps.length,
-      frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
-      thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+      ...surveyFacts(own),
       opinion: opts.opinion,
     }),
     schema: buyerSurveySchema,

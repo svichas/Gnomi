@@ -1,6 +1,6 @@
 import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
-import { buildCandidates, categoryOf, groupCandidates, groupKey, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -94,8 +94,7 @@ export function judgeGroups(groups: Group[], cap = JUDGE_TOKEN_CAP): GroupSummar
 export type Post = EventOf<'social.post'> & { persona_id: string };
 
 /** Posts about one POI, replies included, in seq order; a post's POI as social/feed.ts postPois resolves it. */
-export function postsAbout(events: GnomiEvent[], poi_id: string): Post[] {
-  const about = postPois(events);
+export function postsAbout(events: GnomiEvent[], poi_id: string, about = postPois(events)): Post[] {
   return events.filter((e): e is Post => e.type === 'social.post' && e.persona_id !== null && about.get(e.payload.post_id) === poi_id);
 }
 
@@ -259,7 +258,7 @@ interface Reach {
 function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
   const places = placesOf(events);
   const pages = new Map<string, Set<string>>();
-  const poi = new Map<string, Set<string>>();
+  const poi = exposureOf(events, defaultPoi);
   const buyers = new Map<string, Set<string>>();
   const buyerSeqs = new Set<number>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
@@ -272,9 +271,6 @@ function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: stri
     if (e.type === 'persona.step') {
       add(pages, e.persona_id, pagePattern(e.payload.result.url_before, places));
       add(pages, e.persona_id, pagePattern(e.payload.result.url_after, places));
-      add(poi, e.poi_id ?? defaultPoi, e.persona_id);
-    } else if (e.type === 'persona.episode_started' || e.type === 'persona.survey') {
-      add(poi, e.payload.poi_id, e.persona_id);
     }
   }
   for (const c of candidates) {
@@ -429,11 +425,10 @@ export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
 
 /** Step 8: the mean survey sentiment and the share who would continue, per segment, over users' answers; buyers have their own section. */
 export function sentimentBySegment(events: GnomiEvent[], ctx: Context): ReportSentiment[] {
-  const surveys = new Map<string, { sentiment: number; would_continue: boolean }>(); // the latest per persona and POI
-  for (const e of events) if (e.type === 'persona.survey' && e.persona_id && !e.payload.buyer) surveys.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e.payload);
-  if (surveys.size === 0) return [];
+  const surveys = latestSurveys(events, (e) => !e.payload.buyer);
+  if (surveys.length === 0) return [];
   return ctx.segments.map((s) => {
-    const answers = [...surveys].filter(([key]) => ctx.personas.get(key.split('\u0000')[0])?.segment_id === s.id).map(([, a]) => a);
+    const answers = surveys.filter((e) => ctx.personas.get(e.persona_id!)?.segment_id === s.id).map((e) => e.payload);
     return {
       segment_id: s.id,
       name: s.name,
@@ -481,8 +476,7 @@ function applyJudgeLikes(groups: LikeGroup[], judged: JudgeLike[] | null | undef
  * Step 9: survey likes grouped by the part of the product they name (their words, in older surveys), merged and named by the
  * judge when it ran, most personas first. With the run's context each like also says what share of personas named it.
  */
-export function wentWell(events: GnomiEvent[], ctx?: Context): ReportLike[] {
-  const groups = likeGroups(events);
+export function wentWell(events: GnomiEvent[], ctx?: Context, groups = likeGroups(events)): ReportLike[] {
   const exposure = ctx ? exposureOf(events, ctx.poi_id) : null;
   const likes: ReportLike[] = [];
   for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
@@ -526,6 +520,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const likes = likeGroups(events);
   const reach = reachOf(events, candidates, ctx.poi_id);
   const names = poiNamesOf(events);
+  const about = postPois(events);
   const limitations: string[] = [];
   const themes: ReportTheme[] = [];
   const tagged = new Map<string, string[]>();
@@ -550,7 +545,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     const judgedThemes = fresh(judged?.payload.themes);
     const judgedPosts = fresh(judged?.payload.posts);
     const { drafts, unknown } = applyJudge(own, judgedThemes ?? null);
-    const talk = postsAbout(events, poi_id);
+    const talk = postsAbout(events, poi_id, about);
     const input = judgeInput(own, talk, undefined, undefined, likes.filter((g) => g.poi_id === poi_id));
     if (!judged) {
       note('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
@@ -637,5 +632,5 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {
     limitations.push('No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".');
   }
-  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events, ctx), limitations };
+  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events, ctx, likes), limitations };
 }

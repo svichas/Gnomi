@@ -1,7 +1,7 @@
 // The static-design prompt of tech.md §7: the expectation loop. Each screen asks what the persona sees, what they would do and
 // what they expect next; the next screen asks whether it matched. Same third-person persona and question form as the web steps.
 import { z } from 'zod';
-import { ACCESSIBILITY, firstLanguage, heardLines, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { ACCESSIBILITY, firstName, heardLines, languageRules, patienceRule, personaSection, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { english, ENGLISH } from '../llm/english.ts';
@@ -33,7 +33,6 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
-  const { locale } = personaEnvironment(persona);
   const access = ACCESSIBILITY[persona.accessibility_needs];
   const familiarity = {
     low: `This kind of product is new to ${p}: its icons and jargon mean little to ${obj}, and nothing is obvious.`,
@@ -41,10 +40,10 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
     high: `${p} uses products like this every day and expects the usual conventions.`,
   }[persona.familiarity_with_category];
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the screen budget; stating it would steer when to stop
+    patienceRule(persona, w), // the engine enforces the screen budget; stating it would steer when to stop
     persona.device === 'mobile' ? `${p} is on a phone, so these are phone screens used by touch.` : `${p} is on a computer with a mouse and a full-size screen.`,
     ...(enabled('familiarity_with_category') ? [familiarity] : []),
-    ...(locale.toLowerCase().split('-')[0] === 'en' ? [] : [firstLanguage(p, locale)]),
+    ...languageRules(p, personaEnvironment(persona).locale),
     ...(enabled('accessibility_needs') && access ? [`${access(w)}.`] : []),
   ];
   const n = poi.frames.length;
@@ -52,16 +51,12 @@ export function designSystemPrompt(persona: Persona, project: ProjectConfig, seg
 
 People give up on tools that waste their time or confuse them. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 
-<persona>
-${profileBlock(persona, project, segment, obj)}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
 How ${p} behaves:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+${taskSection(persona, project, segment, p)}
 
 Answer every turn with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
 - thought: ${p} thinking aloud about this screen, in at most 40 words.
@@ -89,7 +84,7 @@ export function designParts(opts: {
   heard?: HeardPost[]; // what the persona read in the feed just before this screen
 }): UserPart[] {
   const { persona, poi, index, previous } = opts;
-  const p = persona.name.split(' ')[0];
+  const p = firstName(persona);
   const n = poi.frames.length;
   const label = (i: number) => (poi.frames[i].name?.trim() ? `screen ${i + 1}, "${poi.frames[i].name!.trim()}"` : `screen ${i + 1}`);
   const said = previous?.said;
