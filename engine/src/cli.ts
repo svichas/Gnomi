@@ -1,5 +1,6 @@
 // Gnomi from a terminal, no app (tech.md §16.2): write an audience into a file, then run it against points of interest.
 // The project work is the app's own (workspace.ts); provider keys come from the environment, e.g. ANTHROPIC_API_KEY.
+// With --json every stdout line is one JSON object and the last is the command's result, for agents (.claude/skills/gnomi/SKILL.md).
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,21 +11,32 @@ import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audien
 import { audienceDeps, checkRun, KEYS, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
+import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { describe } from '@gnomi/simulation/log/describe.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
-import type { BlobStore, BrowserPool, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Persona, PersonaProgress, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
+import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
+import type { Audience, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 
-const USAGE = `Usage:
-  node engine/src/cli.ts audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
+const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
+  audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
       [--pois <pois.json> | --url <url>] [--count <n>] [--propose] [--settings <settings.json>] [--fake-llm]
-  node engine/src/cli.ts run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>]
-      [--goal "<goal>"] [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
+  audience update <audience.json> [--settings <settings.json>] [--fake-llm]
+      writes the personas again where the file's audience or product was edited; the rest are kept
+  personas <audience.json> [--id <persona id>]
+  estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
+  run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
+      [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
+  runs <project dir>
+  report <project dir> [--run <run id>] [--format summary|md|json]
+Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
 design frame "path" instead of "asset": the file is imported. Ids, names and the web defaults are filled in when left out.
@@ -44,6 +56,10 @@ const OPTIONS = {
   propose: { type: 'boolean', default: false },
   settings: { type: 'string' },
   project: { type: 'string' },
+  id: { type: 'string' },
+  run: { type: 'string' },
+  format: { type: 'string', default: 'summary' },
+  json: { type: 'boolean', default: false },
   'fake-llm': { type: 'boolean', default: false },
   headed: { type: 'boolean', default: false },
 } as const;
@@ -57,6 +73,11 @@ function args() {
     throw new Error(`${err instanceof Error ? err.message : err}\n\n${USAGE}`);
   }
 }
+
+let json = false;
+/** One line of output: the text for a person, or the object for --json. */
+const out = (text: string, line: Record<string, unknown>) => console.log(json ? JSON.stringify(line) : text);
+const note = (text: string) => out(text, { kind: 'note', text });
 
 // Only provider keys are read from the environment: logins and the Figma token stay app-only.
 const envSecrets: Secrets = (name) => (Object.values(KEYS).some((key) => key.secret === name) ? process.env[name.toUpperCase()] || null : null);
@@ -122,79 +143,185 @@ async function poisFrom(v: Values, blobs: BlobStore): Promise<Poi[]> {
   return pois;
 }
 
+/** The project a run or an estimate uses: flags first, then what the audience file was written for. */
+function configFor(v: Values, file: AudienceFile | null, pois: Poi[], settings: RunSettings): ProjectConfig {
+  if (file?.audience.segments.some((s) => s.role)) throw new Error('This audience logs in (a segment names a role). Recorded logins are only available in the app.');
+  const goal = v.goal ?? file?.product.goal;
+  if (!goal) throw new Error(`Pass --goal, or an --audience that names one.\n\n${USAGE}`);
+  return {
+    name: v.name ?? file?.product.name ?? pois[0]!.name,
+    description: v.product ?? file?.product.description ?? '',
+    pois,
+    goal,
+    role: null,
+    audience: file?.audience ?? null,
+    settings,
+    ...(file ? { persona_schema: file.schema } : {}),
+  };
+}
+
+/** The project an audience file's personas were written for, to check whether they are still current. */
+const fileProject = (file: AudienceFile) => ({ ...file.product, pois: [], role: null, audience: file.audience, settings: DEFAULT_SETTINGS, persona_schema: file.schema });
+
 function progressLine(): (progress: PersonaProgress) => void {
   let last = -1;
   return ({ done, total, recent }) => {
     if (done === last || !total) return;
     last = done;
-    console.log(`personas ${done}/${total}${recent?.[0] ? `: ${recent[0]}` : ''}`);
+    out(`personas ${done}/${total}${recent?.[0] ? `: ${recent[0]}` : ''}`, { kind: 'progress', done, total });
   };
 }
 
-const timeline = (store: ProjectStore): Recorder => createRecorder(store, (e) => console.log(`#${e.seq} ${e.type} ${describe(e)}`.trimEnd()));
+const timeline = (store: ProjectStore): Recorder => createRecorder(store, (e) => {
+  const text = describe(e);
+  out(`#${e.seq} ${e.type} ${text}`.trimEnd(), { kind: 'event', seq: e.seq, type: e.type, persona_id: e.persona_id, poi_id: e.poi_id, text });
+});
 
-async function createAudienceFile(v: Values): Promise<void> {
-  if (!v.out || !v.goal) throw new Error(`audience create needs --out and --goal.\n\n${USAGE}`);
-  const count = v.count === undefined ? undefined : Number(v.count);
-  if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 200)) throw new Error('--count must be a whole number from 1 to 200.');
-  // Writing over an earlier audience file keeps every persona whose slot is unchanged; anything else there is never overwritten.
-  const previous: AudienceFile | null = existsSync(v.out) ? readAudienceFile(v.out) : null;
-  const settings = settingsFrom(v);
-  requireKey(settings, 'persona_writer', v['fake-llm']);
-  const dir = mkdtempSync(join(tmpdir(), 'gnomi-audience-')); // drafts and setup calls only; the file is what is kept
+const estimateText = (e: RunEstimate) =>
+  `about ${e.calls} model calls, $${e.cost_usd[0].toFixed(2)}–${e.cost_usd[1].toFixed(2)}${e.unpriced.length ? ` or more (no price for ${e.unpriced.join(', ')})` : ''}, ${Math.round(e.minutes[0])}–${Math.round(e.minutes[1])} min`;
+
+/** What an agent reads first: the outcome and each POI's top themes, without the evidence the full report carries. */
+function summarize(report: Report) {
+  return {
+    run_id: report.run_id,
+    status: report.status,
+    stop_reason: report.stop_reason,
+    goal: report.goal,
+    personas: report.personas.length,
+    completion: report.weighted.completion,
+    with_friction: report.weighted.with_friction,
+    frictions: report.frictions.length,
+    pois: report.pois.map((poi) => ({
+      id: poi.id,
+      name: poi.name,
+      themes: (report.themes ?? []).filter((t) => t.poi_id === poi.id).sort((a, b) => a.rank - b.rank).slice(0, 5)
+        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.prevalence?.personas ?? null, share: t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust })),
+    })),
+    sentiment: (report.sentiment ?? []).map(({ name, surveyed, sentiment, would_continue }) => ({ segment: name, surveyed, sentiment, would_continue })),
+    cost_usd: report.cost_usd,
+    duration_ms: report.duration_ms,
+    banner: report.banner,
+  };
+}
+
+/** Drafts and setup calls of persona writing go to a throwaway project; the audience file is what is kept. */
+async function inTempProject<T>(work: (store: ProjectStore, blobs: BlobStore) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-'));
   const store = openProject(dir);
   try {
-    const pois = v.pois || v.url ? await poisFrom(v, createFsBlobStore(dir)) : [];
-    const name = v.name ?? pois[0]?.name;
-    if (!name) throw new Error('Name the product with --name, or pass its --pois or --url.');
-    const schema = getPersonaSchema();
-    const config: ProjectConfig = { name, description: v.product ?? '', pois, goal: v.goal, role: null, audience: null, settings, persona_schema: schema };
-    store.saveProject(config);
-    const llm = projectGateway({ fake: v['fake-llm'], secrets: envSecrets, config, record: timeline(store) });
-    let cost = 0;
-    let audience = defaultAudience(config);
-    if (v.propose) {
-      const proposed = await proposeAudience(audienceDeps(store, config, llm));
-      audience = proposed.audience;
-      cost += proposed.cost_usd;
-      console.log(`Proposed ${audience.segments.length} segments: ${audience.segments.map((s) => `${s.name} (${s.share}%)`).join(', ')}`);
-    }
-    if (count) audience = { ...audience, persona_count: count };
-    const { personas, cost_usd } = await syncPersonas(audience, previous?.personas ?? [], audienceDeps(store, { ...config, audience }, llm, { emit: progressLine() }));
-    cost += cost_usd;
-    writeAudienceFile(v.out, {
-      id: previous?.id ?? randomUUID(),
-      name: basename(v.out, extname(v.out)),
-      savedAt: Date.now(),
-      audience,
-      schema,
-      product: { name, description: config.description, goal: v.goal },
-      personas,
-    });
-    const { warning } = diversityReport(personas);
-    console.log(`${personas.length} personas in ${audience.segments.length} segments written to ${v.out} ($${cost.toFixed(4)})${warning ? `\n${warning}` : ''}`);
+    return await work(store, createFsBlobStore(dir));
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/** The file's personas where they are still current for this project; the rest are written again, not saved back. */
-async function personasFor(file: AudienceFile, config: ProjectConfig, store: ProjectStore, record: Recorder, fake: boolean): Promise<Persona[]> {
-  const llm = projectGateway({ fake, secrets: envSecrets, config, record });
-  const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
-  const saved = new Map(file.personas.map((p) => [p.id, p.profile_signature]));
-  const rewritten = personas.filter((p) => saved.get(p.id) !== p.profile_signature).length;
-  if (rewritten) console.log(`${rewritten} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
-  store.replacePersonas(personas, file.audience.persona_count);
-  return personas;
+/** Brings the personas in line with the audience, keeping every unchanged slot's persona, and writes the file. */
+async function writeAudience(path: string, previous: AudienceFile | null, config: ProjectConfig & { audience: Audience; persona_schema: PersonaSchema }, store: ProjectStore, llm: LlmGateway, spent: number) {
+  const { audience, persona_schema: schema } = config;
+  const { personas, cost_usd } = await syncPersonas(audience, previous?.personas ?? [], audienceDeps(store, config, llm, { emit: progressLine() }));
+  writeAudienceFile(path, {
+    id: previous?.id ?? randomUUID(),
+    name: previous?.name ?? basename(path, extname(path)),
+    savedAt: Date.now(),
+    audience,
+    schema,
+    product: { name: config.name, description: config.description, goal: config.goal },
+    personas,
+  });
+  const kept = new Map(previous?.personas.map((p) => [p.id, p.profile_signature]));
+  const written = personas.filter((p) => kept.get(p.id) !== p.profile_signature).length;
+  const cost = spent + cost_usd;
+  const { warning } = diversityReport(personas);
+  out(
+    `${personas.length} personas in ${audience.segments.length} segments (${written} written) saved to ${path} ($${cost.toFixed(4)})${warning ? `\n${warning}` : ''}`,
+    { kind: 'audience', file: resolve(path), personas: personas.length, written, segments: audience.segments.length, cost_usd: cost, diversity_warning: warning },
+  );
+}
+
+async function createAudienceFile(v: Values): Promise<void> {
+  if (!v.out || !v.goal) throw new Error(`audience create needs --out and --goal.\n\n${USAGE}`);
+  const { out: path, goal } = v;
+  const count = v.count === undefined ? undefined : Number(v.count);
+  if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 200)) throw new Error('--count must be a whole number from 1 to 200.');
+  // Writing over an earlier audience file keeps every persona whose slot is unchanged; anything else there is never overwritten.
+  const previous: AudienceFile | null = existsSync(path) ? readAudienceFile(path) : null;
+  const settings = settingsFrom(v);
+  requireKey(settings, 'persona_writer', v['fake-llm']);
+  await inTempProject(async (store, blobs) => {
+    const pois = v.pois || v.url ? await poisFrom(v, blobs) : [];
+    const name = v.name ?? pois[0]?.name;
+    if (!name) throw new Error('Name the product with --name, or pass its --pois or --url.');
+    const persona_schema = getPersonaSchema();
+    const config: ProjectConfig = { name, description: v.product ?? '', pois, goal, role: null, audience: null, settings, persona_schema };
+    store.saveProject(config);
+    const llm = projectGateway({ fake: v['fake-llm'], secrets: envSecrets, config, record: timeline(store) });
+    let spent = 0;
+    let audience = defaultAudience(config);
+    if (v.propose) {
+      const proposed = await proposeAudience(audienceDeps(store, config, llm));
+      audience = proposed.audience;
+      spent = proposed.cost_usd;
+      note(`Proposed ${audience.segments.length} segments: ${audience.segments.map((s) => `${s.name} (${s.share}%)`).join(', ')}`);
+    }
+    if (count) audience = { ...audience, persona_count: count };
+    await writeAudience(path, previous, { ...config, audience, persona_schema }, store, llm, spent);
+  });
+}
+
+async function updateAudienceFile(v: Values, path: string | undefined): Promise<void> {
+  if (!path) throw new Error(`audience update needs the audience file.\n\n${USAGE}`);
+  const file = readAudienceFile(path);
+  const { persona_count } = file.audience;
+  if (!Number.isInteger(persona_count) || persona_count < 1 || persona_count > 200) throw new Error(`${path}: "persona_count" must be a whole number from 1 to 200.`);
+  const settings = settingsFrom(v);
+  requireKey(settings, 'persona_writer', v['fake-llm']);
+  await inTempProject(async (store) => {
+    const config = { ...fileProject(file), settings };
+    store.saveProject(config);
+    const llm = projectGateway({ fake: v['fake-llm'], secrets: envSecrets, config, record: timeline(store) });
+    await writeAudience(path, file, config, store, llm, 0);
+  });
+}
+
+function listPersonas(v: Values, path: string | undefined): void {
+  if (!path) throw new Error(`personas needs the audience file.\n\n${USAGE}`);
+  const file = readAudienceFile(path);
+  const project = fileProject(file);
+  const segments = new Map(file.audience.segments.map((s) => [s.id, s.name]));
+  if (v.id) {
+    const persona = file.personas.find((p) => p.id === v.id);
+    if (!persona) throw new Error(`There is no persona ${v.id} in ${path}.`);
+    const line = { kind: 'persona', ...persona, segment: segments.get(persona.segment_id!) ?? null, current: personaProfileIsCurrent(persona, project) };
+    console.log(json ? JSON.stringify(line) : JSON.stringify(line, null, 2));
+    return;
+  }
+  const rows = file.personas.map((p) => ({
+    id: p.id, name: p.name, segment: segments.get(p.segment_id!) ?? null, job_title: p.job_title, device: p.device, country: p.country ?? null,
+    tech_skill: p.tech_skill, patience: p.patience, current: personaProfileIsCurrent(p, project),
+  }));
+  for (const r of rows) out(`${r.id}  ${r.name}, ${r.job_title} (${r.segment}): ${r.device}${r.country ? `, ${r.country}` : ''}, tech ${r.tech_skill}/5, patience ${r.patience}/5${r.current ? '' : ', stale'}`, { kind: 'persona', ...r });
+  const stale = rows.filter((r) => !r.current).length;
+  out(`${rows.length} personas, ${stale} stale, written for "${file.product.goal}" on ${file.product.name}`, { kind: 'personas', file: resolve(path), personas: rows.length, stale });
+}
+
+async function estimate(v: Values): Promise<void> {
+  const file = v.audience ? readAudienceFile(v.audience) : null;
+  const settings = settingsFrom(v);
+  await inTempProject(async (_store, blobs) => {
+    const config = configFor(v, file, await poisFrom(v, blobs), settings);
+    const personas = file?.personas ?? [BUILTIN_PERSONA];
+    const stale = file ? personas.filter((p) => !personaProfileIsCurrent(p, config)).length : 0;
+    const e = estimateRun({ personas, settings, audience: config.audience, pois: config.pois });
+    out(
+      `${personas.length} personas: ${estimateText(e)}; budget $${settings.cost_budget_usd}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
+      { kind: 'estimate', personas: personas.length, stale, ...e, budget_usd: settings.cost_budget_usd },
+    );
+  });
 }
 
 async function runSimulation(v: Values): Promise<void> {
   const file = v.audience ? readAudienceFile(v.audience) : null;
-  if (file?.audience.segments.some((s) => s.role)) throw new Error('This audience logs in (a segment names a role). Recorded logins are only available in the app.');
-  const goal = v.goal ?? file?.product.goal;
-  if (!goal) throw new Error(`Pass --goal, or an --audience that names one.\n\n${USAGE}`);
   const fake = v['fake-llm'];
   const settings = settingsFrom(v);
   requireKey(settings, 'navigator', fake);
@@ -203,22 +330,21 @@ async function runSimulation(v: Values): Promise<void> {
   const blobs = createFsBlobStore(dir);
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
-    const pois = await poisFrom(v, blobs);
-    const config: ProjectConfig = {
-      name: v.name ?? file?.product.name ?? pois[0]!.name,
-      description: v.product ?? file?.product.description ?? '',
-      pois,
-      goal,
-      role: null,
-      audience: file?.audience ?? null,
-      settings,
-      ...(file ? { persona_schema: file.schema } : {}),
-    };
+    const config = configFor(v, file, await poisFrom(v, blobs), settings);
     store.saveProject(config);
-    console.log(`Project folder: ${dir}`);
+    note(`Project folder: ${dir}`);
     const record = timeline(store);
-    if (file) await personasFor(file, config, store, record, fake);
+    if (file) {
+      const llm = projectGateway({ fake, secrets: envSecrets, config, record });
+      const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
+      const saved = new Map(file.personas.map((p) => [p.id, p.profile_signature]));
+      const rewritten = personas.filter((p) => saved.get(p.id) !== p.profile_signature).length;
+      // Not saved back: the file stays what it was written for.
+      if (rewritten) note(`${rewritten} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
+      store.replacePersonas(personas, file.audience.persona_count);
+    }
     const personas = checkRun(store, config, { reset: false, fake, secrets: envSecrets });
+    note(`Estimate for ${personas.length} personas: ${estimateText(estimateRun({ personas, settings, audience: config.audience, pois: config.pois }))}; budget $${settings.cost_budget_usd}`);
     let run: RunHandle | undefined;
     const llm = projectGateway({ fake, secrets: envSecrets, config, record, onThrottle: (provider) => run?.throttle(provider) });
     // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
@@ -228,26 +354,70 @@ async function runSimulation(v: Values): Promise<void> {
     run = startRun(runConfig, { store, blobs, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, llm, record, sessions: null });
     const started = run;
     process.once('SIGINT', () => {
-      console.log('Stopping… (Ctrl-C again to quit at once)');
+      note('Stopping… (Ctrl-C again to quit at once)');
       started.stop();
       process.once('SIGINT', () => process.exit(130));
     });
-    const markdown = reportToMarkdown(await started.done);
-    const report = `runs/${started.run_id}/report`;
-    await blobs.put(`${report}.md`, new TextEncoder().encode(markdown));
-    console.log(`\n${markdown}`);
-    console.log(`Report: ${join(dir, `${report}.json`)} and ${join(dir, `${report}.md`)}`);
+    const report = await started.done;
+    const markdown = reportToMarkdown(report);
+    const path = `runs/${started.run_id}/report`;
+    await blobs.put(`${path}.md`, new TextEncoder().encode(markdown));
+    const [report_json, report_md] = [join(dir, `${path}.json`), join(dir, `${path}.md`)];
+    out(`\n${markdown}\nReport: ${report_json} and ${report_md}`, {
+      kind: 'run', project: dir, run_id: started.run_id, status: report.status, stop_reason: report.stop_reason, cost_usd: report.cost_usd,
+      duration_ms: report.duration_ms, report_json, report_md, summary: summarize(report),
+    });
   } finally {
     await launched[0]?.then((pool) => pool.close()).catch(() => {});
     store.close();
   }
 }
 
+/** A project folder the CLI or the app wrote; never creates one. */
+function existingProject(dir: string | undefined): ProjectStore {
+  if (!dir) throw new Error(`Name the project folder.\n\n${USAGE}`);
+  if (!existsSync(join(dir, 'project.sqlite'))) throw new Error(`${dir} is not a Gnomi project folder.`);
+  return openProject(dir);
+}
+
+function listRuns(dir: string | undefined): void {
+  const store = existingProject(dir);
+  try {
+    const runs = store.listRuns().map((r) => ({ run_id: r.run_id, status: r.status, stop_reason: r.stop_reason, cost_usd: r.cost_usd, started_at: new Date(r.started_at).toISOString(), goal: r.config.project.goal }));
+    for (const r of runs) out(`${r.run_id}  ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ''}, $${r.cost_usd.toFixed(4)}, ${r.started_at}: "${r.goal}"`, { kind: 'run_row', ...r });
+    out(`${runs.length} run${runs.length === 1 ? '' : 's'} in ${resolve(dir!)}, newest first`, { kind: 'runs', project: resolve(dir!), runs: runs.length });
+  } finally {
+    store.close();
+  }
+}
+
+function showReport(v: Values, dir: string | undefined): void {
+  if (!['summary', 'md', 'json'].includes(v.format)) throw new Error('--format is summary, md or json.');
+  const store = existingProject(dir);
+  try {
+    const runs = store.listRuns(); // newest first
+    const run_id = v.run ?? runs[0]?.run_id;
+    if (!run_id || !runs.some((r) => r.run_id === run_id)) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
+    const report = buildReport(store.events(run_id));
+    if (v.format === 'md') return void console.log(reportToMarkdown(report));
+    const body = v.format === 'json' ? report : summarize(report);
+    console.log(json ? JSON.stringify({ kind: 'report', format: v.format, report: body }) : JSON.stringify(body, null, 2));
+  } finally {
+    store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = args();
-  const command = positionals.join(' ');
-  if (command === 'audience create') return createAudienceFile(values);
+  json = values.json;
+  const [command, sub, target] = positionals;
+  if (command === 'audience' && sub === 'create') return createAudienceFile(values);
+  if (command === 'audience' && sub === 'update') return updateAudienceFile(values, target);
+  if (command === 'personas') return listPersonas(values, sub);
+  if (command === 'estimate') return estimate(values);
   if (command === 'run') return runSimulation(values);
+  if (command === 'runs') return listRuns(sub);
+  if (command === 'report') return showReport(values, sub);
   throw new Error(USAGE);
 }
 

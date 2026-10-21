@@ -32,7 +32,7 @@ interface PoiRunner<P extends Poi> {
 }
 ```
 
-`RUNNERS` in `index.ts` maps each type to its runner; `preflight(project, hasAsset?)` runs every POI's check after "is there a POI" and "does every segment with a share have one". The host calls it before a run with `hasAsset` checking the project's `assets/` folder; the CLI calls it without (its project is one web app), and then a missing asset only surfaces when the run reads it.
+`RUNNERS` in `index.ts` maps each type to its runner; `preflight(project, hasAsset?)` runs every POI's check after "is there a POI" and "does every segment with a share have one". The host and the CLI call it before a run (through `checkRun` in `engine/src/workspace.ts`) with `hasAsset` checking the project's `assets/` folder.
 
 | Type | File | Today |
 | --- | --- | --- |
