@@ -3,13 +3,13 @@ import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
-import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserContext } from 'playwright-core';
 import type { BrowserPool, PageDriver, PageOptions, StorageState } from '../seams.ts';
 import { hostRule, startContainment } from './contain.ts';
 import { launchBrowserPool } from './pool.ts';
+import { deadOrigin, listen, stop } from './server.fixture.ts';
 
 type Blocked = Parameters<PageOptions['onBlockedRequest']>[0];
 
@@ -36,8 +36,7 @@ before(async () => {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
   });
   third.on('connection', () => hits.push('CONNECTION')); // any socket at all, even one that never sends a request
-  await new Promise<void>((resolve) => third.listen(0, '127.0.0.1', resolve));
-  thirdOrigin = `http://127.0.0.1:${(third.address() as AddressInfo).port}`;
+  thirdOrigin = await listen(third);
 
   app = http.createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
@@ -88,8 +87,7 @@ before(async () => {
         </script></body>`);
     }
   });
-  await new Promise<void>((resolve) => app.listen(0, resolve)); // all interfaces, so `localhost` works over IPv4 and IPv6
-  appOrigin = `http://localhost:${(app.address() as AddressInfo).port}`;
+  appOrigin = await listen(app, null);
   pool = await launchBrowserPool();
 });
 
@@ -99,10 +97,7 @@ beforeEach(() => {
 
 after(async () => {
   await pool.close();
-  for (const server of [third, app]) {
-    server.closeAllConnections();
-    server.close();
-  }
+  stop(third, app);
 });
 
 async function open(t: TestContext, opts: { allowedHosts: string[]; blockedDomains?: string[]; storageState?: StorageState }, blocked: Blocked[] = []): Promise<PageDriver> {
@@ -114,15 +109,6 @@ async function open(t: TestContext, opts: { allowedHosts: string[]; blockedDomai
 const withThird = (path: string, origin = thirdOrigin, extra = '') => `${appOrigin}${path}?third=${encodeURIComponent(origin)}${extra}`;
 const summary = (blocked: Blocked[]) => blocked.map((b) => `${b.method} ${b.url.replace(/^[a-z]+:\/\/[^/]+/, '')} navigation=${b.navigation}`).sort();
 const refOf = (text: string, line: RegExp) => line.exec(text)![1];
-
-/** An origin nothing listens on: a port that was just free. */
-async function deadOrigin(): Promise<string> {
-  const server = http.createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise((resolve) => server.close(resolve));
-  return `http://127.0.0.1:${port}`;
-}
 
 /** What a client sends to a proxy, byte for byte, and everything it gets back until the proxy hangs up. */
 function exchange(port: number, request: string): Promise<string> {

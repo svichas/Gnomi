@@ -2,7 +2,6 @@ import { draftComparison } from './comparison/config.ts';
 // startRun, the scheduler and the step loop over in-memory fakes of the store, blobs, sessions, browser and model.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { createGateway, InvalidOutputError } from './llm/gateway.ts';
@@ -15,6 +14,7 @@ import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts
 import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from './settings.ts';
 import { influenceEdges } from './social/influence.ts';
+import { listen } from './browser/server.fixture.ts';
 import type { BlobStore, BrowserPool, LlmAttempt, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 import type {
   Action,
@@ -1031,8 +1031,7 @@ async function hook(status: number) {
     calls.push(req.method ?? '');
     res.writeHead(status).end();
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/__reset`;
+  const url = `${await listen(server)}/__reset`;
   return { url, calls, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 

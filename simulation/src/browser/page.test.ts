@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
 import type { Action, ActionOutcome, Device } from '../types.ts';
 import { failedAction } from '../signals/index.ts';
 import { launchBrowserPool } from './pool.ts';
+import { listen } from './server.fixture.ts';
 
 const SECRET = 'hunter2-secret';
 const head = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
@@ -77,8 +77,7 @@ before(async () => {
       res.end(pages[url.pathname] ?? '<h1>Not found</h1>');
     }
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  origin = await listen(server);
   pool = await launchBrowserPool();
 });
 

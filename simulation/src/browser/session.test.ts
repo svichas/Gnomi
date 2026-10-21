@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { Page } from 'playwright-core';
 import type { BrowserPool, LoginRecording, StorageState } from '../seams.ts';
 import { launchBrowserPool } from './pool.ts';
+import { deadOrigin, listen, stop } from './server.fixture.ts';
 
 const CANARY = 'canary-password-7f3a';
 const hits: string[] = [];
@@ -20,8 +20,7 @@ before(async () => {
     res.setHeader('content-type', 'image/gif');
     res.end(Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'));
   });
-  await new Promise<void>((resolve) => third.listen(0, '127.0.0.1', resolve));
-  const thirdOrigin = `http://127.0.0.1:${(third.address() as AddressInfo).port}`;
+  const thirdOrigin = await listen(third);
 
   // A login form that posts to `action`, and a page that needs the cookie it sets.
   const loginPage = (action: string) => `<!doctype html><title>Sign in</title><h1>Sign in</h1><img src="${thirdOrigin}/logo.gif" alt="">
@@ -48,8 +47,7 @@ before(async () => {
       res.end('<!doctype html><title>Page</title>');
     }
   });
-  await new Promise<void>((resolve) => app.listen(0, resolve));
-  appOrigin = `http://localhost:${(app.address() as AddressInfo).port}`;
+  appOrigin = await listen(app, null);
   pool = await launchBrowserPool();
 });
 
@@ -59,20 +57,8 @@ beforeEach(() => {
 
 after(async () => {
   await pool.close();
-  for (const server of [third, app]) {
-    server.closeAllConnections();
-    server.close();
-  }
+  stop(third, app);
 });
-
-/** An origin nothing listens on: a port that was just free. */
-async function deadOrigin(): Promise<string> {
-  const server = http.createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise((resolve) => server.close(resolve));
-  return `http://127.0.0.1:${port}`;
-}
 
 async function record(t: TestContext, path: string): Promise<{ recording: LoginRecording; page: Page }> {
   const recording = await pool.record(appOrigin + path, { headless: true });
