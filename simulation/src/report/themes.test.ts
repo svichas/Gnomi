@@ -290,6 +290,12 @@ test('buyer objections are a share of the buyers surveyed on the POI, not of eve
   assert.deepEqual(long.affected.map((a) => [a.affected, a.reached]), [[2, 3], [0, 0]]);
 });
 
+test('merged themes that tie on everything rank by their first group, not by the judge’s order', () => {
+  const events = log(...(['a1', 'a2', 'b1', 'b2'] as const).map((id, i) => ['persona.survey', id, structured([item('friction', `Part ${i}`, 'Hard to use')])] as [EventType, string, object]));
+  const judged = { ...events[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Late', description: 'd', group_ids: ['g3', 'g4'] }, { title: 'Early', description: 'd', group_ids: ['g1', 'g2'] }] } } as GnomiEvent;
+  assert.deepEqual(analyseFrictions([...events, judged], ctx).themes.map((t) => [t.id, t.rank]), [['g1+g2', 1], ['g3+g4', 2]]);
+});
+
 test('nobody met first-hand is evidence none, not a single report', () => {
   assert.equal(prevalence(0, 5).level, 'none');
   assert.equal(prevalence(1, 5).level, 'single');

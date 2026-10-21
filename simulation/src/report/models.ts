@@ -4,14 +4,14 @@ import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme,
 import { english, ENGLISH } from '../llm/english.ts';
 import { buildReport } from './build.ts';
 import { groupKey, likeGroups } from './friction.ts';
-import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
+import { authorThemes, frictionGroups, judgeInput, postsAbout, TEXT_MAX } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
 // changes. Each answer is recorded as an event, so the report rebuilds from the log alone; a failed or missing answer
 // records nothing and the report falls back to the deterministic themes.
 
 const text = (max: number) => english(z.string().trim().min(1).max(max));
-const theme = z.object({ title: text(120), description: text(400), group_ids: z.array(z.string()).min(1) });
+const theme = z.object({ title: text(120), description: text(TEXT_MAX), group_ids: z.array(z.string()).min(1) });
 export const judgeSchema = z.object({
   themes: z.array(theme),
 });

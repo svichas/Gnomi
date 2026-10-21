@@ -17,14 +17,14 @@ export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
-const TEXT_MAX = 600;
+export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
-const groupNo = (id: string) => Number(id.slice(1));
+const groupNo = (id: string) => Number.parseInt(id.slice(1), 10); // a merged theme "g1+g3" by its first group
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 export interface Context {
