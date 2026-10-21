@@ -1,4 +1,5 @@
 import type { GnomiEvent, RunConfig, RunStatus } from '@gnomi/simulation/types.ts';
+import { admits, inScenario } from '@gnomi/simulation/comparison/config.ts';
 import { poisFor, withPois } from '@gnomi/simulation/poi/pois.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { runSetup } from './activity.ts';
@@ -49,11 +50,10 @@ export function runProgress(events: GnomiEvent[], config?: RunConfig, status?: R
   for (const persona of setup.personas) {
     if (comparison) {
       for (const task of comparison.tasks) {
-        const scenario = comparison.scenarios.find((item) => item.id === task.scenario_id);
-        if (scenario?.segment_ids && !scenario.segment_ids.includes(persona.segment_id ?? '')) continue;
+        if (!inScenario(comparison, task.scenario_id, persona.segment_id)) continue;
         for (const entry of task.entries) {
           const poi = pois.find((item) => item.id === entry.poi_id);
-          if (!poi || (poi.segments && !poi.segments.includes(persona.segment_id ?? ''))) continue;
+          if (!poi || !admits(poi, persona.segment_id)) continue;
           planned.add(taskKey(persona.id, task.id, entry.target_id));
         }
       }
