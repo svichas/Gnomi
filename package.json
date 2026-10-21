@@ -1,7 +1,14 @@
 {
   "name": "gnomi",
+  "description": "A local desktop app for social simulation and product research: simulated personas explore your product, talk about it, and surface frictions as evidence.",
   "private": true,
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/svichas/Gnomi.git"
+  },
+  "homepage": "https://github.com/svichas/Gnomi#readme",
+  "bugs": "https://github.com/svichas/Gnomi/issues",
   "workspaces": [
     "simulation",
     "engine",
@@ -11,6 +18,7 @@
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "biome lint .",
     "gym": "npm start -w @gnomi/gym",
     "gnomi": "node engine/src/cli.ts",
     "dev": "npm run dev -w @gnomi/app"
@@ -19,6 +27,7 @@
     "node": ">=24.15"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
     "typescript": "7.0.2"
   }
