@@ -74,7 +74,8 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
   const edges = influenceEdges(events).filter((e) => e.kind !== 'formed'); // a formed first opinion is not a shift
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
   const rounds = events.reduce((max, e) => Math.max(max, e.round), 1);
-  const pois = [...new Set([...postPois(events).values()].filter((id) => id !== null))];
+  const posted = postPois(events);
+  const pois = [...new Set([...posted.values()].filter((id) => id !== null))];
   // Who was shown which posts: in a feed, including the parents its replies quoted, or handed them at a step.
   const shown = new Map<string, Set<string>>();
   for (const e of events) {
@@ -83,7 +84,7 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
   }
 
   return pois.map((poi_id) => {
-    const talk = postsAbout(events, poi_id);
+    const talk = postsAbout(events, poi_id, posted);
     const own = themes.filter((t) => t.poi_id === poi_id);
     const about = opinions.filter((e) => e.payload.poi_id === poi_id);
     const poiEdges = edges.filter((e) => e.poi_id === poi_id);
