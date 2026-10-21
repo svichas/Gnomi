@@ -225,13 +225,13 @@ const THUMBNAIL_WIDTH = 640;
 ipcMain.handle('report-thumbnails', async (_event, paths: unknown) => {
   if (!Array.isArray(paths) || !paths.every((path) => typeof path === 'string')) throw new Error('Unknown screenshots.');
   const thumbnails: Record<string, string> = {};
-  for (const path of paths) {
+  await Promise.all(paths.map(async (path) => {
     const blob = await request('get_blob', { path }).catch(() => null); // the engine hands out run files only
     const image = blob && nativeImage.createFromBuffer(Buffer.from(blob.base64, 'base64'));
-    if (!image || image.isEmpty()) continue;
+    if (!image || image.isEmpty()) return;
     const small = image.getSize().width > THUMBNAIL_WIDTH ? image.resize({ width: THUMBNAIL_WIDTH, quality: 'good' }) : image;
     thumbnails[path] = `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`;
-  }
+  }));
   return thumbnails;
 });
 
