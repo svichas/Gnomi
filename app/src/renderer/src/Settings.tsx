@@ -170,60 +170,36 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     return typeof saved === 'string' ? { ok: false, text: problemFor(saved, 'settings') } : null;
   }
 
-  /** Whether the provider was added, so the form can drop what was typed. */
-  async function add(provider: ProviderId, value: string): Promise<boolean> {
+  /** Whether the provider or the Figma token was added, so the form can drop what was typed. */
+  async function add(provider: ProviderId | 'figma', value: string): Promise<boolean> {
     let added = false;
     await changing.run(async () => {
       if (provider === 'openai_compatible') {
         added = true; // in the draft even when the project cannot be saved yet
         return saveLocal(value.trim());
       }
-      const entry = await window.gnomi.saveKey(provider, value);
+      const entry = await (provider === 'figma' ? window.gnomi.saveFigmaToken(value) : window.gnomi.saveKey(provider, value));
       added = true;
       await reloadProviders();
-      return entry.remembered ? null : { ok: true, text: 'Key accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
+      return entry.remembered ? null : { ok: true, text: `${provider === 'figma' ? 'Token' : 'Key'} accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.` };
     });
     return added;
   }
 
-  const remove = (provider: ProviderId) =>
+  const remove = (provider: ProviderId | 'figma') =>
     changing.run(async () => {
       if (provider === 'openai_compatible') return saveLocal(null);
-      await window.gnomi.clearKey(provider);
+      await (provider === 'figma' ? window.gnomi.clearFigmaToken() : window.gnomi.clearKey(provider));
       await reloadProviders();
       return null;
     });
 
-  async function addFigma(token: string): Promise<boolean> {
-    let added = false;
-    await changing.run(async () => {
-      const entry = await window.gnomi.saveFigmaToken(token);
-      added = true;
-      await reloadProviders();
-      return entry.remembered ? null : { ok: true, text: 'Token accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
-    });
-    return added;
-  }
-
-  const removeFigma = () =>
-    changing.run(async () => {
-      await window.gnomi.clearFigmaToken();
-      await reloadProviders();
-      return null;
-    });
-
-  async function testFigma(): Promise<string | null> {
-    await window.gnomi.testFigmaToken();
-    await reloadProviders();
-    return null;
-  }
-
-  async function test(provider: ProviderId): Promise<string | null> {
+  async function test(provider: ProviderId | 'figma'): Promise<string | null> {
     if (provider === 'openai_compatible') {
       const saved = await save(); // the engine tests the address saved with the project
       if (typeof saved === 'string') return problemFor(saved, 'settings');
     }
-    await window.gnomi.testKey(provider);
+    await (provider === 'figma' ? window.gnomi.testFigmaToken() : window.gnomi.testKey(provider));
     await reloadProviders();
     return null;
   }
@@ -293,12 +269,12 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
               detail={list.figma.remembered ? list.figma.masked : `${list.figma.masked} · this session only`}
               test={list.figma.test}
               disabled={changing.busy}
-              onTest={testFigma}
-              onRemove={removeFigma}
+              onTest={() => test('figma')}
+              onRemove={() => remove('figma')}
             />
           </ul>
         ) : (
-          list && <AddFigmaToken disabled={changing.busy} onAdd={addFigma} />
+          list && <AddFigmaToken disabled={changing.busy} onAdd={(token) => add('figma', token)} />
         )}
         <p className="mt-3 text-xs text-stone-500">Test checks that Figma accepts the token; whether it can open a particular file is checked when you import it. The token stays encrypted by your operating system, outside every project.</p>
       </Card>
