@@ -354,7 +354,11 @@ try {
     assert.deepEqual(await options(), ['Anthropic', 'DeepSeek']);
     await navigator.selectOption('deepseek');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.deepseek.navigator.model);
-    await settings.getByText('DeepSeek reads text only, so the navigator will not see the screenshots.').waitFor();
+    // DeepSeek's default navigator model sees screenshots; V4 Pro reads text only, and the page says so.
+    const textOnly = settings.getByText('This model reads text only, so the navigator will not see the screenshots.');
+    assert.equal(await textOnly.count(), 0);
+    await settings.getByLabel('Navigator model').selectOption('deepseek-v4-pro');
+    await textOnly.waitFor();
     await settings.getByRole('button', { name: 'Remove DeepSeek' }).click();
     await page.waitForFunction(() => document.querySelector<HTMLSelectElement>('[aria-label="Navigator provider"]')?.value === 'anthropic');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
