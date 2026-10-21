@@ -38,6 +38,12 @@ let changingProject = false;
 const catalog = (): ProjectCatalog => ({ projects: library.list(), currentId: currentProjectId });
 const lastProjectFile = () => join(app.getPath('userData'), 'current-project');
 
+/** The preferred project if it is still there, else the newest, else a new one. */
+function projectOr(preferred?: string): string {
+  const entries = library.list();
+  return entries.find((entry) => entry.id === preferred)?.id ?? entries[0]?.id ?? library.create('Untitled project').id;
+}
+
 async function openManagedProject(id: string) {
   const project = await request('open_project', { dir: library.directory(id), project_id: id });
   currentProjectId = id;
@@ -124,9 +130,7 @@ async function startEngine(): Promise<Startup> {
           await request('open_project', { dir: override, project_id: 'development' });
           currentProjectId = 'development';
         } else {
-          const entries = library.list();
-          const previous = existsSync(lastProjectFile()) ? readFileSync(lastProjectFile(), 'utf8') : '';
-          await openManagedProject(entries.find((entry) => entry.id === previous)?.id ?? entries[0]?.id ?? library.create('Untitled project').id);
+          await openManagedProject(projectOr(existsSync(lastProjectFile()) ? readFileSync(lastProjectFile(), 'utf8') : ''));
         }
       })(),
       providers.load(),
@@ -195,7 +199,7 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
       case 'export': exportedTo = library.exportFolder(input.id, destination!); break;
       case 'delete': {
         await library.trash(input.id, (path) => shell.trashItem(path));
-        if (input.id === previous) selected = library.list()[0]?.id ?? library.create('Untitled project').id;
+        if (input.id === previous) selected = projectOr();
         break;
       }
     }
@@ -205,8 +209,7 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
   } catch (err) {
     if (closed) {
       try {
-        const fallback = library.list().find((entry) => entry.id === previous)?.id ?? library.list()[0]?.id ?? library.create('Untitled project').id;
-        await openManagedProject(fallback);
+        await openManagedProject(projectOr(previous));
       } catch {
         throw new Error('The project action failed and the previous project could not be reopened. Restart Gnomi.');
       }
