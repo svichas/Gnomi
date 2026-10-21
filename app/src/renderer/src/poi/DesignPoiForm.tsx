@@ -31,6 +31,7 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a drop zone for dragged image files; the file picker below is the keyboard path
     <div
       className="space-y-4"
       onDragOver={(e) => e.preventDefault()}

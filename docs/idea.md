@@ -95,7 +95,7 @@ The team fixes what it chooses, deploys to staging, duplicates the run (same per
 - **Project home**: any number of projects, each stored as its own folder; a list with last run status; create, open, rename, duplicate, export and delete. One project is open per window, and a second window opens another project side by side.
 - **POI library**: drag-and-drop and paste; type auto-detected; preview per POI; per-POI settings (start page, device, allowed hosts, mode: full / observe-only).
 - **Login recorder** for web POIs: an embedded browser where the user logs in once per role, completes SSO or MFA by hand, and marks the start page. Sessions are saved per role and labelled with expiry. A "re-record" button handles expired sessions.
-- **Audience builder**: segment cards with share sliders that renormalise to 100%; per-segment role, usage frequency, device mix, country mix, patience, account state (empty or populated), typical goals, and an optional employer list ("Coca-Cola, Pepsi, a staffing agency") that the segment's personas are spread across; persona list per segment with edit, regenerate, add, remove; import of real shares from a CSV; a profile-attributes editor to switch default attributes off, add custom ones with a type and per-segment sampling rule, and save the set as a template.
+- **Audience builder**: segment cards with share sliders that renormalise to 100%; per-segment role, usage frequency, device mix, country mix, patience, account state (empty or populated), typical goals, and an optional employer list ("Northwind, Larkspur Foods, a staffing agency") that the segment's personas are spread across; persona list per segment with edit, regenerate, add, remove; import of real shares from a CSV; a profile-attributes editor to switch default attributes off, add custom ones with a type and per-segment sampling rule, and save the set as a template.
 - **Goal editor**: scenario text, per-segment overrides, a preview of each segment's interpretation.
 - **Settings**: provider keys (add, test, remove), model routing per role with cost estimates, budget, concurrency, data folder location.
 - **Pre-run summary**: everything that will happen, estimated cost and time, containment summary, Start.
@@ -119,7 +119,7 @@ The team fixes what it chooses, deploys to staging, duplicates the run (same per
 
 - A live, virtualised feed of events: navigating, clicking, typing, reading, thinking aloud, posting, replying, reacting, reporting friction, giving up, finishing.
 - Every step shows two lines, what the persona did and what it thought, in the persona's own words:
-  > Stefanos (recruiter, Pepsi) clicked "See pricing"
+  > Stefanos (recruiter, Northwind) clicked "See pricing"
   > Stefanos thought "pricing is expensive for what we'd use, I'd need to ask Finance"
   > Stefanos felt −1
 - Thoughts can be filtered on their own, so a team can read the swarm's running commentary without the clicks.
@@ -181,7 +181,7 @@ A segment has:
 - `tech_skill`: a default range,
 - `account_state`: empty (first use) or populated (an account with history),
 - `entry`: how they usually arrive (direct, email link, shared link),
-- `employers` (optional): named companies or kinds of company that the segment's personas work for, such as "Coca-Cola, Pepsi, a staffing agency". Personas are spread across the list. Left empty, Gnomi invents plausible employers from the industry and company-size ranges,
+- `employers` (optional): named companies or kinds of company that the segment's personas work for, such as "Northwind, Larkspur Foods, a staffing agency". Personas are spread across the list. Left empty, Gnomi invents plausible employers from the industry and company-size ranges,
 - `goal_override` (optional).
 
 Segments come from one line about the product plus the POIs. Gnomi proposes them; the user edits shares or imports real numbers. The report weights every finding by segment share and shows friction per segment.
@@ -205,13 +205,13 @@ Plus a `seed` that fixes the trait sampling and the model sampling, so the perso
 
 - A small **core** stays in every schema because the engine depends on it: name, country with timezone and languages, device, tech skill, patience, goal interpretation, voice, biography and seed. Core attributes can be hidden from the cards but not removed.
 - Every other default attribute (employer, prior tools, psychology dials, working pattern and so on) can be switched off; it then disappears from the cards, the prompt and the report.
-- A **custom attribute** has a name, a type (text, number range, choice list, yes/no, list of text), a one-line description the model reads, a sampling rule per segment (fixed value, a share per choice, or a range) and two flags: *use in prompt* and *report dimension*. Examples: `hiring_volume_per_quarter: number 1–50`, `uses_linkedin_recruiter: yes/no`, `region: choice [EMEA, Americas, APAC]`, `must_have_integrations: list`.
+- A **custom attribute** has a name, a type (text, number range, choice list, yes/no, list of text), a one-line description the model reads, a sampling rule per segment (fixed value, a share per choice, or a range) and two flags: *use in prompt* and *report dimension*. Examples: `hiring_volume_per_quarter: number 1–50`, `uses_sourcing_tool: yes/no`, `region: choice [EMEA, Americas, APAC]`, `must_have_integrations: list`.
 - Custom attributes feed the biography writer, so a persona with `hiring_volume_per_quarter: 40` has a biography about volume, and attributes flagged as a report dimension become filters in the inspector, the activity panel and the report ("friction by region").
 - The schema is saved with the project and can be saved as a **template** ("B2B SaaS buyer", "consumer app", "developer tool") for reuse in other projects; Gnomi ships the default template.
 
 **Country matters in three places.** The persona expects its own date formats, currency, units, spelling and consent norms, and judges the product against them. Its browser runs with that country's locale, timezone and language, so the product under test behaves for the persona as it would for a real user there (a German hiring manager sees `15.10.2026`, euro prices and the cookie banner Germany requires). And its posts in the swarm are written in its first language unless the segment says otherwise, so a multilingual audience produces a multilingual feed. Countries come from a per-segment country mix the user sets (for example 60% United States, 25% United Kingdom, 15% Germany).
 
-**How a persona thinks.** On every step the model is given the full profile and biography and asked what this person does, thinks and feels next. The prompt makes the profile load-bearing: the country sets what looks normal, the prior tools set what the product is compared against ("in Greenhouse this took one click"), the decision role sets what matters (a CFO thinks in cost per hire, a recruiter in minutes per candidate), the psychology dials set how it reacts to risk, price and novelty, and the voice sets how the thought reads. Thoughts are in the first person and in the persona's language, and the inspector shows the profile next to the timeline so a reader can check that the thinking fits the person.
+**How a persona thinks.** On every step the model is given the full profile and biography and asked what this person does, thinks and feels next. The prompt makes the profile load-bearing: the country sets what looks normal, the prior tools set what the product is compared against ("in Rival ATS this took one click"), the decision role sets what matters (a CFO thinks in cost per hire, a recruiter in minutes per candidate), the psychology dials set how it reacts to risk, price and novelty, and the voice sets how the thought reads. Thoughts are in the first person and in the persona's language, and the inspector shows the profile next to the timeline so a reader can check that the thinking fits the person.
 
 Personas are sampled from the segment's ranges with a seeded random generator first, and only then written up by a model, so that the population's diversity comes from sampling rather than from asking a model to "be diverse".
 
@@ -239,15 +239,15 @@ work:
   company_size: 180
   industry: fintech
   decision_role: approver          # approves hires, does not choose the ATS
-  tools_today: [Jira, Slack, Google Calendar, Notion]
+  tools_today: [issue tracker, team chat, shared calendar, wiki]
 capability:
   tech_skill: 5
   patience: 2
   reading_speed: fast
   familiarity_with_category: low   # has used two ATSs, never configured one
   prior_tools:
-    - {name: Greenhouse, liked: "scorecards were one tap", hated: "email notifications for everything"}
-    - {name: Personio, liked: "nothing in particular", hated: "could never find the candidate again"}
+    - {name: Rival ATS, liked: "scorecards were one tap", hated: "email notifications for everything"}
+    - {name: Harbor HR, liked: "nothing in particular", hated: "could never find the candidate again"}
 context:
   device: mobile
   accessibility_needs: none
@@ -271,8 +271,8 @@ voice:
 biography: >
   I run two backend teams at a payments company in Berlin. Hiring is maybe five percent of my
   week and I want it to stay that way: the recruiter does the work, I say yes or no. I open
-  these tools from my phone, usually from an email, usually late. Greenhouse was fine because
-  the scorecard was one tap; Personio lost me every time I tried to find a candidate again.
+  these tools from my phone, usually from an email, usually late. Rival ATS was fine because
+  the scorecard was one tap; Harbor HR lost me every time I tried to find a candidate again.
   I notice when prices are in dollars and dates are the wrong way round. If something takes
   more than a couple of taps I close it and tell the recruiter to just message me.
 seed: 884213
@@ -300,7 +300,7 @@ Notes on the example:
 - Buyers only engage with the text POIs (pricing, positioning). They cover perception, not usage.
 - Within recruiters, sampled personas vary: a junior coordinator at a 60-person startup on an empty account; a senior talent partner at a 1,500-person company with 40 open jobs; a recruiter whose first language is not English; one with low vision who uses browser zoom at 150%.
 - Countries follow the segment's country mix. With 60% United States, 25% United Kingdom and 15% Germany for recruiters, the German recruiters see the staging app with a German locale and Berlin time, expect euro prices and `DD.MM.YYYY` dates, post in German in the swarm feed, and report "the salary field only accepts dollars" as a friction the American recruiters never meet. The report shows friction per country within a segment when the mix has more than one.
-- Employers are the user's call. Typing "Coca-Cola, Pepsi, a staffing agency" into the recruiters segment spreads its personas across an in-house recruiter at Coca-Cola, one at Pepsi and an agency recruiter who works for several clients, and their goal interpretations differ accordingly (the agency recruiter juggles many clients and cares about bulk actions and client-facing views). The inspector, the activity panel and the report can be filtered by employer. The personas remain fictional people; a real company name is context, not a claim about that company's staff.
+- Employers are the user's call. Typing "Northwind, Larkspur Foods, a staffing agency" into the recruiters segment spreads its personas across an in-house recruiter at Northwind, one at Larkspur Foods and an agency recruiter who works for several clients, and their goal interpretations differ accordingly (the agency recruiter juggles many clients and cares about bulk actions and client-facing views). The inspector, the activity panel and the report can be filtered by employer. The personas remain fictional people; a real company name is context, not a claim about that company's staff.
 - Recorded sessions: the engineer records one session each for `recruiter`, `hiring_manager`, `admin` and `approver` on staging; candidates and buyers need none.
 
 Personas per run: 50 by default, configurable from 1 to 200. Counts follow segment shares, preferring at least 3 per active segment when the requested total allows it; smaller runs lower that minimum so even one persona is possible. The report still weights segments by their configured shares. Personas added by hand remain extra.

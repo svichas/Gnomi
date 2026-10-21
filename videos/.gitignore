@@ -1,36 +1,5 @@
-# Publish the current presentation and its self-contained source bundle.
-# Earlier versions, render intermediates, and working files stay local.
+# Only the README animation is published; films and working files stay local.
 *
 !.gitignore
-!output/
-output/*
-!output/gnomi-film/
-output/gnomi-film/*
-!output/gnomi-film/Gnomi-explainer.mp4
-!output/gnomi-film/Gnomi-editable.zip
-!output/gnomi-film/Gnomi.en.srt
-!output/gnomi-film/cover.jpg
-!output/gnomi-film/storyboard.jpg
-!output/gnomi-film/narration.txt
-!output/gnomi-film/production-notes.txt
-!output/gnomi-film/assets/
-output/gnomi-film/assets/*
-!output/gnomi-film/assets/gnomi-personas.glb
-
-# Simulation explainer: final film and its portable editable bundle.
-!simulation-explainer/
-simulation-explainer/*
-!simulation-explainer/Gnomi-simulation.mp4
-!simulation-explainer/Gnomi-simulation-editable.zip
-!simulation-explainer/Gnomi-simulation.en.srt
-!simulation-explainer/cover.jpg
-!simulation-explainer/storyboard.jpg
-!simulation-explainer/narration.txt
-!simulation-explainer/production-notes.txt
-!simulation-explainer/assets/
-simulation-explainer/assets/*
-!simulation-explainer/assets/simulation-models.glb
-
-# README animation: the GIF and the scene that renders it.
 !readme-gif/
 !readme-gif/*

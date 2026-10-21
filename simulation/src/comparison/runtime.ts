@@ -7,7 +7,7 @@ import { runnerFor } from '../poi/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { EventOf, EventType, GnomiEvent, PageSnapshot, Persona, Poi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import type { ComparisonCitation, ComparisonEpisodeFinished, ComparisonScope, ComparisonStudy, ComparisonTarget, ComparisonTask } from './types.ts';
-import { ASSESSMENT_PROMPT_VERSION, ASSESSMENT_SYSTEM, comparisonAssessmentSchema, comparisonVerificationSchema, RUBRIC_VERSION, VERIFICATION_SYSTEM } from './prompts.ts';
+import { ASSESSMENT_PROMPT_VERSION, ASSESSMENT_SYSTEM, comparisonAssessmentSchema, comparisonVerificationSchema, RUBRIC_VERSION, VERIFICATION_SYSTEM, type AssessedEpisode } from './prompts.ts';
 
 /** A seeded cyclic allocation: every complete segment block puts each target in each position once. */
 export function balancedTargetOrder(personas: { id: string; segment_id: string | null }[], targetIds: string[], seed: number): Map<string, string[]> {
@@ -142,7 +142,7 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
     sources: suppliedSources.map((e) => ({ event_seq: e.seq, ...e.payload })),
     trace: packet.trace, coverage_limit: packet.limit,
   };
-  let proposed;
+  let proposed: AssessedEpisode;
   try {
     const text = JSON.stringify(input);
     if (text.length > 120_000) throw new Error('The frozen rubric and evidence exceed the assessment input limit; no model call was made.');
@@ -198,7 +198,7 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
   for (const { item, rejection: structuralRejection } of candidates) {
     const review = verified?.criteria.filter((v) => v.criterion_id === item.criterion_id);
     const rejection = structuralRejection
-      ?? (!review || review.length !== 1 || !review[0].supported ? review?.[0]?.reason ?? 'Semantic verification was not completed.' : null);
+      ?? (review?.length !== 1 || !review[0].supported ? review?.[0]?.reason ?? 'Semantic verification was not completed.' : null);
     record({ ...base, type: 'comparison.assessment', payload: { ...scope, ...item, summary: packet.limit ? `${item.summary} Coverage limit: ${packet.limit}` : item.summary, assessor: provenance, rejection } });
   }
   for (const criterion of criteria.filter((c) => !seen.has(c.id))) record({ ...base, type: 'comparison.assessment', payload: { ...scope, criterion_id: criterion.id, assessment: 'unknown', basis: 'simulated_inference', summary: 'The assessor supplied no judgment for this criterion.', evidence: [], assessor: provenance, rejection: null } });

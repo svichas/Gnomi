@@ -119,6 +119,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   }, [runId]);
 
   const ended = log.ended || (!!row && row.status !== 'running');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetches the report again when a newer one is generated or the user retries
   useEffect(() => {
     if (!ended) return;
     let current = true;
@@ -203,6 +204,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           </button>
         ))}
       </div>}
+      {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-labelledby is set only while the role is tabpanel */}
       {view === 'activity' && <div role={ended ? 'tabpanel' : undefined} id="run-panel-activity" aria-labelledby={ended ? 'run-tab-activity' : undefined} className="simulation-overview">
         <div className="simulation-workspace">
           {active && <Swarm events={events} segments={segments} expectedPersonas={personas.length} onOpen={openPersona} />}

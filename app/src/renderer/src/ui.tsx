@@ -108,6 +108,7 @@ export function NumberInput(props: { value: number; onChange(value: number): voi
 export function ActionBar({ notice, children }: { notice?: ReactNode; children: ReactNode }) {
   const bar = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when a notice appears, not each time its content changes
   useEffect(() => { noticeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [!!notice]);
   useEffect(() => {
     const element = bar.current;

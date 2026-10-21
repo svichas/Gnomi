@@ -96,6 +96,7 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
             <h4 id={`comparison-scope-${groupIndex}`} className="comparison-scope">{scopeName(scope)} · {ACCESS_LABELS[scope.access_scope]}</h4>
             {task && <p className="comparison-task">{task.instruction}</p>}
           </div>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
           <div className="comparison-table-scroll" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
             <table className="comparison-matrix" style={{ minWidth: `${13 + study.targets.length * 12}rem` }}>
               <thead><tr><th scope="col">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id}>{target.name}{isFocal(target.id) && <span className="comparison-focal">Your tool</span>}</th>)}</tr></thead>

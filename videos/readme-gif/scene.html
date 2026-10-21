@@ -63,7 +63,7 @@
   <div class="status"><span class="live" id="live"></span><b>Simulating</b> · Pricing page · 5 personas</div>
 </header>
 
-<svg class="graph" width="1200" height="600" id="graph"></svg>
+<svg class="graph" width="1200" height="600" id="graph" aria-hidden="true"></svg>
 
 <div class="abs card">
   <div class="chrome"><i></i><i></i><i></i><span>staging.acme.app/pricing</span></div>
@@ -77,7 +77,7 @@
 
 <div id="layer"></div>
 
-<div class="abs watch"><i><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="#f6f5f0"/></svg></i>Watch the introduction · 1:27</div>
+<div class="abs watch"><i><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1l7 4-7 4z" fill="#f6f5f0"/></svg></i>Watch the introduction · 1:27</div>
 
 <script>
 const PERSONAS = {
@@ -102,7 +102,7 @@ const EDGES = [['A', 'B'], ['C', 'D'], ['E', 'A'], ['E', 'C']];
 const RING = { warning: '#a27b36', success: '#34704f' };
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
-const ease = (v) => 1 - Math.pow(1 - clamp(v), 3);
+const ease = (v) => 1 - (1 - clamp(v)) ** 3;
 const span = (t, a, b) => clamp((t - a) / (b - a));
 // fades in over `fin` after a, out over `fout` before b
 const win = (t, a, b, fin = 0.35, fout = 0.35) => Math.min(ease(span(t, a, a + fin)), 1 - span(t, b - fout, b));
@@ -123,7 +123,7 @@ const edgeEls = [...graph.querySelectorAll('.edge')];
 const findEdge = (p, q) => edgeEls.find((el) => el.dataset.k === p + q || el.dataset.k === q + p);
 
 function render(t) {
-  const T = 12, out = 1 - span(t, 11.2, 11.9); // whole simulation layer fades before the loop restarts
+  const out = 1 - span(t, 11.2, 11.9); // whole simulation layer fades before the loop restarts
   const spokes = ease(span(t, 0.5, 1.4));
   graph.querySelectorAll('.spoke').forEach((s) => (s.style.opacity = spokes * out));
   edgeEls.forEach((el, i) => {

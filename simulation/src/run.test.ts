@@ -12,7 +12,7 @@ import { buildReport } from './report/build.ts';
 import { getPersonaSchema } from './profile/schema.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from './run.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
-import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from './settings.ts';
+import { DEFAULT_SETTINGS } from './settings.ts';
 import { influenceEdges } from './social/influence.ts';
 import { listen } from './browser/server.fixture.ts';
 import type { BlobStore, BrowserPool, LlmAttempt, LlmGateway, LlmRequest, PageOptions, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';

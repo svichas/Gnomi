@@ -24,6 +24,11 @@ test('followed posts come first, most reactions first, then two trending posts f
   assert.deepEqual(board.posts.find((p) => p.post_id === 'b1')?.disagree, 1);
 });
 
+test('each persona’s latest reaction to a post counts once, as the app counts it', () => {
+  const b1 = readBoard([post('b', 'b1'), react('c', 'b1'), react('c', 'b1', 'disagree'), react('d', 'b1')]).posts[0];
+  assert.deepEqual([b1.agree, b1.disagree], [1, 1]);
+});
+
 test('a persona never sees its own posts or posts it was already shown', () => {
   const events = [post('a', 'a1'), post('me', 'm1'), post('a', 'a2'), event('social.feed_viewed', 'me', { post_ids: ['a1'] })];
   assert.deepEqual(ids(events, 'me', ['a']), ['a2']);

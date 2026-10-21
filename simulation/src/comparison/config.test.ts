@@ -7,7 +7,7 @@ import { admits, draftComparison, effectiveComparisonPois, inScenario, validateC
 export const comparisonProject = (): ProjectConfig => ({
   name: 'ATS comparison', description: 'Compare hiring tools', goal: 'Choose an ATS for a hiring team',
   role: null, audience: null, settings: DEFAULT_SETTINGS,
-  pois: ['Workable', 'Lever', 'Ashby', 'Teamtailor'].map((name, i) => ({
+  pois: ['Gym ATS', 'Rival ATS', 'Harbor ATS', 'Summit ATS'].map((name, i) => ({
     id: `poi-${i}`, name, type: 'web', start_url: `https://vendor${i}.example/`, mode: 'observe_only',
     segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null,
   })),

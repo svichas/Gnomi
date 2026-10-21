@@ -1,5 +1,6 @@
 import type { LlmAttempt, LlmGateway, LlmRequest } from '@gnomi/simulation/seams.ts';
-import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
+import type { Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
+import { defaultAudience } from './defaults.ts';
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { nameKey, writePersonas } from './write.ts';
@@ -7,6 +8,7 @@ import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { sampleProfile } from '@gnomi/simulation/profile/sample.ts';
 import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 
+export { defaultAudience };
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';
 
@@ -28,39 +30,6 @@ export interface AudienceDeps {
 
 const PREFERRED_MIN_PER_SEGMENT = 3;
 export const MAX_PERSONAS = 200;
-
-// Starting points the user sees and edits (idea.md §11), not measurements: about 15% think in a first language other than English.
-const LANGUAGES: Record<string, number> = { en: 0.85, es: 0.04, de: 0.02, fr: 0.02, pt: 0.02, hi: 0.02, zh: 0.02, ar: 0.01 };
-// About 14%: colour-vision deficiency alone affects ~8% of men and ~0.5% of women; the rest are rough, so every run meets these users.
-const ACCESSIBILITY: Record<AccessibilityNeed, number> = { none: 0.86, low_vision: 0.05, colour_blind: 0.04, motor: 0.03, screen_reader: 0.02 };
-
-/** A deterministic starting point with no model call: one segment holding the whole population. */
-export function defaultAudience(project: ProjectConfig): Audience {
-  return {
-    seed: 1,
-    persona_count: 50,
-    segments: [
-      {
-        id: 'seg-1',
-        name: 'Everyone',
-        description: `All the people who use ${project.name}, in one group: every role, level of experience and device.`,
-        share: 100,
-        role: project.role,
-        usage_frequency: 'weekly',
-        typical_goals: project.goal ? [project.goal] : [],
-        mobile_share: 0.25,
-        patience: [1, 5], // one segment for everyone spans the full ranges until segments narrow them
-        tech_skill: [1, 5],
-        account_state: 'populated',
-        entry: 'direct',
-        goal_override: null,
-      },
-    ],
-    company_size: [50, 2000],
-    languages: { ...LANGUAGES },
-    accessibility: { ...ACCESSIBILITY },
-  };
-}
 
 /** Proposes segments from the product sentence, the POI and the goal (idea.md §5.1 step 3). */
 export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: Audience; cost_usd: number }> {

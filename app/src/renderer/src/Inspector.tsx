@@ -44,6 +44,7 @@ export function Inspector(props: {
   const highlighted = evidenceSeq ?? focusSeq;
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs again once the timeline has rows, so the focused step's element exists
   useEffect(() => {
     setEvidenceSeq(null);
     if (focusSeq !== null) evidence.current.get(focusSeq)?.scrollIntoView({ block: 'center' });
@@ -119,7 +120,7 @@ export function Inspector(props: {
               <span>Round {entry.round}</span>
               {entry.cause.step_ids.map((seq) => {
                 const step = events.find((event) => event.seq === seq && event.type === 'persona.step');
-                if (!step || step.type !== 'persona.step') return null;
+                if (step?.type !== 'persona.step') return null;
                 return <button type="button" key={seq} className="text-indigo-700 underline" onClick={() => { setEvidenceSeq(seq); evidence.current.get(seq)?.scrollIntoView({ block: 'center' }); }}>View source step {step.payload.step_no}</button>;
               })}
             </div>

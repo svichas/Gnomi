@@ -105,6 +105,7 @@ export function AudienceTab(props: {
   const [libraryName, setLibraryName] = useState<string | null>(null); // the saved audience this one came from or was saved as
 
   // A run estimate for the personas already written; none while they are missing or out of date, as it would describe other people.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the engine estimates the saved project, so a new info asks again; the draft audience only gates it
   useEffect(() => {
     setEstimate(null);
     if (!audience || needsPersonas) return;
@@ -228,7 +229,7 @@ export function AudienceTab(props: {
               <button type="button" onClick={propose} aria-label="Suggest an audience" aria-describedby="audience-suggest-hint" className="audience-choice audience-choice-primary">
                 <Icon name="spark" size={22} /><strong>Suggest an audience</strong><span id="audience-suggest-hint">Gnomi proposes groups from your product and goal.</span>
               </button>
-              <button type="button" onClick={() => onAudience(blankAudience(description))} aria-label="Build my own" aria-describedby="audience-build-hint" className="audience-choice">
+              <button type="button" onClick={() => onAudience(blankAudience({ name: projectName.trim() || 'your product', role: info?.project?.role ?? null, goal: goal.trim() }))} aria-label="Build my own" aria-describedby="audience-build-hint" className="audience-choice">
                 <Icon name="plus" size={22} /><strong>Build my own</strong><span id="audience-build-hint">Start with one group and shape it yourself.</span>
               </button>
             </div>

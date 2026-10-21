@@ -97,7 +97,7 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
                   {pois.map((poi) => <Check key={poi.id} checked={target.poi_ids.includes(poi.id)} onChange={(checked) => change({ poi_ids: checked ? [...target.poi_ids, poi.id] : target.poi_ids.filter((id) => id !== poi.id) })}>{poi.name}</Check>)}
                 </fieldset>
                 {target.access_scope === 'authenticated_workflow' && <>
-                  <Field label="Login name for this tool" hint="Use a separate name for each tool, such as workable-recruiter."><input className={inputClass} value={target.session_role ?? ''} placeholder="tool-recruiter" onChange={(e) => change({ session_role: e.target.value.toLowerCase() || null })} /></Field>
+                  <Field label="Login name for this tool" hint="Use a separate name for each tool, such as rival-recruiter."><input className={inputClass} value={target.session_role ?? ''} placeholder="tool-recruiter" onChange={(e) => change({ session_role: e.target.value.toLowerCase() || null })} /></Field>
                   <div className="flex flex-wrap items-center gap-3">
                     <Button small disabled={!target.session_role || recorder.busy || recorder.recording !== null} onClick={() => void recorder.start(target.session_role!, saveFirst, target.id)}>{session ? 'Re-record login' : 'Record login'}</Button>
                     <span className="text-xs text-stone-600">{session ? `Recorded for ${target.name}.` : 'Without a valid recorded login, this workflow will be reported as access-limited.'}</span>

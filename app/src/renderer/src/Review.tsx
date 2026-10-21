@@ -68,6 +68,7 @@ export function Review(props: {
   const profilesStale = useMemo(() => !!saved?.audience && staleProfiles(personas, saved).size > 0, [saved, personas]);
   const audienceReady = personas.length > 0 && !countChanged && !profilesStale;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: checks once per mount; App saves and remounts Review with a new key on every visit
   useEffect(() => {
     if (!saved) return;
     let current = true;

@@ -25,6 +25,7 @@ export function ActivityItem({ row, related = [row], who, onOpen, onRead }: { ro
   const icon = tone === 'alarm' || tone === 'bad' || tone === 'friction' ? 'alert' : tone === 'good' ? 'check' : quote ? 'message' : 'activity';
   const marker = <>{who ? <PersonaAvatar name={who} id={personaId ?? who} /> : <span className="system-avatar"><Icon name={icon} size={16} /></span>}{who && <span className={`event-icon event-${icon}`}><Icon name={icon} size={10} /></span>}</>;
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: catches focus and Escape bubbling from the buttons inside; the item itself is not a control
     <div className={`timeline-item tone-${tone}`} data-expanded={expanded || undefined} onFocusCapture={onRead}
       onKeyDown={(event) => { if (event.key === 'Escape' && expanded) { setExpanded(false); event.stopPropagation(); } }}>
       <div className="timeline-header">
@@ -157,7 +158,7 @@ export function Activity(props: {
       </div>
       {profileGroups.length > 0 && <div className="activity-profile-filters"><ProfileFilters groups={profileGroups} filter={{ dimension: filters.dimension, value: filters.value }} onChange={(next) => set({ ...next, persona: '' })} /></div>}
       </div>
-      {applied.length > 0 && <div className="activity-applied-filters" aria-label="Applied filters">{applied.map((item) => item && <button key={item.key} type="button" onClick={item.clear} aria-label={`Remove filter: ${item.label}`}>{item.label}<span aria-hidden="true">×</span></button>)}</div>}
+      {applied.length > 0 && <div className="activity-applied-filters" role="group" aria-label="Applied filters">{applied.map((item) => item && <button key={item.key} type="button" onClick={item.clear} aria-label={`Remove filter: ${item.label}`}>{item.label}<span aria-hidden="true">×</span></button>)}</div>}
       <div className="timeline-options"><div role="group" aria-label="Timeline detail" className="segmented-control"><button type="button" aria-pressed={!routineVisible} onClick={() => { setAllEvents(false); set({ category: '' }); }}>Highlights</button><button type="button" aria-pressed={routineVisible} onClick={() => { setAllEvents(true); set({ category: '' }); }}>All events</button></div><div className="activity-live-controls"><span className={`activity-live-state${live && !pausedRows ? ' is-live' : ''}`}><i aria-hidden="true" />{pausedRows ? 'Updates paused' : live ? 'Live updates' : 'Run history'}</span>{live && !pausedRows && <button type="button" className="activity-pause" onClick={pause}>Pause updates</button>}{pausedRows && <button type="button" className="activity-pause" onClick={() => setSnapshot(null)}>{pending ? `Show ${pending} new update${pending === 1 ? '' : 's'}` : live ? 'Resume updates' : 'Show latest'}</button>}</div></div>
       <div className="activity-reading-guide"><p>{routineVisible ? 'Every recorded event, newest first.' : 'Related steps and observations are grouped into moments, newest first.'}</p>{pausedRows ? <span>{live ? 'The simulation keeps running while you read.' : 'Show the latest updates to see the full history.'}</span> : <span>Select a name to explore their full journey.</span>}</div>
       {moments.length === 0 ? (

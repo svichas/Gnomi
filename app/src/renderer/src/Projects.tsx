@@ -30,6 +30,7 @@ function ProjectMenu({ name, disabled, children }: { name: string; disabled: boo
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: catches blur and Escape bubbling from the menu's buttons; the wrapper itself is not a control
     <div ref={container} className="project-menu"
       onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
       onKeyDown={(event) => {
@@ -39,6 +40,7 @@ function ProjectMenu({ name, disabled, children }: { name: string; disabled: boo
         }
       }}>
       <button ref={trigger} type="button" className="project-menu-trigger" aria-label={`Manage ${name}`} aria-expanded={open} aria-controls={panelId} disabled={disabled} onClick={() => setOpen(!open)}><Icon name="more" /></button>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the click bubbles from the action buttons, which the keyboard activates too */}
       <div id={panelId} role="group" aria-label={`Actions for ${name}`} hidden={!open} className="project-menu-items" onClick={(event) => {
         const button = event.target instanceof Element ? event.target.closest('button') : null;
         if (button && !button.disabled) closeAndFocus();

@@ -15,13 +15,13 @@ test('country weights become percentages and adding, changing and removing a cou
 });
 
 test('employer lists are trimmed, deduplicated and saved without empty lines', () => {
-  const audience = blankAudience('ATS');
+  const audience = blankAudience({ name: 'ATS', role: null, goal: '' });
   audience.segments[0].employers = [' Acme ', '', 'Acme', 'Example GmbH'];
   assert.deepEqual(cleanAudience(audience).segments[0].employers, ['Acme', 'Example GmbH']);
 });
 
 test('country mix validation gives an actionable error before saving', () => {
-  const audience = blankAudience('ATS');
+  const audience = blankAudience({ name: 'ATS', role: null, goal: '' });
   assert.equal(audienceProblem({ ...audience, countries: undefined }), null);
   assert.equal(audienceProblem({ ...audience, countries: { DE: 60, GR: 40 } }), null);
   const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: 0 }, { DE: -1 }, { DE: NaN }];
@@ -69,17 +69,17 @@ test('whatever the slider does, shares are whole percents that add up to exactly
 });
 
 test('adding a segment takes an even slice, removing one hands its share back in proportion', () => {
-  const base = { ...blankAudience('d'), segments: setShare(addSegment(blankAudience('d')), 'seg-1', 75).segments };
+  const base = { ...blankAudience({ name: 'd', role: null, goal: '' }), segments: setShare(addSegment(blankAudience({ name: 'd', role: null, goal: '' })), 'seg-1', 75).segments };
   assert.deepEqual(base.segments.map((s) => s.share), [75, 25]);
   const three = addSegment(base);
   assert.deepEqual(three.segments.map((s) => [s.id, s.share]), [['seg-1', 50], ['seg-2', 17], ['seg-3', 33]]);
   const two = removeSegment(three, 'seg-2');
   assert.deepEqual(two.segments.map((s) => [s.id, s.share]), [['seg-1', 60], ['seg-3', 40]]);
-  assert.equal(removeSegment(blankAudience('d'), 'seg-1').segments.length, 1, 'the last segment stays');
+  assert.equal(removeSegment(blankAudience({ name: 'd', role: null, goal: '' }), 'seg-1').segments.length, 1, 'the last segment stays');
 });
 
 test('the audience is checked before it is saved', () => {
-  const audience = blankAudience('An ATS');
+  const audience = blankAudience({ name: 'An ATS', role: null, goal: '' });
   assert.equal(audienceProblem(audience), null);
   assert.equal(audienceProblem({ ...audience, persona_count: 1 }), null);
   assert.match(String(audienceProblem({ ...audience, persona_count: 0 })), /from 1 to 200/);
@@ -113,7 +113,7 @@ test('a persona the user added is told apart from one the shares allot, by the e
 
 test('the persona count splits by share with at least 3 per segment, fewer only when the run is too small', () => {
   const audience = (persona_count: number, shares: number[]) => {
-    const base = blankAudience('A product');
+    const base = blankAudience({ name: 'A product', role: null, goal: '' });
     return { ...base, persona_count, segments: shares.map((share, i) => ({ ...base.segments[0], id: `seg-${i + 1}`, share })) };
   };
   assert.deepEqual(segmentCounts(audience(50, [50, 30, 20])), [25, 15, 10]);

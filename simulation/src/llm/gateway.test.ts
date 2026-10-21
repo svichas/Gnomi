@@ -105,6 +105,7 @@ const OK = '{"thought":"Jobs is in the menu.","feeling":0}';
 
 function stubFetch(...responses: Array<() => Response | Promise<Response>>) {
   const urls: string[] = [];
+  // biome-ignore lint/suspicious/noExplicitAny: parsed request bodies in four providers' wire formats, read field by field
   const bodies: any[] = [];
   const headers: Headers[] = [];
   mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {

@@ -68,12 +68,14 @@ export function App() {
   const baseline = useRef('');
   const projectDir = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: home, homePage and revision mark a new page, which moves focus to its heading
   useEffect(() => {
     const card = tab === 'settings' && settingsSection ? document.getElementById(`settings-${settingsSection}`) : null;
     if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
     window.scrollTo({ top: 0 });
     main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
   }, [tab, home, homePage, revision, settingsSection]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lists the runs again each time a home page opens
   useEffect(() => { if (home) void window.gnomi.listRuns().then(setAllRuns, (err) => setProblem(errorText(err))); }, [home, homePage]);
   const [unsaved, setUnsaved] = useState<{ resolve(choice: 'save' | 'discard' | 'cancel'): void } | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
@@ -107,6 +109,7 @@ export function App() {
     setDraft((current) => current && { ...current, settings: withAvailableProvider(current.settings, available.keys) });
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: startup runs once; loadProject only uses setters and refs
   useEffect(() => {
     void stopped.then(setProblem);
     void (async () => {

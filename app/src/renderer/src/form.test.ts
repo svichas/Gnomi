@@ -170,7 +170,7 @@ test('the run settings are checked, and a problem is worded for the tab that sho
 });
 
 test('the audience goes into the project cleaned up, or stops the save with a sentence', () => {
-  const audience = blankAudience('An ATS');
+  const audience = blankAudience({ name: 'An ATS', role: null, goal: '' });
   audience.segments[0] = { ...audience.segments[0], name: ' Recruiters ', typical_goals: ['post jobs', '  ', ' screen '], goal_override: '  ' };
   const config = toConfig(form({}, { audience }));
   assert.ok(typeof config !== 'string');

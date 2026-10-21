@@ -1,3 +1,4 @@
+import { defaultAudience } from '@gnomi/engine/audience/defaults.ts';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
@@ -67,18 +68,9 @@ export function blankSegment(id: string, name: string, share: number): Segment {
   };
 }
 
-/** The "start from one segment" audience: everyone in one segment, with the shape of the product's own description. */
-export function blankAudience(description: string): Audience {
-  // Company size and accessibility keep the existing defaults until the profile schema editor.
-  return {
-    seed: newSeed(),
-    persona_count: 50,
-    segments: [{ ...blankSegment('seg-1', 'Everyone', 100), description }],
-    company_size: [20, 1000],
-    languages: { en: 1 },
-    countries: { US: 100 },
-    accessibility: { none: 0.92, low_vision: 0.03, colour_blind: 0.03, screen_reader: 0.01, motor: 0.01 },
-  };
+/** The "start from one segment" audience: the engine's default (engine/src/audience/defaults.ts) with a fresh seed. */
+export function blankAudience(project: Pick<ProjectConfig, 'name' | 'role' | 'goal'>): Audience {
+  return { ...defaultAudience(project), seed: newSeed() };
 }
 
 const withShares = (segments: Segment[], shares: number[]) => segments.map((segment, i) => ({ ...segment, share: shares[i] }));

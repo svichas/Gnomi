@@ -181,6 +181,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
       }],
     },
   }));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sigma reads the filter and graph through refs, so it is told to repaint when they change
   useEffect(() => {
     sigma.current?.refresh();
   }, [filter, shown]);
@@ -213,11 +214,11 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
         </div>
         <div className="swarm-viewbar">
           <div className="swarm-view-switch" role="group" aria-label="Map activity view">
-            {([['all', 'All activity', 'activity'], ['friction', 'Friction', 'alert'], ['social', 'Social', 'message']] as const).map(([view, label, icon]) => <button key={view} aria-pressed={momentView === view} onClick={() => changeMomentView(view)}><Icon name={icon} size={14} />{label}</button>)}
+            {([['all', 'All activity', 'activity'], ['friction', 'Friction', 'alert'], ['social', 'Social', 'message']] as const).map(([view, label, icon]) => <button type="button" key={view} aria-pressed={momentView === view} onClick={() => changeMomentView(view)}><Icon name={icon} size={14} />{label}</button>)}
           </div>
           <Check checked={bubbles} onChange={setBubbles}>Show bubbles</Check>
         </div>
-        <div className="swarm-canvas" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
+        <div className="swarm-canvas" role="group" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
           <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
             <Interaction onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
             {bubbles && <MomentBubbles moments={highlights} name={name} onOpen={onOpen} showConversations={types.has('talked')} />}
