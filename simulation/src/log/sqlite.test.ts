@@ -168,6 +168,21 @@ test('a v1 project upgrades on open and keeps its runs and events', (t) => {
   assert.equal(userVersion(dir), 6);
 });
 
+test('a read-only open of an older project upgrades it, leaving its running runs alone', (t) => {
+  const dir = tempDir(t);
+  const store = openProject(dir);
+  store.createRun(snapshot());
+  store.close();
+  const v5 = new DatabaseSync(join(dir, 'project.sqlite'));
+  v5.exec('PRAGMA user_version = 5;');
+  v5.close();
+
+  const reader = openProject(dir, { readOnly: true });
+  assert.equal(reader.listRuns()[0].status, 'running');
+  reader.close();
+  assert.equal(userVersion(dir), 6);
+});
+
 test('a v2 project upgrades on open with an empty population', (t) => {
   const dir = tempDir(t);
   const store = openProject(dir);

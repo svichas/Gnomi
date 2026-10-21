@@ -149,8 +149,9 @@ export function openProject(dir: string, { readOnly = false, recover = true } = 
   }
   if (readOnly) {
     if (user_version < SCHEMA_VERSION) {
+      // No build like this one has it open, or it would be upgraded already: upgrade it, leaving its runs' status alone.
       db.close();
-      throw new Error(`project.sqlite is schema v${user_version}; open it in Gnomi once to upgrade it to v${SCHEMA_VERSION}`);
+      return openProject(dir, { recover: false });
     }
   } else {
     // IMMEDIATE: a deferred transaction that has read cannot wait for the write lock, it fails at once.
