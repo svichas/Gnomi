@@ -325,6 +325,16 @@ test('page and model text cannot add HTML, images or links to the export, and ev
   assert.ok(md.includes('   - Page: http://localhost:3001/reset\n') && !md.includes('s3cret'), 'no token in the export');
 });
 
+test('an evidence page keeps its hash route without the route\'s query, and a text\'s name that parses as a URL stays whole', () => {
+  const md = reportToMarkdown({
+    ...report,
+    themes: [{ ...theme, evidence: [{ ...theme.evidence[0], url: 'https://app.test/?ref=a#/settings?tab=s3cret' }] }],
+    frictions: [{ ...report.frictions[0], url: 'Pricing: is it clear?' }],
+  });
+  assert.ok(md.includes('Page: https://app.test/#/settings\n') && !md.includes('s3cret'), 'the route names the page; its query may carry a token');
+  assert.ok(md.includes('Pricing: is it clear?'));
+});
+
 test('missing-usage copy names the count and preserves uncertainty about provider billing', () => {
   assert.equal(missingUsageText(undefined), null);
   assert.equal(missingUsageText(0), null);

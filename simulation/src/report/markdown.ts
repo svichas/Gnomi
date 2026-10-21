@@ -7,8 +7,9 @@ import { formatAttributeValue } from './dimensions.ts';
 // or hide a link behind its own words. Escaping `[` is enough to stop `![`.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[\\[\]`]/g, '\\$&').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const cell = (text: string) => line(text).replace(/\|/g, '\\|');
-// A query string or fragment can carry a session or reset token; a text's or design's name is not a URL and stays whole.
-const pageUrl = (url: string) => line(URL.canParse(url) ? url.replace(/[?#].*$/s, '') : url);
+// A query string or fragment can carry a session or reset token, but a hash route (#/settings) names the page and stays.
+// A text's or design's name is not an http(s) URL and stays whole.
+const pageUrl = (url: string) => line(/^https?:\/\//i.test(url) ? url.replace(/[?#].*$/s, '') + (/#!?\/[^?]*/.exec(url)?.[0] ?? '') : url);
 const pct = (rate: number | null) => (rate === null ? '-' : `${Math.round(rate * 100)}%`); // null: a rate over nobody
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
