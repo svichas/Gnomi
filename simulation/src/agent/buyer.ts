@@ -7,7 +7,7 @@ import { opinionSchema } from '../opinion/index.ts';
 import type { LlmGateway, UserPart } from '../seams.ts';
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, RunConfig, Segment } from '../types.ts';
 import { firstName, personaSection, taskSection, wordsFor } from './prompt.ts';
-import { sawLines, surveyedName, type SurveyedEnd } from './survey.ts';
+import { sawLines, surveyedName, surveyFacts, type SurveyedEnd } from './survey.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const BUYER_SURVEY = 'buyer_survey';
@@ -70,8 +70,6 @@ export function buyerParts(opts: { persona: Persona; poi: Poi; end: SurveyedEnd;
  */
 export async function askBuyer(opts: { llm: LlmGateway; config: RunConfig; persona: Persona; segment: Segment | null; poi: Poi; end: SurveyedEnd; own: GnomiEvent[]; opinion: Opinion | null; round: number; signal: AbortSignal }): Promise<EventPayloads['persona.survey']> {
   const { config, persona, poi, own } = opts;
-  const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
-  const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
   const { object } = await opts.llm.call({
     role: 'navigator',
     model: config.project.settings.routing.navigator,
@@ -85,10 +83,7 @@ export async function askBuyer(opts: { llm: LlmGateway; config: RunConfig; perso
       persona,
       poi,
       end: opts.end,
-      detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
-      steps: steps.length,
-      frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
-      thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+      ...surveyFacts(own),
       opinion: opts.opinion,
     }),
     schema: buyerSurveySchema,

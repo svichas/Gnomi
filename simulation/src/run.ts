@@ -5,7 +5,7 @@ import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
 import { HEARD_POSTS, type HeardPost } from './agent/prompt.ts';
 import { socialParts, socialSchema, socialSystemPrompt } from './agent/social.ts';
-import { surveyedName, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
+import { surveyedName, surveyFacts, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
@@ -295,8 +295,6 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         if (!hard.signal.aborted) record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload });
         return;
       }
-      const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
-      const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
       const compare = comparisonFor(project, persona, poi, store.events(run_id, { personaId: persona.id, types: ['persona.survey'] })); // competitor POIs only
       const { object } = await budgetedLlm.call(compare.ask({
         role: 'navigator',
@@ -306,15 +304,12 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         round: base.round,
         purpose: 'survey',
         poi_id: poi.id,
-        system: surveySystemPrompt(persona, project, segmentOf(persona, project), poi),
+        system: surveySystemPrompt(persona, project, segment, poi),
         user: surveyParts({
           persona,
           product: surveyedName(project, poi),
           end,
-          detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
-          steps: steps.length,
-          frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
-          thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+          ...surveyFacts(own),
           opinion,
         }),
         schema: surveySchema,

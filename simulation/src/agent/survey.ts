@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema, upTo5 } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
-import type { Opinion, Persona, Poi, ProjectConfig, Segment, SurveyItem } from '../types.ts';
+import type { GnomiEvent, Opinion, Persona, Poi, ProjectConfig, Segment, SurveyItem } from '../types.ts';
 import type { EpisodeEnd } from './loop.ts';
 import { clip, firstName, personaSection, taskSection, wordsFor } from './prompt.ts';
 
@@ -87,6 +87,18 @@ export function sawLines(p: string, product: string, thoughts: string[], opinion
     ...(thoughts.length ? [`What ${p} was thinking at ${thoughts.length === 1 ? 'the last step' : `the last ${thoughts.length} steps`}:`, ...thoughts.map((t) => `- "${clip(t, 200)}"`)] : []),
     opinion ? `Current opinion of ${product} (self-reported): ${JSON.stringify(opinion)}` : `${p} has no settled opinion of ${product} yet.`,
   ];
+}
+
+/** What a survey recalls of the episode from the persona's own events on the POI: how it ended, its valid steps, its frictions and latest thoughts. */
+export function surveyFacts(own: GnomiEvent[]): { detail: string | null; steps: number; frictions: string[]; thoughts: string[] } {
+  const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
+  const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
+  return {
+    detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
+    steps: steps.length,
+    frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
+    thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+  };
 }
 
 /** The volatile part: how the episode ended, how long it took, what the persona thought and reported on the way, and its opinion. */
