@@ -108,3 +108,18 @@ test('rejudge records a new judge answer for an ended run, rewrites its report f
   sql(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
   assert.match(fails('r-0001'), /has not ended/);
 });
+
+test('runs and report only read the project: a run still live in another process stays running', () => {
+  const project = join(dir, 'live');
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+  // The app, mid-run: its connection is open and the run is not finished.
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec("UPDATE run SET status = 'running', ended_at = NULL");
+    assert.match(cli('runs', project), /^r-0001 {2}running,/m);
+    assert.match(cli('report', project, '--format', 'md'), /^# Gnomi report: Pick a plan/);
+    assert.equal(db.prepare('SELECT status FROM run').get()?.status, 'running');
+  } finally {
+    db.close();
+  }
+});

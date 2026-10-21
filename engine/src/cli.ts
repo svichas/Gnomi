@@ -376,11 +376,11 @@ async function runSimulation(v: Values): Promise<void> {
   }
 }
 
-/** A project folder the CLI or the app wrote; never creates one. */
-function existingProject(dir: string | undefined): ProjectStore {
+/** A project folder the CLI or the app wrote, read-only by default: its run may still be live in the app or another CLI. */
+function existingProject(dir: string | undefined, options: Parameters<typeof openProject>[1] = { readOnly: true }): ProjectStore {
   if (!dir) throw new Error(`Name the project folder.\n\n${USAGE}`);
   if (!existsSync(join(dir, 'project.sqlite'))) throw new Error(`${dir} is not a Gnomi project folder.`);
-  return openProject(dir);
+  return openProject(dir, options);
 }
 
 function listRuns(dir: string | undefined): void {
@@ -417,7 +417,7 @@ function showReport(v: Values, dir: string | undefined): void {
 
 /** Runs an ended run's judge and author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
 async function rejudge(v: Values, dir: string | undefined): Promise<void> {
-  const store = existingProject(dir);
+  const store = existingProject(dir, {}); // writes the judge's new events
   try {
     const { run_id, config } = pickRun(store, v, dir);
     // From the log, not the row: opening the project marks a live run's row interrupted.

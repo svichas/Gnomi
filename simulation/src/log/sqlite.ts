@@ -132,34 +132,42 @@ function toEvent({ payload_json, ...event }: EventRow): GnomiEvent {
   return { ...event, payload } as GnomiEvent;
 }
 
-export function openProject(dir: string): ProjectStore {
-  mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(join(dir, 'project.sqlite'));
+/** readOnly never writes, for reading a project another process may be running in: no migration, no runs marked interrupted. */
+export function openProject(dir: string, { readOnly = false } = {}): ProjectStore {
+  if (!readOnly) mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, 'project.sqlite'), { readOnly });
   // WAL with NORMAL: commits survive an app crash; a power cut can drop the last few.
-  db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;');
+  if (!readOnly) db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;');
   const { user_version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (user_version > SCHEMA_VERSION) {
     db.close();
     throw new Error(`project.sqlite is schema v${user_version}; this build reads up to v${SCHEMA_VERSION}`);
   }
-  db.exec('BEGIN');
-  try {
-    db.exec(SCHEMA);
-    // Existing sessions retain no target binding; only a new recording can establish ownership.
-    if (!db.prepare('PRAGMA table_info(session)').all().some((column) => column.name === 'target_id')) db.exec('ALTER TABLE session ADD COLUMN target_id TEXT');
-    if (user_version < 6) db.exec(`
-      INSERT OR IGNORE INTO persona_generation (id, persona_count)
-      SELECT 1, json_extract(config_json, '$.audience.persona_count') FROM project
-      WHERE json_extract(config_json, '$.audience.persona_count') IS NOT NULL AND EXISTS (SELECT 1 FROM persona);
-    `);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
-  } catch (error) {
-    db.exec('ROLLBACK');
-    db.close();
-    throw error;
+  if (readOnly) {
+    if (user_version < SCHEMA_VERSION) {
+      db.close();
+      throw new Error(`project.sqlite is schema v${user_version}; open it in Gnomi once to upgrade it to v${SCHEMA_VERSION}`);
+    }
+  } else {
+    db.exec('BEGIN');
+    try {
+      db.exec(SCHEMA);
+      // Existing sessions retain no target binding; only a new recording can establish ownership.
+      if (!db.prepare('PRAGMA table_info(session)').all().some((column) => column.name === 'target_id')) db.exec('ALTER TABLE session ADD COLUMN target_id TEXT');
+      if (user_version < 6) db.exec(`
+        INSERT OR IGNORE INTO persona_generation (id, persona_count)
+        SELECT 1, json_extract(config_json, '$.audience.persona_count') FROM project
+        WHERE json_extract(config_json, '$.audience.persona_count') IS NOT NULL AND EXISTS (SELECT 1 FROM persona);
+      `);
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}; COMMIT;`);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      db.close();
+      throw error;
+    }
+    // A run still 'running' at open was cut off by a crash; nothing else will ever finish it.
+    db.exec("UPDATE run SET status = 'interrupted' WHERE status = 'running';");
   }
-  // A run still 'running' at open was cut off by a crash; nothing else will ever finish it.
-  db.exec("UPDATE run SET status = 'interrupted' WHERE status = 'running';");
 
   const selectProject = db.prepare('SELECT config_json FROM project WHERE id = 1');
   const upsertProject = db.prepare(
