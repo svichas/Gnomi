@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { PersonaSchema, ProfileAttribute, ProfileGroup, Segment } from '@gnomi/simulation/types.ts';
-import { ATTRIBUTE_TYPES, choiceValues, customAttribute, parseProfileTemplate, profileProblem, PROFILE_GROUPS, serializeProfileTemplate, setAttributeChoices } from './profile.ts';
+import { ATTRIBUTE_TYPES, choiceValues, customAttribute, DEFAULT_IDS, parseProfileTemplate, profileProblem, PROFILE_GROUPS, serializeProfileTemplate, setAttributeChoices } from './profile.ts';
 import { ProfileAttributeEditor } from './ProfileAttributeEditor.tsx';
 import { Button, Card, Field, inputClass, Note, OutcomeNote, secondaryButton, useAction } from './ui.tsx';
-
-const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
 
 export function ProfileEditor({ schema, segments, disabled, onSchema }: { schema?: PersonaSchema; segments: Segment[]; disabled: boolean; onSchema(schema: PersonaSchema): void }) {
   const attributes = getPersonaSchema(schema);
