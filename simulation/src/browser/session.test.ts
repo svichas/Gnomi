@@ -99,7 +99,7 @@ test('record: finish() says so when the window was closed first, and the browser
   await page.close();
   for (let i = 0; browser.isConnected() && i < 40; i++) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(browser.isConnected(), false);
-  await assert.rejects(recording.finish(), new Error('The recorder window was closed before the login was saved'));
+  await assert.rejects(recording.finish(), new Error('The login window was closed before the login was saved. Record it again and keep the window open until you save.'));
 });
 
 test('record: cancel() closes the browser and nothing can be saved afterwards', async (t) => {

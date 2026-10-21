@@ -31,7 +31,7 @@ export async function recordLogin(browser: Browser, url: string): Promise<LoginR
     page,
     async finish() {
       try {
-        if (page.isClosed() || !browser.isConnected()) throw new Error('The recorder window was closed before the login was saved');
+        if (page.isClosed() || !browser.isConnected()) throw new Error('The login window was closed before the login was saved. Record it again and keep the window open until you save.');
         const storageState = await context.storageState({ indexedDB: true }); // some apps keep their tokens there
         const expiries = storageState.cookies.map((cookie) => cookie.expires).filter((expires) => expires > 0); // -1 marks a session cookie
         return {

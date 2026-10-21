@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import type { SessionInfo } from '@gnomi/simulation/types.ts';
 import { call, errorText } from './engine.ts';
+import { Icon } from './Icon.tsx';
 import { RecordingPanel } from './Recorder.tsx';
 import type { Recorder } from './Recorder.tsx';
 import { Button, Card, Field, inputClass, Note, OutcomeNote, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
+
+function loginStatus(session: SessionInfo, checked: Outcome | 'checking' | undefined): { tone: string; label: string } {
+  if (checked && checked !== 'checking') return checked.ok ? { tone: 'good', label: 'Works' } : { tone: 'bad', label: 'Not working' };
+  if (session.expires_at !== null && session.expires_at < Date.now()) return { tone: 'bad', label: 'Expired' };
+  return session.verified_at === null ? { tone: 'neutral', label: 'Not checked' } : { tone: 'good', label: 'Ready' };
+}
 
 function expiry(session: SessionInfo): string {
   if (session.expires_at === null) return 'Its cookies last until the browser session ends.';
@@ -26,8 +33,10 @@ export function Logins(props: {
   const [newRole, setNewRole] = useState('');
   const [checks, setChecks] = useState<Record<string, Outcome | 'checking'>>({});
 
+  // The name only matters once there are several logins to choose between, so the first one gets a default.
+  const defaultRole = sessions.some((session) => session.role === 'user') ? null : 'user';
   const record = (name: string) =>
-    recorder.start(name, async () => (name ? saveFirst() : 'Name the role first, for example recruiter.'));
+    recorder.start(name, async () => (name ? saveFirst() : 'Name this login, for example recruiter.'));
 
   async function check(name: string) {
     setChecks((was) => ({ ...was, [name]: 'checking' }));
@@ -42,82 +51,84 @@ export function Logins(props: {
     setChecks((was) => ({ ...was, [name]: result }));
   }
 
+  const recordingBusy = recorder.busy || recorder.recording !== null;
+
   return (
     <Card title="Logins">
       <div className="space-y-4">
         <p className="text-sm text-stone-600">
-          For a site behind a login, record one session per role. You log in yourself in a separate browser window and Gnomi keeps the session,
-          encrypted on this computer. Gnomi never sees your password.
+          If the site needs a login, log in once yourself and Gnomi reuses that session for the personas. It is kept encrypted on this computer, and
+          Gnomi never sees your password.
         </p>
         {!sessionsPersist && (
           <Note tone="info">This computer has no secure key storage, so recorded logins will not survive a restart of Gnomi.</Note>
         )}
 
-        <div>
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
-              <Field label="Role name">
-                <input
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value.toLowerCase())}
-                  placeholder="recruiter"
-                  spellCheck={false}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-            <Button onClick={() => record(newRole.trim().toLowerCase())} disabled={recorder.busy || recorder.recording !== null} variant="primary">
-              Record login
-            </Button>
-          </div>
-          <p className="mt-1 text-xs text-stone-500">
-            One word of lowercase letters, digits, - or _, such as recruiter. Recording saves the project first, then opens its start page.
-          </p>
-        </div>
-
-        <RecordingPanel recorder={recorder} />
-        <OutcomeNote outcome={recorder.outcome} />
-
         {sessions.length > 0 && (
           <ul aria-label="Recorded logins" className="space-y-2">
             {sessions.map((session) => {
               const checked = checks[session.role];
+              const status = loginStatus(session, checked);
               return (
                 <li key={session.role} className="rounded-lg border border-stone-200 p-3">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-stone-900">{session.role}</p>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-stone-900">{session.role}</p>
+                        <span className="tone-chip" data-tone={status.tone}>{status.label}</span>
+                      </div>
                       <p className="break-all text-xs text-stone-600">Starts on {session.start_url}</p>
                       <p className="text-xs text-stone-500">
                         Recorded {when(session.recorded_at)}. Last verified {session.verified_at === null ? 'never' : when(session.verified_at)}. {expiry(session)}
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <Button
-                        onClick={() => check(session.role)}
-                        disabled={checked === 'checking'}
-                        aria-label={`Check ${session.role} login`}
-                      >
-                        {checked === 'checking' ? 'Checking...' : 'Check'}
+                      <Button small onClick={() => check(session.role)} disabled={checked === 'checking'} aria-label={`Check ${session.role} login`}>
+                        {checked === 'checking' ? 'Checking…' : 'Check'}
                       </Button>
-                      <Button
-                        onClick={() => record(session.role)}
-                        disabled={recorder.busy || recorder.recording !== null}
-                        aria-label={`Re-record ${session.role} login`}
-                      >
+                      <Button small onClick={() => record(session.role)} disabled={recordingBusy} aria-label={`Re-record ${session.role} login`}>
                         Re-record
                       </Button>
                     </div>
                   </div>
-                  {checked && checked !== 'checking' && (
+                  {checked && checked !== 'checking' && !checked.ok && (
                     <div className="mt-2">
-                      <Note tone={checked.ok ? 'ok' : 'error'}>{checked.text}</Note>
+                      <Note tone="error">{checked.text}</Note>
                     </div>
                   )}
                 </li>
               );
             })}
           </ul>
+        )}
+
+        <RecordingPanel recorder={recorder} />
+        <OutcomeNote outcome={recorder.outcome} />
+
+        {recorder.recording === null && (
+          <div className="rounded-lg border border-dashed border-stone-300 p-3">
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <Field label={defaultRole ? 'Login name (optional)' : 'Login name'}>
+                  <input
+                    value={newRole}
+                    onChange={(e) => setNewRole(e.target.value.toLowerCase())}
+                    placeholder={defaultRole ?? 'recruiter'}
+                    spellCheck={false}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <Button onClick={() => record(newRole.trim().toLowerCase() || (defaultRole ?? ''))} disabled={recordingBusy} variant={sessions.length ? 'secondary' : 'primary'}>
+                <Icon name="plus" size={16} />
+                {sessions.length ? 'Record another login' : 'Record login'}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-stone-500">
+              A name is only needed when personas log in as different kinds of user, such as recruiter and candidate: lowercase letters, digits, - or _.
+              Recording saves the project first, then opens its start page in a new browser window.
+            </p>
+          </div>
         )}
 
         {perSegment ? (
