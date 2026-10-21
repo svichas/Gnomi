@@ -357,7 +357,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       return drained;
     },
 
-    storageState: () => context.storageState(),
+    storageState: () => context.storageState({ indexedDB: true }), // as a recorded login: some apps keep their tokens there
     close: () => context.close(),
   };
 }

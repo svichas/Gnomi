@@ -105,6 +105,19 @@ test('a woken persona carries on as the same visitor: its page reopens with the 
   assert.deepEqual(pages.map((p) => p.options.storageState), [login, own(1), own(2)]);
 });
 
+test('an error from reloading a woken persona\'s page is not reported as one the persona ran into', async () => {
+  const { browsers } = fakeBrowsers((page) => {
+    let reported = false;
+    return { errors: () => (page.gotos.length && !reported && (reported = true) ? [{ kind: 'http' as const, status: 405, message: 'GET /users answered 405' }] : []) };
+  });
+  const { report, events } = await runWeb('reload', {
+    personas: personas(1), navigator: () => step('click', 'e1'), browsers, withLogin: true,
+    settings: { social: true, rounds: 3, concurrency: 1 }, project: { audience },
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.equal(of(events, 'signal.error').length, 1, 'only the first page\'s error, which a step saw');
+});
+
 test('a page a late redirect replaces under the snapshot is read again; the persona goes on and nobody else is cancelled', async () => {
   let reads = 0;
   const { browsers } = fakeBrowsers((page) => ({

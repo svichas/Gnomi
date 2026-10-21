@@ -131,6 +131,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     page = await deps.openPage(poi, state);
     if (signal.aborted) return false;
     await page.goto(lastGoodUrl);
+    page.errors(); // the reload's own errors are not something the persona did
     return true;
   };
 
