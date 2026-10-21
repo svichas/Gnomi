@@ -37,6 +37,27 @@ export function projectGateway(opts: { fake: boolean; secrets: Secrets; config: 
   return createGateway({ secrets: { get: opts.secrets }, localBaseUrl: opts.config.settings.local_base_url, record: opts.record, onThrottle: opts.onThrottle });
 }
 
+/** Model work after a run, such as a rejudge: like a run's gateway at its cost budget, no call starts once these calls have spent cap, and those in flight are canceled. */
+export function cappedGateway(llm: LlmGateway, cap: number, signal: AbortSignal): LlmGateway {
+  let spent = 0;
+  const reached = new AbortController();
+  const stop = AbortSignal.any([signal, reached.signal]);
+  return {
+    async call(req) {
+      stop.throwIfAborted();
+      return llm.call({
+        ...req,
+        signal: req.signal ? AbortSignal.any([req.signal, stop]) : stop,
+        onAttempt(attempt) {
+          spent += attempt.payload.cost_usd;
+          if (spent >= cap) reached.abort(new Error(`The $${cap} budget was reached`));
+          req.onAttempt?.(attempt);
+        },
+      });
+    },
+  };
+}
+
 /** What the audience builder needs for this project: setup calls and drafts go to its store, progress to emit. */
 export function audienceDeps(store: ProjectStore, config: ProjectConfig, llm: LlmGateway, opts: { signal?: AbortSignal; emit?: (progress: PersonaProgress) => void } = {}): AudienceDeps {
   // Proposed segments may only use logins that were actually recorded (metadata only, no session key needed).

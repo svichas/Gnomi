@@ -185,6 +185,7 @@ export function openProject(dir: string, { readOnly = false, recover = true } = 
      VALUES (?, ?, 'running', ?, ?, 0, ?)`,
   );
   const updateRunEnd = db.prepare('UPDATE run SET status = ?, stop_reason = ?, cost_usd = ?, ended_at = ? WHERE id = ?');
+  const updateRunCost = db.prepare('UPDATE run SET cost_usd = ? WHERE id = ?');
   const selectRuns = db.prepare(
     'SELECT id, status, stop_reason, cost_usd, started_at, ended_at, snapshot_json FROM run ORDER BY rowid DESC',
   );
@@ -257,6 +258,9 @@ export function openProject(dir: string, { readOnly = false, recover = true } = 
     finishRun(run_id, status, stop_reason, cost_usd) {
       const { changes } = updateRunEnd.run(status, stop_reason, cost_usd, Date.now(), run_id);
       if (changes === 0) throw new Error(`No run ${run_id}`);
+    },
+    setRunCost(run_id, cost_usd) {
+      if (updateRunCost.run(cost_usd, run_id).changes === 0) throw new Error(`No run ${run_id}`);
     },
     listRuns() {
       return (selectRuns.all() as RunDbRow[]).map((row) => ({

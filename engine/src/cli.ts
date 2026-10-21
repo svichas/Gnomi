@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, type Secrets } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -23,7 +23,7 @@ import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, GnomiEvent, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -36,8 +36,9 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
   runs <project dir>
   report <project dir> [--run <run id>] [--format summary|md|json]
-  rejudge <project dir> [--run <run id>] [--fake-llm]
-      groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing
+  rejudge <project dir> [--run <run id>] [--budget <usd>] [--fake-llm]
+      groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
+      It spends at most what is left of the run's cost budget, or --budget instead.
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -60,6 +61,7 @@ const OPTIONS = {
   project: { type: 'string' },
   id: { type: 'string' },
   run: { type: 'string' },
+  budget: { type: 'string' },
   format: { type: 'string', default: 'summary' },
   json: { type: 'boolean', default: false },
   'fake-llm': { type: 'boolean', default: false },
@@ -431,10 +433,36 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     requireKey(settings, 'judge', fake);
     requireKey(settings, 'author', fake);
     const events = () => store.events(run_id);
-    const before = events().length;
+    const log = events();
+    const [before, round] = [log.length, log.at(-1)?.round ?? 1];
+    const spent = (from: GnomiEvent[]) => from.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
+    // What is left of the run's cost budget, unless --budget says what this rejudge may spend.
+    const budget = v.budget === undefined ? settings.cost_budget_usd - spent(log) : Number(v.budget);
+    if (!(budget > 0)) throw new Error(v.budget === undefined ? `${run_id} has spent its $${settings.cost_budget_usd} budget; pass --budget <usd> to let rejudge spend more.` : '--budget must be a positive amount in dollars.');
     const record = timeline(store);
-    await runReportModels({ config, round: events().at(-1)?.round ?? 1, llm: projectGateway({ fake, secrets: envSecrets, config: config.project, record }), record, events });
+    const stop = new AbortController();
+    process.once('SIGINT', () => {
+      note('Stopping… (Ctrl-C again to quit at once)');
+      stop.abort();
+      process.once('SIGINT', () => process.exit(130));
+    });
+    const path = `runs/${run_id}/report`;
+    let report: Report;
+    try {
+      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), record, events });
+    } finally {
+      // Written even when the judge failed or was stopped: the author's new suggestions are in the log, and the files are snapshots of it.
+      report = buildReport(events());
+      const blobs = createFsBlobStore(dir!);
+      await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
+      await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
+      store.setRunCost(run_id, report.cost_usd);
+      // As a run ends: an app with this run open reloads its report.
+      record({ run_id, round, persona_id: null, poi_id: null, type: 'report.generated', payload: { path: `${path}.json`, friction_count: report.frictions.length } });
+    }
     const added = events().slice(before);
+    const cost_usd = spent(added);
+    if (cost_usd >= budget) note(`This rejudge reached its $${budget.toFixed(2)} budget, so it made no more model calls.`);
     const pois = (type: 'report.themes' | 'report.suggestions') => new Set(added.flatMap((e) => (e.type === type ? [e.payload.poi_id] : [])));
     const asked = added.flatMap((e) => (e.type === 'report.started' ? e.payload.pois : []));
     const [answered, suggested] = [pois('report.themes'), pois('report.suggestions')];
@@ -442,13 +470,6 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     if (missing.length > 0 && missing.length < asked.length) note(`The judge gave no valid answer for ${missing.join(', ')}, which keeps its earlier themes.`);
     const unsuggested = [...answered].filter((poi) => !suggested.has(poi));
     if (unsuggested.length > 0) note(`The author gave no suggested changes for ${unsuggested.join(', ')}, so its new themes have none.`);
-    // Written even when the judge failed: the author's new suggestions are in the log, and the files are snapshots of it.
-    const report = buildReport(events());
-    const path = `runs/${run_id}/report`;
-    const blobs = createFsBlobStore(dir!);
-    await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
-    await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
-    const cost_usd = added.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
     const themes = report.themes?.length ?? 0;
     const [report_json, report_md] = [resolve(dir!, `${path}.json`), resolve(dir!, `${path}.md`)];
     out(`${run_id} judged again: ${themes} themes ($${cost_usd.toFixed(4)})`, { kind: 'rejudge', run_id, themes, cost_usd, report_json, report_md, summary: summarize(report) });

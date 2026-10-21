@@ -3,10 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { checkRun, credential } from './workspace.ts';
+import { cappedGateway, checkRun, credential } from './workspace.ts';
+import { createScriptedGateway } from '@gnomi/simulation/llm/scripted.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { LlmRole, ProjectConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
 
@@ -34,4 +37,15 @@ test('the start check needs a key for every role the run will use, and none with
   // Unused roles need no key: no social rounds, and the persona writer has already written everyone.
   assert.doesNotThrow(() => check(on('socialiser', { social: false })));
   assert.doesNotThrow(() => check(on('persona_writer')));
+});
+
+test('a capped gateway makes no call once its own calls have spent the cap, nor after its signal aborts', async () => {
+  const scripted = createScriptedGateway({ judge: () => ({}) }, (() => {}) as unknown as Recorder, { costPerCall: 0.4 });
+  const ask = (llm: LlmGateway) => llm.call({ role: 'judge', model: DEFAULT_SETTINGS.routing.judge, run_id: null, persona_id: null, round: 1, system: '', user: [], schema: z.object({}) });
+  const capped = cappedGateway(scripted, 1, new AbortController().signal);
+  for (let i = 0; i < 3; i++) await ask(capped); // $1.20: the call that crosses the cap is paid for, so it answers
+  await assert.rejects(ask(capped), /\$1 budget/);
+  const stop = new AbortController();
+  stop.abort();
+  await assert.rejects(ask(cappedGateway(scripted, 1, stop.signal)));
 });

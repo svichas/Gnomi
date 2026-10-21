@@ -109,6 +109,28 @@ test('rejudge records a new judge answer for an ended run, rewrites its report f
   assert.match(fails('r-0001'), /has not ended/);
 });
 
+test('rejudge spends within what is left of the run budget unless --budget allows more, and leaves the run row and log current', () => {
+  const project = join(dir, 'rejudge-budget');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  const price = (usd: number) => db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.cost_usd', ${usd}) WHERE type = 'llm.call'`);
+  try {
+    price(0.01); // scripted calls are free: as if the run had paid for its own
+    cli('rejudge', project);
+    const row = JSON.parse(cli('runs', project, '--json').split('\n')[0]);
+    assert.equal(row.cost_usd, JSON.parse(cli('report', project, '--format', 'json', '--json')).report.cost_usd, 'runs shows what the report counts');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM event WHERE type = 'report.generated'").get()?.n, 2, 'an app with the run open reloads its report');
+
+    price(5); // the run spent its $5 budget
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'rejudge', project, '--fake-llm'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--budget/);
+    assert.match(cli('rejudge', project, '--budget', '0.5'), /judged again/);
+  } finally {
+    db.close();
+  }
+});
+
 test('runs, report and rejudge leave a run still live in another process running', () => {
   const project = join(dir, 'live');
   cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
