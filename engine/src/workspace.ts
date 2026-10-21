@@ -13,8 +13,9 @@ import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
-import type { Persona, PersonaProgress, ProjectConfig, ProviderId } from '@gnomi/simulation/types.ts';
+import type { Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -97,4 +98,18 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
     if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
   return personas;
+}
+
+/** Starts a run of the personas checkRun returned, on a gateway that backs off when the run is throttled. */
+export function launchRun(
+  store: ProjectStore,
+  config: ProjectConfig,
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number },
+  deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
+): RunHandle {
+  let handle: RunHandle | undefined;
+  const llm = projectGateway({ fake: deps.fake, secrets: deps.secrets, config, record: deps.record, onThrottle: (provider) => handle?.throttle(provider) });
+  const base = newRunConfig(config, run);
+  handle = startRun(store.createRun({ ...base, pause_timeout_ms: run.pause_timeout_ms ?? base.pause_timeout_ms }), { store, blobs: deps.blobs, browsers: deps.browsers, llm, record: deps.record, sessions: deps.sessions });
+  return handle;
 }

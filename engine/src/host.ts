@@ -17,14 +17,14 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, credential, estimateFor, population, projectGateway } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, credential, estimateFor, launchRun, population, projectGateway } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
-import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
+import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
 import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo, Transport } from './protocol.ts';
-import type { BlobStore, BrowserPool, LlmGateway, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
-import type { Audience, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { BlobStore, BrowserPool, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
+import type { Audience, Persona, PersonaProgress, ProjectConfig, SessionInfo } from '@gnomi/simulation/types.ts';
 
 interface PortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: PortLike[] }) => void): void;
@@ -98,10 +98,6 @@ function pool(): Promise<BrowserPool> {
 
 const secret = (name: SecretName) => secrets.get(name) ?? null;
 
-function gateway(config: ProjectConfig, record: Recorder, onThrottle?: (provider: ProviderId) => void): LlmGateway {
-  return projectGateway({ fake: FAKE_LLM, secrets: secret, config, record, onThrottle });
-}
-
 function withAudience(): { config: ProjectConfig; audience: Audience } {
   const config = project();
   if (!config.audience) throw new Error('Set up the audience first');
@@ -109,7 +105,7 @@ function withAudience(): { config: ProjectConfig; audience: Audience } {
 }
 
 function writer(config: ProjectConfig, emit?: (progress: PersonaProgress) => void): AudienceDeps {
-  return audienceDeps(current().store, config, gateway(config, current().record), { signal: setupTask?.stop.signal, emit });
+  return audienceDeps(current().store, config, projectGateway({ fake: FAKE_LLM, secrets: secret, config, record: current().record }), { signal: setupTask?.stop.signal, emit });
 }
 
 function persona(id: string): { people: Persona[]; persona: Persona } {
@@ -340,10 +336,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       : { newPage: async (opts) => (await pool()).newPage(opts) };
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
     noSetup('starting a run');
-    let run: RunHandle | undefined;
-    const llm = gateway(config, record, (provider) => run?.throttle(provider));
-    run = startRun(store.createRun(newRunConfig(config, { personas, sessions: verified, reset })), { store, blobs, browsers: browserPool, llm, record, sessions });
-    const started = run;
+    const started = launchRun(store, config, { personas, sessions: verified, reset }, { blobs, record, browsers: browserPool, sessions, fake: FAKE_LLM, secrets: secret });
     const key = runKey(store.dir, started.run_id);
     runs.set(key, started);
     started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {

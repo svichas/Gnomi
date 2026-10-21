@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, checkRun, credential, estimateFor, KEYS, projectGateway, type Secrets } from './workspace.ts';
+import { audienceDeps, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -19,7 +19,7 @@ import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
-import { createRecorder, newRunConfig, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
+import { createRecorder } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
 import type { Audience, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
@@ -344,14 +344,12 @@ async function runSimulation(v: Values): Promise<void> {
     }
     const personas = checkRun(store, config, { reset: false, fake, secrets: envSecrets });
     note(`Estimate for ${personas.length} personas: ${estimateText(estimateFor(config, personas))}; budget $${settings.cost_budget_usd}`);
-    let run: RunHandle | undefined;
-    const llm = projectGateway({ fake, secrets: envSecrets, config, record, onThrottle: (provider) => run?.throttle(provider) });
     // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
     const pool = () => (launched[0] ??= launchBrowserPool({ headless: !v.headed }));
     // Nobody can resume a blocked persona from a terminal, so a block ends their episode at once.
-    const runConfig = store.createRun({ ...newRunConfig(config, { personas, sessions: [], reset: false }), pause_timeout_ms: 0 });
-    run = startRun(runConfig, { store, blobs, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, llm, record, sessions: null });
-    const started = run;
+    const started = launchRun(store, config, { personas, sessions: [], reset: false, pause_timeout_ms: 0 }, {
+      blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake, secrets: envSecrets,
+    });
     process.once('SIGINT', () => {
       note('Stopping… (Ctrl-C again to quit at once)');
       started.stop();
