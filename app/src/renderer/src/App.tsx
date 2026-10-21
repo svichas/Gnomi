@@ -10,12 +10,12 @@ import { Project } from './Project.tsx';
 import { ProjectRunHistory } from './ProjectRunHistory.tsx';
 import type { ProjectAction, ProjectCatalog, WorkspaceRun } from '../../projects.ts';
 import { configuredProviders, withAvailableProvider, type ProviderList } from '../../providers.ts';
-import { ProjectDialog, Projects } from './Projects.tsx';
+import { Projects } from './Projects.tsx';
 import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Button, Note, OpenSettings } from './ui.tsx';
+import { Button, Dialog, Note, OpenSettings } from './ui.tsx';
 import type { SettingsSection } from './credentials.ts';
 import { SimulationDock } from './SimulationDock.tsx';
 import { Icon } from './Icon.tsx';
@@ -345,7 +345,7 @@ export function App() {
             </div>
           </div>
         )}
-        {unsaved && <ProjectDialog title="Save your changes?" onCancel={() => { if (!savingChanges) void resolveUnsaved('cancel'); }}>
+        {unsaved && <Dialog title="Save your changes?" onCancel={() => { if (!savingChanges) void resolveUnsaved('cancel'); }}>
           <p className="text-sm text-stone-700">This project has unsaved changes. Save them before continuing, or discard them.</p>
           {saveProblem && <Note tone="error">{saveProblem}</Note>}
           <div className="flex flex-wrap gap-3">
@@ -353,7 +353,7 @@ export function App() {
             <Button onClick={() => void resolveUnsaved('discard')} disabled={savingChanges}>Discard changes</Button>
             <Button onClick={() => void resolveUnsaved('cancel')} disabled={savingChanges}>Cancel</Button>
           </div>
-        </ProjectDialog>}
+        </Dialog>}
       </main>
       <SimulationDock onOpen={openSessionRun} projects={catalog?.projects ?? []} />
     </div>
