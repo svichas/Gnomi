@@ -5,7 +5,7 @@ import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, 
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { SavedAudience } from '../../audiences.ts';
-import { addSegment, audienceProblem, blankAudience, cleanAudience, generatedCount, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare, staleProfiles } from './audience.ts';
+import { addSegment, audienceProblem, blankAudience, cleanAudience, generatedCount, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, segmentVar, setShare, staleProfiles } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
@@ -47,11 +47,11 @@ function PersonaCount({ audience, onChange, estimate, written }: { audience: Aud
       </div>
       <div>
         <p className="persona-allocation-label">Your audience mix</p>
-        {counts && <div className="persona-allocation-bar" aria-hidden="true">{audience.segments.map((segment, index) => <span key={segment.id} style={{ flex: counts[index], background: `var(--gnomi-segment-${index % 5 + 1})` }} />)}</div>}
+        {counts && <div className="persona-allocation-bar" aria-hidden="true">{audience.segments.map((segment, index) => <span key={segment.id} style={{ flex: counts[index], background: segmentVar(index) }} />)}</div>}
         {counts && (
           <ul aria-label="Personas per segment" className="persona-count-split">
             {audience.segments.map((segment, index) => (
-              <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+              <li key={segment.id} style={{ '--segment-color': segmentVar(index) } as CSSProperties}>
                 <span className="segment-dot" /><span>{segment.name.trim() || 'Unnamed segment'}</span><span className="persona-allocation-share">{segment.share}%</span><strong>{counts[index]} <span className="sr-only">personas</span></strong>
               </li>
             ))}

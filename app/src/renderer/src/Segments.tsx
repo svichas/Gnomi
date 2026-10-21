@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { Segment, SessionInfo, UsageFrequency } from '@gnomi/simulation/types.ts';
+import { segmentVar } from './audience.ts';
 import { Icon } from './Icon.tsx';
 import { Button, Field, inputClass, NumberInput } from './ui.tsx';
 
@@ -56,7 +57,7 @@ export function SegmentCard(props: {
   const roles = sessions.map((session) => session.role);
   const nameId = useId();
   return (
-    <li className="segment-card" style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+    <li className="segment-card" style={{ '--segment-color': segmentVar(index) } as CSSProperties}>
       <div className="segment-head">
         <span className="segment-dot" aria-hidden="true" />
         <label htmlFor={nameId} className="sr-only">Segment name</label>

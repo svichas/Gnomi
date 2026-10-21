@@ -178,6 +178,9 @@ export function addedByHand(persona: Persona, audienceSeed: number | null): bool
   return persona.seed % 2 ** 32 === fnv1a(`${audienceSeed}/${persona.segment_id}/${slot}/added`);
 }
 
+/** A segment's colour by its place in the audience: the brand has five (assets/brand/brand-tokens.css), used in turn. */
+export const segmentVar = (index: number) => `var(--gnomi-segment-${index % 5 + 1})`;
+
 /** The persona count the written personas were made for: the last generation's setting, or the saved audience's before that was recorded. */
 export const generatedCount = (info: ProjectInfo | null) => info?.generated_persona_count ?? info?.project?.audience?.persona_count;
 

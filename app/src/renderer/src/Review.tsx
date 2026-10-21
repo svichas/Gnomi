@@ -6,7 +6,7 @@ import { effectiveComparisonPois } from '@gnomi/simulation/comparison/config.ts'
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
-import { generatedCount, staleProfiles } from './audience.ts';
+import { generatedCount, segmentVar, staleProfiles } from './audience.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';
 import { call, errorText } from './engine.ts';
@@ -181,7 +181,7 @@ export function Review(props: {
                   {saved.audience.segments.map((segment, index) => {
                     const count = personas.filter((persona) => persona.segment_id === segment.id).length;
                     return (
-                      <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+                      <li key={segment.id} style={{ '--segment-color': segmentVar(index) } as CSSProperties}>
                         <span className="segment-dot" />
                         <span><strong>{segment.name || 'Unnamed segment'}</strong> {count} {count === 1 ? 'persona' : 'personas'} · {segment.share}% · {segment.role ? `${segment.role} login` : 'logged out'}</span>
                       </li>
