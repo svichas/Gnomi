@@ -15,7 +15,8 @@ import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
-import type { Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
+import { socialRounds } from '@gnomi/simulation/settings.ts';
+import type { LlmRole, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -34,6 +35,27 @@ export const credential = (provider: ProviderId, localBaseUrl: string | null | u
 export function projectGateway(opts: { fake: boolean; secrets: Secrets; config: ProjectConfig; record: Recorder; onThrottle?: (provider: ProviderId) => void }): LlmGateway {
   if (opts.fake) return createScriptedGateway({ navigator: DEMO_NAVIGATOR, socialiser: DEMO_SOCIALISER, persona_writer: DEMO_PERSONA_WRITER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, opts.record);
   return createGateway({ secrets: { get: opts.secrets }, localBaseUrl: opts.config.settings.local_base_url, record: opts.record, onThrottle: opts.onThrottle });
+}
+
+/** Model work after a run, such as a rejudge: like a run's gateway at its cost budget, no call starts once these calls have spent cap, and those in flight are canceled. */
+export function cappedGateway(llm: LlmGateway, cap: number, signal: AbortSignal): LlmGateway {
+  let spent = 0;
+  const reached = new AbortController();
+  const stop = AbortSignal.any([signal, reached.signal]);
+  return {
+    async call(req) {
+      stop.throwIfAborted();
+      return llm.call({
+        ...req,
+        signal: req.signal ? AbortSignal.any([req.signal, stop]) : stop,
+        onAttempt(attempt) {
+          spent += attempt.payload.cost_usd;
+          if (spent >= cap) reached.abort(new Error(`The $${cap} budget was reached`));
+          req.onAttempt?.(attempt);
+        },
+      });
+    },
+  };
 }
 
 /** What the audience builder needs for this project: setup calls and drafts go to its store, progress to emit. */
@@ -78,6 +100,12 @@ export const estimateFor = (config: ProjectConfig, personas: Persona[]) =>
   estimateRun({ personas, settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
 
 /** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
+/** Every role a run of `config` calls a model for, as the Review step lists them. */
+export function runRoles(config: ProjectConfig): LlmRole[] {
+  const social = !config.comparison && socialRounds(config.settings, config.audience) > 0;
+  return ['navigator', ...(social ? ['socialiser' as const] : []), 'judge', ...(config.comparison ? [] : ['author' as const])];
+}
+
 export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
   checkComparison(config);
   const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
@@ -93,7 +121,8 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
     // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
     !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
-  for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
+  // A missing key for any role the run calls would fail mid-run or quietly drop the report's analysis.
+  for (const role of runRoles(config)) {
     const provider = config.settings.routing[role].provider;
     if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }

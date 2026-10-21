@@ -108,3 +108,65 @@ test('rejudge records a new judge answer for an ended run, rewrites its report f
   sql(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
   assert.match(fails('r-0001'), /has not ended/);
 });
+
+test('rejudge spends within what is left of the run budget unless --budget allows more, and leaves the run row and log current', () => {
+  const project = join(dir, 'rejudge-budget');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  const price = (usd: number) => db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.cost_usd', ${usd}) WHERE type = 'llm.call'`);
+  try {
+    price(0.01); // scripted calls are free: as if the run had paid for its own
+    cli('rejudge', project);
+    const row = JSON.parse(cli('runs', project, '--json').split('\n')[0]);
+    assert.equal(row.cost_usd, JSON.parse(cli('report', project, '--format', 'json', '--json')).report.cost_usd, 'runs shows what the report counts');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM event WHERE type = 'report.generated'").get()?.n, 2, 'an app with the run open reloads its report');
+
+    price(5); // the run spent its $5 budget
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'rejudge', project, '--fake-llm'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--budget/);
+    assert.match(cli('rejudge', project, '--budget', '0.5'), /judged again/);
+  } finally {
+    db.close();
+  }
+});
+
+test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
+  const settings = join(dir, 'navigator.json');
+  writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));
+  assert.match(cli('estimate', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings), /model calls/);
+  writeFileSync(settings, JSON.stringify({ routing: { judge: { model: 'gpt-6-luna' } } }));
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'estimate', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /"routing\.judge" must be/);
+});
+
+test('run checks the key of every role it calls before it writes anything, naming the variable to set', () => {
+  const settings = join(dir, 'judge-openai.json');
+  writeFileSync(settings, JSON.stringify({ routing: { judge: { provider: 'openai', model: 'gpt-6-luna' } } }));
+  const { OPENAI_API_KEY: _, ...env } = process.env;
+  const args = ['run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings, '--project', join(dir, 'judge-key')];
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8', env: { ...env, ANTHROPIC_API_KEY: 'test-key' } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set OPENAI_API_KEY \(the judge runs on openai\)/);
+});
+
+test('runs, report and rejudge leave a run still live in another process running', () => {
+  const project = join(dir, 'live');
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+  // The app, mid-run: its connection is open and the run is not finished.
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec("UPDATE run SET status = 'running', ended_at = NULL");
+    assert.match(cli('runs', project), /^r-0001 {2}running,/m);
+    assert.match(cli('report', project, '--format', 'md'), /^# Gnomi report: Pick a plan/);
+    assert.equal(db.prepare('SELECT status FROM run').get()?.status, 'running');
+    // The app runs r-0002 while an agent judges r-0001 again.
+    db.exec(`UPDATE run SET status = 'finished';
+      INSERT INTO run (id, created_at, status, seed, snapshot_json, cost_usd, started_at) SELECT 'r-0002', created_at, 'running', seed, snapshot_json, 0, started_at FROM run`);
+    cli('rejudge', project, '--run', 'r-0001');
+    assert.equal(db.prepare("SELECT status FROM run WHERE id = 'r-0002'").get()?.status, 'running');
+  } finally {
+    db.close();
+  }
+});

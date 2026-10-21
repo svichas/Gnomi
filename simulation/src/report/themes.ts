@@ -17,14 +17,14 @@ export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
-const TEXT_MAX = 600;
+export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
-const groupNo = (id: string) => Number(id.slice(1));
+const groupNo = (id: string) => Number.parseInt(id.slice(1), 10); // a merged theme "g1+g3" by its first group
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
 export interface Context {
@@ -282,15 +282,20 @@ function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: stri
 
 /**
  * Step 5: affected_s = first-hand personas in segment s ÷ personas in s who reached one of the theme's pages (any page of the POI
- * for a theme of survey answers only). Prevalence is the first-hand personas of those who reached it, or for buyer objections of
- * the buyers surveyed on the POI. Severity is the median over personas of each one's worst; score = the share's low end × the mean
+ * for a theme of survey answers only; the buyers surveyed on it for buyer objections, its other personas for user answers only).
+ * Prevalence is the first-hand personas of those who reached it. Severity is the median over personas of each one's worst; score = the share's low end × the mean
  * trust weight over personas, each at its best trust. Themes rank by evidence level, then severity tier, then score.
  */
 export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id))) {
   const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
   const affectedIds = new Set(members.map((m) => m.persona_id));
+  // Buyers and users answer different surveys, so a theme from one survey only is a share of those who were asked it.
+  const buyers = members.every((m) => m.kind === 'objection' && reach.buyerSeqs.has(m.seqs[0]));
+  const users = members.every((m) => m.step_no === null && !reach.buyerSeqs.has(m.seqs[0]));
+  const buyer = (id: string) => !!reach.buyers.get(poi_id)?.has(id);
+  const onPoi = (id: string) => !!reach.poi.get(poi_id)?.has(id) && !(users && buyer(id));
   const reached = (id: string) =>
-    affectedIds.has(id) || (pages.length === 0 ? !!reach.poi.get(poi_id)?.has(id) : pages.some((p) => reach.pages.get(id)?.has(p)));
+    affectedIds.has(id) || (buyers ? buyer(id) : pages.length === 0 ? onPoi(id) : pages.some((p) => reach.pages.get(id)?.has(p)));
   const ids = [...ctx.personas.keys()];
   const affected = ctx.segments.map((s) => {
     const inSegment = ids.filter((id) => ctx.personas.get(id)?.segment_id === s.id);
@@ -308,8 +313,7 @@ export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, r
     trust_counts[m.trust] += 1;
   }
   const weight = [...best.values()].reduce((sum, w) => sum + w, 0) / best.size;
-  const buyers = members.every((m) => m.kind === 'objection' && reach.buyerSeqs.has(m.seqs[0]));
-  const exposed = new Set([...(buyers ? (reach.buyers.get(poi_id) ?? []) : ids.filter(reached)), ...affectedIds]).size;
+  const exposed = new Set([...ids.filter(reached), ...affectedIds]).size;
   const share = prevalence(firstHand.size, exposed);
   return { affected, severity: median([...worst.values()]), trust: maxTrust(members), trust_counts, prevalence: share, score: share.low * weight };
 }

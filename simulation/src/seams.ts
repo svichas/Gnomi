@@ -31,6 +31,8 @@ export interface ProjectStore {
   /** Assigns the next run id ('r-0001', …) and stores the frozen snapshot with status 'running'. */
   createRun(snapshot: Omit<RunConfig, 'run_id'>): RunConfig;
   finishRun(run_id: string, status: Exclude<RunStatus, 'running'>, stop_reason: string | null, cost_usd: number): void;
+  /** For model work after the run ended, such as a rejudge, so the run's row counts what its log does. */
+  setRunCost(run_id: string, cost_usd: number): void;
   /** Newest first. */
   listRuns(): RunRow[];
   /** Assigns seq (monotonic per run, from 1) and ts; durable when it returns. */
@@ -146,6 +148,8 @@ export interface PageDriver {
   inspect(): Promise<PageFlags>;
   /** Console errors, uncaught exceptions and 4xx/5xx document/XHR/fetch responses from allowed hosts since the last call. */
   errors(): PageError[];
+  /** The cookies and local storage the page holds now, so a page reopened later carries on as the same visitor. */
+  storageState?(): Promise<StorageState>;
   close(): Promise<void>;
 }
 

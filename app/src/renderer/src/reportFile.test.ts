@@ -124,7 +124,7 @@ test("a text POI's quoted passages and the buying survey render into the HTML an
     assert.ok(html.includes(text), text);
   }
   const markdown = await reportFile(report, 'md', thumbnails());
-  assert.match(markdown, /## Buying survey[\s\S]*\| Recruiters \| 1 \| -1\.00 \| 0% \| 0 \/ 0 \/ 0 \/ 1 \|\n\n- Recruiters, top objections: No SSO on <Team> \(1 persona\)\n- Recruiters, unclear: Whether Team has SSO \(1 persona\)/);
+  assert.match(markdown, /## Buying survey[\s\S]*\| Recruiters \| 1 \| -1\.00 \| 0% \| 0 \/ 0 \/ 0 \/ 1 \|\n\n- Recruiters, top objections: No SSO on &lt;Team&gt; \(1 persona\)\n- Recruiters, unclear: Whether Team has SSO \(1 persona\)/);
   assert.match(markdown, /- Passage: characters 412–437, "Single sign-on \(SAML SSO\)"/);
 });
 

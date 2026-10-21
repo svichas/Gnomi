@@ -65,7 +65,7 @@ const project = (pois: DesignPoi[], navigator = PROVIDER_DEFAULTS.anthropic.navi
 
 const noBrowser = { newPage: () => Promise.reject(new Error('A design run opens no page')) } as unknown as BrowserPool;
 
-async function runCheckout(defects: 'D26' | 'none', navigator = shopper, name: string = defects) {
+async function runCheckout(defects: 'D26' | 'none', navigator: (req: LlmRequest<unknown>) => unknown = shopper, name: string = defects) {
   const folder = join(dir, name);
   const store = openProject(folder);
   const blobs = createFsBlobStore(folder);
@@ -139,6 +139,29 @@ test('a mismatch the persona gave no words for is filed on the frame whose expec
   assert.deepEqual(frictions.map((f) => [f.payload.frame, f.payload.step_no, f.payload.where.url]), [[2, 3, `asset:${poi.frames[2].asset}`]]);
   assert.match(frictions[0].payload.what, /^Expected A confirmation that my order is placed, but the next screen showed: \S/);
   assert.equal(frictions[0].payload.expected, 'A confirmation that my order is placed');
+});
+
+test('a timed-out model call on a screen is a failed step, as an invalid answer is, and the run goes on', async () => {
+  let screens = 0;
+  const slow = (req: LlmRequest<unknown>) => {
+    if (req.purpose === 'design' && ++screens === 2) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    return shopper(req);
+  };
+  const { report, events } = await runCheckout('none', slow, 'timeout');
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const steps = events.filter((e): e is EventOf<'persona.step'> => e.type === 'persona.step');
+  assert.deepEqual(steps.map((s) => s.payload.result.error), [null, 'invalid_output', null, null, null, null]);
+});
+
+test('no valid answer on the last screen ends the persona as the model failing, not as having looked through every screen', async () => {
+  let screens = 0;
+  const silentAtTheEnd = (req: LlmRequest<unknown>) => (req.purpose === 'design' && ++screens > 5 ? {} : shopper(req)); // screen 6, both attempts
+  const { report, events } = await runCheckout('none', silentAtTheEnd, 'silent-last');
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const last = events.filter((e): e is EventOf<'persona.step'> => e.type === 'persona.step').at(-1)!;
+  assert.deepEqual([last.payload.frame, last.payload.action.type, last.payload.result.error], [5, 'read', 'invalid_output']);
+  assert.ok(!events.some((e) => e.type === 'persona.goal_done' || e.type === 'persona.survey'));
+  assert.equal(report.personas[0].outcome, 'model_failed');
 });
 
 test('the demo responder answers design screens in the schema, with a labelled sample mismatch on the second', () => {

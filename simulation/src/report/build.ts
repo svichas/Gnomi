@@ -1,4 +1,4 @@
-import { assetPlaces, placeName, poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
+import { poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
@@ -6,12 +6,11 @@ import { buildComparison } from './comparison.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { buyerResults } from './buyers.ts';
-import { stepEvidence } from './friction.ts';
+import { stepEvidence, stepReader } from './friction.ts';
 import { analyseFrictions, sentimentBySegment, wentWell, type Context } from './themes.ts';
 import type {
   Audience,
   EventOf,
-  EventPayloads,
   EventType,
   GnomiEvent,
   Outcome,
@@ -54,9 +53,8 @@ function ofType<K extends EventType>(events: GnomiEvent[], type: K): EventOf<K>[
   return events.filter((e): e is EventOf<K> => e.type === type);
 }
 
-const rate = (count: number, total: number) => (total === 0 ? 0 : count / total);
-
-const stepKey = (persona_id: string, step_no: number) => JSON.stringify([persona_id, step_no]);
+// A rate over nobody is unknown, not 0%: a segment the run never reached would read as a total failure.
+const rate = (count: number, total: number) => (total === 0 ? null : count / total);
 
 // A block is resumed when its persona resumed after it.
 const resumedAfter = (own: GnomiEvent[], block: EventOf<'persona.blocked'>) =>
@@ -74,7 +72,7 @@ function endingOf(own: GnomiEvent[]): Ending {
   if (lastBlock && !resumedAfter(own, lastBlock)) ending = { outcome: 'blocked', outcome_text: lastBlock.payload.detail };
   if (stuck) {
     ending = stuck.payload.error === 'invalid_output'
-      ? { outcome: 'model_failed', outcome_text: 'The model gave no valid answer three steps in a row; this says nothing about the product' }
+      ? { outcome: 'model_failed', outcome_text: 'The model gave no valid answer, so the persona could not go on; this says nothing about the product' }
       : { outcome: 'repeated_failure', outcome_text: `The same ${stuck.payload.action} failed three times in a row (${stuck.payload.error})` };
   }
   if (abandoned) ending = { outcome: 'abandoned', outcome_text: abandoned.payload.reason };
@@ -168,14 +166,11 @@ export function buildReport(events: GnomiEvent[]): Report {
     };
   });
 
-  // Step numbers repeat across personas, so a friction finds its step by persona and step number together.
-  const stepByKey = new Map<string, EventPayloads['persona.step']>();
-  for (const e of ofType(events, 'persona.step')) stepByKey.set(stepKey(e.persona_id ?? '', e.payload.step_no), e.payload);
-  const places = assetPlaces(pois);
+  const atStep = stepReader(events, pois[0]?.id ?? '');
   const frictions: ReportFriction[] = ofType(ours, 'persona.friction_reported').map((e) => {
     const persona_id = e.persona_id ?? '';
     const persona = personaById.get(persona_id);
-    const step = stepByKey.get(stepKey(persona_id, e.payload.step_no));
+    const at = atStep(e, e.payload.step_no, e.payload.where.url);
     return {
       seq: e.seq,
       persona_id,
@@ -185,10 +180,10 @@ export function buildReport(events: GnomiEvent[]): Report {
       severity: e.payload.severity,
       what: e.payload.what,
       expected: e.payload.expected,
-      url: placeName(e.payload.where.url, places), // a text or design by its name, not its stored file
-      quote: step?.thought ?? '',
-      screenshot: step?.screenshot ?? null,
-      ...stepEvidence(e.payload, step),
+      url: at.url!, // a text or design by its name, not its stored file
+      quote: at.quote,
+      screenshot: at.screenshot,
+      ...stepEvidence(e.payload, at),
     };
   });
 
@@ -213,8 +208,9 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Each segment counts by its share; the shares are renormalised over the segments with a persona that started and got model answers.
   const counted = segments.filter((s) => s.personas > s.outcomes.not_started + s.outcomes.model_failed);
   const weight = counted.reduce((sum, s) => sum + s.share, 0);
-  const weighted = (pick: (s: ReportSegment) => number) =>
-    weight === 0 ? 0 : counted.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
+  // A counted segment has someone started, so its rates are set.
+  const weighted = (pick: (s: ReportSegment) => number | null) =>
+    weight === 0 ? null : counted.reduce((sum, s) => sum + s.share * (pick(s) ?? 0), 0) / weight;
   const comparisons = buildComparisons(events, competitors, ctx);
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');

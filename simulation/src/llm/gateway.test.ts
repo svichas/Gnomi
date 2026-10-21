@@ -530,6 +530,16 @@ test('an overloaded API (529) backs off exponentially, gives up after three retr
   assert.deepEqual(throttled, []);
 });
 
+test('a 429 without retry-after (Gemini) waits 10 to 15 s, not the 1 s backoff, before each retry', async () => {
+  const limited = () => Response.json({ error: { code: 429, message: 'Resource has been exhausted (e.g. check quota).', status: 'RESOURCE_EXHAUSTED' } }, { status: 429 });
+  const sent = stubFetch(limited, limited, limited, limited);
+  const { gateway, slept, throttled } = setup();
+  await assert.rejects(gateway.call(request({ model: { provider: 'google', model: 'gemini-3.8-flash' } })), /^Error: Google answered 429: .* \(gave up after 4 attempts\)$/);
+  assert.equal(sent.urls.length, 4);
+  assert.deepEqual(slept, [10_000, 10_000, 10_000], 'the 10 s floor; jitter adds up to 5 s');
+  assert.deepEqual(throttled, ['google', 'google', 'google', 'google']);
+});
+
 test('a 5xx is retried, and so are transient failures between invalid outputs', async () => {
   stubFetch(
     () => anthropicError(500, 'api_error', 'Internal error'),

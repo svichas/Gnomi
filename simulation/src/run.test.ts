@@ -168,6 +168,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
     saveProject: () => {},
     createRun: (snapshot) => ({ ...snapshot, run_id: 'r-0001' }),
     finishRun: (_run_id, status, stop_reason, cost_usd) => void finished.push({ status, stop_reason, cost_usd }),
+    setRunCost: () => {},
     listRuns: () => [],
     append(event) {
       const stored = { ...event, seq: events.length + 1, ts: Date.now() } as GnomiEvent;
@@ -589,6 +590,34 @@ test('stop() cancels a model call in flight', async () => {
   const report = await r.run.done;
   assert.equal(of(r.events, 'persona.step').length, 0);
   assert.deepEqual([report.status, report.stop_reason], ['stopped', 'user']);
+});
+
+test('stop() while the judge answers still ends the run as a user stop, with its report', async () => {
+  const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };
+  const steps = [step('click', 'e1', null, friction), step('done', null, 'Posted the job')];
+  const judged = { themes: [{ title: 'The Jobs link leads nowhere', description: 'Jobs opens a page that is not found.', group_ids: ['g1'] }] };
+  const r = begin((req, n) => (req.role === 'judge' ? judged : req.role === 'author' ? { suggestions: [] } : steps[n]), {
+    onCall: (req, run) => void (req.role === 'judge' && run.stop()),
+  });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'llm.call').filter((e) => e.payload.role === 'author').length, 0, 'no author call starts after the stop');
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload), [{ reason: 'user', detail: null }]);
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'user', cost_usd: 0 }]);
+  assert.equal(report.status, 'stopped');
+  assert.equal(r.types().at(-1), 'report.generated');
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+});
+
+test('a failure in the report phase ends the run as stopped(error), with its report', async () => {
+  const r = begin([step('done', null, 'Posted the job')], {
+    onEvent: (e) => {
+      if (e.type === 'report.started') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'error: disk full', cost_usd: 0 }]);
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.equal(r.types().at(-1), 'report.generated');
 });
 
 test('a browser failure ends the run as stopped(error), closes the page and still reports', async () => {
@@ -1057,6 +1086,25 @@ test('a reset hook that fails stops the run before any persona starts', async (t
   assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
 });
 
+test('a reset hook that redirects fails without following, and its query string stays out of the reset record and the report', async (t) => {
+  // An SSO proxy answers the POST with a redirect to its login page, which answers a GET with 200.
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    calls.push(`${req.method} ${req.url}`);
+    if (req.url?.startsWith('/__reset')) res.writeHead(302, { location: '/login?next=s3cret' }).end();
+    else res.writeHead(200).end();
+  });
+  const url = `${await listen(server)}/__reset`;
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois: [{ ...web, reset_hook_url: `${url}?token=s3cret` }] } });
+  const report = await r.run.done;
+  assert.deepEqual(calls, ['POST /__reset?token=s3cret']);
+  assert.equal(report.stop_reason, `error: The reset hook answered 302 with a redirect to ${new URL(url).origin}/login; point it at an endpoint that answers 2xx`);
+  assert.deepEqual(report.methods.reset, { url, status: 302, error: null });
+  assert.deepEqual(of(r.events, 'run.reset_called').map((e) => e.payload.url), [url]);
+  assert.ok(!new TextDecoder().decode(r.files.get('runs/r-0001/report.json')).includes('s3cret'), 'the token stays out of the report');
+});
+
 // —— Social rounds (M4) ——
 
 const QUIET = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
@@ -1117,11 +1165,11 @@ test('rounds interleave usage and social phases while any episode remains, and e
   assert.ok(calls.filter(([role]) => role === 'navigator').every(([, round], i, all) => i === 0 || round >= all[i - 1][1]));
 });
 
-test('slices continue one episode: one page per persona kept open between rounds, steps and memory running on', async () => {
+test('slices continue one episode: its page closes between rounds and reopens, steps and memory running on', async () => {
   const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(3) });
   await r.run.done;
-  assert.equal(r.pages.length, 2);
-  assert.ok(r.pages.every((p) => p.closed && p.gotos.length === 1), 'one start-page load each, closed once the run is over');
+  assert.equal(r.pages.length, 6, 'a page per persona and round');
+  assert.ok(r.pages.every((p) => p.closed && p.gotos.length === 1), 'one page load each, closed once the run is over');
   for (const id of ['p-0', 'p-1']) assert.deepEqual(of(r.events, 'persona.step').filter((e) => e.persona_id === id).map((e) => e.payload.step_no), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   const fifth = r.transcripts.find((t) => t.persona_id === 'p-0' && /Step 5\./.test(t.request_json));
   assert.match(fifth?.request_json ?? '', /4\. scroll down/, 'step 5 remembers step 4 across the social phase');
@@ -1245,6 +1293,16 @@ test('two invalid socialiser answers leave the persona silent for that phase, an
   assert.equal(of(r.events, 'social.feed_viewed').filter((e) => e.round === 3).length, 0, 'nothing new to read in the last round');
 });
 
+test('a timed-out socialiser call leaves the persona silent for that phase, and the run goes on', async () => {
+  const social = (req: LlmRequest<unknown>) => {
+    if (req.round === 1 && req.persona_id === 'p-0') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    return req.round === 1 ? { ...QUIET, action: 'post', text: 'Fine so far.', about_poi_id: null } : QUIET;
+  };
+  const r = begin(swarmAnswers(social), { personas: swarm(2), project: SWARM, settings: rounds(3) });
+  assert.equal((await r.run.done).status, 'finished');
+  assert.deepEqual(of(r.events, 'social.post').map((e) => e.persona_id), ['p-1']);
+});
+
 test('the cost cap reached in a social phase stops the run there: no later round or step, and every page closes', async () => {
   // Sixteen $0.01 steps make the first slice; the whole phase of four socialiser calls would reach the budget, so none starts.
   const budget = 0.18;
@@ -1258,6 +1316,36 @@ test('the cost cap reached in a social phase stops the run there: no later round
   assert.equal(of(r.events, 'persona.survey').length, 0);
   assert.equal(r.finished[0].status, 'stopped');
   assert.ok(report.cost_usd <= budget + 12 * 0.01 + 1e-9);
+});
+
+test('step and social calls get a default deadline, so a stalled provider cannot hold a round past the wall clock', async () => {
+  const deadlines = new Set<string>();
+  const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(2), onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
+  await r.run.done;
+  assert.deepEqual([...deadlines].sort(), ['report_suggestions 180000', 'report_themes 180000', 'social 180000', 'step 180000', 'survey 30000']);
+});
+
+test('steps and social calls on a local model server get no default deadline, since it answers one request at a time', async () => {
+  const deadlines = new Set<string>();
+  const local = { provider: 'openai_compatible' as const, model: 'gemma4:e4b' };
+  const settings = { ...rounds(2), routing: { ...DEFAULT_SETTINGS.routing, navigator: local, socialiser: local } };
+  const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings, onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
+  await r.run.done;
+  assert.deepEqual([...deadlines].filter((d) => /^(step|social) /.test(d)).sort(), ['social undefined', 'step undefined']);
+});
+
+test('a failure between rounds ends the episodes waiting for a slice and closes their pages', async () => {
+  const r = begin(swarmAnswers(), {
+    personas: swarm(2),
+    project: SWARM,
+    settings: rounds(3),
+    onEvent: (e) => {
+      if (e.type === 'run.round_ended') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.ok(r.pages.length === 2 && r.pages.every((p) => p.closed), 'episodes waiting for a slice end and close their pages');
 });
 
 test('a usage slice is admitted whole: when its steps would reach the budget, none of them starts', async () => {

@@ -404,19 +404,22 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   async get_blob({ path }) {
     // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.
     const asset = path.startsWith('assets/') ? path.slice('assets/'.length) : null;
-    if (asset === null && !path.startsWith('runs/')) throw new Error('Only files from a run or a point of interest can be opened');
+    if ((asset === null && !path.startsWith('runs/')) || path.split(/[\\/]/).includes('..')) throw new Error('Only files from a run or a point of interest can be opened');
     const data = await current().blobs.get(asset === null ? path : assetPath(asset));
     return { mime: asset === null ? 'image/jpeg' : assetMime(asset), base64: Buffer.from(data).toString('base64') };
   },
 };
 
-function serve(transport: Transport) {
-  clients.add(transport);
+// Main picks the project and holds the secrets; the renderer's port may not.
+const MAIN_ONLY: Method[] = ['open_project', 'close_project', 'set_secret'];
+
+function serve(transport: Transport, main: boolean) {
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
     const projectTask = !['open_project', 'close_project', 'set_secret', 'get_session_runs', 'figma_test', 'figma_frames', 'figma_previews'].includes(msg.method);
     if (projectTask) projectRequests++;
     try {
+      if (!main && MAIN_ONLY.includes(msg.method)) throw new Error(`${msg.method} is for the app's main process only`);
       const handler = handlers[msg.method] as (params: unknown) => unknown;
       transport.send({ kind: 'response', id: msg.id, ok: true, result: await handler(msg.params) });
     } catch (err) {
@@ -432,7 +435,9 @@ function servePort(port: PortLike) {
     send: (msg) => port.postMessage(msg),
     onMessage: (handler) => port.on('message', (e) => handler(e.data as ClientToEngine)),
   };
-  serve(transport);
+  serve(transport, false);
+  // Events go to the renderer's ports only: main reads nothing but its responses.
+  clients.add(transport);
   port.on('close', () => clients.delete(transport));
   port.start?.();
 }
@@ -453,4 +458,4 @@ serve({
       else if (data?.kind === 'shutdown') void shutdown().then(() => process.versions.electron && process.exit(0));
       else handler(data as ClientToEngine);
     }),
-});
+}, true);

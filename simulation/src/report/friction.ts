@@ -90,16 +90,21 @@ const stepKey = (persona_id: string, step_no: number) => `${persona_id}\u0000${s
 type SignalEvent = EventOf<`signal.${SignalKind}`>;
 const isSignal = (e: GnomiEvent): e is SignalEvent => e.type.startsWith('signal.') && SIGNAL_KINDS.includes(e.type.slice(7) as SignalKind);
 
-/** Step 1 and 2: every self-report, survey friction and signal as a candidate, merged into confirmed frictions where they meet. */
-export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candidate[] {
+/** A candidate for event `e` at its persona's step `step_no`: the step's page, element, thought and screenshot, with defaults. */
+export function stepReader(events: GnomiEvent[], defaultPoi: string): (e: GnomiEvent, step_no: number, url: string | null) => Candidate {
   const places = placesOf(events);
-  const steps = new Map<string, { seq: number; payload: EventPayloads['persona.step'] }>();
-  for (const e of events) if (e.type === 'persona.step') steps.set(stepKey(e.persona_id ?? '', e.payload.step_no), { seq: e.seq, payload: e.payload });
+  const steps = new Map<string, { seq: number; poi_id: string | null; payload: EventPayloads['persona.step'] }>();
+  for (const e of events) if (e.type === 'persona.step') steps.set(stepKey(e.persona_id ?? '', e.payload.step_no), { seq: e.seq, poi_id: e.poi_id, payload: e.payload });
 
-  const atStep = (e: GnomiEvent, step_no: number, url: string | null): Candidate => {
+  return (e, step_no, url) => {
     const persona_id = e.persona_id ?? '';
     const step = steps.get(stepKey(persona_id, step_no));
     const page = url ?? step?.payload.result.url_before ?? null;
+    // A step's screenshot is taken before its action: a signal seen after it (on the page it led to, or a message it made
+    // appear) is in the next step's screenshot, when that step is on the same POI.
+    const after = isSignal(e) && (e.type === 'signal.validation_error' || url !== step?.payload.result.url_before);
+    const next = after ? steps.get(stepKey(persona_id, step_no + 1)) : undefined;
+    const shot = after ? (next?.poi_id === e.poi_id ? next?.payload.screenshot : null) : step?.payload.screenshot;
     return {
       poi_id: e.poi_id ?? defaultPoi,
       persona_id,
@@ -113,13 +118,17 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       trust: 'reported',
       text: '',
       quote: step?.payload.thought ?? '',
-      screenshot: step?.payload.screenshot ?? null,
+      screenshot: shot ?? null,
       seqs: [e.seq],
       signals: [],
       ...stepEvidence(step?.payload),
     };
   };
+}
 
+/** Step 1 and 2: every self-report, survey friction and signal as a candidate, merged into confirmed frictions where they meet. */
+export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candidate[] {
+  const atStep = stepReader(events, defaultPoi);
   const reports: Candidate[] = [];
   const signals: Candidate[] = []; // those that may confirm a self-report
   const unmatched: Candidate[] = [];

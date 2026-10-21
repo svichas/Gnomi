@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { buildGraph } from '@gnomi/engine/graph/index.ts';
+import type { PersonaNode } from '@gnomi/engine/graph/index.ts';
 import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
@@ -167,6 +169,25 @@ test('each persona is waiting, working, blocked, done or gave up, and a run that
   const ended = personaStates([...events, event(9, 'run.stopped', { reason: 'user', detail: null }, null)], people);
   assert.deepEqual([...ended.values()], ['done', 'abandoned', 'blocked', 'unfinished', 'unfinished', 'unfinished']);
   assert.equal(personaStates([start(1, 'unknown')], people).has('unknown'), false, 'events of someone outside the population are ignored');
+  assert.deepEqual([...personaStates(events, people, true).values()], [...ended.values()], 'a run that ended without logging it, such as an interrupted one');
+});
+
+test('the swarm graph and the grid read one status: a budget or failure stop is stopped early, a comparison is done only once every task is', () => {
+  const people = ['a', 'b'].map((id) => person(id, null));
+  const graphStates = (events: GnomiEvent[]) => new Map(people.map(({ id }) => [id, (buildGraph(events).nodes.get(`persona:${id}`) as PersonaNode).status]));
+  const stopped = [start(1, 'a'), event(2, 'signal.budget_exceeded', { step_no: 3, budget: 3 }, 'a'), start(3, 'b'), event(4, 'signal.repeated_failure', { step_no: 1, action: 'click', error: 'ref_not_found' }, 'b')];
+  assert.deepEqual([...personaStates(stopped, people)], [['a', 'unfinished'], ['b', 'unfinished']]);
+  assert.deepEqual(graphStates(stopped), personaStates(stopped, people));
+  // Two targets, one task: a's first is incomplete and her last reaches its goal; b has finished only one.
+  const study = { targets: [{}, {}], tasks: [{}] };
+  const finished = (seq: number, who: string, episode_id: string, outcome: 'completed' | 'incomplete') => event(seq, 'comparison.episode_finished', { episode_id, outcome } as EventPayloads['comparison.episode_finished'], who);
+  const compared = [
+    event(1, 'run.started', { config: { project: { pois: [], comparison: study } } as unknown as RunConfig }, null),
+    start(2, 'a'), finished(3, 'a', 'e-1', 'incomplete'), start(4, 'a'), event(5, 'persona.goal_done', { step_no: 2, summary: 'ok' }, 'a'), finished(6, 'a', 'e-2', 'completed'),
+    start(7, 'b'), event(8, 'persona.goal_done', { step_no: 2, summary: 'ok' }, 'b'), finished(9, 'b', 'e-1', 'completed'),
+  ];
+  assert.deepEqual([...personaStates(compared, people)], [['a', 'unfinished'], ['b', 'active']]);
+  assert.deepEqual(graphStates(compared), personaStates(compared, people));
 });
 
 test('the activity filters keep one persona, one segment or one kind of event', () => {

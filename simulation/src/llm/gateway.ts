@@ -41,6 +41,7 @@ const THINKING_OFF: Partial<Record<string, 'disabled' | 'between_tools'>> = { 'c
 
 const MAX_RETRIES = 3; // after the first attempt, for 429, 5xx and overloaded
 const BACKOFF_MS = 1000; // 1 s, 2 s, 4 s before jitter
+const RATE_LIMIT_MS = 10_000; // a 429 with no retry-after waits 10–15 s: a per-minute quota does not clear within 1–4 s
 const MAX_WAIT_MS = 60_000; // a longer retry-after is a quota to wait out, not a blip: stop here and say so
 // OpenAI answers an empty account with a 429 too, but waiting never helps.
 const NO_CREDIT = /insufficient_quota|credit balance is too low/i;
@@ -180,7 +181,7 @@ function reasoningTokens(provider: ProviderId, usage: LanguageModelUsage | undef
 
 /**
  * How long the provider asked us to wait, from retry-after-ms or retry-after (seconds or a date).
- * shortcut: the retryDelay inside a Gemini error body is not read, so its 429s fall back to the backoff; parse it if they prove too slow.
+ * shortcut: the retryDelay inside a Gemini error body is not read, so its 429s fall back to RATE_LIMIT_MS; parse it if they prove too slow.
  */
 function retryAfterMs(headers: Record<string, string> | undefined): number | null {
   const ms = Number(headers?.['retry-after-ms']);
@@ -360,7 +361,8 @@ export function createGateway({
             throw new Error(`${NAME[provider]} ${code}: ${error}${retries ? ` (gave up after ${retries + 1} attempts)` : ''}`);
           }
           // A provider's retry-after is a floor; the jitter spreads the personas out so they do not all return together.
-          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal).catch(rethrow);
+          const backoff = api?.statusCode === 429 ? RATE_LIMIT_MS * (1 + clock.random() / 2) : BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2);
+          await clock.sleep(asked === null ? backoff : asked + clock.random() * 500, req.signal).catch(rethrow);
           req.signal?.throwIfAborted();
           retries++;
           continue;

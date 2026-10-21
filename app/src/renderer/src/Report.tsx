@@ -336,7 +336,8 @@ function SentimentScale({ value }: { value: number }) {
 }
 
 /** A rate as a short bar and its count, so a column reads at a glance. */
-function Rate({ rate, of, tone }: { rate: number; of: number; tone: Tone }) {
+function Rate({ rate, of, tone }: { rate: number | null; of: number; tone: Tone }) {
+  if (rate === null) return '-'; // nobody started
   return (
     <span className="flex items-center gap-2 whitespace-nowrap">
       <span aria-hidden="true" className="h-1.5 w-14 overflow-hidden rounded-full bg-stone-100">
@@ -408,7 +409,7 @@ function SegmentTable({ report }: { report: ReportData }) {
         The weighted row counts each segment by its share of the audience, not by how many personas it has. Ran into friction: a self-report, survey friction or browser signal in one of the problems; objections are not counted.
         {pois.length > 0 && ' A persona reached the goal only when it did so on every text, design or site it was given.'}
         {notStarted > 0 && ` ${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of the rates.`}
-        {noAnswer > 0 && ` ${count(noAnswer, 'persona')} got no valid model answer three steps in a row and ${noAnswer === 1 ? 'is' : 'are'} left out of the rates; that says nothing about the product.`}
+        {noAnswer > 0 && ` ${count(noAnswer, 'persona')} got no valid model answer and ${noAnswer === 1 ? 'is' : 'are'} left out of the rates; that says nothing about the product.`}
         {surveys && ' Mood and carrying on come from users’ surveys at the end, one answer per persona and point of interest, 0 is neutral, without weighting.'}
       </p>
     </section>

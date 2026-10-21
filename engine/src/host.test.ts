@@ -18,7 +18,7 @@ import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import type { Audience, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
 process.env.GNOMI_FAKE_LLM = '1';
-const { call, events, progress } = await startHost();
+const { call, connect, events, progress, toMain } = await startHost();
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -371,4 +371,29 @@ test('a custom schema needs a generated audience, and legacy profiles migrate wh
   store.close();
   await call('save_project', { project: { ...config, persona_schema: getPersonaSchema() } });
   await assert.rejects(call('start_run', { reset: false }), /profile.*changed|refresh|generate.*again/i);
+});
+
+test('get_blob refuses a path that climbs out of runs/ to the database or a recorded login', async () => {
+  await call('open_project', { dir });
+  for (const path of ['runs/../project.sqlite', 'runs/../sessions/x.session', 'runs\\..\\project.sqlite']) {
+    await assert.rejects(call('get_blob', { path }), /Only files from a run or a point of interest/, path);
+  }
+});
+
+test('a renderer port cannot switch projects or set secrets, which only main may do', async () => {
+  const renderer = connect();
+  await call('open_project', { dir });
+  await assert.rejects(renderer('open_project', { dir: join(dir, 'other') }), /main process only/);
+  await assert.rejects(renderer('close_project', {}), /main process only/);
+  await assert.rejects(renderer('set_secret', { name: 'anthropic_api_key', value: 'sk-renderer' }), /main process only/);
+  assert.equal((await renderer('get_project', {})).dir, dir);
+});
+
+test('main gets only its responses over the parent port: events and progress go to the renderer', async () => {
+  await call('open_project', { dir: join(dir, 'main-port') });
+  await call('save_project', { project: project({}, { audience: audience([segment('seg-1', { share: 100 })], 2) }) });
+  const before = progress.length;
+  await call('generate_personas', {});
+  assert.ok(progress.length > before, 'the renderer got the progress');
+  assert.deepEqual(toMain, []);
 });

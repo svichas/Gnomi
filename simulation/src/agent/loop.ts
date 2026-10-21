@@ -3,7 +3,7 @@ import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
-import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
+import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { readsImages } from '../settings.ts';
@@ -36,8 +36,11 @@ export interface EpisodeDeps {
   stepsBefore: number;
   /** The persona's opinion of this POI when the episode starts, from an earlier social phase; null or absent when it has none. */
   opinion?: Opinion | null;
-  /** A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely re-recorded. */
-  openPage: (poi: WebPoi) => Promise<PageDriver>;
+  /**
+   * A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely
+   * re-recorded. Between slices it gets the `state` the persona's last page left with instead.
+   */
+  openPage: (poi: WebPoi, state?: StorageState) => Promise<PageDriver>;
   llm: LlmGateway;
   blobs: BlobStore;
   record: Recorder;
@@ -54,8 +57,8 @@ export interface EpisodeDeps {
   /** The round the run is in, for every event and model call (tech.md §6.4). */
   round: () => number;
   /**
-   * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, page and memory intact, for
-   * its next usage slice. next() resolves with the persona's opinion of this POI as the social phase left it and the posts it read
+   * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, memory intact, for its next
+   * usage slice; a web episode closes its page meanwhile. next() resolves with the persona's opinion of this POI as the social phase left it and the posts it read
    * there (`heard`, for the next step's prompt), or null when the run ended in between. Absent: one straight run.
    */
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
@@ -122,6 +125,15 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
   let lastGoodUrl = startUrl;
   let page = await deps.openPage(poi);
+  // A fresh page at the last unblocked URL, logged in with `state` or else the role's current recorded session; false once the run is stopping.
+  const reopen = async (state?: StorageState) => {
+    if (signal.aborted) return false;
+    page = await deps.openPage(poi, state);
+    if (signal.aborted) return false;
+    await page.goto(lastGoodUrl);
+    page.errors(); // the reload's own errors are not something the persona did
+    return true;
+  };
 
   // The page checks of tech.md §9.1/§9.3 after every load. A blocked persona pauses until the user resumes it, then
   // continues on a fresh page at the last unblocked URL, memory intact. 'go' means carry on.
@@ -148,10 +160,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       const wake = await waiting;
       if (wake !== 'resumed') return wake === 'timeout' ? 'blocked' : 'stopped';
       await page.close().catch(() => {});
-      if (signal.aborted) return 'stopped';
-      page = await deps.openPage(poi);
-      if (signal.aborted) return 'stopped';
-      await page.goto(lastGoodUrl);
+      if (!(await reopen())) return 'stopped';
       url = lastGoodUrl;
       emit('persona.resumed', { step_no });
     }
@@ -160,8 +169,9 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   // Looks at the page and asks the model what the persona does. output is null when the model twice failed to answer validly;
   // the whole result is null when stop() cancelled the call.
   const look = async (step_no: number) => {
-    const snapshot = await page.snapshot();
-    const shot = await page.screenshot();
+    // A redirect that lands after act()'s settle cap destroys the page's context under a read: the new page is read once more.
+    const read = async () => ({ snapshot: await page.snapshot(), shot: await page.screenshot() });
+    const { snapshot, shot } = await read().catch((err: unknown) => (String(err).includes('Execution context was destroyed') ? read() : Promise.reject(err)));
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
     const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
@@ -172,8 +182,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       return { snapshot, screenshot, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;
-      // A second invalid output is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
-      if (!(err instanceof InvalidOutputError)) throw err;
+      // A second invalid output or a timed-out call is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError')) throw err;
       return { snapshot, screenshot, output: null };
     }
   };
@@ -188,10 +198,17 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const last = stepsBefore + step_budget;
     for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
       if (atSliceEnd(deps, step_no)) {
+        // A waiting persona holds no page, so open pages stay within the concurrency. Its cookies and local storage come back with it;
+        // shortcut: unsaved input and session storage are lost between slices; keep the page open if a flow needs them.
+        const kept = await page.storageState?.().catch(() => undefined);
+        await page.close().catch(() => {});
         const next = await deps.slice!.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
         heard = next.heard ?? [];
+        if (!(await reopen(kept))) return 'stopped';
+        const back = await inspect(step_no - 1, lastGoodUrl);
+        if (back !== 'go') return back;
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();
