@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
 import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createGateway } from '@gnomi/simulation/llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
@@ -71,6 +72,9 @@ export function checkComparison(config: ProjectConfig) {
   const comparisonProblems = validateComparison(config);
   if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
 }
+
+export const estimateFor = (config: ProjectConfig, personas: Persona[]) =>
+  estimateRun({ personas, settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
 
 /** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
 export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {

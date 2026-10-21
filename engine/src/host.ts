@@ -8,7 +8,6 @@ import { resolve } from 'node:path';
 import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
-import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { testProviderKey } from '@gnomi/simulation/llm/gateway.ts';
 import { figmaClient } from './figma/client.ts';
 import { fakeFigma } from './figma/fake.ts';
@@ -18,7 +17,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, credential, population, projectGateway } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, credential, estimateFor, population, projectGateway } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
@@ -313,7 +312,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(current().store, config), settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
+    return estimateFor(config, population(current().store, config));
   },
   async start_run({ reset }) {
     noSetup('starting a run');

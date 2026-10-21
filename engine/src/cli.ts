@@ -8,10 +8,9 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, checkRun, credential, KEYS, projectGateway, type Secrets } from './workspace.ts';
+import { audienceDeps, checkRun, credential, estimateFor, KEYS, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
-import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { describe } from '@gnomi/simulation/log/describe.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -312,7 +311,7 @@ async function estimate(v: Values): Promise<void> {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
     const personas = file?.personas ?? [BUILTIN_PERSONA];
     const stale = file ? personas.filter((p) => !personaProfileIsCurrent(p, config)).length : 0;
-    const e = estimateRun({ personas, settings, audience: config.audience, pois: config.pois });
+    const e = estimateFor(config, personas);
     out(
       `${personas.length} personas: ${estimateText(e)}; budget $${settings.cost_budget_usd}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
       { kind: 'estimate', personas: personas.length, stale, ...e, budget_usd: settings.cost_budget_usd },
@@ -344,7 +343,7 @@ async function runSimulation(v: Values): Promise<void> {
       store.replacePersonas(personas, file.audience.persona_count);
     }
     const personas = checkRun(store, config, { reset: false, fake, secrets: envSecrets });
-    note(`Estimate for ${personas.length} personas: ${estimateText(estimateRun({ personas, settings, audience: config.audience, pois: config.pois }))}; budget $${settings.cost_budget_usd}`);
+    note(`Estimate for ${personas.length} personas: ${estimateText(estimateFor(config, personas))}; budget $${settings.cost_budget_usd}`);
     let run: RunHandle | undefined;
     const llm = projectGateway({ fake, secrets: envSecrets, config, record, onThrottle: (provider) => run?.throttle(provider) });
     // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
