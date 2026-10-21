@@ -157,7 +157,7 @@ Finding plan information is a valid success for a public-site research task even
 
 ### 3.4. Build evidence before preferences
 
-Capture positive capabilities and successful paths as well as friction. The existing [web survey](../simulation/src/agent/prompt.ts) and [run coordinator](../simulation/src/run.ts) must supply target-specific task observations, not just a friction summary and generic project goal. Keep source-level extraction separate from persona interpretation and final comparison.
+Capture positive capabilities and successful paths as well as friction. The existing [web survey](../simulation/src/agent/survey.ts) and [run coordinator](../simulation/src/run.ts) must supply target-specific task observations, not just a friction summary and generic project goal. Keep source-level extraction separate from persona interpretation and final comparison.
 
 Every comparison observation carries run/replicate, target, scenario, task, criterion and episode identities; persona/segment where applicable; source URL or asset ID; capture time; event/step and screenshot/text reference; access scope; and the proposition it supports. A document gathered once is one source, even if twenty personas read it. Preserve contradictory observations with their contexts rather than collapsing them into a favorable summary.
 

@@ -133,8 +133,8 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | Name | Unit or range | Value | Rationale | Provenance | Status |
 | --- | --- | --- | --- | --- | --- |
 | `posting_propensity` | 0-1 | `round(u^3, 2)`, `u` uniform | Most people read and do not write. | `audience/sample.ts` | assumed |
-| `DEFAULT_POSTING_PROPENSITY` | 0-1 | 0.2 | For personas written before the field existed. | `agent/prompt.ts` | assumed |
-| propensity wording cut-offs | 0-1 | 0.15, 0.35, 0.6 | Four prompt phrasings; not a probability. | `agent/prompt.ts` | assumed |
+| `DEFAULT_POSTING_PROPENSITY` | 0-1 | 0.2 | For personas written before the field existed. | `agent/social.ts` | assumed |
+| propensity wording cut-offs | 0-1 | 0.15, 0.35, 0.6 | Four prompt phrasings; not a probability. | `agent/social.ts` | assumed |
 | `patience` | integer 1-5 | uniform in the segment range | Authored per segment. | `audience/sample.ts` | assumed |
 | `motivation` | 1-5 | 10, 25, 35, 20, 10 percent | Most people meet a work tool as a chore. | `audience/sample.ts` | assumed |
 | `seniority` | junior, mid, senior, lead | 25, 40, 25, 10 percent | An organisation pyramid. | `audience/sample.ts` | assumed |
