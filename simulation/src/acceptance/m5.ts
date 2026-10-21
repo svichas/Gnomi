@@ -2,7 +2,7 @@ import type { GnomiEvent, Report } from '../types.ts';
 import type { Criterion, Mode } from './checks.ts';
 import { M5_SEEDS, retask, withBuyers, type Fixture } from './fixture.ts';
 
-/** The checkout sign-in prompt of Gym D26 is frame 4 of 6 (gym/defects.yaml `frames: [checkout/4]`), index 3. */
+/** The checkout sign-in prompt of Gym D26 is frame 4 of 6 (demo/GymSite/defects.yaml `frames: [checkout/4]`), index 3. */
 export const D26_FRAME = 3;
 export const DESIGN_PERSONAS = 20; // the roadmap's demo script runs a frame sequence with 20 personas
 export const SEEDS_NEEDED = 4; // of five

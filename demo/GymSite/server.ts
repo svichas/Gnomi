@@ -1,4 +1,4 @@
-// Gym ATS, a seeded-defect demo app Gnomi is measured against (catalogue: gym/defects.yaml). No dependencies.
+// Gym ATS, a seeded-defect demo app Gnomi is measured against (catalogue: demo/GymSite/defects.yaml). No dependencies.
 // startGym({ port, defects, login, thirdParty, liveKey, captcha }): port defaults to 4317 (0 = any free port); defects default to "all" (DEFECT_IDS, Gym v2), "v1" is D01–D12 and "none" the control build; other options default off. Env: PORT, GYM_DEFECTS, GYM_LOGIN=1, GYM_THIRD_PARTY, GYM_LIVE_KEY=1, GYM_CAPTCHA=1.
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";

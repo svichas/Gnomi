@@ -1,4 +1,4 @@
-// Regenerates the Gym v3 assets under gym/assets: the pricing copy, the design frames as 1280 px wide PNGs, and manifest.json (a hash of each frame's HTML).
+// Regenerates the Gym v3 assets under demo/GymSite/assets: the pricing copy, the design frames as 1280 px wide PNGs, and manifest.json (a hash of each frame's HTML).
 // Run: npm run assets -w @gnomi/gym. Needs Playwright's Chromium (npx playwright install chromium).
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -35,5 +35,5 @@ if (import.meta.main) {
   const pngs = await renderPages(plan.map((f) => f.html));
   plan.forEach((f, i) => write(f.key, pngs[i]));
   write("manifest.json", JSON.stringify(frameManifest(), null, 2) + "\n");
-  console.log(`Wrote ${plan.length} frames and ${copyPlan().length} copy files to gym/assets`);
+  console.log(`Wrote ${plan.length} frames and ${copyPlan().length} copy files to demo/GymSite/assets`);
 }

@@ -16,7 +16,7 @@ import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { GnomiEvent } from '@gnomi/simulation/types.ts';
-import { startGym } from '../gym/server.ts';
+import { startGym } from '../demo/GymSite/server.ts';
 
 const appDir = import.meta.dirname;
 const shots = join(appDir, 'test-results');

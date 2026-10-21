@@ -4,7 +4,7 @@
   "workspaces": [
     "simulation",
     "engine",
-    "gym",
+    "demo/GymSite",
     "app"
   ],
   "scripts": {

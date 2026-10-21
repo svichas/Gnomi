@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { gymAssets } from '../../../gym/assets.ts';
+import { gymAssets } from '../../../demo/GymSite/assets.ts';
 import { importLocalFile, importText } from '../assets.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
@@ -49,7 +49,7 @@ test('a quoted passage keeps offsets that hold it, is repaired to the nearest oc
   assert.ok(locatePassage(text, 'single sign-on is', 0, 0), 'three words');
 });
 
-// —— Runs on Gym v3's pricing copy (gym/design.ts, defect D28: the Team card lists SSO, the table and the FAQ give it to Business) ——
+// —— Runs on Gym v3's pricing copy (demo/GymSite/design.ts, defect D28: the Team card lists SSO, the table and the FAQ give it to Business) ——
 
 const segment = (id: string, name: string, over: Partial<Segment> = {}): Segment => ({
   id, name, description: '', share: 50, role: null, usage_frequency: 'weekly', typical_goals: [], mobile_share: 0, patience: [3, 3], tech_skill: [3, 3],

@@ -2,7 +2,7 @@
 
 The M5 mode of the [acceptance runner](m2-acceptance.md) checks the new point-of-interest types against the roadmap's M5 criteria, on Gym v3's content. It starts no browser and no Gym server, because text and design POIs open no page. It runs, in this order:
 
-1. **Text with buyers** (`text-d28`, `text-control`). The frozen fixture's people read the Plotline pricing page ([`gymAssets`](../gym/assets.ts) `copy.pricing`) together with a buyer segment, "Procurement", of one more person for every five of the fixture's people run (at least three) and share 20, the other shares scaled to leave room. First with D28 on (the Team plan card lists single sign-on, the comparison table and FAQ give it to Business only), then on the control copy.
+1. **Text with buyers** (`text-d28`, `text-control`). The frozen fixture's people read the Plotline pricing page ([`gymAssets`](../demo/GymSite/assets.ts) `copy.pricing`) together with a buyer segment, "Procurement", of one more person for every five of the fixture's people run (at least three) and share 20, the other shares scaled to leave room. First with D28 on (the Team plan card lists single sign-on, the comparison table and FAQ give it to Business only), then on the control copy.
 2. **Design** (`design-<seed>`, `design-control`). The people walk Gym v3's six checkout frames, D26 on (frame 4 is a sign-in prompt where an order confirmation is expected), once for each run seed 20261015 to 20261019, at most 20 personas each, then the control frames once. The frames carry no names, so a label cannot hint at the defect.
 3. **Figma listing**, which this runner never measures.
 
@@ -46,7 +46,7 @@ Start with `acceptance.json` and `manifest.json`. The manifest records the seeds
 
 Statuses mean what they mean in M2. `FAIL` means an observed requirement failed. The overall status of a live run is `REVIEW_NEEDED` until the D28 sheet is reviewed and recorded with its artifact paths in the roadmap. A scripted rehearsal never passes a criterion that needs a live model.
 
-The design runner records every expectation mismatch as a friction on its frame, and `frame_mismatch` reads those, so a friction on frame 4 that the persona gave for another reason also counts. The quotes in `acceptance.json` and `report.md` let a reader tell. Frame 4 is index 3 of the sequence; a test ties it to `gym/defects.yaml` and the frame files.
+The design runner records every expectation mismatch as a friction on its frame, and `frame_mismatch` reads those, so a friction on frame 4 that the persona gave for another reason also counts. The quotes in `acceptance.json` and `report.md` let a reader tell. Frame 4 is index 3 of the sequence; a test ties it to `demo/GymSite/defects.yaml` and the frame files.
 
 ## Pure checks
 

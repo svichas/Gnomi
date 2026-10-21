@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { startGym } from '../../gym/server.ts';
+import { startGym } from '../../demo/GymSite/server.ts';
 import { launchBrowserPool } from './browser/pool.ts';
 import { createScriptedGateway, DEMO_SURVEY } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';

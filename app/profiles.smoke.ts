@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { startGym } from '../gym/server.ts';
+import { startGym } from '../demo/GymSite/server.ts';
 
 type DownloadState = typeof globalThis & { profileSmokeDownload?: Promise<string> };
 

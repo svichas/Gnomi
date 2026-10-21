@@ -11,7 +11,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { Segment } from '@gnomi/simulation/types.ts';
-import { gymAssets } from '../gym/assets.ts';
+import { gymAssets } from '../demo/GymSite/assets.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-text-'));
 const projectDir = join(dir, 'text.gnomi');

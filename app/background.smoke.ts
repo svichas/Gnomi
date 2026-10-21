@@ -10,7 +10,7 @@ import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { importText } from '@gnomi/simulation/assets.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
-import { startGym } from '../gym/server.ts';
+import { startGym } from '../demo/GymSite/server.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-background-'));
 const userData = join(dir, 'user-data');

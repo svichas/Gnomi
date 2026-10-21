@@ -111,7 +111,7 @@ npm run cli -w @gnomi/simulation -- \
 
 This writes a local project, events, screenshots, and report artifacts. Scripted answers are fixtures for checking the workflow, not model-generated research findings. The CLI runs one built-in persona; audience setup and login recording are available in the desktop app. For a live CLI run, supply `ANTHROPIC_API_KEY` in your environment and omit `--fake-llm`.
 
-See the [Gym guide](gym/README.md) for the design and text fixtures, or start the web control with `GYM_DEFECTS=none npm run gym`.
+See the [Gym guide](demo/GymSite/README.md) for the design and text fixtures, or start the web control with `GYM_DEFECTS=none npm run gym`.
 
 ## Local storage and model access
 
@@ -146,7 +146,7 @@ Live acceptance runs are opt-in and require provider credentials and an explicit
 | [`app/`](app/) | Electron shell and React UI: projects, audience editor, inputs, live graph, activity, and reports. |
 | [`simulation/`](simulation/) | TypeScript simulation runtime: Playwright browser actions, provider routing, social rounds, SQLite event storage, and reports. |
 | [`engine/`](engine/) | Host process for the desktop app: project and audience authoring, Figma import, and the message protocol around the simulation. |
-| [`gym/`](gym/) | Demo web app, defect catalogue, design frames, and text fixtures. |
+| [`demo/GymSite/`](demo/GymSite/) | Demo web app, defect catalogue, design frames, and text fixtures. |
 | [`docs/`](docs/) | Product design, architecture, input contracts, evaluation guides, and roadmap. |
 | [`assets/brand/`](assets/brand/) | Logos, icons, typography, and brand assets. |
 | [`videos/`](videos/) | The introduction video, editable film project, audio, 3D models, animation source, and the README animation (`readme-gif/`, rebuilt with `node videos/readme-gif/render.mjs`). |

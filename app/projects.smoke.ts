@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _electron as electron } from 'playwright-core';
-import { gymAssets } from '../gym/assets.ts';
-import { startGym } from '../gym/server.ts';
+import { gymAssets } from '../demo/GymSite/assets.ts';
+import { startGym } from '../demo/GymSite/server.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-project-home-'));
 const exported = join(dir, 'exports');
