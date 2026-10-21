@@ -127,6 +127,9 @@ function layout(audience: Audience, population: Persona[]): { segment: Segment; 
 
 const takenNames = (personas: Persona[]) => new Map(personas.map((p) => [nameKey(p.name), p.name]));
 
+const traitsAt = (project: ProjectConfig, audience: Audience, segment: Segment, seed: number) =>
+  ({ ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) });
+
 function segmentOf(audience: Audience, segmentId: string | null): Segment {
   const segment = audience.segments.find((s) => s.id === segmentId);
   if (!segment) throw new Error(`The audience has no segment ${JSON.stringify(segmentId)}`);
@@ -145,7 +148,7 @@ export async function syncPersonas(
 ): Promise<{ personas: Persona[]; cost_usd: number }> {
   const project = { ...deps.project, audience };
   const slots = layout(audience, existing).flatMap(({ segment, slots }) =>
-    slots.map((slot) => ({ ...slot, segment, traits: { ...sampleTraits(segment, audience, slot.seed), attributes: sampleProfile(project.persona_schema, segment.id, slot.seed) }, signature: profileSignature(project, segment, slot.seed) })),
+    slots.map((slot) => ({ ...slot, segment, traits: traitsAt(project, audience, segment, slot.seed), signature: profileSignature(project, segment, slot.seed) })),
   );
   // Presentation/report flags and private values do not change prose. Keep it and refresh the sampled stored values.
   const keep = (s: (typeof slots)[number]) => s.old?.profile_signature === s.signature;
@@ -153,6 +156,13 @@ export async function syncPersonas(
   const written = await writePersonas(slots.filter((s) => !keep(s)), takenNames(kept), { ...deps, project });
   const byId = new Map([...kept, ...written.personas].map((p) => [p.id, p]));
   return { personas: slots.map((s) => byId.get(s.id)!), cost_usd: written.cost_usd };
+}
+
+/** Samples and writes one persona; others hold the names it must not take. */
+async function writeOne(id: string, segment: Segment, seed: number, audience: Audience, others: Persona[], deps: AudienceDeps): Promise<{ persona: Persona; cost_usd: number }> {
+  const project = { ...deps.project, audience };
+  const { personas, cost_usd } = await writePersonas([{ id, segment, seed, traits: traitsAt(project, audience, segment, seed) }], takenNames(others), { ...deps, project });
+  return { persona: personas[0], cost_usd };
 }
 
 /** A new seed for one persona: traits re-sampled and re-written, its id kept. */
@@ -163,11 +173,7 @@ export async function regeneratePersona(
   deps: AudienceDeps,
 ): Promise<{ persona: Persona; cost_usd: number }> {
   const segment = segmentOf(audience, persona.segment_id);
-  const seed = persona.seed + GENERATION;
-  const project = { ...deps.project, audience };
-  const job = { id: persona.id, segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population.filter((p) => p.id !== persona.id)), { ...deps, project });
-  return { persona: personas[0], cost_usd };
+  return writeOne(persona.id, segment, persona.seed + GENERATION, audience, population.filter((p) => p.id !== persona.id), deps);
 }
 
 /** One more persona in a segment, beyond what its share allots. */
@@ -184,9 +190,5 @@ export async function addPersona(
   ]);
   let index = 0;
   while (used.has(index)) index++;
-  const seed = addedSeed(audience.seed, segment.id, index);
-  const project = { ...deps.project, audience };
-  const job = { id: personaId(segment.id, index), segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population), { ...deps, project });
-  return { persona: personas[0], cost_usd };
+  return writeOne(personaId(segment.id, index), segment, addedSeed(audience.seed, segment.id, index), audience, population, deps);
 }
