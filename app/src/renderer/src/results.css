@@ -32,7 +32,6 @@
 .report-export-actions select { width: auto; max-width: 100%; font-size: 13px; }
 .report-export > .note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 
-.inspector-dialog { width: min(560px, 100vw); }
 .inspector-header { padding: 24px; flex-shrink: 0; }
 .inspector-header .button { flex-shrink: 0; }
 .inspector-jump-links { display: flex; gap: 4px; padding: 0 20px 12px; border-bottom: 1px solid var(--gnomi-line); flex-shrink: 0; }
