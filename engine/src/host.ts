@@ -18,7 +18,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, KEYS, population, projectGateway } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, credential, population, projectGateway } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
@@ -259,9 +259,9 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return null;
   },
   async test_key({ provider }) {
-    const credential = provider === 'openai_compatible' ? (open?.store.getProject()?.settings.local_base_url ?? null) : (secrets.get(KEYS[provider].secret) ?? null);
-    if (!credential) return { ok: false, error: provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : 'No key saved' };
-    const result = await testProviderKey(provider, credential);
+    const key = credential(provider, open?.store.getProject()?.settings.local_base_url, secret);
+    if (!key) return { ok: false, error: provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : 'No key saved' };
+    const result = await testProviderKey(provider, key);
     return result.ok ? { ok: true, error: null } : { ok: false, error: result.error };
   },
   async figma_test() {

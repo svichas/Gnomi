@@ -24,6 +24,10 @@ export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: Se
 
 export type Secrets = (name: SecretName) => string | null;
 
+/** What a provider needs before any call: the local endpoint for openai_compatible, else its key. */
+export const credential = (provider: ProviderId, localBaseUrl: string | null | undefined, secrets: Secrets) =>
+  provider === 'openai_compatible' ? localBaseUrl || null : secrets(KEYS[provider].secret);
+
 /** The model gateway for this project's routing, or scripted answers with no key and no cost; onThrottle tells a run to back off (tech.md §9.5). */
 export function projectGateway(opts: { fake: boolean; secrets: Secrets; config: ProjectConfig; record: Recorder; onThrottle?: (provider: ProviderId) => void }): LlmGateway {
   if (opts.fake) return createScriptedGateway({ navigator: DEMO_NAVIGATOR, socialiser: DEMO_SOCIALISER, persona_writer: DEMO_PERSONA_WRITER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, opts.record);
@@ -86,8 +90,7 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
   for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
     const provider = config.settings.routing[role].provider;
-    if (!opts.fake && provider === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
-    if (!opts.fake && provider !== 'openai_compatible' && !opts.secrets(KEYS[provider].secret)) throw new Error(`Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
+    if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
   return personas;
 }

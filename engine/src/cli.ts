@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, checkRun, KEYS, projectGateway, type Secrets } from './workspace.ts';
+import { audienceDeps, checkRun, credential, KEYS, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
@@ -100,10 +100,10 @@ function settingsFrom(v: Values): RunSettings {
 /** Fails early with the variable to set, rather than on the first model call. */
 function requireKey(settings: RunSettings, role: 'navigator' | 'persona_writer', fake: boolean) {
   const { provider } = settings.routing[role];
-  if (fake) return;
-  if (provider === 'openai_compatible') {
-    if (!settings.local_base_url) throw new Error('Set "local_base_url" in --settings for the local model the routing names.');
-  } else if (!envSecrets(KEYS[provider].secret)) throw new Error(`Set ${KEYS[provider].secret.toUpperCase()} (the ${role} runs on ${provider}), or pass --fake-llm for a scripted run that calls no model.`);
+  if (fake || credential(provider, settings.local_base_url, envSecrets)) return;
+  throw new Error(provider === 'openai_compatible'
+    ? 'Set "local_base_url" in --settings for the local model the routing names.'
+    : `Set ${KEYS[provider].secret.toUpperCase()} (the ${role} runs on ${provider}), or pass --fake-llm for a scripted run that calls no model.`);
 }
 
 function webPoi(raw: Record<string, unknown>, id: string): Poi {
