@@ -20,7 +20,8 @@ export class SessionRuns {
     if (event.type === 'run.started') {
       this.runs.set(key, { project_id, project_dir: dir, project_name: event.payload.config.project.name, run_id: event.run_id,
         started_at: event.ts, ended_at: null, status: 'running', phase: 'starting', waiting: 0, stop_reason: null });
-      this.blocked.set(key, new Set());
+      // A comparison never waits for the user: a blocked task ends at once, so there is nothing to resume.
+      if (!event.payload.config.project.comparison) this.blocked.set(key, new Set());
     }
     const run = this.runs.get(key);
     if (!run) return;

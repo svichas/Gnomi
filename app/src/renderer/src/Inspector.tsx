@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
-import { FEELINGS, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
+import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
+import type { PersonaState } from './activity.ts';
 import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
@@ -11,12 +12,13 @@ import './results.css';
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
   runId: string; persona: Persona; schema?: PersonaSchema; pois?: { id: string; name: string }[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  state: PersonaState; // the run's own status for her: her events alone miss the run's end and a comparison's rules
   events: GnomiEvent[]; // hers only, in order
   social: SocialMemory | null; // null: the run had no social rounds
   names: Map<string, string>;
   onClose(): void;
 }) {
-  const { runId, persona, schema, pois, segment, focusSeq, ended, events, social, names, onClose } = props;
+  const { runId, persona, schema, pois, segment, focusSeq, ended, state, events, social, names, onClose } = props;
   const poiName = (id: string) => pois?.find((poi) => poi.id === id)?.name ?? id;
   const name = personaLabel(persona, schema);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -36,8 +38,6 @@ export function Inspector(props: {
   }
 
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
-  const logged = personaStates(events, [persona]).get(persona.id) ?? 'waiting'; // her own events do not include the run's end
-  const state = ended && (logged === 'active' || logged === 'waiting') ? 'unfinished' : logged;
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');

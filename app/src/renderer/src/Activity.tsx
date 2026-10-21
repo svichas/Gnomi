@@ -7,6 +7,7 @@ import type { ProfileGroups } from '@gnomi/simulation/report/dimensions.ts';
 import { CATEGORIES, isTimelineHighlight } from './activity.ts';
 import type { Category, Filters, ProfileFilter, Row } from './activity.ts';
 import { activityMoments, momentKind, pendingActivityCount } from './activityFeed.ts';
+import type { ActivityMoment } from './activityFeed.ts';
 import { Button, Field, inputClass } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 import './activity.css';
@@ -87,6 +88,7 @@ export function ProfileFilters({ groups, filter, onChange }: { groups: ProfileGr
 /** The live feed of a run, virtualised: only the rows on screen are in the page, however many personas there are. */
 export function Activity(props: {
   rows: Row[];
+  moments: Record<'highlights' | 'all', ActivityMoment[]>; // the live rows' moments, folded as events arrive
   total: number;
   personas: Persona[];
   segments: Segment[];
@@ -96,18 +98,18 @@ export function Activity(props: {
   onFilters(filters: Filters): void;
   onOpen(personaId: string, seq: number | null): void;
 }) {
-  const { rows, total, personas, segments, filters, live = false, profileGroups = [], onFilters, onOpen } = props;
+  const { rows, moments: liveMoments, total, personas, segments, filters, live = false, profileGroups = [], onFilters, onOpen } = props;
   const byId = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const [showFilters, setShowFilters] = useState(false);
   const [allEvents, setAllEvents] = useState(false);
   const [snapshot, setSnapshot] = useState<{ filterKey: string; rows: Row[] } | null>(null);
   const filterKey = JSON.stringify(filters);
   const pausedRows = snapshot?.filterKey === filterKey ? snapshot.rows : null;
-  const feedRows = pausedRows ?? rows;
   const pause = () => { if (live && !pausedRows) setSnapshot({ filterKey, rows }); };
   // An explicit event category shows every matching event, including routine ones.
   const routineVisible = allEvents || !!filters.category;
-  const moments = useMemo(() => activityMoments(feedRows, routineVisible), [feedRows, routineVisible]);
+  const pausedMoments = useMemo(() => pausedRows && activityMoments(pausedRows, routineVisible), [pausedRows, routineVisible]);
+  const moments = pausedMoments ?? liveMoments[routineVisible ? 'all' : 'highlights'];
   const pending = useMemo(() => pausedRows ? pendingActivityCount(routineVisible ? rows : rows.filter(isTimelineHighlight), pausedRows) : 0, [rows, pausedRows, routineVisible]);
   const activeFilters = !!(filters.persona || filters.segment || filters.category || filters.dimension);
   const set = (change: Partial<Filters>) => { setSnapshot(null); onFilters({ ...filters, ...change }); };

@@ -6,8 +6,9 @@ import { isAttributeEnabled } from '@gnomi/simulation/profile/schema.ts';
 import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
 import { socialMemory } from '@gnomi/engine/graph/feed.ts';
 import { Activity, ProfileFilters } from './Activity.tsx';
-import { filterEvents, filterPersonas, isEnd, merge, personaProgress, personaStates, runSetup, stateWord, toRows, waitingBlocks } from './activity.ts';
+import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, foldRows, merge, runSetup, stateWord, statesOf, waitingOf } from './activity.ts';
 import type { Filters, PersonaState } from './activity.ts';
+import { emptyMoments, foldMoments } from './activityFeed.ts';
 import { BlockedBanner } from './Blocked.tsx';
 import { call, errorText, onEvent } from './engine.ts';
 import { Inspector } from './Inspector.tsx';
@@ -64,20 +65,26 @@ function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segme
   );
 }
 
+/** Folds only the events the log gained since the last render; starts over when a late event was sorted in or `reset` changed. */
+function useFold<T>(events: GnomiEvent[], reset: unknown[], start: () => T, step: (state: T, added: GnomiEvent[]) => T): T {
+  const last = useRef<{ events: GnomiEvent[]; reset: unknown[]; state: T } | null>(null);
+  const prev = last.current;
+  const same = !!prev && reset.every((value, i) => value === prev.reset[i]);
+  if (prev && same && prev.events === events) return prev.state;
+  const added = prev && same ? appended(prev.events, events) : null;
+  const state = prev && added ? step(prev.state, added) : step(start(), events);
+  last.current = { events, reset, state };
+  return state;
+}
+
 function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefined; active: boolean }) {
-  const [events, setEvents] = useState<GnomiEvent[]>([]);
-  // What the log says, read once per batch of events rather than on every render (the app re-renders all its tabs).
-  const log = useMemo(() => {
-    const ended = events.some(isEnd);
-    return {
-      config: events.find((event) => event.type === 'run.started')?.payload.config,
-      ended,
-      generatedSeq: events.findLast((event) => event.type === 'report.generated')?.seq,
-      waiting: ended || events.some((event) => event.type === 'report.started') ? [] : waitingBlocks(events),
-      social: events.some((event) => event.type === 'run.round_started' || event.type.startsWith('social.')),
-      posts: events.some((event) => event.type === 'social.post'),
-    };
-  }, [events]);
+  const [received, setEvents] = useState<GnomiEvent[]>([]);
+  // A hidden tab keeps showing the log it last showed, and catches up in one fold when it is shown again.
+  const shown = useRef(received);
+  if (active) shown.current = received;
+  const events = shown.current;
+  // What the log says, folded once per batch of new events rather than read whole on every render (the app re-renders all its tabs).
+  const log = useFold(events, [], emptyLog, foldLog);
   const frozenConfig = log.config ?? row?.config;
   const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
   const [report, setReport] = useState<ReportData | null>(null);
@@ -89,6 +96,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const closeInspector = useCallback(() => setInspecting(null), []);
   const openPersona = useCallback((id: string, seq?: number) => setInspecting({ persona: id, seq: seq ?? null }), []);
   const [view, setView] = useState<'activity' | 'report'>('activity');
+  const [feedOpen, setFeedOpen] = useState(false);
   const openedReport = useRef(false);
 
   useEffect(() => {
@@ -153,14 +161,17 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
 
   const { personas, segments } = setup;
   const personaById = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
-  const states = useMemo(() => personaStates(events, personas), [events, personas]);
-  const progress = useMemo(() => personaProgress(events), [events]);
+  const states = useMemo(() => statesOf(log.statuses, personas, ended), [log, personas, ended]);
   const groups = useMemo(() => setup.schema ? groupProfiles(personas, setup.schema) : [], [personas, setup.schema]);
   const profileFilter = useMemo(() => ({ dimension: filters.dimension, value: filters.value }), [filters.dimension, filters.value]);
   const shownPersonas = useMemo(() => filterPersonas(personas, profileFilter, setup.schema), [personas, profileFilter, setup.schema]);
-  const filtered = useMemo(() => filterEvents(events, filters, personaById, setup.schema), [events, filters, personaById, setup.schema]);
-  const rows = useMemo(() => toRows(filtered), [filtered]);
-  const waiting = ended ? [] : log.waiting;
+  // The feed's rows and moments, folded as events arrive; a new filter starts them over.
+  const feed = useFold(events, [filters, personaById, setup.schema], () => ({ rows: emptyRows(), highlights: emptyMoments(), all: emptyMoments() }), (fold, added) => {
+    const rows = foldRows(fold.rows, filterEvents(added, filters, personaById, setup.schema));
+    return { rows: fold.rows, highlights: foldMoments(fold.highlights, rows.added, rows.replaced), all: foldMoments(fold.all, rows.added, rows.replaced, true) };
+  });
+  const moments = useMemo(() => ({ highlights: feed.highlights.list, all: feed.all.list }), [feed]);
+  const waiting = ended ? [] : waitingOf(log);
   const inspected = inspecting ? personaById.get(inspecting.persona) : undefined;
   const names = useMemo(() => new Map(personas.map((persona) => [persona.id, personaLabel(persona, setup.schema)])), [personas, setup.schema]);
   const inspectedEvents = useMemo(() => inspected ? events.filter((event) => event.persona_id === inspected.id) : [], [events, inspected]);
@@ -211,7 +222,8 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           {statusPanel}
         </div>
         <Activity
-          rows={rows}
+          rows={feed.rows.rows}
+          moments={moments}
           total={events.length}
           personas={shownPersonas}
           segments={segments}
@@ -222,8 +234,9 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           onOpen={(id, seq) => setInspecting({ persona: id, seq })}
         />
         <div className="simulation-explore-tools">
-          {log.posts && <details className="disclosure"><summary><Icon name="message" />Audience conversations<span>Explore full discussion threads</span></summary><div className="disclosure-body"><Feed events={events} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} /></div></details>}
-          <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={openPersona} />
+          {/* Every thread is in the page while the feed shows, so it is built only while open. */}
+          {log.posts && <details className="disclosure" onToggle={(event) => setFeedOpen(event.currentTarget.open)}><summary><Icon name="message" />Audience conversations<span>Explore full discussion threads</span></summary><div className="disclosure-body">{feedOpen && <Feed events={events} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} />}</div></details>}
+          <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={log.progress} ended={ended} onOpen={openPersona} />
           {groups.length > 0 && <details className="disclosure profile-filter-disclosure"><summary><Icon name="filter" />Audience filters<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied to activity and people' : 'Explore a particular group'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} /></div></details>}
         </div>
       </div>}
@@ -248,6 +261,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          state={states.get(inspected.id) ?? 'waiting'}
           events={inspectedEvents}
           social={social}
           names={names}
