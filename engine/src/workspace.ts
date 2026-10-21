@@ -15,7 +15,8 @@ import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
-import type { Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
+import { socialRounds } from '@gnomi/simulation/settings.ts';
+import type { LlmRole, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -93,7 +94,10 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
     // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
     !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
-  for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
+  // Every role the run calls, as the Review step lists them: a missing key would fail mid-run or quietly drop the report's analysis.
+  const social = !config.comparison && socialRounds(config.settings, config.audience) > 0;
+  const roles: LlmRole[] = ['navigator', ...(social ? ['socialiser' as const] : []), 'judge', ...(config.comparison ? [] : ['author' as const])];
+  for (const role of roles) {
     const provider = config.settings.routing[role].provider;
     if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
