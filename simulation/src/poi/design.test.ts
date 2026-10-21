@@ -9,7 +9,7 @@ import { after, test } from 'node:test';
 import { assetFile, gymAssets } from '../../../demo/GymSite/assets.ts';
 import { framePlan } from '../../../demo/GymSite/design.ts';
 import { importLocalFile } from '../assets.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY } from '../llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY, requestText } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
@@ -40,7 +40,7 @@ function shopper(req: LlmRequest<unknown>) {
   assert.ok(images.length >= 1 && images.length <= 2, 'only the current screen and the one before it');
   const screen = shows.get(sha(images.at(-1)!.data));
   assert.ok(screen, 'every image sent is a downscaled Gym frame');
-  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const text = requestText(req);
   const expected = /expected next: "([^"]*)"/.exec(text)?.[1] ?? null;
   const confirmation = expected?.includes('confirmation') ?? false;
   const matched = expected === null ? null : !confirmation || screen.includes('Your order is placed');

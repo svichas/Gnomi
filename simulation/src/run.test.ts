@@ -7,7 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { createGateway, InvalidOutputError } from './llm/gateway.ts';
 import { surveySchema } from './agent/prompt.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, requestText } from './llm/scripted.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
 import { buildReport } from './report/build.ts';
 import { getPersonaSchema } from './profile/schema.ts';
@@ -464,7 +464,7 @@ test('every episode that ends on its own gets one survey from the navigator, abo
   for (const req of asked.values()) {
     assert.deepEqual([req.role, req.model, req.schema], ['navigator', DEFAULT_SETTINGS.routing.navigator, surveySchema]);
   }
-  const text = (id: string) => asked.get(id)!.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+  const text = (id: string) => requestText(asked.get(id)!);
   assert.match(text('done'), /^The session is over after 2 steps: Persona finished the task \("Posted"\)\.\nFrictions Persona reported along the way:\n- "Jobs is hard to find"/);
   assert.match(text('abandoned'), /after 1 step: Persona gave up \("Too slow"\)\.\nPersona reported no frictions/);
   assert.match(text('stuck'), /after 3 steps: Persona stopped after the same action failed three times in a row\./);
@@ -1061,7 +1061,7 @@ test('a reset hook that fails stops the run before any persona starts', async (t
 // —— Social rounds (M4) ——
 
 const QUIET = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };
-const said = (req: LlmRequest<unknown>) => req.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+const said = requestText;
 const stepOf = (req: LlmRequest<unknown>) => Number(/^Step (\d+)\./m.exec(said(req))?.[1]);
 const feedOf = (req: LlmRequest<unknown>) => [...said(req).matchAll(/^\[post (\S+)\]/gm)].map((m) => m[1]);
 // Patience 1 is a 12-step budget, so three rounds are slices of four steps.
