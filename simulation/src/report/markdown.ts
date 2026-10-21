@@ -2,9 +2,13 @@ import { isUnrated } from '../types.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 
-// Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
-const line = (text: string) => text.replace(/\s+/g, ' ').trim();
+// Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
+// so HTML and the characters that start a link, image or code span are escaped: a page cannot make the export load an image
+// or hide a link behind its own words. Escaping `[` is enough to stop `![`.
+const line = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[\\[\]`]/g, '\\$&').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const cell = (text: string) => line(text).replace(/\|/g, '\\|');
+// A query string or fragment can carry a session or reset token; a text's or design's name is not a URL and stays whole.
+const pageUrl = (url: string) => line(URL.canParse(url) ? url.replace(/[?#].*$/s, '') : url);
 const pct = (rate: number | null) => (rate === null ? '-' : `${Math.round(rate * 100)}%`); // null: a rate over nobody
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
@@ -119,7 +123,7 @@ function comparisonToMarkdown(report: Report): string {
     '', '### Captured sources', '',
     ...[...evidence.entries()].flatMap(([seq, items]) => [
       `<a id="comparison-source-${seq}"></a>`, `- Event #${seq}; persona ${line(items[0].persona_id)}; captured ${new Date(items[0].captured_at).toISOString()}`,
-      `  - Source: ${line(items[0].source)}`,
+      `  - Source: ${pageUrl(items[0].source)}`,
       ...items.flatMap((item) => [`  - Excerpt: “${line(item.quote)}”`, `  - Proposition (${label(item.basis)}; assessment #${item.assessment_seq}): ${line(item.proposition)}`]),
       `  - Screenshot: ${items[0].screenshot ?? 'none'}`, '',
     ]),
@@ -188,7 +192,7 @@ function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
-    ...(t.pages.length > 0 ? [`- Pages: ${t.pages.join(', ')}`] : []),
+    ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
     ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),
     `- Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`,
     '', 'Evidence:', '',
@@ -210,7 +214,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
   return [
     `${i + 1}. ${line(e.persona_name)} (${at}, severity ${e.severity}, ${e.trust}${signals}): ${line(e.what)}`,
     ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
-    ...(e.url ? [`   - Page: ${e.url}`] : []),
+    ...(e.url ? [`   - Page: ${pageUrl(e.url)}`] : []),
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
     ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
@@ -351,7 +355,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
     `   - Expected: ${line(friction.expected)}`,
     `   - Quote: "${line(friction.quote)}"`,
     ...passageLine(friction),
-    `   - Page: ${friction.url}`,
+    `   - Page: ${pageUrl(friction.url)}`,
     ...(friction.frame !== undefined ? [`   - Frame: ${friction.frame + 1}`] : []),
     `   - Screenshot: ${friction.screenshot ?? 'none'}`,
   ].join('\n');
