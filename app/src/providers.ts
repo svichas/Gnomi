@@ -4,7 +4,6 @@ import type { LlmRole, ProviderId, RunSettings } from '@gnomi/simulation/types.t
 // The provider list of the Settings page. Keys stay in main, encrypted by the OS; the page only ever sees what is here.
 
 export type KeyedProvider = Exclude<ProviderId, 'openai_compatible'>; // the local endpoint needs an address, not a key
-export const KEYED_PROVIDERS: KeyedProvider[] = ['anthropic', 'openai', 'google', 'deepseek'];
 
 /** The last "Test key" of a provider. `target` is the address a local endpoint test reached; the result lapses when it changes. */
 export interface KeyTest {
@@ -37,6 +36,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openai_compatible: 'Local endpoint',
 };
 const ALL = Object.keys(PROVIDER_LABELS) as ProviderId[];
+export const KEYED_PROVIDERS = ALL.filter((p): p is KeyedProvider => p !== 'openai_compatible');
 
 /** What the Settings page reads: the saved keys, and the last test of the project's local endpoint. */
 export interface ProviderList {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { writeSchema } from '../audience/write.ts';
+import { writeSchema } from './write.ts';
 
 test('the persona writer rejects a candidate named or described in another script', () => {
   const candidate = { name: 'Chen Jing', job_title: 'UAT tester', industry: 'Medical software', background: 'I test releases.', context_of_use: 'At home.', goal_interpretation: 'Find the price.', voice: 'Plain.', probability: 0.25 };

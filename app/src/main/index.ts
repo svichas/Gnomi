@@ -9,6 +9,7 @@ import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../proj
 import type { KeyTest } from '../providers.ts';
 import { REPORT_FORMATS } from '../reports.ts';
 import type { ReportFormat } from '../reports.ts';
+import type { Startup } from '../startup.ts';
 import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { keyedProvider, ProviderKeys } from './providers.ts';
@@ -37,6 +38,12 @@ let changingProject = false;
 
 const catalog = (): ProjectCatalog => ({ projects: library.list(), currentId: currentProjectId });
 const lastProjectFile = () => join(app.getPath('userData'), 'current-project');
+
+/** The preferred project if it is still there, else the newest, else a new one. */
+function projectOr(preferred?: string): string {
+  const entries = library.list();
+  return entries.find((entry) => entry.id === preferred)?.id ?? entries[0]?.id ?? library.create('Untitled project').id;
+}
 
 async function openManagedProject(id: string) {
   const project = await request('open_project', { dir: library.directory(id), project_id: id });
@@ -87,11 +94,6 @@ async function loadSessionKey(): Promise<{ key: string; remembered: boolean }> {
   return { key, remembered }; // not remembered: recorded logins end with this app session
 }
 
-interface Startup {
-  startupError: string | null; // set instead of rejecting, so the page can show it
-  sessionsPersist: boolean; // false: recorded logins are forgotten when the app quits
-}
-
 /** Starts the engine, gives it the secrets and opens the project. */
 async function startEngine(): Promise<Startup> {
   let sessionsPersist = true;
@@ -124,9 +126,7 @@ async function startEngine(): Promise<Startup> {
           await request('open_project', { dir: override, project_id: 'development' });
           currentProjectId = 'development';
         } else {
-          const entries = library.list();
-          const previous = existsSync(lastProjectFile()) ? readFileSync(lastProjectFile(), 'utf8') : '';
-          await openManagedProject(entries.find((entry) => entry.id === previous)?.id ?? entries[0]?.id ?? library.create('Untitled project').id);
+          await openManagedProject(projectOr(existsSync(lastProjectFile()) ? readFileSync(lastProjectFile(), 'utf8') : ''));
         }
       })(),
       providers.load(),
@@ -195,7 +195,7 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
       case 'export': exportedTo = library.exportFolder(input.id, destination!); break;
       case 'delete': {
         await library.trash(input.id, (path) => shell.trashItem(path));
-        if (input.id === previous) selected = library.list()[0]?.id ?? library.create('Untitled project').id;
+        if (input.id === previous) selected = projectOr();
         break;
       }
     }
@@ -205,8 +205,7 @@ ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<P
   } catch (err) {
     if (closed) {
       try {
-        const fallback = library.list().find((entry) => entry.id === previous)?.id ?? library.list()[0]?.id ?? library.create('Untitled project').id;
-        await openManagedProject(fallback);
+        await openManagedProject(projectOr(previous));
       } catch {
         throw new Error('The project action failed and the previous project could not be reopened. Restart Gnomi.');
       }
@@ -222,13 +221,13 @@ const THUMBNAIL_WIDTH = 640;
 ipcMain.handle('report-thumbnails', async (_event, paths: unknown) => {
   if (!Array.isArray(paths) || !paths.every((path) => typeof path === 'string')) throw new Error('Unknown screenshots.');
   const thumbnails: Record<string, string> = {};
-  for (const path of paths) {
+  await Promise.all(paths.map(async (path) => {
     const blob = await request('get_blob', { path }).catch(() => null); // the engine hands out run files only
     const image = blob && nativeImage.createFromBuffer(Buffer.from(blob.base64, 'base64'));
-    if (!image || image.isEmpty()) continue;
+    if (!image || image.isEmpty()) return;
     const small = image.getSize().width > THUMBNAIL_WIDTH ? image.resize({ width: THUMBNAIL_WIDTH, quality: 'good' }) : image;
     thumbnails[path] = `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`;
-  }
+  }));
   return thumbnails;
 });
 

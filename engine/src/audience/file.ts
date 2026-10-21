@@ -1,16 +1,20 @@
-// An audience kept in a file for the CLI: the app's saved-audience shape (app/src/audiences.ts) plus the personas written
-// from it and the product they were written for, so a run reuses them for as long as they are current.
+// An audience kept in a file for the CLI: the app's saved-audience shape plus the personas written from it and the
+// product they were written for, so a run reuses them for as long as they are current.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { Audience, Persona, PersonaSchema } from '@gnomi/simulation/types.ts';
 
-export interface AudienceFile {
+/** An audience kept outside any project, for other projects to start from. Personas stay behind: they are written for one product. */
+export interface SavedAudience {
   id: string;
   name: string;
   savedAt: number;
   audience: Audience;
   schema: PersonaSchema;
+}
+
+export interface AudienceFile extends SavedAudience {
   product: { name: string; description: string; goal: string }; // what the personas were written for
   personas: Persona[];
 }

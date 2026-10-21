@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
 import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
+import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createGateway } from '@gnomi/simulation/llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
@@ -12,8 +13,9 @@ import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
-import type { Persona, PersonaProgress, ProjectConfig, ProviderId } from '@gnomi/simulation/types.ts';
+import type { Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -23,6 +25,10 @@ export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: Se
 };
 
 export type Secrets = (name: SecretName) => string | null;
+
+/** What a provider needs before any call: the local endpoint for openai_compatible, else its key. */
+export const credential = (provider: ProviderId, localBaseUrl: string | null | undefined, secrets: Secrets) =>
+  provider === 'openai_compatible' ? localBaseUrl || null : secrets(KEYS[provider].secret);
 
 /** The model gateway for this project's routing, or scripted answers with no key and no cost; onThrottle tells a run to back off (tech.md §9.5). */
 export function projectGateway(opts: { fake: boolean; secrets: Secrets; config: ProjectConfig; record: Recorder; onThrottle?: (provider: ProviderId) => void }): LlmGateway {
@@ -63,10 +69,17 @@ export function population(store: ProjectStore, config: ProjectConfig): Persona[
   return config.audience ? store.listPersonas() : [BUILTIN_PERSONA];
 }
 
-/** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
-export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
+export function checkComparison(config: ProjectConfig) {
   const comparisonProblems = validateComparison(config);
   if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
+}
+
+export const estimateFor = (config: ProjectConfig, personas: Persona[]) =>
+  estimateRun({ personas, settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
+
+/** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
+export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
+  checkComparison(config);
   const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
   if (refusal) throw new Error(refusal);
   if (opts.reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
@@ -82,8 +95,21 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
   for (const role of config.comparison ? ['navigator', 'judge'] as const : ['navigator'] as const) {
     const provider = config.settings.routing[role].provider;
-    if (!opts.fake && provider === 'openai_compatible' && !config.settings.local_base_url) throw new Error('Set the local model endpoint in the project settings first');
-    if (!opts.fake && provider !== 'openai_compatible' && !opts.secrets(KEYS[provider].secret)) throw new Error(`Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
+    if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
   return personas;
+}
+
+/** Starts a run of the personas checkRun returned, on a gateway that backs off when the run is throttled. */
+export function launchRun(
+  store: ProjectStore,
+  config: ProjectConfig,
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number },
+  deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
+): RunHandle {
+  let handle: RunHandle | undefined;
+  const llm = projectGateway({ fake: deps.fake, secrets: deps.secrets, config, record: deps.record, onThrottle: (provider) => handle?.throttle(provider) });
+  const base = newRunConfig(config, run);
+  handle = startRun(store.createRun({ ...base, pause_timeout_ms: run.pause_timeout_ms ?? base.pause_timeout_ms }), { store, blobs: deps.blobs, browsers: deps.browsers, llm, record: deps.record, sessions: deps.sessions });
+  return handle;
 }
