@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Report as ReportData } from '@gnomi/simulation/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
 import type { ReportFormat } from '../../reports.ts';
-import { Button, Note, inputClass, useAction } from './ui.tsx';
+import { Button, inputClass, OutcomeNote, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
 /** Saves the report as a file. The file is drawn on demand, so the screen never loads the static renderer or the inlined styles. */
@@ -37,7 +37,7 @@ export function ExportReport({ report }: { report: ReportData }) {
           {busy ? 'Exporting...' : 'Export report'}
         </Button>
       </div>
-      {outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>}
+      <OutcomeNote outcome={outcome} />
     </div>
   );
 }

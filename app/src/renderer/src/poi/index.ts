@@ -25,6 +25,13 @@ export const draftOf = (poi: Poi): PoiDraft => (POI_KINDS[poi.type] as unknown a
 export const poiOf = (draft: PoiDraft): Poi | string => kindOf(draft).toPoi(draft);
 export const poiTitle = (draft: PoiDraft, index: number): string => kindOf(draft).title(draft) || `${POI_KINDS[draft.type].label} ${index + 1}`;
 
+/** The items with the one at `index` moved `by` places (−1 earlier, +1 later). */
+export function move<T>(items: T[], index: number, by: number): T[] {
+  const next = [...items];
+  [next[index], next[index + by]] = [next[index + by], next[index]];
+  return next;
+}
+
 /** An id no draft has yet: poi-1, poi-2, … */
 export const nextPoiId = (drafts: PoiDraft[]): string => `poi-${Math.max(0, ...drafts.map((d) => Number(/^poi-(\d+)$/.exec(d.id)?.[1] ?? 0))) + 1}`;
 

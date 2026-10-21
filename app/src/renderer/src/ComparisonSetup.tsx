@@ -5,7 +5,7 @@ import type { Poi, SessionInfo } from '@gnomi/simulation/types.ts';
 import { toConfig, type Draft } from './form.ts';
 import { poiOf } from './poi/index.ts';
 import { RecordingPanel, type Recorder } from './Recorder.tsx';
-import { Button, Card, Check, Field, inputClass, Note } from './ui.tsx';
+import { Button, Card, Check, Field, inputClass, Note, OutcomeNote } from './ui.tsx';
 
 const lines = (value: string) => value.split('\n');
 const nextId = (prefix: string, items: { id: string }[]) => {
@@ -183,7 +183,7 @@ export function ComparisonSetup({ draft, onChange, sessions, sessionsPersist, re
           </div>
         </details>
         <RecordingPanel recorder={recorder} />
-        {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+        <OutcomeNote outcome={recorder.outcome} />
       </>}
     </div>
   </Card>;

@@ -66,7 +66,19 @@ function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segme
 
 function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefined; active: boolean }) {
   const [events, setEvents] = useState<GnomiEvent[]>([]);
-  const frozenConfig = events.find((event) => event.type === 'run.started')?.payload.config ?? row?.config;
+  // What the log says, read once per batch of events rather than on every render (the app re-renders all its tabs).
+  const log = useMemo(() => {
+    const ended = events.some(isEnd);
+    return {
+      config: events.find((event) => event.type === 'run.started')?.payload.config,
+      ended,
+      generatedSeq: events.findLast((event) => event.type === 'report.generated')?.seq,
+      waiting: ended || events.some((event) => event.type === 'report.started') ? [] : waitingBlocks(events),
+      social: events.some((event) => event.type === 'run.round_started' || event.type.startsWith('social.')),
+      posts: events.some((event) => event.type === 'social.post'),
+    };
+  }, [events]);
+  const frozenConfig = log.config ?? row?.config;
   const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
   const [report, setReport] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,8 +118,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
     };
   }, [runId]);
 
-  const ended = events.some(isEnd) || (!!row && row.status !== 'running');
-  const generatedSeq = events.findLast((event) => event.type === 'report.generated')?.seq;
+  const ended = log.ended || (!!row && row.status !== 'running');
   useEffect(() => {
     if (!ended) return;
     let current = true;
@@ -127,7 +138,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
     return () => {
       current = false;
     };
-  }, [ended, generatedSeq, runId, reportAttempt]);
+  }, [ended, log.generatedSeq, runId, reportAttempt]);
 
   async function stop() {
     setStopping(true);
@@ -148,13 +159,14 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const shownPersonas = useMemo(() => filterPersonas(personas, profileFilter, setup.schema), [personas, profileFilter, setup.schema]);
   const filtered = useMemo(() => filterEvents(events, filters, personaById, setup.schema), [events, filters, personaById, setup.schema]);
   const rows = useMemo(() => toRows(filtered), [filtered]);
-  const waiting = ended || events.some((event) => event.type === 'report.started') ? [] : waitingBlocks(events);
+  const waiting = ended ? [] : log.waiting;
   const inspected = inspecting ? personaById.get(inspecting.persona) : undefined;
   const names = useMemo(() => new Map(personas.map((persona) => [persona.id, personaLabel(persona, setup.schema)])), [personas, setup.schema]);
+  const inspectedEvents = useMemo(() => inspected ? events.filter((event) => event.persona_id === inspected.id) : [], [events, inspected]);
   const social = useMemo(() => {
-    if (!inspected || !events.some((event) => event.type === 'run.round_started' || event.type.startsWith('social.'))) return null; // a run without social rounds
+    if (!inspected || !log.social) return null; // a run without social rounds
     return socialMemory(events, inspected.id);
-  }, [events, inspected]);
+  }, [events, inspected, log.social]);
   const statusPanel = <RunStatus events={events} config={frozenConfig} row={row} compact={view === 'report'} reportAvailable={report !== null} waiting={waiting.length} stopping={stopping} onStop={stop} />;
 
   return (
@@ -208,7 +220,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           onOpen={(id, seq) => setInspecting({ persona: id, seq })}
         />
         <div className="simulation-explore-tools">
-          {events.some((event) => event.type === 'social.post') && <details className="disclosure"><summary><Icon name="message" />Audience conversations<span>Explore full discussion threads</span></summary><div className="disclosure-body"><Feed events={events} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} /></div></details>}
+          {log.posts && <details className="disclosure"><summary><Icon name="message" />Audience conversations<span>Explore full discussion threads</span></summary><div className="disclosure-body"><Feed events={events} names={names} pois={frozenConfig?.project.pois} onOpen={openPersona} /></div></details>}
           <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={progress} ended={ended} onOpen={openPersona} />
           {groups.length > 0 && <details className="disclosure profile-filter-disclosure"><summary><Icon name="filter" />Audience filters<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied to activity and people' : 'Explore a particular group'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} /></div></details>}
         </div>
@@ -234,6 +246,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          events={inspectedEvents}
           social={social}
           names={names}
           onClose={closeInspector}

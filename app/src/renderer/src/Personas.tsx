@@ -4,7 +4,7 @@ import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries } 
 import { countryName } from '@gnomi/simulation/audience/locations.ts';
 import { addedByHand, distribution } from './audience.ts';
 import { PersonaHeader, ProfileFields, personaLabel } from './ProfileFields.tsx';
-import { formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
+import { DEFAULT_IDS, formatAttribute, NARRATIVE_FIELDS } from './profile.ts';
 import { Icon } from './Icon.tsx';
 import { Bars, Button, Card, Field, inputClass, Note } from './ui.tsx';
 
@@ -60,7 +60,6 @@ const WRITTEN = [
   ['goal_interpretation', 'How they read the goal'],
   ['voice', 'Voice'],
 ] as const;
-const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
 const GLANCE = ['city', 'country', 'device'];
 
 /** One persona, collapsed to who and where they are; opening it shows the full profile, and only the written fields can be edited by hand. */

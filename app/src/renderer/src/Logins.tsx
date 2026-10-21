@@ -3,7 +3,7 @@ import type { SessionInfo } from '@gnomi/simulation/types.ts';
 import { call, errorText } from './engine.ts';
 import { RecordingPanel } from './Recorder.tsx';
 import type { Recorder } from './Recorder.tsx';
-import { Button, Card, Field, inputClass, Note, when } from './ui.tsx';
+import { Button, Card, Field, inputClass, Note, OutcomeNote, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 
 function expiry(session: SessionInfo): string {
@@ -76,7 +76,7 @@ export function Logins(props: {
         </div>
 
         <RecordingPanel recorder={recorder} />
-        {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+        <OutcomeNote outcome={recorder.outcome} />
 
         {sessions.length > 0 && (
           <ul aria-label="Recorded logins" className="space-y-2">

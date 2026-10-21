@@ -4,7 +4,7 @@ import type { ComparisonAssessment, ComparisonCell, ComparisonReport as Comparis
 import { BASIS_LABELS, ComparisonEvidence, EvidenceLinks, evidenceCatalog } from './ComparisonEvidence.tsx';
 import { ACCESS_LABELS, ComparisonCoverage } from './ComparisonCoverage.tsx';
 import { Icon } from './Icon.tsx';
-import { Fold, Tile } from './reportParts.tsx';
+import { Fold, SectionHeading, Tile } from './reportParts.tsx';
 import type { Tone } from './reportParts.tsx';
 
 const ASSESSMENTS: Record<ComparisonAssessment, { label: string; tone: Tone }> = {
@@ -46,10 +46,6 @@ function names({ study }: ComparisonData, report: Report) {
     personaName: (id: string) => report.personas.find((persona) => persona.id === id)?.name ?? id,
     scopeName: (scope: { scenario_id: string; task_id: string; segment_id: string | null }) => `${scenarioName(scope.scenario_id)} · ${segmentName(scope.segment_id)} · ${taskName(scope.task_id)}`,
   };
-}
-
-function SectionHeading({ id, title, hint }: { id: string; title: string; hint: string }) {
-  return <div className="report-section-heading"><div><h3 id={id}>{title}</h3><p>{hint}</p></div></div>;
 }
 
 /** This component also renders every HTML/PDF export: the decision and denominators have one source. */

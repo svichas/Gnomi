@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Persona } from '@gnomi/simulation/types.ts';
+import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { Persona, ProjectConfig } from '@gnomi/simulation/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '@gnomi/simulation/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, generatedCount, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare, staleProfiles } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
   assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
@@ -120,4 +121,15 @@ test('the persona count splits by share with at least 3 per segment, fewer only 
   assert.deepEqual(segmentCounts(audience(4, [90, 5, 5])), [2, 1, 1]);
   assert.deepEqual(segmentCounts(audience(1, [60, 40])), [1, 0]);
   assert.deepEqual(segmentCounts(audience(20, [100, 0])), [20, 0]);
+});
+
+test('personas are measured against the count they were written for, and a changed audience leaves signed profiles out of date', () => {
+  const project = { audience: { persona_count: 12 } } as ProjectInfo['project'];
+  assert.equal(generatedCount(null), undefined);
+  assert.equal(generatedCount({ generated_persona_count: 8, project } as ProjectInfo), 8);
+  assert.equal(generatedCount({ generated_persona_count: null, project } as ProjectInfo), 12, 'before generation recorded its count');
+  const unsigned = { id: 'p-1', segment_id: null, seed: 1 } as Persona; // current while the project has no profile schema
+  const signed = { ...unsigned, id: 'p-2', segment_id: 'gone', profile_signature: 'p1-old' } as Persona;
+  assert.deepEqual(staleProfiles([unsigned, signed], { audience: null } as ProjectConfig), new Set(['p-2']));
+  assert.deepEqual(staleProfiles([unsigned, signed], null), new Set(), 'nothing to compare with yet');
 });

@@ -1,6 +1,8 @@
-import type { Audience, Persona, Segment } from '@gnomi/simulation/types.ts';
+import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { Audience, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { apportion as splitByShare } from '@gnomi/simulation/audience/sample.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 
 // The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
 
@@ -174,4 +176,15 @@ export function addedByHand(persona: Persona, audienceSeed: number | null): bool
   if (persona.segment_id === null || audienceSeed === null) return false;
   const slot = Number(persona.id.slice(persona.id.lastIndexOf('-') + 1)) - 1;
   return persona.seed % 2 ** 32 === fnv1a(`${audienceSeed}/${persona.segment_id}/${slot}/added`);
+}
+
+/** A segment's colour by its place in the audience: the brand has five (assets/brand/brand-tokens.css), used in turn. */
+export const segmentVar = (index: number) => `var(--gnomi-segment-${index % 5 + 1})`;
+
+/** The persona count the written personas were made for: the last generation's setting, or the saved audience's before that was recorded. */
+export const generatedCount = (info: ProjectInfo | null) => info?.generated_persona_count ?? info?.project?.audience?.persona_count;
+
+/** The personas whose writer inputs changed since they were written, so their prose no longer fits; none without a project. */
+export function staleProfiles(personas: Persona[], project: ProjectConfig | null): Set<string> {
+  return new Set(project ? personas.filter((persona) => !personaProfileIsCurrent(persona, project)).map((persona) => persona.id) : []);
 }

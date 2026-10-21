@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
-import { FEELINGS, merge, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
-import { call, errorText, onEvent } from './engine.ts';
+import { FEELINGS, personaProgress, personaStates, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
@@ -12,11 +11,12 @@ import './results.css';
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
   runId: string; persona: Persona; schema?: PersonaSchema; pois?: { id: string; name: string }[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  events: GnomiEvent[]; // hers only, in order
   social: SocialMemory | null; // null: the run had no social rounds
   names: Map<string, string>;
   onClose(): void;
 }) {
-  const { runId, persona, schema, pois, segment, focusSeq, ended, social, names, onClose } = props;
+  const { runId, persona, schema, pois, segment, focusSeq, ended, events, social, names, onClose } = props;
   const poiName = (id: string) => pois?.find((poi) => poi.id === id)?.name ?? id;
   const name = personaLabel(persona, schema);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -26,8 +26,6 @@ export function Inspector(props: {
     dialog.current?.close();
     onClose();
   }
-  const [events, setEvents] = useState<GnomiEvent[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const evidence = useRef(new Map<number, HTMLLIElement>());
   const [evidenceSeq, setEvidenceSeq] = useState<number | null>(null);
   function jumpTo(id: string) {
@@ -36,21 +34,6 @@ export function Inspector(props: {
     section?.scrollIntoView({ block: 'start' });
     section?.focus({ preventScroll: true });
   }
-
-  useEffect(() => {
-    let current = true;
-    const off = onEvent((event) => {
-      if (event.run_id === runId && event.persona_id === persona.id) setEvents((have) => merge(have, [event]));
-    });
-    call('get_events', { run_id: runId, after_seq: null, persona_id: persona.id }).then(
-      (all) => current && setEvents((have) => merge(have, all)),
-      (err) => current && setError(errorText(err)),
-    );
-    return () => {
-      current = false;
-      off();
-    };
-  }, [runId, persona.id]);
 
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
   const logged = personaStates(events, [persona]).get(persona.id) ?? 'waiting'; // her own events do not include the run's end
@@ -92,8 +75,7 @@ export function Inspector(props: {
 
         <section aria-label="Timeline" id="inspector-timeline" tabIndex={-1}>
           <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Step by step</h3><span>Newest first</span></div>
-          {error && <p className="text-sm text-red-800">{error}</p>}
-          {rows.length === 0 && !error && <div className="inspector-empty"><Icon name="activity" size={24} /><p>{ended ? 'No actions were recorded for this persona.' : 'This persona is waiting to explore.'}</p><span>{ended ? 'Explore their profile to review the audience assumptions.' : 'Recorded actions and screenshots will appear here.'}</span></div>}
+          {rows.length === 0 && <div className="inspector-empty"><Icon name="activity" size={24} /><p>{ended ? 'No actions were recorded for this persona.' : 'This persona is waiting to explore.'}</p><span>{ended ? 'Explore their profile to review the audience assumptions.' : 'Recorded actions and screenshots will appear here.'}</span></div>}
           <ol className="inspector-timeline space-y-2">
             {rows.map((row) => (
               <li

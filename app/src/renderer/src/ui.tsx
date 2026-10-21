@@ -30,6 +30,26 @@ export function Card({ title, children, description, id, className }: { title: s
   );
 }
 
+/** Keep the invoking control before React autofocus moves focus into the dialog. */
+export function Dialog({ title, onCancel, wide, children }: { title: string; onCancel(): void; wide?: boolean; children: ReactNode }) {
+  const element = useRef<HTMLDialogElement>(null);
+  const [invoker] = useState(() => document.activeElement);
+  useEffect(() => {
+    const dialog = element.current;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (invoker instanceof HTMLElement && invoker.isConnected) invoker.focus();
+    };
+  }, [invoker]);
+  return (
+    <dialog ref={element} aria-label={title} onCancel={(event) => { event.preventDefault(); onCancel(); }} className={`m-auto w-full space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-xl backdrop:bg-stone-900/30 ${wide ? 'max-h-[90vh] max-w-3xl overflow-auto' : 'max-w-md'}`}>
+      <h2 className="text-base font-semibold text-stone-900">{title}</h2>
+      {children}
+    </dialog>
+  );
+}
+
 /** A labelled control. The label is tied to it by id rather than wrapped around it, so its text stays "Goal" however much the control holds. */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string; 'aria-describedby'?: string }> }) {
   const id = useId();
@@ -172,6 +192,11 @@ export function Note({ tone, children }: { tone: keyof typeof NOTE_ICONS; childr
 export interface Outcome {
   ok: boolean;
   text: string;
+}
+
+/** The message an action ended with, if it has ended. */
+export function OutcomeNote({ outcome }: { outcome: Outcome | null }) {
+  return outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>;
 }
 
 /** Runs one async action at a time, tracking whether it is in flight and the message it ended with. */

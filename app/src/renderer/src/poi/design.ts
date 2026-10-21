@@ -15,10 +15,3 @@ export const design: PoiKind<DesignPoi, DesignPoi> = {
       : { ...draft, name: draft.name.trim() || 'Design', frames: draft.frames.map(({ asset, name }) => ({ asset, name: name?.trim() || null })) },
   title: (draft) => draft.name.trim(),
 };
-
-/** The frames with the one at `index` moved `by` places (−1 earlier, +1 later). */
-export function moveFrame(frames: DesignPoi['frames'], index: number, by: number): DesignPoi['frames'] {
-  const next = [...frames];
-  [next[index], next[index + by]] = [next[index + by], next[index]];
-  return next;
-}

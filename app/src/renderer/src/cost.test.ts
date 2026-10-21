@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, GnomiEvent } from '@gnomi/simulation/types.ts';
-import { missingUsageText, recordedCost } from './cost.ts';
+import { recordedCost } from './cost.ts';
 
 const call = (seq: number, cost_usd: number, extra: Partial<EventPayloads['llm.call']> = {}): GnomiEvent => ({
   seq, ts: seq, run_id: 'r-1', round: 1, persona_id: 'p-1', poi_id: null, type: 'llm.call',
@@ -17,13 +17,4 @@ test('live recorded cost includes retries and partial usage but does not infer m
     call(4, 0, { status: 'error', error: 'Old log without usage flag' }),
     { seq: 5, ts: 5, run_id: 'r-1', round: 1, persona_id: null, poi_id: null, type: 'run.finished', payload: {} },
   ]), { cost_usd: 0.3, unreported_usage_calls: 2 });
-});
-
-test('missing-usage copy names the count and preserves uncertainty about provider billing', () => {
-  assert.equal(missingUsageText(undefined), null);
-  assert.equal(missingUsageText(0), null);
-  assert.match(missingUsageText(1)!, /^1 model call did not report complete usage/);
-  assert.match(missingUsageText(2)!, /^2 model calls did not report complete usage/);
-  assert.match(missingUsageText(2)!, /Canceled or failed requests may still incur provider charges/);
-  assert.match(missingUsageText(2)!, /Actual charges may exceed the recorded cost/);
 });

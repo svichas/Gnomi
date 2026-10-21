@@ -269,7 +269,7 @@ export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[
   return [...waiting.values()];
 }
 
-export type PersonaState = 'waiting' | 'active' | 'blocked' | 'done' | 'abandoned' | 'unfinished';
+export type PersonaState = import('@gnomi/engine/graph/index.ts').PersonaStatus;
 
 export const STATE_WORDS: Record<PersonaState, string> = {
   waiting: 'Waiting to start',

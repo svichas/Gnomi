@@ -19,6 +19,7 @@ export function reportToMarkdown(report: Report): string {
   if (report.comparison) return comparisonToMarkdown(report);
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
+  const missingUsage = missingUsageText(report.unreported_usage_calls);
   return [
     `# Gnomi report: ${report.goal}`,
     '',
@@ -46,9 +47,7 @@ export function reportToMarkdown(report: Report): string {
     '## Cost and time',
     '',
     `- Recorded cost: $${report.cost_usd.toFixed(4)}. ${COST_SCOPE_TEXT}`,
-    ...((report.unreported_usage_calls ?? 0) > 0 ? [
-      `- ${report.unreported_usage_calls} model call${report.unreported_usage_calls === 1 ? '' : 's'} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`,
-    ] : []),
+    ...(missingUsage ? [`- ${missingUsage}`] : []),
     `- Tokens: ${report.input_tokens} in, ${report.output_tokens} out`,
     `- LLM calls: ${report.llm_calls}`,
     `- Duration: ${duration}`,
@@ -150,6 +149,12 @@ function dimensionLines(report: Report): string[] {
 
 /** Persona writing happens before the run, so its calls are in the project's setup log, not the run's. */
 export const COST_SCOPE_TEXT = 'Writing the personas is recorded separately and is not included in this cost.';
+
+/** Said beside a recorded cost when some model calls did not report their usage; null when every call did. */
+export function missingUsageText(calls: number | undefined): string | null {
+  if (!calls) return null;
+  return `${count(calls, 'model call')} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`;
+}
 
 export const TRUST_TEXT = {
   confirmed: 'a self-report backed by an objective signal',
