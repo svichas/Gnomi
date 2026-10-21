@@ -22,7 +22,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      # The Electron binary is only needed by the smoke scripts, which need a display and are not run here.
+      # The Electron binary is only needed by the smoke job below.
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -31,3 +31,19 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build -w @gnomi/app
+
+  # The Electron smoke holds the only checks on the CSP, context isolation and key storage; scripted models, no keys.
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Electron's sandbox needs.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: xvfb-run -a npm run smoke -w @gnomi/app
