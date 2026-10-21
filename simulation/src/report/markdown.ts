@@ -323,7 +323,7 @@ function segmentLines(report: Report): string[] {
     'Ran into friction: a self-report, survey friction or browser signal in one of the problem themes; objections are not counted.',
     ...(pois.length ? ['A persona reached the goal only when it did so on every text, design or site it was given.'] : []),
     ...(notStarted ? [`${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of these rates.`] : []),
-    ...(noAnswer ? [`${count(noAnswer, 'persona')} got no valid model answer three steps in a row and ${noAnswer === 1 ? 'is' : 'are'} left out of these rates; that says nothing about the product.`] : []),
+    ...(noAnswer ? [`${count(noAnswer, 'persona')} got no valid model answer and ${noAnswer === 1 ? 'is' : 'are'} left out of these rates; that says nothing about the product.`] : []),
     '',
     `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}. **Unweighted:** completion ${pct(started.length ? started.filter((p) => p.outcome === 'done').length / started.length : null)}.`,
   ];

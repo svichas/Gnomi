@@ -72,7 +72,7 @@ function endingOf(own: GnomiEvent[]): Ending {
   if (lastBlock && !resumedAfter(own, lastBlock)) ending = { outcome: 'blocked', outcome_text: lastBlock.payload.detail };
   if (stuck) {
     ending = stuck.payload.error === 'invalid_output'
-      ? { outcome: 'model_failed', outcome_text: 'The model gave no valid answer three steps in a row; this says nothing about the product' }
+      ? { outcome: 'model_failed', outcome_text: 'The model gave no valid answer, so the persona could not go on; this says nothing about the product' }
       : { outcome: 'repeated_failure', outcome_text: `The same ${stuck.payload.action} failed three times in a row (${stuck.payload.error})` };
   }
   if (abandoned) ending = { outcome: 'abandoned', outcome_text: abandoned.payload.reason };
