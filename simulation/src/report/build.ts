@@ -54,15 +54,6 @@ function ofType<K extends EventType>(events: GnomiEvent[], type: K): EventOf<K>[
   return events.filter((e): e is EventOf<K> => e.type === type);
 }
 
-// A start_url that does not parse contributes no host, so it cannot hide the rest of the report.
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
-}
-
 const rate = (count: number, total: number) => (total === 0 ? 0 : count / total);
 
 const stepKey = (persona_id: string, step_no: number) => JSON.stringify([persona_id, step_no]);
@@ -272,8 +263,8 @@ export function buildReport(events: GnomiEvent[]): Report {
       const [host, reason] = JSON.parse(key) as [string, 'observe_only' | 'robots' | null];
       return reason ? { host, count, reason } : { host, count };
     });
-  // Each web POI's start page host comes first and is always allowed.
-  const hosts = webPois(pois).flatMap((poi) => [hostOf(poi.start_url), ...poi.allowed_hosts]);
+  // Each web POI's start page host comes first and is always allowed. One that does not parse adds none, so it cannot hide the rest of the report.
+  const hosts = webPois(pois).flatMap((poi) => [URL.parse(poi.start_url)?.hostname ?? '', ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
   const discarded = ofType(events, 'social.discarded');
   const runNotes = [

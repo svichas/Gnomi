@@ -1,4 +1,4 @@
-import type { Poi, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { GnomiEvent, Poi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
 // Pure (no Node imports): the renderer uses these for the Project screen and to read old runs.
 
@@ -21,6 +21,13 @@ export function withPois<T extends Saved>(project: T): Omit<T, 'poi' | 'pois'> &
     reset_hook_url: poi.reset_hook_url ?? null,
   }] : []);
   return { ...rest, pois: migrated };
+}
+
+/** A run's POIs, from the project frozen in its run.started by any version; none without it. */
+export function runPois(events: GnomiEvent[]): Poi[] {
+  const started = events.find((e) => e.type === 'run.started');
+  const project = (started?.payload.config as { project?: SavedProject } | undefined)?.project;
+  return project ? withPois(project).pois : [];
 }
 
 /**

@@ -1,4 +1,4 @@
-import { withPois, type SavedProject } from '../poi/pois.ts';
+import { runPois } from '../poi/pois.ts';
 import type { FeedPolicy, GnomiEvent } from '../types.ts';
 
 export const FEED_POSTS = 12;
@@ -48,9 +48,7 @@ export function readBoard(events: GnomiEvent[]): Board {
  * post about nothing in particular is about that POI. Shared by the report's themes, spread and influence. Pure.
  */
 export function postPois(events: GnomiEvent[]): Map<string, string | null> {
-  const started = events.find((e) => e.type === 'run.started');
-  const project = (started?.payload.config as { project?: SavedProject } | undefined)?.project;
-  const pois = project ? withPois(project).pois : [];
+  const pois = runPois(events);
   const only = pois.length === 1 ? pois[0].id : null;
   const about = new Map<string, string | null>();
   for (const e of events) {

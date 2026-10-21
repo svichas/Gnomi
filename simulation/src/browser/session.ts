@@ -3,9 +3,7 @@ import type { BrowserPool, LoginRecording } from '../seams.ts';
 import { startContainment } from './contain.ts';
 import type { Containment } from './contain.ts';
 import { inspect } from './inspect.ts';
-import { newContext, openPage, settle } from './page.ts';
-
-const firstLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
+import { firstLine, newContext, openPage, settle } from './page.ts';
 
 /**
  * A browser on `url` for a human to log in (tech.md §9.1). Nothing here reads a form field, a request body or a

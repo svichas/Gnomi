@@ -22,6 +22,9 @@ const SECRET = `${PASSWORD}, input[data-gnomi-password]`;
 // Model-supplied: reject anything that is not a ref before it reaches Playwright's selector engine.
 const REF = /^(?:f\d+)?e\d+$/;
 
+/** An error's first line, at most 200 characters: what the log keeps of it. */
+export const firstLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
+
 // Runs in the page: return only presence, never the existing password itself.
 function passwordState(el: Element, selector: string): 'empty' | 'filled' | null {
   const control = el.matches(selector) ? el : el.closest('label')?.control;
@@ -144,19 +147,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
   });
 
-  const hostOf = (url: string) => {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return '';
-    }
-  };
+  const hostOf = (url: string) => URL.parse(url)?.hostname ?? '';
 
   // What went wrong in the page since errors() was last drained (tech.md §8.1), each distinct error once.
   // shortcut: at most MAX_ERRORS per step, so a page that throws on every frame cannot flood the log, upgrade to counts if a report needs them.
   let pageErrors: PageError[] = [];
   const capture = (error: PageError) => {
-    const message = error.message.split('\n')[0].slice(0, 200);
+    const message = firstLine(error.message);
     if (pageErrors.length < MAX_ERRORS && !pageErrors.some((e) => e.kind === error.kind && e.status === error.status && e.message === message)) pageErrors.push({ ...error, message });
   };
   page.on('console', (msg) => {
@@ -322,7 +319,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       try {
         text = await perform(action, ref);
       } catch (e) {
-        error = e instanceof errors.TimeoutError ? 'timeout' : (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
+        error = e instanceof errors.TimeoutError ? 'timeout' : firstLine(e);
       }
       await settle(page);
       const opened = popup as Page | null; // set by the popup listener while the action ran
