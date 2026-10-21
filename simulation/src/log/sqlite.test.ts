@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -391,10 +393,32 @@ test('a run left running is marked interrupted on reopen; finished runs keep the
   store.finishRun(done, 'finished', null, 0);
   store.close();
 
+  // Another process's writer, such as the CLI's rejudge, must not end a run the app may still be running.
+  const writer = openProject(dir, { recover: false });
+  assert.equal(writer.listRuns().find((r) => r.run_id === 'r-0001')?.status, 'running');
+  writer.close();
+
   const reopened = openProject(dir);
   const status = Object.fromEntries(reopened.listRuns().map((r) => [r.run_id, r.status]));
   assert.deepEqual(status, { 'r-0001': 'interrupted', 'r-0002': 'finished' });
   reopened.close();
+});
+
+test('a writer waits for another process to release its write lock rather than failing at once', async (t) => {
+  const dir = tempDir(t);
+  openProject(dir).close();
+  const holder = spawn(process.execPath, ['-e', `
+    const db = new (require('node:sqlite').DatabaseSync)(process.argv[1]);
+    db.exec('BEGIN IMMEDIATE');
+    console.log('locked');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    db.exec('COMMIT');
+  `, join(dir, 'project.sqlite')]);
+  await once(holder.stdout, 'data');
+  const store = openProject(dir);
+  store.createRun(snapshot());
+  store.close();
+  await once(holder, 'exit');
 });
 
 test('finishRun records status, stop reason, cost and end time', (t) => {

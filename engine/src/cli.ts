@@ -417,10 +417,11 @@ function showReport(v: Values, dir: string | undefined): void {
 
 /** Runs an ended run's judge and author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
 async function rejudge(v: Values, dir: string | undefined): Promise<void> {
-  const store = existingProject(dir, {}); // writes the judge's new events
+  // Writes the judge's new events, beside a run the app may have live.
+  const store = existingProject(dir, { recover: false });
   try {
     const { run_id, config } = pickRun(store, v, dir);
-    // From the log, not the row: opening the project marks a live run's row interrupted.
+    // From the log, not the row: a crashed run's row may still say running.
     if (store.events(run_id, { types: ['run.finished', 'run.stopped'], limit: 1 }).length === 0) throw new Error(`${run_id} has not ended: it is still running, or it was interrupted before its report.`);
     if (config.project.comparison) throw new Error(`${run_id} is a comparison study, which has no judge to run again.`);
     const settings = config.project.settings;

@@ -132,10 +132,14 @@ function toEvent({ payload_json, ...event }: EventRow): GnomiEvent {
   return { ...event, payload } as GnomiEvent;
 }
 
-/** readOnly never writes, for reading a project another process may be running in: no migration, no runs marked interrupted. */
-export function openProject(dir: string, { readOnly = false } = {}): ProjectStore {
+/**
+ * readOnly never writes, for reading a project another process may be running in: no migration, no runs marked interrupted.
+ * recover: false writes but leaves 'running' runs alone, for a writer beside the app such as the CLI's rejudge.
+ */
+export function openProject(dir: string, { readOnly = false, recover = true } = {}): ProjectStore {
   if (!readOnly) mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(join(dir, 'project.sqlite'), { readOnly });
+  // The app and a CLI may share the file: wait up to 5 s for the other's write lock rather than failing at once.
+  const db = new DatabaseSync(join(dir, 'project.sqlite'), { readOnly, timeout: 5000 });
   // WAL with NORMAL: commits survive an app crash; a power cut can drop the last few.
   if (!readOnly) db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;');
   const { user_version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -149,7 +153,8 @@ export function openProject(dir: string, { readOnly = false } = {}): ProjectStor
       throw new Error(`project.sqlite is schema v${user_version}; open it in Gnomi once to upgrade it to v${SCHEMA_VERSION}`);
     }
   } else {
-    db.exec('BEGIN');
+    // IMMEDIATE: a deferred transaction that has read cannot wait for the write lock, it fails at once.
+    db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(SCHEMA);
       // Existing sessions retain no target binding; only a new recording can establish ownership.
@@ -166,7 +171,7 @@ export function openProject(dir: string, { readOnly = false } = {}): ProjectStor
       throw error;
     }
     // A run still 'running' at open was cut off by a crash; nothing else will ever finish it.
-    db.exec("UPDATE run SET status = 'interrupted' WHERE status = 'running';");
+    if (recover) db.exec("UPDATE run SET status = 'interrupted' WHERE status = 'running';");
   }
 
   const selectProject = db.prepare('SELECT config_json FROM project WHERE id = 1');

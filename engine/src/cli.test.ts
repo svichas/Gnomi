@@ -109,7 +109,7 @@ test('rejudge records a new judge answer for an ended run, rewrites its report f
   assert.match(fails('r-0001'), /has not ended/);
 });
 
-test('runs and report only read the project: a run still live in another process stays running', () => {
+test('runs, report and rejudge leave a run still live in another process running', () => {
   const project = join(dir, 'live');
   cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
   // The app, mid-run: its connection is open and the run is not finished.
@@ -119,6 +119,11 @@ test('runs and report only read the project: a run still live in another process
     assert.match(cli('runs', project), /^r-0001 {2}running,/m);
     assert.match(cli('report', project, '--format', 'md'), /^# Gnomi report: Pick a plan/);
     assert.equal(db.prepare('SELECT status FROM run').get()?.status, 'running');
+    // The app runs r-0002 while an agent judges r-0001 again.
+    db.exec(`UPDATE run SET status = 'finished';
+      INSERT INTO run (id, created_at, status, seed, snapshot_json, cost_usd, started_at) SELECT 'r-0002', created_at, 'running', seed, snapshot_json, 0, started_at FROM run`);
+    cli('rejudge', project, '--run', 'r-0001');
+    assert.equal(db.prepare("SELECT status FROM run WHERE id = 'r-0002'").get()?.status, 'running');
   } finally {
     db.close();
   }
