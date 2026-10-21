@@ -151,6 +151,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const waiting = ended || events.some((event) => event.type === 'report.started') ? [] : waitingBlocks(events);
   const inspected = inspecting ? personaById.get(inspecting.persona) : undefined;
   const names = useMemo(() => new Map(personas.map((persona) => [persona.id, personaLabel(persona, setup.schema)])), [personas, setup.schema]);
+  const inspectedEvents = useMemo(() => inspected ? events.filter((event) => event.persona_id === inspected.id) : [], [events, inspected]);
   const social = useMemo(() => {
     if (!inspected || !events.some((event) => event.type === 'run.round_started' || event.type.startsWith('social.'))) return null; // a run without social rounds
     return socialMemory(events, inspected.id);
@@ -234,6 +235,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          events={inspectedEvents}
           social={social}
           names={names}
           onClose={closeInspector}
