@@ -62,7 +62,7 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
   return (
     <li aria-label={title} className="poi-item" data-expanded={expanded}>
       <div className="poi-item-header">
-        <span className="poi-order" aria-label={`Step ${index + 1}`}>{index + 1}</span>
+        <span className="poi-order" role="img" aria-label={`Step ${index + 1}`}>{index + 1}</span>
         <h3>
           <button ref={toggle} type="button" className="poi-toggle" aria-label={`Edit ${title}`} aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
             <span className="poi-item-icon"><Icon name={FORMATS[draft.type].icon} size={18} /></span>

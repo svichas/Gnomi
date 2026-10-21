@@ -23,6 +23,7 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
 }) {
   return <div className="space-y-4">
     <p className="text-sm text-stone-600">Completion uses completed, failed and abandoned valid attempts. Environment blocks, incomplete or invalid tasks and unattempted work are excluded and remain visible below.</p>
+    {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
     <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label="Task coverage by target" tabIndex={0}>
       <table className="w-full min-w-160 text-left text-sm">
         <thead className="bg-stone-50 text-xs text-stone-600"><tr>

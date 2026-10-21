@@ -105,6 +105,7 @@ export function AudienceTab(props: {
   const [libraryName, setLibraryName] = useState<string | null>(null); // the saved audience this one came from or was saved as
 
   // A run estimate for the personas already written; none while they are missing or out of date, as it would describe other people.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the engine estimates the saved project, so a new info asks again; the draft audience only gates it
   useEffect(() => {
     setEstimate(null);
     if (!audience || needsPersonas) return;

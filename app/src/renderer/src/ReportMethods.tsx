@@ -25,6 +25,7 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
   const none = 'None';
   const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
   const models = Object.entries(methods.models);
+  // biome-ignore-start lint/correctness/useJsxKeyInIterable: each row is a [label, value] pair whose value renders alone in its <dd>, not as a list
   const rows: [string, ReactNode][] = [
     ['Seed', String(methods.seed)],
     ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
@@ -96,6 +97,7 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
     ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),
     ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];
+  // biome-ignore-end lint/correctness/useJsxKeyInIterable: rows above
   return (
     <dl className="divide-y divide-stone-100 rounded-lg border border-stone-200 text-sm">
       {rows.map(([label, value]) => (

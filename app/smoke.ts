@@ -126,7 +126,7 @@ async function openReview(page: Page) {
 }
 
 /** Opens the Review step, starts the run from its bar and waits until the run's page is showing. */
-async function startRun(page: Page, runId: string) {
+async function startRun(page: Page) {
   const review = await openReview(page);
   await review.getByRole('button', { name: 'Start run', exact: true }).click();
   const heading = page.getByRole('region', { name: 'Run status' });
@@ -209,7 +209,7 @@ try {
     await page.getByLabel('Start page URL').fill(started.url);
     await page.getByLabel('Goal', { exact: true }).fill('Post a job for a backend engineer');
     await page.screenshot({ path: join(shots, 'project-filled.png') });
-    await startRun(page, 'r-0001');
+    await startRun(page);
     await openReport(page, { timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
@@ -260,7 +260,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
-      await startRun(page, 'r-0002');
+      await startRun(page);
       await openReport(page, { timeout: 180_000 });
       assert.match(await methodsText(page), /127\.0\.0\.1: \d+ requests?/);
       await page.screenshot({ path: join(shots, 'report-methods.png'), fullPage: true });
@@ -280,7 +280,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
-      await startRun(page, 'r-0003');
+      await startRun(page);
       const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
       await banner.waitFor({ timeout: 60_000 });
       assert.match(await banner.innerText(), /hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
@@ -300,7 +300,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/billing`);
-      await startRun(page, 'r-0004');
+      await startRun(page);
       await openReport(page, { timeout: 60_000 });
       const feed = await showActivity(page);
       await feed.scrollIntoViewIfNeeded(); // the feed draws only the rows on screen
@@ -521,7 +521,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
-      await startRun(page, 'r-0005');
+      await startRun(page);
       await openReport(page, { timeout: 300_000 });
       await unfoldSection(page, 'audience-results-title');
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
@@ -609,7 +609,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
-      await startRun(page, 'r-0006');
+      await startRun(page);
       const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
       const status = page.getByRole('region', { name: 'Run status' });
       await banner.waitFor({ timeout: 120_000 });

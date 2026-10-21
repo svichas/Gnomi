@@ -214,7 +214,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
   return (
     <div className="settings-workspace">
-      <div className="settings-overview" aria-label="Current settings">
+      <div className="settings-overview" role="group" aria-label="Current settings">
         <div><Icon name="globe" /><span><strong>{list ? `${connectedCount} ${connectedCount === 1 ? 'provider' : 'providers'} connected` : 'Loading connections…'}</strong><small>{list && connectedCount === 0 ? 'Add a provider to generate personas' : 'AI access for your projects'}</small></span></div>
         {!workspace && <><div><Icon name="clock" /><span><strong>${settings.cost_budget_usd} · {settings.wall_clock_budget_min} min</strong><small>Limits for each simulation</small></span></div>
         <div><Icon name="people" /><span><strong>{settings.concurrency} at a time</strong><small>Personas exploring in parallel</small></span></div></>}

@@ -10,8 +10,9 @@ function Flag({ label, text, checked, disabled = false, onChange }: { label: str
 
 export function ProfileAttributeEditor({ attribute, custom, segments, onChange, onRemove }: { attribute: ProfileAttribute; custom: boolean; segments: Segment[]; onChange(next: ProfileAttribute): void; onRemove(): void }) {
   const [segment, setSegment] = useState('');
-  const [choices, setChoices] = useState(attribute.choices?.join('\n') ?? '');
-  useEffect(() => setChoices(attribute.choices?.join('\n') ?? ''), [attribute.choices?.join('\n')]);
+  const joined = attribute.choices?.join('\n');
+  const [choices, setChoices] = useState(joined ?? '');
+  useEffect(() => setChoices(joined ?? ''), [joined]);
   const set = <K extends keyof ProfileAttribute>(key: K, value: ProfileAttribute[K]) => onChange({ ...attribute, [key]: value });
   const selected = segments.find((item) => item.id === segment);
   const label = `${attribute.name} — ${selected?.name ?? 'Everyone'}`;
