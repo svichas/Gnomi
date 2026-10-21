@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
 import type { Action, ActionOutcome, Device } from '../types.ts';
-import { failedAction } from '../signals/index.ts';
+import { failedAction, validationError } from '../signals/index.ts';
 import { launchBrowserPool } from './pool.ts';
 import { listen } from './server.fixture.ts';
 
@@ -65,8 +65,18 @@ const pages: Record<string, string> = {
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
-<button onclick="fetch('/slow', { method: 'POST' }).then(() => document.body.append('Saved slowly'))">Slow save</button>
-<button onclick="fetch('/slow')">Poll</button></body></html>`,
+<button onclick="fetch('/delay/4000', { method: 'POST' }).then(() => document.body.append('Saved slowly'))">Slow save</button>
+<button onclick="fetch('/delay/1500')">Poll</button></body></html>`,
+  // What a page shows a moment after an action: suggestions after a 300 ms debounce and a fetch, options after a slow GET,
+  // a menu on a timer, and a save's error after a slow POST.
+  '/late': `<!doctype html><html><head>${head}<title>Late</title></head><body>
+<label for="where">Meeting point</label><input id="where" autocomplete="off"><ul id="places" role="listbox" aria-label="Places"></ul>
+<button type="button" onclick="fetch('/delay/700').then(() => { categories.innerHTML = '<li role=option>Hiking</li>' })">Choose a category</button><ul id="categories" role="listbox" aria-label="Categories"></ul>
+<button type="button" onclick="setTimeout(() => { actions.innerHTML = '<li role=menuitem>Duplicate</li>' }, 400)">More actions</button><ul id="actions" role="menu" aria-label="Actions"></ul>
+<button type="button">Dead button</button>
+<form onsubmit="event.preventDefault(); fetch('/delay/1200', { method: 'POST' }).then(() => { const a = document.createElement('div'); a.setAttribute('role', 'alert'); a.textContent = 'Please choose a category'; document.body.append(a) })"><button>Publish</button></form>
+<script>let t; where.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => fetch('/delay/150').then(() => { places.innerHTML = '<li role=option>Athens Riviera</li>' }), 300) })</script>
+</body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -84,8 +94,8 @@ before(async () => {
       // Two inputs whose values come from the query, to compare screenshots of different values.
       const { password = '', text = '' } = Object.fromEntries(url.searchParams);
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
-    } else if (url.pathname === '/slow') {
-      setTimeout(() => res.end('ok'), 1_500);
+    } else if (url.pathname.startsWith('/delay/')) {
+      setTimeout(() => res.end('ok'), Number(url.pathname.slice('/delay/'.length)));
     } else if (url.pathname.startsWith('/status/')) {
       res.statusCode = Number(url.pathname.slice('/status/'.length));
       res.end('<h1>Failed</h1>');
@@ -379,6 +389,30 @@ test('a link that opens a new tab takes the persona there; a slow response marks
   assert.equal((await page.snapshot()).title, 'Next page');
   const plain = await act(page, 'wait');
   assert.equal(plain.pending, undefined, 'only a step that started something carries the flag');
+});
+
+test('the persona sees what the page shows a moment later: a debounced search, a slow GET, a menu on a timer, a slow save', async (t) => {
+  const page = await open(t, '/late');
+  const step = (action: Action, result: ActionOutcome) => ({ step_no: 1, action, target: result.target, result, snapshot_hash: '' });
+  await act(page, 'type', refOf((await page.snapshot()).text, /textbox "Meeting point" \[ref=(\w+)\]/), 'Ath');
+  assert.match((await page.snapshot()).text, /option "Athens Riviera"/);
+  for (const [name, shown] of [['Choose a category', /option "Hiking"/], ['More actions', /menuitem "Duplicate"/]] as const) {
+    const action: Action = { type: 'click', ref: refOf((await page.snapshot()).text, new RegExp(`button "${name}" \\[ref=(\\w+)\\]`)), text: null };
+    const result = await page.act(action);
+    assert.deepEqual([result.dom_changed, failedAction(step(action, result))], [true, null], name);
+    assert.match((await page.snapshot()).text, shown, name);
+  }
+  const form = (await page.snapshot()).text;
+  const publish: Action = { type: 'click', ref: refOf(form, /button "Publish" \[ref=(\w+)\]/), text: null };
+  const saved = await page.act(publish);
+  const after = (await page.snapshot()).text;
+  assert.match(after, /alert[^\n]*: Please choose a category/);
+  assert.equal(validationError(step(publish, saved), form, after)?.payload.message, 'Please choose a category');
+  const dead: Action = { type: 'click', ref: refOf(after, /button "Dead button" \[ref=(\w+)\]/), text: null };
+  const started = Date.now();
+  const result = await page.act(dead);
+  assert.equal(failedAction(step(dead, result))?.payload.error, 'no_effect');
+  assert.ok(Date.now() - started < 1_500, `${Date.now() - started} ms`);
 });
 
 test('a slow GET the click starts, such as a long poll, does not hide that the click changed nothing', async (t) => {

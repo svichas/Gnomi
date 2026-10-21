@@ -13,6 +13,8 @@ import { pruneSnapshot, snapshotTargets, type PasswordState } from './prune.ts';
 const ACTION_MS = 5_000;
 const SETTLE_MS = 3_000; // cap on waiting for the page to go quiet after an action
 const QUIET_MS = 250; // no DOM mutation for this long counts as settled
+const GLANCE_MS = 800; // how long a person keeps looking when a click or keys showed nothing yet: a debounced search, a menu on a timer
+const POLL_MS = 100; // how often that look checks for a change
 const WAIT_MS = 1_000;
 const READ_CHARS = 2_000;
 const MAX_ERRORS = 20;
@@ -117,16 +119,17 @@ const domVersion = async (page: Page) =>
     )
   ).join('|');
 
-export async function settle(page: Page): Promise<void> {
+/** Waits, at most SETTLE_MS, for the page to load, for the `started` requests to finish, then for QUIET_MS without a DOM change. */
+export async function settle(page: Page, started: ReadonlySet<Request> = new Set()): Promise<void> {
   const deadline = Date.now() + SETTLE_MS;
   await page.waitForLoadState('load', { timeout: SETTLE_MS }).catch(() => {});
-  // A response slower than QUIET_MS can read as "nothing happened"; act() flags the step as pending instead.
-  let last = await domVersion(page);
+  // A response slower than the cap can read as "nothing happened"; act() flags a write or a load still open as pending instead.
+  let last: string | null = null;
   while (Date.now() < deadline) {
-    await sleep(QUIET_MS);
-    const now = await domVersion(page);
-    if (now === last) return;
+    const now = started.size > 0 ? null : await domVersion(page); // an open request is never quiet: its answer is what a person waits for
+    if (now !== null && now === last) return;
     last = now;
+    await sleep(QUIET_MS);
   }
 }
 
@@ -139,19 +142,28 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let popup: Page | null = null; // a tab the current action opened
   let formClick = false; // the current action clicked something inside a form
   const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
+  // Every load, fetch and XHR the current action started that has not finished: settle waits for them.
+  // shortcut: a page's own GETs meanwhile (analytics, polling) hold settle too, up to SETTLE_MS, upgrade by ignoring repeated URLs if real apps hit the cap.
+  const started = new Set<Request>();
   page.on('popup', (opened) => {
     popup = opened;
   });
   page.on('request', (request) => {
+    if (!ERROR_RESOURCES.has(request.resourceType())) return;
+    started.add(request);
     // A script's GET (analytics, a long poll) is the page's own traffic and would hide a dead click; a write or a load is the action's.
-    if (request.resourceType() === 'document' || (request.method() !== 'GET' && ERROR_RESOURCES.has(request.resourceType()))) inflight.add(request);
+    if (request.resourceType() === 'document' || request.method() !== 'GET') inflight.add(request);
   });
-  page.on('requestfinished', (request) => inflight.delete(request));
+  page.on('requestfinished', (request) => {
+    inflight.delete(request);
+    started.delete(request);
+  });
   const rememberPasswords = () => Promise.all(page.frames().map((frame) => frame.locator(PASSWORD).evaluateAll((inputs) => {
     for (const input of inputs) if (!input.hasAttribute('data-gnomi-password')) input.setAttribute('data-gnomi-password', '');
   })));
   page.on('requestfailed', (request) => {
     inflight.delete(request);
+    started.delete(request);
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
   });
 
@@ -370,14 +382,27 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       popup = null;
       formClick = false;
       inflight.clear();
+      started.clear();
       refusals(); // what the page ran into before this action is not its doing
       try {
         text = await perform(action, ref);
       } catch (e) {
         error = e instanceof errors.TimeoutError ? 'timeout' : firstLine(e);
       }
-      await settle(page);
+      // Typing's own input events are its echo, not the page reacting to it.
+      const echo = action.type === 'type' ? await domVersion(page) : before;
+      await settle(page, started);
       const opened = popup as Page | null; // set by the popup listener while the action ran
+      // Nothing shown, loading or opened yet: a person keeps looking a moment, for a debounced search or a menu on a timer.
+      const unseen = error === null && !opened && ['click', 'type', 'press'].includes(action.type) && started.size === 0 && page.url() === url_before;
+      if (unseen && (await domVersion(page)) === echo) {
+        for (let waited = 0; waited < GLANCE_MS; waited += POLL_MS) {
+          await sleep(POLL_MS);
+          if ((await domVersion(page)) === echo) continue;
+          await settle(page, started);
+          break;
+        }
+      }
       if (opened) {
         // The persona follows a tab the action opened in the one tab Gnomi drives; containment checks the load as any other.
         await opened.waitForLoadState('domcontentloaded', { timeout: ACTION_MS }).catch(() => {});
@@ -385,7 +410,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         await opened.close().catch(() => {});
         if (/^https?:/.test(url)) {
           await page.goto(url, { timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => {});
-          await settle(page);
+          await settle(page, started);
         }
       }
       const pending = opened !== null || inflight.size > 0;
@@ -396,7 +421,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       if (outside || (observed && page.url().startsWith('chrome-error://'))) {
         // The persona should hear "that leads outside the product" and still be on the page it was on, not on a browser error page.
         await page.goBack({ timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => null);
-        await settle(page);
+        await settle(page, started);
       }
       if (outside) error = 'host_not_allowed';
       else if (observed) error = observed;
