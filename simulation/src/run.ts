@@ -149,8 +149,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return spent;
   };
   const checkRecordedBudget = () => {
-    if (spentUsd() < settings.cost_budget_usd) return;
+    const now = spentUsd();
+    if (now < settings.cost_budget_usd) return now;
     halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd} recorded-cost budget was reached` }, true);
+    return now;
   };
   const budgetedLlm: LlmGateway = {
     call(req) {
@@ -173,9 +175,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let stepsDone = 0;
   const beginStep = (estimatedCost?: number) => {
     if (drain.signal.aborted) return false;
-    checkRecordedBudget();
+    const now = checkRecordedBudget();
     if (drain.signal.aborted) return false;
-    const now = spentUsd();
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
     if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
       halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
