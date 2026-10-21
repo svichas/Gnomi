@@ -22,3 +22,5 @@
   .header-runs span:not(.project-history-count) { display: none; }
   .header-runs { padding: 8px; }
 }
+.workspace-page { display: grid; gap: 8px; }
+.workspace-page > .back-button { justify-self: start; }

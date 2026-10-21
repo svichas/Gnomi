@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('gnomi', {
   saveAudience: (name, audience, schema) => ipcRenderer.invoke('save-audience', name, audience, schema),
   deleteAudience: (id) => ipcRenderer.invoke('delete-audience', id),
   listProjects: () => ipcRenderer.invoke('list-projects'),
+  listRuns: () => ipcRenderer.invoke('list-runs'),
   projectAction: (action) => ipcRenderer.invoke('project-action', action),
   reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
   saveReport: (format, runId, content) => ipcRenderer.invoke('save-report', format, runId, content),

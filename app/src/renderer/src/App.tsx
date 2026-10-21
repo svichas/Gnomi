@@ -8,7 +8,7 @@ import { initialDraft, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
 import { Project } from './Project.tsx';
 import { ProjectRunHistory } from './ProjectRunHistory.tsx';
-import type { ProjectAction, ProjectCatalog } from '../../projects.ts';
+import type { ProjectAction, ProjectCatalog, WorkspaceRun } from '../../projects.ts';
 import { configuredProviders, withAvailableProvider, type ProviderList } from '../../providers.ts';
 import { ProjectDialog, Projects } from './Projects.tsx';
 import { Review } from './Review.tsx';
@@ -47,6 +47,8 @@ export function App() {
   const [sessionsPersist, setSessionsPersist] = useState(true);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
+  const [homePage, setHomePage] = useState<'projects' | 'runs' | 'settings'>('projects');
+  const [allRuns, setAllRuns] = useState<WorkspaceRun[] | null>(null);
   const [review, setReview] = useState<{ key: number; config: ProjectConfig | string } | null>(null);
   const reviews = useRef(0);
   const [returnTab, setReturnTab] = useState<Tab>('project');
@@ -61,7 +63,8 @@ export function App() {
     if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
     window.scrollTo({ top: 0 });
     main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
-  }, [tab, home, revision, settingsSection]);
+  }, [tab, home, homePage, revision, settingsSection]);
+  useEffect(() => { if (home) void window.gnomi.listRuns().then(setAllRuns, (err) => setProblem(errorText(err))); }, [home, homePage]);
   const [unsaved, setUnsaved] = useState<{ resolve(choice: 'save' | 'discard' | 'cancel'): void } | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
@@ -207,6 +210,7 @@ export function App() {
   const dirty = draft !== null && JSON.stringify(draft) !== baseline.current;
   const showHome = () => {
     setHome(true);
+    setHomePage('projects');
     void window.gnomi.listProjects().then(setCatalog).catch((err) => setProblem(errorText(err)));
   };
   function showRun(id: string) {
@@ -215,7 +219,7 @@ export function App() {
     setTab('run');
     requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }));
   }
-  async function openSessionRun(run: SessionRun): Promise<boolean> {
+  async function openSessionRun(run: Pick<SessionRun, 'project_id' | 'run_id'>): Promise<boolean> {
     if (!run.project_id || !catalog?.projects.some((project) => project.id === run.project_id)) throw new Error('This project is no longer in your workspace.');
     if (catalog.currentId !== run.project_id) {
       if (await projectAction({ action: 'open', id: run.project_id }) === null) return false;
@@ -247,7 +251,10 @@ export function App() {
         <button type="button" onClick={showHome} className="brand-link" aria-label="Projects"><img src={logo} alt="Gnomi" /></button>
         <span className="header-divider" />
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
-        {!home && <div className="header-actions">
+        {home ? <div className="header-actions">
+          <Button id="home-runs" variant="quiet" className="header-runs" aria-label="Past runs" aria-pressed={homePage === 'runs'} onClick={() => setHomePage(homePage === 'runs' ? 'projects' : 'runs')}><Icon name="clock" /><span>Past runs</span><span className="project-history-count">{allRuns?.length ?? 0}</span></Button>
+          <Button id="home-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={homePage === 'settings'} onClick={() => setHomePage(homePage === 'settings' ? 'projects' : 'settings')}><Icon name="settings" /><span>Settings</span></Button>
+        </div> : <div className="header-actions">
           <Button id="tab-runs" variant="quiet" className="header-runs" aria-label="Past runs" aria-pressed={tab === 'runs'} onClick={() => { if (tab === 'runs') go(returnTab); else openRuns(); }}><Icon name="clock" /><span>Past runs</span><span className="project-history-count">{info?.runs.length ?? 0}</span></Button>
           <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else openSettings(null); }}><Icon name="settings" /><span>Settings</span></Button>
         </div>}
@@ -259,7 +266,16 @@ export function App() {
             <Note tone="error">{problem}</Note>
           </div>
         )}
-        {home && catalog && <Projects catalog={catalog} onAction={projectAction} onReturn={() => setHome(false)} />}
+        {home && catalog && homePage === 'projects' && <Projects catalog={catalog} onAction={projectAction} onReturn={() => setHome(false)} />}
+        {home && homePage !== 'projects' && <div className="workspace-page">
+          <Button variant="quiet" className="back-button" onClick={() => setHomePage('projects')}><Icon name="back" size={18} />All projects</Button>
+          {homePage === 'runs'
+            ? <div className="page-heading"><p className="eyebrow">Workspace history</p><h1 tabIndex={-1}>Past runs</h1><p>Every simulation from all your projects, newest first. Open one to see its report.</p></div>
+            : <div className="page-heading"><p className="eyebrow">Preferences</p><h1 tabIndex={-1}>Connections</h1><p>AI providers and Figma, shared by all your projects. Budgets and models are set in each project’s Settings.</p></div>}
+          {homePage === 'runs'
+            ? allRuns ? <section aria-label="All project runs"><ProjectRunHistory runs={allRuns} selected={null} onSelect={(run) => void openSessionRun(run).catch((err) => setProblem(errorText(err)))} /></section> : <p className="text-sm text-stone-500">Loading your runs…</p>
+            : draft && <OpenSettings.Provider value={null}><Settings workspace settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} /></OpenSettings.Provider>}
+        </div>}
         {!draft ? (
           <p className="text-sm text-stone-500">Starting Gnomi...</p>
         ) : (
@@ -281,7 +297,7 @@ export function App() {
               </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
-              <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={showRun} />
+              <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={(run) => showRun(run.run_id)} />
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>
               <Project

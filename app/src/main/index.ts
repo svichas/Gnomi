@@ -164,6 +164,7 @@ ipcMain.handle('save-audience', (_event, name: unknown, audience: unknown, schem
 ipcMain.handle('delete-audience', (_event, id: unknown) => audiences.remove(id));
 
 ipcMain.handle('list-projects', () => catalog());
+ipcMain.handle('list-runs', () => library.runs());
 ipcMain.handle('project-action', async (_event, input: ProjectAction): Promise<ProjectActionResult> => {
   if (!input || !['create', 'open', 'rename', 'duplicate', 'delete', 'export'].includes(input.action)) throw new Error('Unknown project action.');
   if (changingProject) throw new Error('Another project action is still finishing.');

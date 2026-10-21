@@ -1,4 +1,5 @@
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { RunRow } from '@gnomi/simulation/types.ts';
 
 export interface ProjectEntry {
   id: string;
@@ -7,6 +8,9 @@ export interface ProjectEntry {
   configured: boolean;
   canDelete: boolean;
 }
+
+/** A saved run listed with the project it belongs to; run IDs are only unique within a project. */
+export type WorkspaceRun = RunRow & { project_id: string; project_name: string };
 
 export interface ProjectCatalog {
   projects: ProjectEntry[];

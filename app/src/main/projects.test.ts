@@ -64,6 +64,14 @@ test('projects have isolated folders, names survive restart, and rename preserve
   assert.throws(() => library.create('  '), /name/i);
 });
 
+test('runs lists every project\'s saved runs with the project they belong to', (t) => {
+  const { library } = setup(t);
+  const { entry } = populated(library);
+  const empty = library.create('No runs yet');
+  assert.deepEqual(library.runs().map((run) => [run.project_id, run.project_name, run.run_id, run.status, run.config.project.goal]), [[entry.id, 'Gym', 'r-0001', 'finished', 'Post a job']]);
+  assert.ok(library.list().some((project) => project.id === empty.id));
+});
+
 test('managed IDs cannot traverse folders, and symlinked projects or databases cannot be opened', (t) => {
   const { dir, library } = setup(t);
   const outside = join(dir, 'outside');
