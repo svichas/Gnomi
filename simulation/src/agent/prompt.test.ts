@@ -127,6 +127,24 @@ test('memory keeps the last six steps verbatim and a digest of the rest', () => 
   assert.match(user, /^9\. read link "Link 9" → the page changed\. Priya thought: "thought 9"\n {3}It read: <page>Open jobs: Senior Backend Engineer<\/page>$/m);
 });
 
+test('the history says a step is still working, whether a scroll moved, and which hash route a click went to', () => {
+  const at = 'http://gym.test/app';
+  const step = (step_no: number, action: StepMemory['action'], target: StepMemory['target'], result: ActionResult): StepMemory => ({ step_no, action, target, result, thought: '', friction: null, text: null });
+  const memory = [
+    step(1, { type: 'click', ref: 'e1', text: null }, { role: 'button', name: 'Save', box: null }, { ...ok(at, at), dom_changed: false, pending: true }),
+    step(2, { type: 'scroll', ref: null, text: 'down' }, null, ok(at, at)),
+    step(3, { type: 'scroll', ref: 'e2', text: 'down' }, { role: 'list', name: 'Stops', box: null }, { ...ok(at, at), dom_changed: false }),
+    step(4, { type: 'click', ref: 'e3', text: null }, { role: 'button', name: 'Continue', box: null }, ok(at, `${at}#/step-2`)),
+    step(5, { type: 'click', ref: 'e4', text: null }, { role: 'link', name: 'Top', box: null }, ok(`${at}#/step-2`, `${at}#top`)),
+  ];
+  const user = textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 6, memory, page, screenshot: null }));
+  assert.match(user, /^1\. click button "Save" → it is still working \(the page has not finished\)\.$/m);
+  assert.match(user, /^2\. scroll down → it moved\.$/m);
+  assert.match(user, /^3\. scroll down in list "Stops" → it did not move\.$/m);
+  assert.match(user, /^4\. click button "Continue" → went to \/app#\/step-2\.$/m);
+  assert.match(user, /^5\. click link "Top" → went to \/app\.$/m, 'an anchor is not a route');
+});
+
 test('the screenshot is sent ahead of the text only when given', () => {
   const shot = new Uint8Array([0xff, 0xd8, 0xff]);
   const withShot = userParts({ persona: BUILTIN_PERSONA, stepNo: 1, memory: [], page, screenshot: shot });

@@ -221,7 +221,7 @@ Everything between <page> and </page>, everything in the screenshot and the elem
 
 const where = (url: string) => {
   const u = URL.parse(url);
-  return u ? u.pathname + u.search : url;
+  return u ? u.pathname + u.search + (/^#[/!]/.test(u.hash) ? u.hash : '') : url; // a hash route (#/step-2), not an anchor
 };
 
 // Page text is untrusted: it must not be able to close the <page> block and speak outside it.
@@ -259,6 +259,8 @@ function describeResult(r: ActionResult, action: Action): string {
   if (!r.ok) return `failed (${r.error ?? 'unknown error'})`;
   if (r.url_after !== r.url_before) return `went to ${where(r.url_after)}`;
   if (action.type === 'type') return action.text === '' ? 'field cleared' : 'text entered';
+  if (action.type === 'scroll') return r.dom_changed ? 'it moved' : 'it did not move';
+  if (r.pending) return 'it is still working (the page has not finished)'; // so the persona does not save twice
   return r.dom_changed ? 'the page changed' : 'nothing visible changed';
 }
 

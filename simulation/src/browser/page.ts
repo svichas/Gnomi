@@ -62,15 +62,32 @@ function hideTransparent(hide: boolean) {
   }
 }
 
-// Runs in every frame before page scripts: counts DOM mutations so act() can tell whether anything changed.
+// Runs in every frame before page scripts: counts DOM mutations (n) and scrolls (s) so act() can tell whether anything changed.
 // Playwright ships both this and passwordState to the page with toString(), so they must stay self-contained.
-// shortcut: every mutation counts, so a page that animates always reads as changed and burns the full settle cap, upgrade by ignoring style-only churn if real apps do this.
+// shortcut: every mutation and input event counts, so a page that animates or fires synthetic input events on a timer always reads as changed (masking a dead click), upgrade by ignoring style-only churn if real apps do this.
 function countMutations() {
-  const state = { id: Math.random().toString(36).slice(2), n: 0 };
+  const state = { id: Math.random().toString(36).slice(2), n: 0, s: 0 };
   (window as unknown as { __gnomi: typeof state }).__gnomi = state;
-  new MutationObserver((records) => {
+  const observer = new MutationObserver((records) => {
     state.n += records.length;
-  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  });
+  const observe = (root: Node) => observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  observe(document);
+  // A shadow root's changes never reach the document's observer: observe each one as it is attached, and hand it back unchanged.
+  // shortcut: declarative shadow roots and scrolls inside a shadow root go uncounted, upgrade if a target app relies on them.
+  const attachShadow = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (this: Element, init: ShadowRootInit) {
+    const root = attachShadow.call(this, init);
+    observe(root);
+    return root;
+  };
+  // A box ticked, an option chosen or the caret landing in a field changes no node. Not 'change': a field fires it on blur,
+  // which would hide a dead button clicked right after typing.
+  const FIELD = 'input:not([type=button i], [type=submit i], [type=reset i], [type=checkbox i], [type=radio i]), textarea, select, [contenteditable]';
+  document.addEventListener('input', () => state.n++, true);
+  document.addEventListener('focusin', (e) => (e.composedPath()[0] as Element).matches?.(FIELD) && state.n++, true);
+  // Counted apart: Playwright scrolls a target into view before clicking it, which would hide a dead button below the fold.
+  document.addEventListener('scroll', () => state.s++, true);
 }
 
 /** An isolated context for a persona or a session check: desktop or phone, service workers blocked, behind its containment proxy, optionally logged in. */
@@ -104,16 +121,16 @@ export async function openPage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
-// One string per frame (document id + mutation count): differs after any DOM change or navigation.
-const domVersion = async (page: Page) =>
+// One string per frame (document id + mutation or scroll count): differs after any DOM change (or scroll) or navigation.
+const domVersion = async (page: Page, count: 'n' | 's' = 'n') =>
   (
     await Promise.all(
       page.frames().map((frame) =>
         frame
-          .evaluate(() => {
-            const state = (window as unknown as { __gnomi?: { id: string; n: number } }).__gnomi;
-            return state ? `${state.id}:${state.n}` : '';
-          })
+          .evaluate((key) => {
+            const state = (window as unknown as { __gnomi?: { id: string; n: number; s: number } }).__gnomi;
+            return state ? `${state.id}:${state[key]}` : '';
+          }, count)
           .catch(() => ''),
       ),
     )
@@ -140,6 +157,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let shown = ''; // the snapshot text the persona was last given
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
   let popup: Page | null = null; // a tab the current action opened
+  let downloaded = false; // the current action started a download
   let formClick = false; // the current action clicked something inside a form
   const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
   // Every load, fetch and XHR the current action started that has not finished: settle waits for them.
@@ -147,6 +165,9 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   const started = new Set<Request>();
   page.on('popup', (opened) => {
     popup = opened;
+  });
+  page.on('download', () => {
+    downloaded = true;
   });
   page.on('request', (request) => {
     if (!ERROR_RESOURCES.has(request.resourceType())) return;
@@ -376,10 +397,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const ref = action.ref?.trim() || null;
       const url_before = page.url();
       const before = await domVersion(page);
+      const scrolled = action.type === 'scroll' ? await domVersion(page, 's') : '';
       let text: string | null = null;
       let error: string | null = null;
       failedNavigation = null;
       popup = null;
+      downloaded = false;
       formClick = false;
       inflight.clear();
       started.clear();
@@ -413,7 +436,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
           await settle(page, started);
         }
       }
-      const pending = opened !== null || inflight.size > 0;
+      const pending = opened !== null || downloaded || inflight.size > 0;
       const outside = refusedByContainment();
       // Observe-only: a page load or form post, or a page robots.txt disallows, stopped before the network. A script's write
       // counts only after a click inside a form: otherwise it is the page's own background traffic (analytics), not the persona's.
@@ -425,7 +448,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       }
       if (outside) error = 'host_not_allowed';
       else if (observed) error = observed;
-      const dom_changed = (await domVersion(page)) !== before;
+      // A scroll changes no node: whether the page or the list moved is what the persona needs to hear.
+      const dom_changed = (await domVersion(page)) !== before || (action.type === 'scroll' && (await domVersion(page, 's')) !== scrolled);
       return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, ...(pending && { pending }), target: (ref && targets.get(ref)) || null, text };
     },
 

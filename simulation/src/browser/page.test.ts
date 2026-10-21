@@ -77,6 +77,19 @@ const pages: Record<string, string> = {
 <form onsubmit="event.preventDefault(); fetch('/delay/1200', { method: 'POST' }).then(() => { const a = document.createElement('div'); a.setAttribute('role', 'alert'); a.textContent = 'Please choose a category'; document.body.append(a) })"><button>Publish</button></form>
 <script>let t; where.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => fetch('/delay/150').then(() => { places.innerHTML = '<li role=option>Athens Riviera</li>' }), 300) })</script>
 </body></html>`,
+  // Clicks whose effect is a state change no DOM node shows (a tick, a choice, the caret, a download, a switch in a shadow root),
+  // a dead button, one below the fold, and a list that scrolls.
+  '/state': `<!doctype html><html><head>${head}<title>State</title></head><body>
+<label><input type="checkbox"> Free event</label> <label><input type="radio" name="level"> Easy</label> <label><input type="radio" name="level"> Hard</label>
+<label for="name">Event name</label> <input id="name"> <label for="kind">Kind</label> <select id="kind"><option>A</option><option>B</option></select>
+<button type="button">Dead button</button> <a href="/file.csv" download>Export attendees</a> <notify-switch></notify-switch>
+<ul aria-label="Stops" style="height:150px;overflow:auto">${Array.from({ length: 20 }, (_, i) => `<li>Stop ${i}</li>`).join('')}</ul>
+<div style="height:2500px"></div><button type="button">Dead low button</button>
+<script>customElements.define('notify-switch', class extends HTMLElement { connectedCallback() {
+  const root = this.attachShadow({ mode: 'open' });
+  root.innerHTML = '<button role="switch" aria-checked="false">Notify me</button>';
+  root.firstChild.onclick = (e) => e.target.setAttribute('aria-checked', String(e.target.getAttribute('aria-checked') !== 'true'));
+} });</script></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -96,6 +109,10 @@ before(async () => {
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
     } else if (url.pathname.startsWith('/delay/')) {
       setTimeout(() => res.end('ok'), Number(url.pathname.slice('/delay/'.length)));
+    } else if (url.pathname === '/file.csv') {
+      res.setHeader('content-type', 'text/csv');
+      res.setHeader('content-disposition', 'attachment; filename="attendees.csv"');
+      res.end('name\nAlice\n');
     } else if (url.pathname.startsWith('/status/')) {
       res.statusCode = Number(url.pathname.slice('/status/'.length));
       res.end('<h1>Failed</h1>');
@@ -413,6 +430,33 @@ test('the persona sees what the page shows a moment later: a debounced search, a
   const result = await page.act(dead);
   assert.equal(failedAction(step(dead, result))?.payload.error, 'no_effect');
   assert.ok(Date.now() - started < 1_500, `${Date.now() - started} ms`);
+});
+
+test('a click whose effect is a state change is a change, a dead button stays dead after typing and below the fold, a scroll says whether it moved', async (t) => {
+  const page = await open(t, '/state');
+  const click = async (line: RegExp) => {
+    const action: Action = { type: 'click', ref: refOf((await page.snapshot()).text, line), text: null };
+    const result = await page.act(action);
+    return { result, failed: failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' })?.payload.error ?? null };
+  };
+  const field = /textbox "Event name" \[ref=(\w+)\]/;
+  for (const line of [/checkbox "Free event" \[ref=(\w+)\]/, /radio "Easy" \[ref=(\w+)\]/, field, /combobox "Kind" \[ref=(\w+)\]/, /switch "Notify me" \[ref=(\w+)\]/]) {
+    const { result, failed } = await click(line);
+    assert.deepEqual([result.dom_changed, failed], [true, null], String(line));
+  }
+  const ticked = (await page.snapshot()).text;
+  assert.match(ticked, /checkbox "Free event" \[checked\]/);
+  assert.equal((await act(page, 'select', refOf(ticked, /combobox "Kind" \[ref=(\w+)\]/), 'B')).dom_changed, true);
+  await act(page, 'type', refOf(ticked, field), 'Sunrise hike');
+  const dead = await click(/button "Dead button" \[ref=(\w+)\]/);
+  assert.deepEqual([dead.result.dom_changed, dead.failed], [false, 'no_effect'], 'the field\'s change on blur is not the button\'s doing');
+  const download = await click(/link "Export attendees" \[ref=(\w+)\]/);
+  assert.deepEqual([download.result.pending, download.failed], [true, null]);
+  const list = refOf((await page.snapshot()).text, /list "Stops" \[ref=(\w+)\]/);
+  assert.equal((await act(page, 'scroll', list, 'up')).dom_changed, false, 'a list already at its top');
+  assert.equal((await act(page, 'scroll', list, 'down')).dom_changed, true, 'the list moved');
+  assert.equal((await act(page, 'scroll', null, 'down')).dom_changed, true, 'the page moved');
+  assert.equal((await click(/button "Dead low button" \[ref=(\w+)\]/)).failed, 'no_effect', 'scrolling it into view is not its doing');
 });
 
 test('a slow GET the click starts, such as a long poll, does not hide that the click changed nothing', async (t) => {
