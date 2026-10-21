@@ -23,7 +23,7 @@
 
 For product teams, designers, founders, and engineers who want to know where people might get stuck—and what to test next.
 
-[How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Development](#development) · [Documentation](#documentation)
+[How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Development](#development) · [Documentation](#documentation) · [License](#license)
 
 > Findings come from simulated users. Treat them as hypotheses, and validate important decisions with real people.
 
@@ -184,3 +184,9 @@ python3 Gnomi-film/source/relink-project.py
 ```
 
 Then open `Gnomi-film/Gnomi-relocated.aive` in Synthcut. The [narration script](videos/output/gnomi-film/narration.txt) and [production notes](videos/output/gnomi-film/production-notes.txt) are included alongside the film.
+
+## License
+
+Gnomi is licensed under the [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). You can use, study, modify, and share it. If you distribute a modified version, or let others use one over a network, you must make its complete source available under the same license.
+
+For a commercial license without these obligations, contact the maintainer through [GitHub](https://github.com/svichas).

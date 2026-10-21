@@ -411,6 +411,8 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
       </div></details>
 
+      <p className="text-xs text-stone-500">Gnomi is free software under the GNU AGPL v3.0. Source: github.com/svichas/Gnomi</p>
+
       <ActionBar notice={saving.outcome && !saving.outcome.ok && <Note tone="error">{saving.outcome.text}</Note>}>
         <p className="settings-save-hint">Provider keys save immediately. Save to apply this project’s run settings.</p>
         {saving.outcome?.ok && <Note tone="ok">{saving.outcome.text}</Note>}
