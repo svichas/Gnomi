@@ -414,7 +414,6 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
 const MAIN_ONLY: Method[] = ['open_project', 'close_project', 'set_secret'];
 
 function serve(transport: Transport, main: boolean) {
-  clients.add(transport);
   transport.onMessage(async (msg) => {
     if (msg?.kind !== 'request') return;
     const projectTask = !['open_project', 'close_project', 'set_secret', 'get_session_runs', 'figma_test', 'figma_frames', 'figma_previews'].includes(msg.method);
@@ -437,6 +436,8 @@ function servePort(port: PortLike) {
     onMessage: (handler) => port.on('message', (e) => handler(e.data as ClientToEngine)),
   };
   serve(transport, false);
+  // Events go to the renderer's ports only: main reads nothing but its responses.
+  clients.add(transport);
   port.on('close', () => clients.delete(transport));
   port.start?.();
 }

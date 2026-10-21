@@ -18,7 +18,7 @@ import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import type { Audience, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
 process.env.GNOMI_FAKE_LLM = '1';
-const { call, connect, events, progress } = await startHost();
+const { call, connect, events, progress, toMain } = await startHost();
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -387,4 +387,13 @@ test('a renderer port cannot switch projects or set secrets, which only main may
   await assert.rejects(renderer('close_project', {}), /main process only/);
   await assert.rejects(renderer('set_secret', { name: 'anthropic_api_key', value: 'sk-renderer' }), /main process only/);
   assert.equal((await renderer('get_project', {})).dir, dir);
+});
+
+test('main gets only its responses over the parent port: events and progress go to the renderer', async () => {
+  await call('open_project', { dir: join(dir, 'main-port') });
+  await call('save_project', { project: project({}, { audience: audience([segment('seg-1', { share: 100 })], 2) }) });
+  const before = progress.length;
+  await call('generate_personas', {});
+  assert.ok(progress.length > before, 'the renderer got the progress');
+  assert.deepEqual(toMain, []);
 });

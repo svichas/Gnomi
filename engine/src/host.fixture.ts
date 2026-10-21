@@ -11,6 +11,7 @@ export async function startHost() {
   const replies = new Map<number, (msg: EngineToClient) => void>();
   const progress: { done: number; total: number }[] = [];
   const events: GnomiEvent[] = [];
+  const toMain: EngineToClient[] = []; // anything but responses, which main would drop
   const reply = (msg: EngineToClient) => {
     if (msg.kind === 'response') replies.get(msg.id)?.(msg);
     else if (msg.kind === 'event') events.push(msg.event);
@@ -18,7 +19,7 @@ export async function startHost() {
   };
   (process as unknown as { parentPort: unknown }).parentPort = {
     on: (event: string, listener: Listener) => event === 'message' && listeners.push(listener),
-    postMessage: reply,
+    postMessage: (msg: EngineToClient) => (msg.kind === 'response' ? reply(msg) : toMain.push(msg)),
   };
   await import('./host.ts');
   const send = (data: unknown, ports: unknown[] = []) => listeners.forEach((listener) => listener({ data, ports }));
@@ -39,5 +40,6 @@ export async function startHost() {
     send({ kind: 'connect' }, [{ on: (event: string, listener: Listener) => event === 'message' && portListeners.push(listener), postMessage: reply }]);
     return caller((data) => portListeners.forEach((listener) => listener({ data, ports: [] })));
   }
-  return { call: caller(send), connect, send, events, progress };
+  connect(); // the renderer, which events and progress stream to
+  return { call: caller(send), connect, send, events, progress, toMain };
 }
