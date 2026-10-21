@@ -6,29 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { FAKE_EXPIRED_TOKEN, FAKE_KEY } from './figma/fake.ts';
-import type { Api, EngineToClient, Method } from './protocol.ts';
+import { startHost } from './host.fixture.ts';
 
-type Listener = (e: { data: unknown; ports: [] }) => void;
-const listeners: Listener[] = [];
-const replies = new Map<number, (msg: EngineToClient) => void>();
-(process as unknown as { parentPort: unknown }).parentPort = {
-  on: (event: string, listener: Listener) => event === 'message' && listeners.push(listener),
-  postMessage: (msg: EngineToClient) => msg.kind === 'response' && replies.get(msg.id)?.(msg),
-};
 process.env.GNOMI_FAKE_LLM = '1';
 process.env.GNOMI_FAKE_FIGMA = '1';
-await import('./host.ts');
-const send = (data: unknown) => listeners.forEach((listener) => listener({ data, ports: [] }));
-after(() => send({ kind: 'shutdown' }));
+const { call } = await startHost();
 
-let nextId = 1;
-function call<M extends Method>(method: M, params: Api[M]['params']): Promise<Api[M]['result']> {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    replies.set(id, (msg) => (msg.kind === 'response' && msg.ok ? resolve(msg.result as Api[M]['result']) : reject(new Error(msg.kind === 'response' && !msg.ok ? msg.error : ''))));
-    send({ kind: 'request', id, method, params });
-  });
-}
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-figma-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const link = `https://www.figma.com/design/${FAKE_KEY}/Acme?node-id=1-3`;

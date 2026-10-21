@@ -12,37 +12,13 @@ import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { createSessionStore } from './sessions.ts';
+import { startHost } from './host.fixture.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
-import type { Api, EngineToClient, Method } from './protocol.ts';
-import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
+import type { Audience, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
-type Listener = (e: { data: unknown; ports: [] }) => void;
-const listeners: Listener[] = [];
-const replies = new Map<number, (msg: EngineToClient) => void>();
-const progress: { done: number; total: number }[] = [];
-const events: GnomiEvent[] = [];
-(process as unknown as { parentPort: unknown }).parentPort = {
-  on: (event: string, listener: Listener) => event === 'message' && listeners.push(listener),
-  postMessage(msg: EngineToClient) {
-    if (msg.kind === 'response') replies.get(msg.id)?.(msg);
-    else if (msg.kind === 'event') events.push(msg.event);
-    else if (msg.kind === 'progress') progress.push(msg);
-  },
-};
 process.env.GNOMI_FAKE_LLM = '1';
-await import('./host.ts');
-const send = (data: unknown) => listeners.forEach((listener) => listener({ data, ports: [] }));
-after(() => send({ kind: 'shutdown' }));
-
-let nextId = 1;
-function call<M extends Method>(method: M, params: Api[M]['params']): Promise<Api[M]['result']> {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    replies.set(id, (msg) => (msg.kind === 'response' && msg.ok ? resolve(msg.result as Api[M]['result']) : reject(new Error(msg.kind === 'response' && !msg.ok ? msg.error : ''))));
-    send({ kind: 'request', id, method, params });
-  });
-}
+const { call, events, progress } = await startHost();
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
