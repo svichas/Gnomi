@@ -50,6 +50,14 @@ export function initialDraft(project: ProjectConfig | null | undefined): Draft {
 
 export const ROLES: LlmRole[] = ['navigator', 'socialiser', 'persona_writer', 'judge', 'author'];
 
+export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
+  navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
+  persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
+  socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },
+  judge: { label: 'Judge', hint: 'Groups and rates the findings.', used: false },
+  author: { label: 'Author', hint: 'Writes the report text.', used: false },
+};
+
 /** What is wrong with the run settings, as a sentence, or null. */
 export function settingsProblem(settings: RunSettings): string | null {
   const { routing, local_base_url, concurrency, cost_budget_usd, wall_clock_budget_min } = settings;

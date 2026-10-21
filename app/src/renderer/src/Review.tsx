@@ -10,10 +10,9 @@ import { generatedCount, staleProfiles } from './audience.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';
 import { call, errorText } from './engine.ts';
-import { problemFor, rolesInUse, startHost } from './form.ts';
+import { problemFor, ROLE_TEXT, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { ROLE_TEXT } from './Settings.tsx';
 import { ActionBar, Button, Check, Note, OutcomeNote, usd, useAction } from './ui.tsx';
 import './results.css';
 

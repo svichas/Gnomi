@@ -4,7 +4,7 @@ import { MAX_ROUNDS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/se
 import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/simulation/types.ts';
 import { configuredProviders, egressList, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
-import { problemFor, ROLES } from './form.ts';
+import { problemFor, ROLE_TEXT, ROLES } from './form.ts';
 import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
@@ -14,14 +14,6 @@ import './audience-settings.css';
 const PROVIDER_NOTES: Partial<Record<ProviderId | 'figma', string>> = {
   deepseek: 'Its servers are in China. Its Flash model sees screenshots, V4 Pro reads text only, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
-};
-
-export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
-  navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
-  persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
-  socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },
-  judge: { label: 'Judge', hint: 'Groups and rates the findings.', used: false },
-  author: { label: 'Author', hint: 'Writes the report text.', used: false },
 };
 
 function TestResult({ test }: { test: KeyTest | null }) {
