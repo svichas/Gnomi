@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-cli-'));
@@ -75,4 +76,35 @@ test('with --json every line is an object and the last the result, for estimate,
   assert.equal(updated.personas, 6);
   assert.equal(updated.written, 2);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).personas.find((p: { id: string }) => p.id === edited.personas[0].id).background, 'Edited by hand.');
+});
+
+test('rejudge records a new judge answer for an ended run, rewrites its report files and leaves the browsing alone', () => {
+  const project = join(dir, 'rejudge');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const lines = cli('rejudge', project, '--run', 'r-0001', '--json').trim().split('\n').map((line) => JSON.parse(line));
+  const types = lines.filter((l) => l.kind === 'event').map((l) => l.type);
+  assert.ok(types.includes('report.themes'), 'the judge answered again');
+  assert.ok(!types.some((t) => t.startsWith('persona.') || t.startsWith('run.')), 'nothing is browsed or run again');
+  const done = lines.at(-1);
+  assert.equal(done.kind, 'rejudge');
+  assert.equal(done.run_id, 'r-0001');
+  assert.ok(done.themes > 0);
+  assert.equal(`${readFileSync(done.report_md, 'utf8')}\n`, cli('report', project, '--run', 'r-0001', '--format', 'md'));
+
+  const fails = (run: string) => {
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'rejudge', project, '--run', run, '--fake-llm'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    return result.stderr;
+  };
+  assert.match(fails('r-0009'), /There is no run r-0009/);
+  const sql = (statement: string) => {
+    const db = new DatabaseSync(join(project, 'project.sqlite'));
+    db.exec(statement);
+    db.close();
+  };
+  // Scripted answers never replace a real model's, and a run without an end event may still be running in the app.
+  sql(`UPDATE event SET payload_json = json_set(payload_json, '$.provider', 'anthropic') WHERE type = 'llm.call'`);
+  assert.match(fails('r-0001'), /analysed by real models/);
+  sql(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
+  assert.match(fails('r-0001'), /has not ended/);
 });

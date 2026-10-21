@@ -30,6 +30,7 @@
     "./report/dimensions.ts": "./src/report/dimensions.ts",
     "./report/friction.ts": "./src/report/friction.ts",
     "./report/markdown.ts": "./src/report/markdown.ts",
+    "./report/models.ts": "./src/report/models.ts",
     "./report/similarity.ts": "./src/report/similarity.ts",
     "./run.ts": "./src/run.ts",
     "./safety.ts": "./src/safety.ts",

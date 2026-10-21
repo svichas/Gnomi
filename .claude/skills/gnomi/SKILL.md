@@ -61,6 +61,7 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
 
 - `runs <project dir> --json` lists runs, newest first.
 - `report <project dir> [--run r-0002] --format summary|md|json` rebuilds a run's report; `summary` is the default and the same object a run returns.
+- `rejudge <project dir> [--run r-0002] --json` runs an ended run's judge and author again with the current prompts and the run's own judge and author models, without browsing, and rewrites its report files. Use it after the theming rules change; it needs the judge's and author's keys and costs a few model calls (the result line gives `cost_usd`).
 
 ## Settings and keys
 

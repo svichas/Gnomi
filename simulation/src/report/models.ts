@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { LlmGateway, Recorder } from '../seams.ts';
 import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
-import { english } from '../llm/english.ts';
+import { english, ENGLISH } from '../llm/english.ts';
 import { buildReport } from './build.ts';
 import { groupKey, likeGroups } from './friction.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout } from './themes.ts';
@@ -37,12 +37,12 @@ export const JUDGE_SYSTEM = `You review what simulated users (personas) ran into
 A deterministic pass has already grouped the findings. Each group has an id, a category, its page, its element or the part of the product it names, its kind, how many personas and findings it has, their trust (confirmed: self-report backed by an objective signal; observed: signal only; reported: self-report only), a median severity from 1 (a small irritation) to 4 (stops them) and up to three example texts.
 Categories: a friction got in the way of doing the task (could not find, understand or complete something); an objection is a reason to doubt or not adopt the product even when it works (value, price, trust, a missing capability, fit).
 
-Merge groups that describe the same underlying problem into one theme, and name every theme:
-- title: a short, specific name for the problem, in sentence case, at most 12 words, naming where it happens. Name the problem, not a fix. Not "Confusing interface" but "Plan limits are not shown before checkout".
-- description: one or two plain sentences: what the personas were trying to do, what got in the way or put them off, and where. Use only what the example texts say; no generalities.
+Merge groups that share one root cause into one theme, and name every theme, writing in ${ENGLISH}:
+- title: a short, specific name for the problem, in sentence case, at most 12 words, naming where it happens when that is one place. Name the problem, not a fix. Not "Confusing interface" but "Plan limits are not shown before checkout".
+- description: one or two plain sentences: what the personas were trying to do, what got in the way or put them off, and where it showed, naming the pages briefly. Use only what the example texts say; no generalities.
 - group_ids: the ids of the groups in this theme.
 
-Merge only groups that are clearly the same problem; when unsure, keep them apart. Never merge a friction group with an objection group. Use only the group ids you were given, and put each group in at most one theme. Do not invent findings. These are simulated users: never claim that real users had the problem.`;
+Two groups share a root cause when one concrete fix, small enough to ship on its own, would remove both: translating the site, or labelling one button, never a broad goal such as "clearer labels" or "better navigation". So labels, menus, forms and errors that are all in a language the personas cannot read are one theme, not one per page, while two unclear labels on two pages are two themes even though clearer labels would fix both. When unsure, keep them apart. Never merge a friction group with an objection group. Use only the group ids you were given, and put each group in at most one theme. Do not invent findings. These are simulated users: never claim that real users had the problem.`;
 
 export const JUDGE_LIKES = `
 

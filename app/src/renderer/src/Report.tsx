@@ -649,7 +649,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
                 return n > 0 ? <li key={outcome} className="flex items-center gap-1.5"><span data-tone={OUTCOMES[outcome].tone} className="tone-dot" />{n} {OUTCOMES[outcome].text.toLowerCase()}</li> : null;
               })}</ul>
               <SeverityLegend />
-              <p className="text-xs text-stone-500">Findings are ordered by evidence strength, then severity and affected share. {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}. Ranges describe uncertainty within this simulation.</p>
+              <p className="text-xs text-stone-500">The judge model is asked to group what one concrete product change would fix. Findings are ordered by evidence strength, then severity and affected share. {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}. Ranges describe uncertainty within this simulation.</p>
               <p className="text-xs text-stone-500">Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.</p>
             </>}
             <Methods methods={report.methods} personas={report.personas} />

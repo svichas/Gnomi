@@ -19,10 +19,11 @@ import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -35,6 +36,8 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
   runs <project dir>
   report <project dir> [--run <run id>] [--format summary|md|json]
+  rejudge <project dir> [--run <run id>] [--fake-llm]
+      groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -97,7 +100,7 @@ function settingsFrom(v: Values): RunSettings {
 }
 
 /** Fails early with the variable to set, rather than on the first model call. */
-function requireKey(settings: RunSettings, role: 'navigator' | 'persona_writer', fake: boolean) {
+function requireKey(settings: RunSettings, role: keyof RunSettings['routing'], fake: boolean) {
   const { provider } = settings.routing[role];
   if (fake || credential(provider, settings.local_base_url, envSecrets)) return;
   throw new Error(provider === 'openai_compatible'
@@ -391,17 +394,64 @@ function listRuns(dir: string | undefined): void {
   }
 }
 
+/** --run, or the newest run. */
+function pickRun(store: ProjectStore, v: Values, dir: string | undefined): RunRow {
+  const runs = store.listRuns(); // newest first
+  const run = v.run ? runs.find((r) => r.run_id === v.run) : runs[0];
+  if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
+  return run;
+}
+
 function showReport(v: Values, dir: string | undefined): void {
   if (!['summary', 'md', 'json'].includes(v.format)) throw new Error('--format is summary, md or json.');
   const store = existingProject(dir);
   try {
-    const runs = store.listRuns(); // newest first
-    const run_id = v.run ?? runs[0]?.run_id;
-    if (!run_id || !runs.some((r) => r.run_id === run_id)) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
-    const report = buildReport(store.events(run_id));
+    const report = buildReport(store.events(pickRun(store, v, dir).run_id));
     if (v.format === 'md') return void console.log(reportToMarkdown(report));
     const body = v.format === 'json' ? report : summarize(report);
     console.log(json ? JSON.stringify({ kind: 'report', format: v.format, report: body }) : JSON.stringify(body, null, 2));
+  } finally {
+    store.close();
+  }
+}
+
+/** Runs an ended run's judge and author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
+async function rejudge(v: Values, dir: string | undefined): Promise<void> {
+  const store = existingProject(dir);
+  try {
+    const { run_id, config } = pickRun(store, v, dir);
+    // From the log, not the row: opening the project marks a live run's row interrupted.
+    if (store.events(run_id, { types: ['run.finished', 'run.stopped'], limit: 1 }).length === 0) throw new Error(`${run_id} has not ended: it is still running, or it was interrupted before its report.`);
+    if (config.project.comparison) throw new Error(`${run_id} is a comparison study, which has no judge to run again.`);
+    const settings = config.project.settings;
+    if (!settings?.routing) throw new Error(`${run_id} predates per-run model settings, so it cannot be judged again.`);
+    const fake = v['fake-llm'];
+    if (fake && store.events(run_id, { types: ['llm.call'] }).some((e) => e.type === 'llm.call' && e.payload.provider !== 'scripted')) throw new Error(`${run_id} was analysed by real models; --fake-llm would replace their answers with scripted ones.`);
+    requireKey(settings, 'judge', fake);
+    requireKey(settings, 'author', fake);
+    const events = () => store.events(run_id);
+    const before = events().length;
+    const record = timeline(store);
+    await runReportModels({ config, round: events().at(-1)?.round ?? 1, llm: projectGateway({ fake, secrets: envSecrets, config: config.project, record }), record, events });
+    const added = events().slice(before);
+    const pois = (type: 'report.themes' | 'report.suggestions') => new Set(added.flatMap((e) => (e.type === type ? [e.payload.poi_id] : [])));
+    const asked = added.flatMap((e) => (e.type === 'report.started' ? e.payload.pois : []));
+    const [answered, suggested] = [pois('report.themes'), pois('report.suggestions')];
+    const missing = asked.filter((poi) => !answered.has(poi));
+    if (missing.length > 0 && missing.length < asked.length) note(`The judge gave no valid answer for ${missing.join(', ')}, which keeps its earlier themes.`);
+    const unsuggested = [...answered].filter((poi) => !suggested.has(poi));
+    if (unsuggested.length > 0) note(`The author gave no suggested changes for ${unsuggested.join(', ')}, so its new themes have none.`);
+    // Written even when the judge failed: the author's new suggestions are in the log, and the files are snapshots of it.
+    const report = buildReport(events());
+    const path = `runs/${run_id}/report`;
+    const blobs = createFsBlobStore(dir!);
+    await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
+    await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
+    const cost_usd = added.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
+    const themes = report.themes?.length ?? 0;
+    const [report_json, report_md] = [resolve(dir!, `${path}.json`), resolve(dir!, `${path}.md`)];
+    out(`${run_id} judged again: ${themes} themes ($${cost_usd.toFixed(4)})`, { kind: 'rejudge', run_id, themes, cost_usd, report_json, report_md, summary: summarize(report) });
+    if (missing.length > 0 && missing.length === asked.length) throw new Error(`The judge gave no valid answer, so ${run_id} keeps its earlier themes; their suggestions were written again.`);
   } finally {
     store.close();
   }
@@ -418,6 +468,7 @@ async function main(): Promise<void> {
   if (command === 'run') return runSimulation(values);
   if (command === 'runs') return listRuns(sub);
   if (command === 'report') return showReport(values, sub);
+  if (command === 'rejudge') return rejudge(values, sub);
   throw new Error(USAGE);
 }
 
