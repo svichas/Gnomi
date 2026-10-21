@@ -186,5 +186,7 @@ export const generatedCount = (info: ProjectInfo | null) => info?.generated_pers
 
 /** The personas whose writer inputs changed since they were written, so their prose no longer fits; none without a project. */
 export function staleProfiles(personas: Persona[], project: ProjectConfig | null): Set<string> {
-  return new Set(project ? personas.filter((persona) => !personaProfileIsCurrent(persona, project)).map((persona) => persona.id) : []);
+  return new Set(project ? personas.filter((persona) => {
+    try { return !personaProfileIsCurrent(persona, project); } catch { return true; }
+  }).map((persona) => persona.id) : []);
 }
