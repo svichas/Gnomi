@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    "./audience/defaults.ts": "./src/audience/defaults.ts",
     "./audience/file.ts": "./src/audience/file.ts",
     "./figma/frames.ts": "./src/figma/frames.ts",
     "./graph/feed.ts": "./src/graph/feed.ts",

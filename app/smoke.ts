@@ -441,7 +441,6 @@ try {
     await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
     await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
     await audience.getByLabel('Number of personas', { exact: true }).fill('6');
-    await audience.getByRole('button', { name: 'Remove country United States' }).click();
     await audience.getByLabel('Add country').selectOption('DE');
     await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
     await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
