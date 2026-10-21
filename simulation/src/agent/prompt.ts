@@ -553,6 +553,7 @@ export function socialParts(opts: {
   const product = opts.pois.map((poi) => poi.name).join(' and ');
   const steps = `${opts.steps} step${opts.steps === 1 ? '' : 's'}`;
   const ending = opts.end && (ENDING[opts.end as SurveyedEnd]?.(p) ?? `${p} could not go on`);
+  const cold = !opts.feed.length && !opts.posted.length;
   const line = (l: FeedLine) => {
     const thread = l.parent ? `, replying to ${l.parent.author} ("${inertFeed(clip(l.parent.text, 120))}")` : '';
     const reactions = l.agree + l.disagree ? ` (${l.agree} agree, ${l.disagree} disagree)` : '';
@@ -571,7 +572,10 @@ export function socialParts(opts: {
     ...(opts.feed.length ? opts.feed.map(line) : ['(nothing new)']),
     '</feed>',
     '',
-    `What does ${p} do with this feed, and does any of it change ${poss} view of ${product}?`,
+    // An empty first feed otherwise reads as "nothing to do" to everyone at once, and a swarm that never starts talking never does.
+    ...(cold
+      ? [`Nobody ${p} follows has written anything yet. ${p}'s impression of ${product} is fresh: if it struck ${p} one way or another, a short post is how the conversation starts, and the others read it next round. Saying nothing is still fine if it left ${p} cold.`, '', `Does ${p} share a first impression of ${product}, or move on?`]
+      : [`What does ${p} do with this feed, and does any of it change ${poss} view of ${product}?`]),
   ].join('\n');
   return [{ type: 'text', text }];
 }

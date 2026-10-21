@@ -121,3 +121,12 @@
   .provider-row-main { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .provider-test-result { text-align: left; }
 }
+
+/* Saved audiences, under the two ways to start: as wide as the choices above them. */
+.saved-audiences { display: grid; gap: 8px; width: min(492px, 100%); margin-top: 16px; text-align: left; }
+.saved-audiences h4 { font-size: 13px; font-weight: 500; color: var(--gnomi-text-muted); }
+.saved-audiences ul { display: grid; gap: 8px; }
+.saved-audiences li { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 16px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); }
+.saved-audiences li > div { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.saved-audiences li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
+.saved-audiences li span { font-size: 12px; line-height: 1.5; color: var(--gnomi-text-muted); }

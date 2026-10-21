@@ -8,14 +8,13 @@
 </p>
 
 <p align="center">
-  <a href="videos/output/gnomi-film/Gnomi-explainer.mp4">
-    <img src="videos/output/gnomi-film/cover.jpg" alt="Watch the Gnomi introduction — 1 minute 27 seconds" width="100%">
+  <a href="https://youtu.be/qgSt7nscow4">
+    <img src="videos/readme-gif/gnomi-social-simulation.gif" alt="Five simulated personas explore a pricing page, think, talk, and influence each other until Gnomi surfaces a finding. Click to watch the 1 minute 27 second introduction on YouTube." width="100%">
   </a>
 </p>
 
 <p align="center">
-  <a href="videos/output/gnomi-film/Gnomi-explainer.mp4">Watch the introduction · 1:27</a>
-  · <a href="videos/output/gnomi-film/Gnomi.en.srt">English subtitles</a>
+  <a href="https://youtu.be/qgSt7nscow4">Watch the introduction on YouTube · 1:27</a>
 </p>
 
 # Perspective before you ship.
@@ -150,7 +149,7 @@ Live acceptance runs are opt-in and require provider credentials and an explicit
 | [`gym/`](gym/) | Demo web app, defect catalogue, design frames, and text fixtures. |
 | [`docs/`](docs/) | Product design, architecture, input contracts, evaluation guides, and roadmap. |
 | [`assets/brand/`](assets/brand/) | Logos, icons, typography, and brand assets. |
-| [`videos/`](videos/) | The introduction video, editable film project, audio, 3D models, and animation source. |
+| [`videos/`](videos/) | The introduction video, editable film project, audio, 3D models, animation source, and the README animation (`readme-gif/`, rebuilt with `node videos/readme-gif/render.mjs`). |
 | [`tasks/`](tasks/) | Implementation plans and progress notes. |
 
 The desktop shell runs the engine in a separate process. The engine drives browser contexts and model calls, recording events in SQLite and evidence in local files. The graph, activity views, persona inspector, and reports are built from that history. The UI uses React and Sigma.js; model access uses the Vercel AI SDK.
@@ -176,7 +175,7 @@ Gnomi is under active development. Some design documents describe the intended a
 
 The introduction is **87 seconds, 1080p, at 24 fps**, with ElevenLabs narration, music, and sound effects, plus animated 3D models and app captures assembled in Synthcut.
 
-[Watch or download the video](videos/output/gnomi-film/Gnomi-explainer.mp4) · [Storyboard](videos/output/gnomi-film/storyboard.jpg) · [Editable source bundle](videos/output/gnomi-film/Gnomi-editable.zip) · [3D personas](videos/output/gnomi-film/assets/gnomi-personas.glb)
+[Watch on YouTube](https://youtu.be/qgSt7nscow4) · [Download the video](videos/output/gnomi-film/Gnomi-explainer.mp4) · [English subtitles](videos/output/gnomi-film/Gnomi.en.srt) · [Storyboard](videos/output/gnomi-film/storyboard.jpg) · [Editable source bundle](videos/output/gnomi-film/Gnomi-editable.zip) · [3D personas](videos/output/gnomi-film/assets/gnomi-personas.glb)
 
 To edit the film, download and extract the source bundle. From the directory where you extracted it, rebuild the project's media paths:
 

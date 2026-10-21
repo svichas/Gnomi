@@ -15,7 +15,8 @@ import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Button, Note } from './ui.tsx';
+import { Button, Note, OpenSettings } from './ui.tsx';
+import type { SettingsSection } from './credentials.ts';
 import { SimulationDock } from './SimulationDock.tsx';
 import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
@@ -49,15 +50,18 @@ export function App() {
   const [review, setReview] = useState<{ key: number; config: ProjectConfig | string } | null>(null);
   const reviews = useRef(0);
   const [returnTab, setReturnTab] = useState<Tab>('project');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [providers, setProviders] = useState<ProviderList | null>(null);
   const [revision, setRevision] = useState(0);
   const baseline = useRef('');
   const projectDir = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
   useEffect(() => {
+    const card = tab === 'settings' && settingsSection ? document.getElementById(`settings-${settingsSection}`) : null;
+    if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
     window.scrollTo({ top: 0 });
     main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
-  }, [tab, home, revision]);
+  }, [tab, home, revision, settingsSection]);
   const [unsaved, setUnsaved] = useState<{ resolve(choice: 'save' | 'discard' | 'cancel'): void } | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
@@ -179,8 +183,15 @@ export function App() {
     else setTab(to);
   };
   const fix = (screen: ReviewScreen) => {
-    if (screen === 'settings') setReturnTab('review');
+    if (screen === 'settings') { setReturnTab('review'); setSettingsSection(null); }
     setTab(screen);
+  };
+  /** From an error anywhere in the workspace to the Settings card that fixes it; Back returns to where it was. */
+  const openSettings = (section: SettingsSection | null) => {
+    if (tab !== 'settings') setReturnTab(tab);
+    setSettingsSection(section);
+    setHome(false);
+    setTab('settings');
   };
 
   const setForm = (update: (form: Form) => Form) => setDraft((was) => was && { ...was, form: update(was.form) });
@@ -224,6 +235,7 @@ export function App() {
   };
 
   return (
+    <OpenSettings.Provider value={openSettings}>
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to content</a>
       <header className="app-header">
@@ -232,7 +244,7 @@ export function App() {
         <span className="header-project">{home ? 'Your workspace' : currentProject?.name ?? 'Your project'}</span>
         {!home && <div className="header-actions">
           <ProjectRunHistory key={revision} runs={info?.runs ?? []} selected={tab === 'run' ? runId : null} onSelect={showRun} />
-          <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else { setReturnTab(tab); setTab('settings'); } }}><Icon name="settings" /><span>Settings</span></Button>
+          <Button id="tab-settings" variant="quiet" className="header-settings" aria-label="Settings" aria-pressed={tab === 'settings'} onClick={() => { if (tab === 'settings') go(returnTab); else openSettings(null); }}><Icon name="settings" /><span>Settings</span></Button>
         </div>}
       </header>
 
@@ -259,7 +271,9 @@ export function App() {
             <div className="workspace-content">
             <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : tab === 'project' ? 'Study setup' : tab === 'audience' ? 'Audience builder' : tab === 'review' ? 'Ready to run' : 'Simulation workspace'}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
-              <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
+              <OpenSettings.Provider value={null}>
+                <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
+              </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>
               <Project
@@ -271,7 +285,7 @@ export function App() {
                 onSaved={refresh}
                 onAudience={() => setTab('audience')}
                 onReview={() => void openReview()}
-                onSettings={() => { setReturnTab('project'); setTab('settings'); }}
+                onSettings={() => openSettings(null)}
                 needsProvider={providers !== null && configuredProviders(providers.keys, draft.settings.local_base_url).length === 0}
               />
             </div>
@@ -319,5 +333,6 @@ export function App() {
       </main>
       <SimulationDock onOpen={openSessionRun} projects={catalog?.projects ?? []} />
     </div>
+    </OpenSettings.Provider>
   );
 }

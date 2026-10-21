@@ -39,13 +39,13 @@ try {
   const text = list.getByRole('listitem').filter({ has: page.getByLabel('Text name', { exact: true }) });
   assert.ok(await text.getByLabel('Text name', { exact: true }).evaluate((el) => el === document.activeElement), 'adding focuses the new name');
   await text.getByLabel('Text name', { exact: true }).fill('Welcome email');
-  await text.getByLabel('Paste the text').fill('Welcome to your next hire. Create a job to get started.');
+  await text.getByLabel('Write or paste the text').fill('Welcome to your next hire. Create a job to get started.');
   const toggle = text.getByRole('button', { name: 'Edit Welcome email', exact: true });
   await toggle.click();
-  assert.equal(await text.getByLabel('Paste the text').isVisible(), false);
+  assert.equal(await text.getByLabel('Write or paste the text').isVisible(), false);
   await toggle.focus();
   await page.keyboard.press('Enter');
-  assert.equal(await text.getByLabel('Paste the text').inputValue(), 'Welcome to your next hire. Create a job to get started.', 'collapsing preserves unimported text');
+  assert.equal(await text.getByLabel('Write or paste the text').innerText(), 'Welcome to your next hire. Create a job to get started.', 'collapsing preserves unimported text');
   await text.getByRole('button', { name: 'Use this text', exact: true }).click();
   await text.getByLabel('Text preview').waitFor();
   await text.getByRole('button', { name: 'Move Welcome email up', exact: true }).click();

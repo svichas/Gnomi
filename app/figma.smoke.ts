@@ -52,13 +52,15 @@ try {
   await find('this is not a link');
   await dialog.getByRole('alert').getByText('That is not a Figma link.', { exact: false }).waitFor();
   await find(link);
-  await dialog.getByRole('alert').getByText('Add a Figma access token in Settings first.').waitFor();
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const missing = dialog.getByRole('alert').filter({ hasText: 'Add a Figma access token in Settings first.' });
+  await missing.getByText('Connect Figma first', { exact: true }).waitFor();
+  await page.screenshot({ path: join(shots, 'figma-no-token.png') });
+  await missing.getByRole('button', { name: 'Open Settings' }).click();
   await dialog.waitFor({ state: 'hidden' });
-  console.log('ok    a malformed link and a missing token each get a clear message');
+  await page.waitForFunction(() => document.activeElement?.id === 'settings-figma');
+  console.log('ok    a malformed link and a missing token each get a clear message; the token error opens the Figma settings');
 
   // 2. Settings: the token is masked, tested, and joins the egress list only while it is saved.
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.locator('#panel-settings');
   const egress = settings.locator('section').filter({ has: page.getByRole('heading', { name: 'Where Gnomi connects' }) });
   assert.equal(await egress.getByText('api.figma.com').count(), 0);
@@ -71,6 +73,9 @@ try {
   await settings.getByRole('button', { name: 'Test Figma', exact: true }).click();
   await settings.getByText('Did not work').waitFor();
   await settings.getByText('wrong, revoked or expired', { exact: false }).first().waitFor();
+  await settings.getByText('Your Figma token stopped working', { exact: true }).waitFor();
+  assert.equal(await settings.getByRole('button', { name: 'Open Settings' }).count(), 0, 'no link to the page it is on');
+  await page.screenshot({ path: join(shots, 'figma-expired-token.png') });
   await settings.getByRole('button', { name: 'Remove Figma', exact: true }).click();
   await settings.getByLabel('Figma access token').waitFor();
   assert.equal(await egress.getByText('api.figma.com').count(), 0, 'removing the token takes Figma off the list');

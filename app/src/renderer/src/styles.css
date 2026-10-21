@@ -82,6 +82,33 @@
 .field-input::placeholder { color: var(--gnomi-text-muted); }
 .field-input:focus { outline: 2px solid var(--gnomi-focus); outline-offset: 2px; }
 .field-input:disabled { background: var(--gnomi-canvas); }
+.ProseMirror { position: relative; white-space: pre-wrap; white-space: break-spaces; word-wrap: break-word; font-variant-ligatures: none; }
+.ProseMirror [contenteditable="false"] { white-space: normal; }
+.ProseMirror-hideselection *::selection { background: transparent; }
+.ProseMirror-hideselection { caret-color: transparent; }
+.ProseMirror-gapcursor { display: none; pointer-events: none; position: absolute; }
+.ProseMirror-focused .ProseMirror-gapcursor { display: block; }
+.ProseMirror-gapcursor::after { content: ""; display: block; position: absolute; top: -2px; width: 20px; border-top: 1px solid currentColor; }
+img.ProseMirror-separator { display: inline !important; border: none !important; margin: 0 !important; width: 0 !important; height: 0 !important; }
+.rich-text-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+.rich-text-toolbar button { min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid var(--gnomi-control-border); border-radius: var(--gnomi-radius-control); background: var(--gnomi-surface); font-size: 13px; font-weight: 550; }
+.rich-text-toolbar button:hover { background: var(--gnomi-selected); }
+.rich-text-toolbar button[aria-pressed="true"] { background: var(--gnomi-selected); border-color: var(--gnomi-action); color: var(--gnomi-action); }
+.rich-text { min-height: 144px; max-height: 420px; overflow: auto; overflow-wrap: anywhere; }
+.rich-text-preview { max-height: 256px; overflow: auto; padding: 12px; border: 1px solid var(--gnomi-line); border-radius: 8px; background: var(--gnomi-canvas); font-size: 14px; line-height: 1.5; }
+.rich-text > * + *, .rich-text-preview > * + * { margin-top: .6em; }
+.rich-text h1, .rich-text-preview h1 { font-size: 1.4em; font-weight: 600; }
+.rich-text h2, .rich-text-preview h2 { font-size: 1.2em; font-weight: 600; }
+.rich-text h3, .rich-text-preview h3 { font-size: 1.05em; font-weight: 600; }
+.rich-text ul, .rich-text-preview ul { list-style: disc; padding-left: 1.4em; }
+.rich-text ol, .rich-text-preview ol { list-style: decimal; padding-left: 1.4em; }
+.rich-text blockquote, .rich-text-preview blockquote { border-left: 3px solid var(--gnomi-line); padding-left: 12px; color: var(--gnomi-text-muted); }
+.rich-text a, .rich-text-preview a { color: var(--gnomi-action); text-decoration: underline; }
+.rich-text code, .rich-text-preview code { font-family: ui-monospace, monospace; font-size: .9em; background: var(--gnomi-canvas); padding: 1px 4px; border-radius: 4px; }
+.rich-text table, .rich-text-preview table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.rich-text th, .rich-text td, .rich-text-preview th, .rich-text-preview td { border: 1px solid var(--gnomi-line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.rich-text th, .rich-text-preview th { font-weight: 600; background: var(--gnomi-canvas); }
+.rich-text p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: var(--gnomi-text-muted); pointer-events: none; }
 .content-panel { padding: 24px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; }
 .content-panel > h2 { font-weight: 550; font-size: 16px; margin-bottom: 20px; letter-spacing: -.015em; }
 .content-panel:has(> .panel-description) > h2 { margin-bottom: 4px; }
@@ -132,6 +159,8 @@
 /* A step's actions float at the foot of the window (ActionBar in ui.tsx); the page and focus scrolling leave room for the bar showing, so it covers nothing at the end. */
 .action-bar { position: fixed; z-index: 20; left: calc(50% + var(--workspace-offset, 0px) / 2); bottom: 24px; transform: translateX(-50%); width: min(var(--action-bar-width, 1136px), calc(100% - 64px - var(--workspace-offset, 0px))); margin: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px; background: var(--gnomi-surface); border: 1px solid var(--gnomi-line); border-radius: 12px; box-shadow: 0 8px 24px #22282314; }
 .action-bar > p { flex: 1 1 240px; }
+.action-bar > .note { flex: 1 1 240px; }
+.action-bar-notice { margin-top: 16px; scroll-margin-bottom: calc(var(--action-bar-height, 66px) + 40px); }
 .app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
 html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
 /* Pills (ui.tsx usePills) float at the top, where the step and header controls are, and never meet the ActionBar. */
@@ -163,14 +192,14 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .review-ready { display: flex; gap: 16px; align-items: flex-start; padding: 24px; border: 1px solid var(--gnomi-sage); border-radius: 12px; background: var(--gnomi-selected); }
 .review-ready h2 { font-size: 18px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 4px; }
 .review-ready p { color: var(--gnomi-text-muted); font-size: 13px; max-width: 60ch; }
-.review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
+.review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; }
 .review-wide { grid-column: 1 / -1; }
 .review-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .review-card-head h2 { font-size: 16px; font-weight: 500; }
 .review-facts { display: grid; gap: 16px; }
 .review-facts dt { font-size: 12px; color: var(--gnomi-text-muted); margin-bottom: 2px; }
 .review-facts dd { overflow-wrap: anywhere; }
-.review-fact-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px; }
+.review-fact-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 16px; }
 .review-note { font-size: 12px; color: var(--gnomi-text-muted); }
 .review-segments { display: grid; gap: 6px; }
 .review-segments li { display: flex; align-items: flex-start; gap: 8px; }
@@ -491,6 +520,19 @@ html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action
 .tone-chip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; border-radius: 999px; padding: 2px 10px; background: var(--tone-tint); color: var(--tone-ink); font-size: 12px; font-weight: 500; line-height: 1.5; }
 .tone-chip::before, .tone-dot { content: ''; display: inline-block; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--tone); }
 .tone-edge { border-left: 4px solid var(--tone); }
+/* Notes: an action's outcome or a standing notice. A key problem gets a title, the engine's words, and a way to Settings. */
+.note { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent); border-left: 3px solid var(--tone); border-radius: 10px; background: var(--tone-tint); color: var(--tone-ink); font-size: 13px; line-height: 1.55; }
+.note[data-tone='ok'] { --tone: var(--gnomi-success); --tone-tint: #eef5f0; --tone-ink: #285a3e; }
+.note[data-tone='error'] { --tone: var(--gnomi-error); --tone-tint: #faf0ee; --tone-ink: #8e3b32; }
+.note[data-tone='info'] { --tone: var(--gnomi-warning); --tone-tint: #faf5e9; --tone-ink: #6e4e14; }
+.note-icon { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: 8px; background: color-mix(in srgb, var(--tone) 14%, var(--gnomi-surface)); color: var(--tone); }
+.note-copy { min-width: 0; flex: 1 1 16rem; display: grid; gap: 2px; padding-top: 3px; overflow-wrap: anywhere; }
+.note-title { font-weight: 600; color: var(--tone-ink); }
+.note-copy > p:not(.note-title) { color: var(--gnomi-text); }
+.note-copy > .note-detail { margin-top: 4px; color: var(--gnomi-text-muted); font-size: 11px; }
+.note-action { flex-shrink: 0; align-self: center; gap: 6px; margin-left: auto; }
+.content-panel[id]:focus { outline: none; box-shadow: 0 0 0 2px var(--gnomi-action); }
+
 .tone-fill { background: var(--tone); }
 .report-more > summary { display: inline-flex; align-items: center; gap: 6px; list-style: none; color: var(--gnomi-action); font-size: 13px; font-weight: 500; text-underline-offset: 3px; }
 .report-more > summary::-webkit-details-marker { display: none; }

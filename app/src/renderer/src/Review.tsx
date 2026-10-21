@@ -173,17 +173,6 @@ export function Review(props: {
           </Fact>}
         </Section>
 
-        {saved.comparison && <Section title="Comparison brief" edit={fix('project', 'Edit comparison')} wide>
-          <Fact label="Decision">{saved.comparison.question}</Fact>
-          <Fact label="Purpose">{saved.comparison.purpose === 'choose_tool' ? 'Choose a tool' : `Improve ${saved.comparison.targets.find((target) => target.id === saved.comparison!.focal_target_id)?.name ?? 'your product'}`}</Fact>
-          <Fact label="Approach">{saved.comparison.execution.mode === 'independent' ? 'Independent tasks; no memory shared between tools.' : 'Buyer journey; prior observations are carried forward.'} Tool order is balanced within segments.</Fact>
-          <Fact label="Criteria">{saved.comparison.criteria.map((criterion) => <span className="block" key={criterion.id}>{criterion.name} · {criterion.importance === 'must_have' ? 'must have' : 'preference'}</span>)}</Fact>
-          <Fact label="Shared tasks">{saved.comparison.tasks.map((task, i) => <span className="block" key={task.id}>{i + 1}. {task.instruction} · Up to {task.max_steps} steps per tool.</span>)}</Fact>
-          <Fact label="Tool access">{saved.comparison.targets.map((target) => <span className="block" key={target.id}>{target.name} · {target.access_scope.replaceAll('_', ' ')} · {target.session_role ? `${target.session_role} login` : 'no login'}</span>)}</Fact>
-          <Fact label="Assumptions">{saved.comparison.assumptions.map((assumption, i) => <span className="block" key={i}>{assumption}</span>)}</Fact>
-          <p className="review-note">The report compares captured evidence. Unavailable access or unresolved requirements stay visible. It does not infer missing features from pages it could not inspect.</p>
-        </Section>}
-
         <Section title="Who will browse" edit={fix('audience', 'Edit audience')}>
           {saved.audience ? (
             <>
@@ -218,6 +207,18 @@ export function Review(props: {
             ) : 'Off: the built-in persona runs alone.'}
           </Fact>
         </Section>
+
+        {/* Full width, so it sits between the pairs rather than leaving a hole beside one. */}
+        {saved.comparison && <Section title="Comparison brief" edit={fix('project', 'Edit comparison')} wide>
+          <Fact label="Decision">{saved.comparison.question}</Fact>
+          <Fact label="Purpose">{saved.comparison.purpose === 'choose_tool' ? 'Choose a tool' : `Improve ${saved.comparison.targets.find((target) => target.id === saved.comparison!.focal_target_id)?.name ?? 'your product'}`}</Fact>
+          <Fact label="Approach">{saved.comparison.execution.mode === 'independent' ? 'Independent tasks; no memory shared between tools.' : 'Buyer journey; prior observations are carried forward.'} Tool order is balanced within segments.</Fact>
+          <Fact label="Criteria">{saved.comparison.criteria.map((criterion) => <span className="block" key={criterion.id}>{criterion.name} · {criterion.importance === 'must_have' ? 'must have' : 'preference'}</span>)}</Fact>
+          <Fact label="Shared tasks">{saved.comparison.tasks.map((task, i) => <span className="block" key={task.id}>{i + 1}. {task.instruction} · Up to {task.max_steps} steps per tool.</span>)}</Fact>
+          <Fact label="Tool access">{saved.comparison.targets.map((target) => <span className="block" key={target.id}>{target.name} · {target.access_scope.replaceAll('_', ' ')} · {target.session_role ? `${target.session_role} login` : 'no login'}</span>)}</Fact>
+          <Fact label="Assumptions">{saved.comparison.assumptions.map((assumption, i) => <span className="block" key={i}>{assumption}</span>)}</Fact>
+          <p className="review-note">The report compares captured evidence. Unavailable access or unresolved requirements stay visible. It does not infer missing features from pages it could not inspect.</p>
+        </Section>}
 
         <Section title="Cost and time" edit={fix('settings', 'Edit budgets')}>
           <Fact label="Estimate">
@@ -268,9 +269,9 @@ export function Review(props: {
         </Section>
       </div>}
 
-      <ActionBar>
+      <ActionBar notice={outcome && <Note tone="error">{outcome.text}</Note>}>
         <Button onClick={onBack} className="mr-auto"><Icon name="back" size={16} />Back to audience</Button>
-        {outcome ? <Note tone="error">{outcome.text}</Note> : <p id="review-start-hint" className="review-status">{status}</p>}
+        {!outcome && <p id="review-start-hint" className="review-status">{status}</p>}
         <Button onClick={start} disabled={busy || !ready || recorder.recording !== null} aria-describedby={outcome ? undefined : 'review-start-hint'} variant="primary">
           <Icon name="play" size={16} />{busy ? 'Starting...' : 'Start run'}
         </Button>

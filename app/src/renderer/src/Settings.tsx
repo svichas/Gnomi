@@ -63,7 +63,7 @@ function ProviderRow(props: { provider: ProviderId | 'figma'; detail: string; te
           </Button>
         </div>
       </div>
-      {test && !test.ok && test.error && <p className="text-xs text-red-800">{test.error}</p>}
+      {test && !test.ok && test.error && <Note tone="error">{test.error}</Note>}
       {note && <p className="text-xs text-stone-500">{note}</p>}
       {testing.outcome && <Note tone="error">{testing.outcome.text}</Note>}
     </li>
@@ -253,7 +253,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       <div className="settings-layout">
       <div className="settings-connections">
       <div className="settings-group-heading"><p>Connections</p><span>Manage AI and design access</span></div>
-      <Card title="Providers">
+      <Card id="settings-providers" title="Providers">
         <p className="mb-4 text-sm text-stone-600">
           Connect an AI provider to create personas and run simulations. Keys are stored using your operating system’s secure storage and sent only to their provider.
         </p>
@@ -290,7 +290,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         {changing.outcome && <div className="mt-3"><Note tone={changing.outcome.ok ? 'ok' : 'error'}>{changing.outcome.text}</Note></div>}
       </Card>
 
-      <Card title="Figma">
+      <Card id="settings-figma" title="Figma">
         <p className="mb-4 text-sm text-stone-600">Optional. Connect Figma to import frames as designs for your audience to explore.</p>
         <details className="settings-help"><summary>How to create a Figma token</summary><p>In Figma, open Settings → Security and generate a personal access token with the file_content:read scope. Use an account with a Dev or Full seat; View and Collab seats have limited imports. Tokens expire, so check the expiry when creating one.</p></details>
         {list?.figma ? (
@@ -411,9 +411,9 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
       </div></details>
 
-      <ActionBar>
+      <ActionBar notice={saving.outcome && !saving.outcome.ok && <Note tone="error">{saving.outcome.text}</Note>}>
         <p className="settings-save-hint">Provider keys save immediately. Save to apply this project’s run settings.</p>
-        {saving.outcome && <Note tone={saving.outcome.ok ? 'ok' : 'error'}>{saving.outcome.text}</Note>}
+        {saving.outcome?.ok && <Note tone="ok">{saving.outcome.text}</Note>}
         {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
         <Button onClick={onSave} disabled={saving.busy} loading={saving.busy} variant="primary">
           Save settings
