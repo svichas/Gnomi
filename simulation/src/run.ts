@@ -158,7 +158,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return now;
   };
   const budgetedLlm: LlmGateway = {
-    call(req) {
+    // async, so a stop rejects the call as the gateway contract says, rather than throwing out of a caller's map or allSettled.
+    async call(req) {
       hard.signal.throwIfAborted();
       return llm.call({
         ...req,
@@ -571,19 +572,22 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     // Once every episode is over the swarm keeps talking, within the R rounds, while anyone has something to read or tell: a text
     // read in one sitting is still discussed, and what a persona found in its last stretch of use reaches the feed.
-    for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
-      const using = config.personas.filter((p) => !ends.has(p.id));
-      if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
-      if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
-      base.round = round;
-      record({ ...base, type: 'run.round_started', payload: {} });
-      if (using.length) await inParallel(mixed(using), turn);
-      if (!drain.signal.aborted) await socialPhase(round);
-      record({ ...base, type: 'run.round_ended', payload: {} });
+    try {
+      for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
+        const using = config.personas.filter((p) => !ends.has(p.id));
+        if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
+        if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
+        base.round = round;
+        record({ ...base, type: 'run.round_started', payload: {} });
+        if (using.length) await inParallel(mixed(using), turn);
+        if (!drain.signal.aborted) await socialPhase(round);
+        record({ ...base, type: 'run.round_ended', payload: {} });
+      }
+    } finally {
+      // A stop or a failure leaves episodes waiting for a slice that will not come: they end now and close their pages.
+      for (const wake of waiting.values()) wake(false);
+      await Promise.allSettled(tasks.values());
     }
-    // A stop leaves episodes waiting for a slice that will not come: they end now and close their pages.
-    for (const wake of waiting.values()) wake(false);
-    await Promise.allSettled(tasks.values());
   };
 
   const resetStaging = async (url: string) => {
@@ -623,6 +627,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
     try {
       if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, record, events: () => store.events(run_id) });
+    } catch (err) {
+      fail(err); // the run still ends, logged and reported, rather than staying 'running'
     } finally {
       clearTimeout(clock); // Comparison analysis remains under the run's wall-clock allowance.
     }

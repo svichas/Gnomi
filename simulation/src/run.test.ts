@@ -591,6 +591,34 @@ test('stop() cancels a model call in flight', async () => {
   assert.deepEqual([report.status, report.stop_reason], ['stopped', 'user']);
 });
 
+test('stop() while the judge answers still ends the run as a user stop, with its report', async () => {
+  const friction = { severity: 3, what: 'Jobs leads to a page not found', expected: 'The list of jobs' };
+  const steps = [step('click', 'e1', null, friction), step('done', null, 'Posted the job')];
+  const judged = { themes: [{ title: 'The Jobs link leads nowhere', description: 'Jobs opens a page that is not found.', group_ids: ['g1'] }] };
+  const r = begin((req, n) => (req.role === 'judge' ? judged : req.role === 'author' ? { suggestions: [] } : steps[n]), {
+    onCall: (req, run) => void (req.role === 'judge' && run.stop()),
+  });
+  const report = await r.run.done;
+  assert.equal(of(r.events, 'llm.call').filter((e) => e.payload.role === 'author').length, 0, 'no author call starts after the stop');
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload), [{ reason: 'user', detail: null }]);
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'user', cost_usd: 0 }]);
+  assert.equal(report.status, 'stopped');
+  assert.equal(r.types().at(-1), 'report.generated');
+  assert.ok(r.files.has('runs/r-0001/report.json'));
+});
+
+test('a failure in the report phase ends the run as stopped(error), with its report', async () => {
+  const r = begin([step('done', null, 'Posted the job')], {
+    onEvent: (e) => {
+      if (e.type === 'report.started') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.deepEqual(r.finished, [{ status: 'stopped', stop_reason: 'error: disk full', cost_usd: 0 }]);
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.equal(r.types().at(-1), 'report.generated');
+});
+
 test('a browser failure ends the run as stopped(error), closes the page and still reports', async () => {
   const r = begin([step('click', 'e1')], {
     act: () => {
@@ -1258,6 +1286,20 @@ test('the cost cap reached in a social phase stops the run there: no later round
   assert.equal(of(r.events, 'persona.survey').length, 0);
   assert.equal(r.finished[0].status, 'stopped');
   assert.ok(report.cost_usd <= budget + 12 * 0.01 + 1e-9);
+});
+
+test('a failure between rounds ends the episodes waiting for a slice and closes their pages', async () => {
+  const r = begin(swarmAnswers(), {
+    personas: swarm(2),
+    project: SWARM,
+    settings: rounds(3),
+    onEvent: (e) => {
+      if (e.type === 'run.round_ended') throw new Error('disk full');
+    },
+  });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'error: disk full');
+  assert.ok(r.pages.length === 2 && r.pages.every((p) => p.closed), 'episodes waiting for a slice end and close their pages');
 });
 
 test('a usage slice is admitted whole: when its steps would reach the budget, none of them starts', async () => {
