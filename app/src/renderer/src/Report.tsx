@@ -336,7 +336,8 @@ function SentimentScale({ value }: { value: number }) {
 }
 
 /** A rate as a short bar and its count, so a column reads at a glance. */
-function Rate({ rate, of, tone }: { rate: number; of: number; tone: Tone }) {
+function Rate({ rate, of, tone }: { rate: number | null; of: number; tone: Tone }) {
+  if (rate === null) return '-'; // nobody started
   return (
     <span className="flex items-center gap-2 whitespace-nowrap">
       <span aria-hidden="true" className="h-1.5 w-14 overflow-hidden rounded-full bg-stone-100">

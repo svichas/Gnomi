@@ -561,6 +561,18 @@ test('changing the shares changes the weighted rates and leaves the segment rate
   );
 });
 
+test('a segment nobody in it started has no rates, not 0%; with nobody started at all, neither has the weighted row', () => {
+  const script = populationScript(populationConfig([recruiters, managers]));
+  const unstarted = (prefix: string) => script.filter(([, e]) => e.type === 'persona.created' || !e.persona_id?.startsWith(prefix));
+  const report = buildReport(stored(unstarted('p-2-')));
+  assert.deepEqual(report.segments.map((s) => [s.id, s.outcomes.not_started, s.completion, s.with_friction]), [['seg-a', 0, 0.25, 0.75], ['seg-b', 2, null, null]]);
+  assert.deepEqual(report.weighted, { completion: 0.25, with_friction: 0.75 }, 'only the segment that started counts');
+  assert.ok(reportToMarkdown(report).includes('| Hiring managers | 40% | 2 | - | - |'));
+  const nobody = buildReport(stored(unstarted('p-')));
+  assert.deepEqual(nobody.weighted, { completion: null, with_friction: null });
+  assert.ok(reportToMarkdown(nobody).includes('**Weighted by share:** completion -, with friction -. **Unweighted:** completion -.'));
+});
+
 test('frictions carry the right persona and screenshot when two personas both have a step 1', () => {
   const report = buildReport(stored(populationScript(populationConfig([recruiters, managers]))));
   assert.deepEqual(

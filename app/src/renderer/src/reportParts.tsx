@@ -11,7 +11,7 @@ export type Inspect = (personaId: string, seq?: number) => void;
 /** True while the report is drawn into an exported file, which has no inspector to open and prints every fold open. */
 export const InFile = createContext(false);
 
-export const pct = (x: number) => `${Math.round(x * 100)}%`;
+export const pct = (x: number | null) => (x === null ? '-' : `${Math.round(x * 100)}%`); // null: a rate over nobody
 export const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 export const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
 export const heading = 'text-base font-semibold text-stone-900';

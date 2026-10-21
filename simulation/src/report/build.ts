@@ -54,7 +54,8 @@ function ofType<K extends EventType>(events: GnomiEvent[], type: K): EventOf<K>[
   return events.filter((e): e is EventOf<K> => e.type === type);
 }
 
-const rate = (count: number, total: number) => (total === 0 ? 0 : count / total);
+// A rate over nobody is unknown, not 0%: a segment the run never reached would read as a total failure.
+const rate = (count: number, total: number) => (total === 0 ? null : count / total);
 
 const stepKey = (persona_id: string, step_no: number) => JSON.stringify([persona_id, step_no]);
 
@@ -213,8 +214,9 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Each segment counts by its share; the shares are renormalised over the segments with a persona that started and got model answers.
   const counted = segments.filter((s) => s.personas > s.outcomes.not_started + s.outcomes.model_failed);
   const weight = counted.reduce((sum, s) => sum + s.share, 0);
-  const weighted = (pick: (s: ReportSegment) => number) =>
-    weight === 0 ? 0 : counted.reduce((sum, s) => sum + s.share * pick(s), 0) / weight;
+  // A counted segment has someone started, so its rates are set.
+  const weighted = (pick: (s: ReportSegment) => number | null) =>
+    weight === 0 ? null : counted.reduce((sum, s) => sum + s.share * (pick(s) ?? 0), 0) / weight;
   const comparisons = buildComparisons(events, competitors, ctx);
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');

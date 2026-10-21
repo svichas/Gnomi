@@ -5,7 +5,7 @@ import { formatAttributeValue } from './dimensions.ts';
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row.
 const line = (text: string) => text.replace(/\s+/g, ' ').trim();
 const cell = (text: string) => line(text).replace(/\|/g, '\\|');
-const pct = (rate: number) => `${Math.round(rate * 100)}%`;
+const pct = (rate: number | null) => (rate === null ? '-' : `${Math.round(rate * 100)}%`); // null: a rate over nobody
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 
@@ -321,7 +321,7 @@ function segmentLines(report: Report): string[] {
     ...(notStarted ? [`${count(notStarted, 'persona')} did not start before the run ended and ${notStarted === 1 ? 'is' : 'are'} left out of these rates.`] : []),
     ...(noAnswer ? [`${count(noAnswer, 'persona')} got no valid model answer three steps in a row and ${noAnswer === 1 ? 'is' : 'are'} left out of these rates; that says nothing about the product.`] : []),
     '',
-    `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}. **Unweighted:** completion ${pct(started.length ? started.filter((p) => p.outcome === 'done').length / started.length : 0)}.`,
+    `**Weighted by share:** completion ${pct(report.weighted.completion)}, with friction ${pct(report.weighted.with_friction)}. **Unweighted:** completion ${pct(started.length ? started.filter((p) => p.outcome === 'done').length / started.length : null)}.`,
   ];
 }
 

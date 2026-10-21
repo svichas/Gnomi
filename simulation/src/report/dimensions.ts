@@ -55,8 +55,8 @@ export function buildDimensions(population: Persona[], personas: ReportPersona[]
       return {
         value,
         personas: members.length,
-        completion: started.length ? started.filter((member) => member.outcome === 'done').length / started.length : 0,
-        with_friction: started.length ? started.filter((member) => withFriction.has(member.id)).length / started.length : 0,
+        completion: started.length ? started.filter((member) => member.outcome === 'done').length / started.length : null,
+        with_friction: started.length ? started.filter((member) => withFriction.has(member.id)).length / started.length : null,
         sentiment: feelings.length ? feelings.reduce((sum, feeling) => sum + feeling, 0) / feelings.length : null,
       };
     }),
