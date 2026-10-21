@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Report, ReportTheme } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
-import { reportToMarkdown } from './markdown.ts';
+import { missingUsageText, reportToMarkdown } from './markdown.ts';
 
 const url = 'http://localhost:3001/jobs/new';
 
@@ -310,4 +310,13 @@ test('sentiment, what went well and the analysis appendix appear when the report
   }
   const legacy = reportToMarkdown(report);
   for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
+});
+
+test('missing-usage copy names the count and preserves uncertainty about provider billing', () => {
+  assert.equal(missingUsageText(undefined), null);
+  assert.equal(missingUsageText(0), null);
+  assert.match(missingUsageText(1)!, /^1 model call did not report complete usage/);
+  assert.match(missingUsageText(2)!, /^2 model calls did not report complete usage/);
+  assert.match(missingUsageText(2)!, /Canceled or failed requests may still incur provider charges/);
+  assert.match(missingUsageText(2)!, /Actual charges may exceed the recorded cost/);
 });

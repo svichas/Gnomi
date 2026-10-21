@@ -75,6 +75,25 @@ export function transcriptRequest(req: LlmRequest<unknown>, user: UserPart[]) {
   };
 }
 
+/** Logs one attempt as the run's llm.call, which cost accounting reads, then tells the caller. Shared with the scripted gateway. */
+export function recordAttempt(req: LlmRequest<unknown>, attempt: LlmAttempt, record: Recorder): void {
+  // Setup calls have no run ledger; observers still receive their attempt below.
+  if (req.run_id !== null) {
+    record(
+      {
+        run_id: req.run_id,
+        round: req.round,
+        persona_id: req.persona_id,
+        poi_id: req.poi_id ?? null,
+        type: 'llm.call',
+        payload: attempt.payload,
+      },
+      attempt.transcript,
+    );
+  }
+  req.onAttempt?.(attempt);
+}
+
 /** The appended turn of the one retry after an invalid output (tech.md §10.6). */
 export function retryParts(user: UserPart[], error: string): UserPart[] {
   return [...user, { type: 'text', text: `That answer did not match the required format: ${error}\nAnswer again with one JSON object that matches the schema.` }];
@@ -87,7 +106,7 @@ export function withoutUnknownKeys<T>(schema: z.ZodType<T>, text: string | null)
   const first = schema.safeParse(value);
   if (first.success || !first.error.issues.every((i) => i.code === 'unrecognized_keys')) return undefined;
   for (const issue of first.error.issues) {
-    const owner = issue.path.reduce<any>((o, k) => o?.[k], value);
+    const owner = issue.path.reduce<Record<PropertyKey, unknown>>((o, k) => o?.[k] as Record<PropertyKey, unknown>, value as Record<PropertyKey, unknown>);
     for (const key of issue.keys) delete owner[key];
   }
   const second = schema.safeParse(value);
@@ -231,6 +250,10 @@ export function createGateway({
       // A text-only model (DeepSeek V4-Pro) runs without the screenshots.
       const parts = readsImages(req.model) ? req.user : req.user.filter((p) => p.type === 'text');
 
+      const rethrow = (err: unknown): never => {
+        req.signal?.throwIfAborted();
+        throw err;
+      };
       let user = parts;
       let spent = 0;
       let invalid = 0; // answers that did not fit the schema; the second one ends the call
@@ -238,7 +261,7 @@ export function createGateway({
       for (;;) {
         req.signal?.throwIfAborted();
         const queued = clock.now();
-        await bucket(provider)?.acquire(estimateTokens(`${shared ?? ''}${system}`, user), req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
+        await bucket(provider)?.acquire(estimateTokens(`${shared ?? ''}${system}`, user), req.signal).catch(rethrow);
         req.signal?.throwIfAborted();
         const started = clock.now();
         let object: T | undefined;
@@ -319,21 +342,7 @@ export function createGateway({
           transcript: JSON.parse(hideKey(JSON.stringify({ request: { ...transcriptRequest({ ...req, shared, system, max_output_tokens: maxOutputTokens }, user), provider_options: options }, response: { text, finish_reason: finish, usage: usage?.raw ?? null, error } }))),
         };
         if (APICallError.isInstance(thrown)) attempt.payload.http_status = thrown.statusCode;
-        // Setup calls have no run ledger; observers still receive their attempt below.
-        if (req.run_id !== null) {
-          record(
-            {
-              run_id: req.run_id,
-              round: req.round,
-              persona_id: req.persona_id,
-              poi_id: req.poi_id ?? null,
-              type: 'llm.call',
-              payload: attempt.payload,
-            },
-            attempt.transcript,
-          );
-        }
-        req.onAttempt?.(attempt);
+        recordAttempt(req, attempt, record);
         // Keep a successful response and its usage even if a budget observer just cancelled other work.
         if (status === 'ok') return { object: object as T, cost_usd: spent };
         req.signal?.throwIfAborted();
@@ -351,7 +360,7 @@ export function createGateway({
             throw new Error(`${NAME[provider]} ${code}: ${error}${retries ? ` (gave up after ${retries + 1} attempts)` : ''}`);
           }
           // A provider's retry-after is a floor; the jitter spreads the personas out so they do not all return together.
-          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal).catch((err) => { req.signal?.throwIfAborted(); throw err; });
+          await clock.sleep(asked === null ? BACKOFF_MS * 2 ** retries * (0.5 + clock.random() / 2) : asked + clock.random() * 500, req.signal).catch(rethrow);
           req.signal?.throwIfAborted();
           retries++;
           continue;

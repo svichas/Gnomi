@@ -3,7 +3,7 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { Audience } from '@gnomi/simulation/types.ts';
-import type { SavedAudience } from '../audiences.ts';
+import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
 
 const MAX_BYTES = 1_000_000;
 

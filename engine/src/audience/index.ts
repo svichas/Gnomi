@@ -1,5 +1,6 @@
 import type { LlmAttempt, LlmGateway, LlmRequest } from '@gnomi/simulation/seams.ts';
-import type { AccessibilityNeed, Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
+import type { Audience, ModelChoice, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
+import { defaultAudience } from './defaults.ts';
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { nameKey, writePersonas } from './write.ts';
@@ -7,6 +8,7 @@ import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { sampleProfile } from '@gnomi/simulation/profile/sample.ts';
 import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 
+export { defaultAudience };
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';
 
@@ -27,40 +29,7 @@ export interface AudienceDeps {
 }
 
 const PREFERRED_MIN_PER_SEGMENT = 3;
-const MAX_PERSONAS = 200;
-
-// Starting points the user sees and edits (idea.md §11), not measurements: about 15% think in a first language other than English.
-const LANGUAGES: Record<string, number> = { en: 0.85, es: 0.04, de: 0.02, fr: 0.02, pt: 0.02, hi: 0.02, zh: 0.02, ar: 0.01 };
-// About 14%: colour-vision deficiency alone affects ~8% of men and ~0.5% of women; the rest are rough, so every run meets these users.
-const ACCESSIBILITY: Record<AccessibilityNeed, number> = { none: 0.86, low_vision: 0.05, colour_blind: 0.04, motor: 0.03, screen_reader: 0.02 };
-
-/** A deterministic starting point with no model call: one segment holding the whole population. */
-export function defaultAudience(project: ProjectConfig): Audience {
-  return {
-    seed: 1,
-    persona_count: 50,
-    segments: [
-      {
-        id: 'seg-1',
-        name: 'Everyone',
-        description: `All the people who use ${project.name}, in one group: every role, level of experience and device.`,
-        share: 100,
-        role: project.role,
-        usage_frequency: 'weekly',
-        typical_goals: project.goal ? [project.goal] : [],
-        mobile_share: 0.25,
-        patience: [1, 5], // one segment for everyone spans the full ranges until segments narrow them
-        tech_skill: [1, 5],
-        account_state: 'populated',
-        entry: 'direct',
-        goal_override: null,
-      },
-    ],
-    company_size: [50, 2000],
-    languages: { ...LANGUAGES },
-    accessibility: { ...ACCESSIBILITY },
-  };
-}
+export const MAX_PERSONAS = 200;
 
 /** Proposes segments from the product sentence, the POI and the goal (idea.md §5.1 step 3). */
 export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: Audience; cost_usd: number }> {
@@ -127,6 +96,9 @@ function layout(audience: Audience, population: Persona[]): { segment: Segment; 
 
 const takenNames = (personas: Persona[]) => new Map(personas.map((p) => [nameKey(p.name), p.name]));
 
+const traitsAt = (project: ProjectConfig, audience: Audience, segment: Segment, seed: number) =>
+  ({ ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) });
+
 function segmentOf(audience: Audience, segmentId: string | null): Segment {
   const segment = audience.segments.find((s) => s.id === segmentId);
   if (!segment) throw new Error(`The audience has no segment ${JSON.stringify(segmentId)}`);
@@ -145,7 +117,7 @@ export async function syncPersonas(
 ): Promise<{ personas: Persona[]; cost_usd: number }> {
   const project = { ...deps.project, audience };
   const slots = layout(audience, existing).flatMap(({ segment, slots }) =>
-    slots.map((slot) => ({ ...slot, segment, traits: { ...sampleTraits(segment, audience, slot.seed), attributes: sampleProfile(project.persona_schema, segment.id, slot.seed) }, signature: profileSignature(project, segment, slot.seed) })),
+    slots.map((slot) => ({ ...slot, segment, traits: traitsAt(project, audience, segment, slot.seed), signature: profileSignature(project, segment, slot.seed) })),
   );
   // Presentation/report flags and private values do not change prose. Keep it and refresh the sampled stored values.
   const keep = (s: (typeof slots)[number]) => s.old?.profile_signature === s.signature;
@@ -153,6 +125,13 @@ export async function syncPersonas(
   const written = await writePersonas(slots.filter((s) => !keep(s)), takenNames(kept), { ...deps, project });
   const byId = new Map([...kept, ...written.personas].map((p) => [p.id, p]));
   return { personas: slots.map((s) => byId.get(s.id)!), cost_usd: written.cost_usd };
+}
+
+/** Samples and writes one persona; others hold the names it must not take. */
+async function writeOne(id: string, segment: Segment, seed: number, audience: Audience, others: Persona[], deps: AudienceDeps): Promise<{ persona: Persona; cost_usd: number }> {
+  const project = { ...deps.project, audience };
+  const { personas, cost_usd } = await writePersonas([{ id, segment, seed, traits: traitsAt(project, audience, segment, seed) }], takenNames(others), { ...deps, project });
+  return { persona: personas[0], cost_usd };
 }
 
 /** A new seed for one persona: traits re-sampled and re-written, its id kept. */
@@ -163,11 +142,7 @@ export async function regeneratePersona(
   deps: AudienceDeps,
 ): Promise<{ persona: Persona; cost_usd: number }> {
   const segment = segmentOf(audience, persona.segment_id);
-  const seed = persona.seed + GENERATION;
-  const project = { ...deps.project, audience };
-  const job = { id: persona.id, segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population.filter((p) => p.id !== persona.id)), { ...deps, project });
-  return { persona: personas[0], cost_usd };
+  return writeOne(persona.id, segment, persona.seed + GENERATION, audience, population.filter((p) => p.id !== persona.id), deps);
 }
 
 /** One more persona in a segment, beyond what its share allots. */
@@ -184,9 +159,5 @@ export async function addPersona(
   ]);
   let index = 0;
   while (used.has(index)) index++;
-  const seed = addedSeed(audience.seed, segment.id, index);
-  const project = { ...deps.project, audience };
-  const job = { id: personaId(segment.id, index), segment, seed, traits: { ...sampleTraits(segment, audience, seed), attributes: sampleProfile(project.persona_schema, segment.id, seed) } };
-  const { personas, cost_usd } = await writePersonas([job], takenNames(population), { ...deps, project });
-  return { persona: personas[0], cost_usd };
+  return writeOne(personaId(segment.id, index), segment, addedSeed(audience.seed, segment.id, index), audience, population, deps);
 }

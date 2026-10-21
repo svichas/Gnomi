@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { gymAssets } from '../../../demo/GymSite/assets.ts';
 import { importLocalFile, importText } from '../assets.ts';
-import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY } from '../llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SURVEY, requestText } from '../llm/scripted.ts';
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
@@ -63,7 +63,7 @@ const persona = (id: string, segment_id: string | null, over: Partial<Persona> =
 const buyers = [persona('b1', 'seg-buyers'), persona('b2', 'seg-buyers'), persona('b3', 'seg-buyers')];
 const users = [persona('u1', 'seg-users'), persona('u2', 'seg-users')];
 
-const said = (req: LlmRequest<unknown>) => req.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+const said = requestText;
 const of = <K extends EventType>(events: GnomiEvent[], type: K) => events.filter((e): e is EventOf<K> => e.type === type);
 
 /** One scripted run of a project whose only POI is a text; the browser pool refuses, because no text POI may open a page. */

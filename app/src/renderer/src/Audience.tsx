@@ -1,12 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, PersonaProgress, PersonaSchema, ProjectConfig, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 import { GenerationDetails } from './GenerationDetails.tsx';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
-import type { SavedAudience } from '../../audiences.ts';
-import { addSegment, audienceProblem, blankAudience, cleanAudience, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, setShare } from './audience.ts';
+import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
+import { addSegment, audienceProblem, blankAudience, cleanAudience, generatedCount, newSeed, PERSONA_MAXIMUM, PERSONA_MINIMUM, removeSegment, segmentCounts, segmentVar, setShare, staleProfiles } from './audience.ts';
 import { estimateText } from './cost.ts';
 import { call, onProgress } from './engine.ts';
 import { problemFor } from './form.ts';
@@ -17,7 +16,7 @@ import { CountryMix } from './CountryMix.tsx';
 import { SavedAudienceList, SaveToLibrary } from './SavedAudiences.tsx';
 import { SegmentCard } from './Segments.tsx';
 import { SocialRounds } from './SocialRounds.tsx';
-import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Card, Field, Note, NumberInput, OutcomeNote, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
 import './audience-settings.css';
@@ -48,11 +47,11 @@ function PersonaCount({ audience, onChange, estimate, written }: { audience: Aud
       </div>
       <div>
         <p className="persona-allocation-label">Your audience mix</p>
-        {counts && <div className="persona-allocation-bar" aria-hidden="true">{audience.segments.map((segment, index) => <span key={segment.id} style={{ flex: counts[index], background: `var(--gnomi-segment-${index % 5 + 1})` }} />)}</div>}
+        {counts && <div className="persona-allocation-bar" aria-hidden="true">{audience.segments.map((segment, index) => <span key={segment.id} style={{ flex: counts[index], background: segmentVar(index) }} />)}</div>}
         {counts && (
           <ul aria-label="Personas per segment" className="persona-count-split">
             {audience.segments.map((segment, index) => (
-              <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+              <li key={segment.id} style={{ '--segment-color': segmentVar(index) } as CSSProperties}>
                 <span className="segment-dot" /><span>{segment.name.trim() || 'Unnamed segment'}</span><span className="persona-allocation-share">{segment.share}%</span><strong>{counts[index]} <span className="sr-only">personas</span></strong>
               </li>
             ))}
@@ -93,11 +92,12 @@ export function AudienceTab(props: {
   const savedSettings = info?.project?.settings;
   const socialChanged = !!savedSettings && ((settings.social ?? false) !== (savedSettings.social ?? false) || (settings.rounds ?? 5) !== (savedSettings.rounds ?? 5));
   const changed = JSON.stringify(audience && cleanAudience(audience)) !== JSON.stringify(info?.project?.audience ?? null) || JSON.stringify(schema) !== JSON.stringify(info?.project?.persona_schema) || socialChanged;
-  const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
-  const stale = new Set(personas.filter((persona) => {
-    try { return !!profileProject && !personaProfileIsCurrent(persona, profileProject); } catch { return true; }
-  }).map((persona) => persona.id));
-  const countChanged = audience !== null && personas.length > 0 && audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count);
+  // Checking a profile samples it again, for up to 200 personas: only when an input changes, not on every render.
+  const stale = useMemo(() => {
+    const profileProject = info?.project ? { ...info.project, name: projectName.trim(), description: description.trim(), goal: goal.trim(), audience: audience && cleanAudience(audience), ...(schema ? { persona_schema: schema } : {}) } : null;
+    return staleProfiles(personas, profileProject);
+  }, [personas, info?.project, projectName, description, goal, audience, schema]);
+  const countChanged = audience !== null && personas.length > 0 && audience.persona_count !== generatedCount(info);
   const needsPersonas = audience !== null && (personas.length === 0 || stale.size > 0 || countChanged);
   const busy = plan.busy || people.busy;
   const stage = building === 'audience' || audience === null ? 1 : building === 'personas' || needsPersonas ? 2 : 3;
@@ -105,6 +105,7 @@ export function AudienceTab(props: {
   const [libraryName, setLibraryName] = useState<string | null>(null); // the saved audience this one came from or was saved as
 
   // A run estimate for the personas already written; none while they are missing or out of date, as it would describe other people.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the engine estimates the saved project, so a new info asks again; the draft audience only gates it
   useEffect(() => {
     setEstimate(null);
     if (!audience || needsPersonas) return;
@@ -215,7 +216,7 @@ export function AudienceTab(props: {
           <Button onClick={generate} disabled={busy} variant={needsPersonas ? 'primary' : 'secondary'}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></Button>
         </div>
       )}
-      {plan.outcome && <Note tone={plan.outcome.ok ? 'ok' : 'error'}>{plan.outcome.text}</Note>}
+      <OutcomeNote outcome={plan.outcome} />
       <Card title="Audience">
         {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
@@ -228,7 +229,7 @@ export function AudienceTab(props: {
               <button type="button" onClick={propose} aria-label="Suggest an audience" aria-describedby="audience-suggest-hint" className="audience-choice audience-choice-primary">
                 <Icon name="spark" size={22} /><strong>Suggest an audience</strong><span id="audience-suggest-hint">Gnomi proposes groups from your product and goal.</span>
               </button>
-              <button type="button" onClick={() => onAudience(blankAudience(description))} aria-label="Build my own" aria-describedby="audience-build-hint" className="audience-choice">
+              <button type="button" onClick={() => onAudience(blankAudience({ name: projectName.trim() || 'your product', role: info?.project?.role ?? null, goal: goal.trim() }))} aria-label="Build my own" aria-describedby="audience-build-hint" className="audience-choice">
                 <Icon name="plus" size={22} /><strong>Build my own</strong><span id="audience-build-hint">Start with one group and shape it yourself.</span>
               </button>
             </div>
@@ -313,7 +314,7 @@ export function AudienceTab(props: {
 
       {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
 
-      {people.outcome && <Note tone={people.outcome.ok ? 'ok' : 'error'}>{people.outcome.text}</Note>}
+      <OutcomeNote outcome={people.outcome} />
       {audience !== null && personas.length > 0 && (
         <PersonaList
           personas={personas}

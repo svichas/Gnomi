@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import { withPois, type SavedProject } from '../poi/pois.ts';
 import type { ProjectStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
@@ -207,6 +207,14 @@ export function openProject(dir: string): ProjectStore {
      ON CONFLICT (id) DO UPDATE SET segment_id = excluded.segment_id, profile_json = excluded.profile_json`,
   );
   const removePersona = db.prepare('DELETE FROM persona WHERE id = ?');
+  const selectGenerated = db.prepare('SELECT persona_count FROM persona_generation WHERE id = 1');
+  const upsertGenerated = db.prepare('INSERT INTO persona_generation (id, persona_count) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET persona_count = excluded.persona_count');
+  const selectDraft = db.prepare('SELECT value_json FROM persona_draft WHERE cache_key = ?');
+  const upsertDraft = db.prepare('INSERT INTO persona_draft VALUES (?, ?) ON CONFLICT(cache_key) DO UPDATE SET value_json = excluded.value_json');
+  const insertSetupCall = db.prepare('INSERT INTO setup_call (ts, task_id, persona_id, purpose, payload_json, request_json, response_json) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const selectSetupCalls = db.prepare('SELECT id, ts, task_id, persona_id, purpose, payload_json FROM setup_call WHERE task_id = (SELECT task_id FROM setup_call ORDER BY id DESC LIMIT 1) ORDER BY id');
+  // One statement per shape of events() query: a run step reads the log several times, and there are only a few shapes.
+  const eventQueries = new Map<string, StatementSync>();
 
   return {
     dir,
@@ -280,7 +288,8 @@ export function openProject(dir: string): ProjectStore {
       }
       params.push(opts.limit ?? -1); // SQLite: LIMIT -1 means no limit
       const sql = `SELECT ${EVENT_COLUMNS} FROM event WHERE ${where.join(' AND ')} ORDER BY seq LIMIT ?`;
-      return (db.prepare(sql).all(...params) as EventRow[]).map(toEvent);
+      const query = eventQueries.get(sql) ?? eventQueries.set(sql, db.prepare(sql)).get(sql)!;
+      return (query.all(...params) as EventRow[]).map(toEvent);
     },
     saveTranscript(run_id, seq, request, response) {
       const { changes } = insertTranscript.run(JSON.stringify(request), JSON.stringify(response), run_id, seq);
@@ -312,7 +321,7 @@ export function openProject(dir: string): ProjectStore {
       return (selectPersonas.all() as PersonaDbRow[]).map((row) => JSON.parse(row.profile_json) as Persona);
     },
     getGeneratedPersonaCount() {
-      const row = db.prepare('SELECT persona_count FROM persona_generation WHERE id = 1').get();
+      const row = selectGenerated.get();
       return row ? Number(row.persona_count) : null;
     },
     replacePersonas(personas, personaCount) {
@@ -320,7 +329,7 @@ export function openProject(dir: string): ProjectStore {
       try {
         clearPersonas.run();
         personas.forEach((p, position) => insertPersona.run(p.id, p.segment_id, position, JSON.stringify(p)));
-        if (personaCount !== undefined) db.prepare('INSERT INTO persona_generation (id, persona_count) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET persona_count = excluded.persona_count').run(personaCount);
+        if (personaCount !== undefined) upsertGenerated.run(personaCount);
         db.exec('COMMIT');
       } catch (err) {
         db.exec('ROLLBACK');
@@ -334,19 +343,18 @@ export function openProject(dir: string): ProjectStore {
       removePersona.run(id);
     },
     getPersonaDraft(key) {
-      const row = db.prepare('SELECT value_json FROM persona_draft WHERE cache_key = ?').get(draftKey(key));
+      const row = selectDraft.get(draftKey(key));
       return row ? JSON.parse(String(row.value_json)) : undefined;
     },
     putPersonaDraft(key, value) {
-      db.prepare('INSERT INTO persona_draft VALUES (?, ?) ON CONFLICT(cache_key) DO UPDATE SET value_json = excluded.value_json').run(draftKey(key), JSON.stringify(value));
+      upsertDraft.run(draftKey(key), JSON.stringify(value));
     },
     clearPersonaDrafts() { db.exec('DELETE FROM persona_draft'); },
     recordSetupCall({ task_id, persona_id, purpose }, { payload, transcript }) {
-      db.prepare('INSERT INTO setup_call (ts, task_id, persona_id, purpose, payload_json, request_json, response_json) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(Date.now(), task_id, persona_id, purpose, JSON.stringify(payload), JSON.stringify(transcript.request), JSON.stringify(transcript.response));
+      insertSetupCall.run(Date.now(), task_id, persona_id, purpose, JSON.stringify(payload), JSON.stringify(transcript.request), JSON.stringify(transcript.response));
     },
     listSetupCalls() {
-      return db.prepare('SELECT id, ts, task_id, persona_id, purpose, payload_json FROM setup_call WHERE task_id = (SELECT task_id FROM setup_call ORDER BY id DESC LIMIT 1) ORDER BY id').all()
+      return selectSetupCalls.all()
         .map(({ payload_json, ...row }) => ({ ...row, payload: JSON.parse(String(payload_json)) }) as SetupCall);
     },
     close() {

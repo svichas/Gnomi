@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { EventPayloads, EventType, GnomiEvent, RunConfig, Segment } from '@gnomi/simulation/types.ts';
 import { runProgress } from './runProgress.ts';
 import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
-import { isPreparingReport, personaStates, waitingBlocks, toRows } from './activity.ts';
+import { personaStates, waitingBlocks, toRows } from './activity.ts';
 
 function config({ people = 2, places = 1, social = false, rounds = 3 } = {}): RunConfig {
   return {
@@ -36,7 +36,6 @@ test('comparison progress waits for assessed tool/tasks, ignores legacy social s
   assert.deepEqual(runProgress(events).sessions, { done: 0, total: 4 });
   assert.equal(runProgress(events).rounds.total, 0);
   assert.equal(personaStates(events, planned.personas).get('p-1'), 'active');
-  assert.equal(isPreparingReport(events, personaStates(events, planned.personas)), false);
   events.push(event(4, 'persona.blocked', { step_no: 3, reason: 'session_expired', detail: 'Login missing' }, 'p-1'));
   assert.deepEqual(waitingBlocks(events), []);
   events.push(event(5, 'comparison.episode_finished', { ...scope, outcome: 'blocked_environment', reason: 'Login missing', evidence_seqs: [] }, 'p-1', 'poi-1'));

@@ -3,13 +3,11 @@
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
-import { validateComparison } from '@gnomi/simulation/comparison/config.ts';
 import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
 import { resolve } from 'node:path';
 import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
-import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { testProviderKey } from '@gnomi/simulation/llm/gateway.ts';
 import { figmaClient } from './figma/client.ts';
 import { fakeFigma } from './figma/fake.ts';
@@ -19,14 +17,14 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkRun, KEYS, population, projectGateway } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, credential, estimateFor, launchRun, population, projectGateway } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
-import { createRecorder, newRunConfig, roleOf, segmentOf, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
+import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
 import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo, Transport } from './protocol.ts';
-import type { BlobStore, BrowserPool, LlmGateway, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
-import type { Audience, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { BlobStore, BrowserPool, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
+import type { Audience, Persona, PersonaProgress, ProjectConfig, SessionInfo } from '@gnomi/simulation/types.ts';
 
 interface PortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: PortLike[] }) => void): void;
@@ -56,6 +54,10 @@ let browsers: Promise<BrowserPool> | null = null;
 let sessions: SessionStore | null = null; // while a project is open and main has sent the session key
 let recording: { role: string; target_id?: string; rec: Promise<LoginRecording> } | null = null; // one login recording at a time
 let setupTask: { stop: AbortController; done: Promise<unknown> } | null = null;
+
+function noSetup(doing: string) {
+  if (setupTask) throw new Error(`Wait for persona generation to finish before ${doing}.`);
+}
 
 function writeSetup<T>(work: () => Promise<T>): Promise<T> {
   if (setupTask || hasRun(current().store.dir)) return Promise.reject(new Error('Wait for the current generation or run to finish.'));
@@ -96,10 +98,6 @@ function pool(): Promise<BrowserPool> {
 
 const secret = (name: SecretName) => secrets.get(name) ?? null;
 
-function gateway(config: ProjectConfig, record: Recorder, onThrottle?: (provider: ProviderId) => void): LlmGateway {
-  return projectGateway({ fake: FAKE_LLM, secrets: secret, config, record, onThrottle });
-}
-
 function withAudience(): { config: ProjectConfig; audience: Audience } {
   const config = project();
   if (!config.audience) throw new Error('Set up the audience first');
@@ -107,7 +105,7 @@ function withAudience(): { config: ProjectConfig; audience: Audience } {
 }
 
 function writer(config: ProjectConfig, emit?: (progress: PersonaProgress) => void): AudienceDeps {
-  return audienceDeps(current().store, config, gateway(config, current().record), { signal: setupTask?.stop.signal, emit });
+  return audienceDeps(current().store, config, projectGateway({ fake: FAKE_LLM, secrets: secret, config, record: current().record }), { signal: setupTask?.stop.signal, emit });
 }
 
 function persona(id: string): { people: Persona[]; persona: Persona } {
@@ -248,18 +246,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   get_session_runs: () => sessionRuns.list(),
   get_project: () => info(),
   save_project({ project }) {
-    if (setupTask) throw new Error('Wait for persona generation to finish before saving project changes.');
+    noSetup('saving project changes');
     validateCountries(project.audience?.countries);
     if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
-    const comparisonProblems = validateComparison(project);
-    if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
+    checkComparison(project);
     current().store.saveProject(project);
     return null;
   },
   async test_key({ provider }) {
-    const credential = provider === 'openai_compatible' ? (open?.store.getProject()?.settings.local_base_url ?? null) : (secrets.get(KEYS[provider].secret) ?? null);
-    if (!credential) return { ok: false, error: provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : 'No key saved' };
-    const result = await testProviderKey(provider, credential);
+    const key = credential(provider, open?.store.getProject()?.settings.local_base_url, secret);
+    if (!key) return { ok: false, error: provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : 'No key saved' };
+    const result = await testProviderKey(provider, key);
     return result.ok ? { ok: true, error: null } : { ok: false, error: result.error };
   },
   async figma_test() {
@@ -296,13 +293,13 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return result;
   }),
   remove_persona({ id }) {
-    if (setupTask) throw new Error('Wait for persona generation to finish before editing personas.');
+    noSetup('editing personas');
     persona(id);
     current().store.deletePersona(id);
     return null;
   },
   edit_persona({ persona: edited }) {
-    if (setupTask) throw new Error('Wait for persona generation to finish before editing personas.');
+    noSetup('editing personas');
     // Only the written fields change: the sampled traits are what keep the population honest (tech.md §2.4).
     const { persona: old } = persona(edited.id);
     const { name, job_title, background, context_of_use, goal_interpretation, voice } = edited;
@@ -311,10 +308,10 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   estimate_run() {
     const config = project();
-    return estimateRun({ personas: population(current().store, config), settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
+    return estimateFor(config, population(current().store, config));
   },
   async start_run({ reset }) {
-    if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
+    noSetup('starting a run');
     const { store, blobs, record } = current();
     const config = project();
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
@@ -338,11 +335,8 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       ? await pool()
       : { newPage: async (opts) => (await pool()).newPage(opts) };
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
-    if (setupTask) throw new Error('Wait for persona generation to finish before starting a run.');
-    let run: RunHandle | undefined;
-    const llm = gateway(config, record, (provider) => run?.throttle(provider));
-    run = startRun(store.createRun(newRunConfig(config, { personas, sessions: verified, reset })), { store, blobs, browsers: browserPool, llm, record, sessions });
-    const started = run;
+    noSetup('starting a run');
+    const started = launchRun(store, config, { personas, sessions: verified, reset }, { blobs, record, browsers: browserPool, sessions, fake: FAKE_LLM, secrets: secret });
     const key = runKey(store.dir, started.run_id);
     runs.set(key, started);
     started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {

@@ -10,12 +10,12 @@ import { Project } from './Project.tsx';
 import { ProjectRunHistory } from './ProjectRunHistory.tsx';
 import type { ProjectAction, ProjectCatalog, WorkspaceRun } from '../../projects.ts';
 import { configuredProviders, withAvailableProvider, type ProviderList } from '../../providers.ts';
-import { ProjectDialog, Projects } from './Projects.tsx';
+import { Projects } from './Projects.tsx';
 import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
 import { Settings } from './Settings.tsx';
-import { Button, Note, OpenSettings } from './ui.tsx';
+import { Button, Dialog, Note, OpenSettings } from './ui.tsx';
 import type { SettingsSection } from './credentials.ts';
 import { SimulationDock } from './SimulationDock.tsx';
 import { Icon } from './Icon.tsx';
@@ -28,6 +28,16 @@ const TABS = [
   { id: 'run', label: 'Simulation', description: 'Activity & findings' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'] | 'settings' | 'runs';
+
+/** Each page's heading, and where its Back button goes in words. */
+const PAGES: Record<Tab, { eyebrow: string; title: string; intro: string; back: string }> = {
+  project: { eyebrow: 'Study setup', title: 'What would you like to learn?', intro: 'Give your simulated users a place to start and a goal to try.', back: 'All projects' },
+  audience: { eyebrow: 'Audience builder', title: 'A few different perspectives.', intro: 'Choose who will try your product. These personas are simulated users.', back: 'Back to setup' },
+  review: { eyebrow: 'Ready to run', title: 'One last look before you start.', intro: 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.', back: 'Back to audience' },
+  run: { eyebrow: 'Simulation workspace', title: 'Simulation', intro: 'Follow your audience’s experience, from first impressions to final findings.', back: 'Back to review' },
+  settings: { eyebrow: 'Preferences', title: 'Make Gnomi work for you.', intro: 'Connect an AI provider and choose your limits.', back: 'Back to project' },
+  runs: { eyebrow: 'Project history', title: 'Past runs', intro: 'Every simulation saved in this project, newest first. Open one to see its report.', back: 'Back to project' },
+};
 
 function rememberedProject(): string | null {
   try { return localStorage.getItem('gnomi.open-project'); } catch { return null; }
@@ -58,12 +68,14 @@ export function App() {
   const baseline = useRef('');
   const projectDir = useRef<string | null>(null);
   const main = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: home, homePage and revision mark a new page, which moves focus to its heading
   useEffect(() => {
     const card = tab === 'settings' && settingsSection ? document.getElementById(`settings-${settingsSection}`) : null;
     if (card) { card.scrollIntoView({ block: 'start' }); card.focus({ preventScroll: true }); return; }
     window.scrollTo({ top: 0 });
     main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
   }, [tab, home, homePage, revision, settingsSection]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lists the runs again each time a home page opens
   useEffect(() => { if (home) void window.gnomi.listRuns().then(setAllRuns, (err) => setProblem(errorText(err))); }, [home, homePage]);
   const [unsaved, setUnsaved] = useState<{ resolve(choice: 'save' | 'discard' | 'cancel'): void } | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
@@ -97,6 +109,7 @@ export function App() {
     setDraft((current) => current && { ...current, settings: withAvailableProvider(current.settings, available.keys) });
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: startup runs once; loadProject only uses setters and refs
   useEffect(() => {
     void stopped.then(setProblem);
     void (async () => {
@@ -234,14 +247,6 @@ export function App() {
     else if (tab === 'audience') setTab('project');
     else showHome();
   };
-  const headings = {
-    project: ['What would you like to learn?', 'Give your simulated users a place to start and a goal to try.'],
-    audience: ['A few different perspectives.', 'Choose who will try your product. These personas are simulated users.'],
-    review: ['One last look before you start.', 'Check what will run, fix anything flagged, then start. These are simulated users on your staging site.'],
-    run: ['Simulation', 'Follow your audience’s experience, from first impressions to final findings.'],
-    settings: ['Make Gnomi work for you.', 'Connect an AI provider and choose your limits.'],
-    runs: ['Past runs', 'Every simulation saved in this project, newest first. Open one to see its report.'],
-  };
 
   return (
     <OpenSettings.Provider value={openSettings}>
@@ -282,7 +287,7 @@ export function App() {
           // All four stay mounted so a half-typed form or a run in progress survives a tab switch.
           <div key={revision} hidden={home} className="project-workspace">
             <div className="journey-nav">
-              <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{tab === 'project' ? 'All projects' : tab === 'settings' || tab === 'runs' ? 'Back to project' : tab === 'run' ? 'Back to review' : tab === 'review' ? 'Back to audience' : 'Back to setup'}</Button>
+              <Button variant="quiet" className="back-button" onClick={back}><Icon name="back" size={18} />{PAGES[tab].back}</Button>
               <p className="workflow-label">Your workflow</p>
               <nav aria-label="Project steps" className="step-nav">
                 {TABS.map(({ id, label, description }, index) => <button key={id} type="button" id={`tab-${id}`} aria-label={label} aria-current={tab === id ? 'step' : undefined} onClick={() => go(id)}><span className="step-number">{index + 1}</span><span className="step-copy"><strong>{label}</strong><small>{description}</small></span><Icon name="chevron" size={14} /></button>)}
@@ -290,7 +295,7 @@ export function App() {
               <div className="workflow-note"><Icon name="leaf" size={20} /><p>Different perspectives. Better questions.</p><span>Findings are hypotheses to explore with real people.</span></div>
             </div>
             <div className="workspace-content">
-            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{tab === 'settings' ? 'Preferences' : tab === 'runs' ? 'Project history' : tab === 'project' ? 'Study setup' : tab === 'audience' ? 'Audience builder' : tab === 'review' ? 'Ready to run' : 'Simulation workspace'}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{headings[tab][0]}</h1><p>{headings[tab][1]}</p></div>
+            <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{PAGES[tab].eyebrow}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{PAGES[tab].title}</h1><p>{PAGES[tab].intro}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <OpenSettings.Provider value={null}>
                 <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
@@ -345,7 +350,7 @@ export function App() {
             </div>
           </div>
         )}
-        {unsaved && <ProjectDialog title="Save your changes?" onCancel={() => { if (!savingChanges) void resolveUnsaved('cancel'); }}>
+        {unsaved && <Dialog title="Save your changes?" onCancel={() => { if (!savingChanges) void resolveUnsaved('cancel'); }}>
           <p className="text-sm text-stone-700">This project has unsaved changes. Save them before continuing, or discard them.</p>
           {saveProblem && <Note tone="error">{saveProblem}</Note>}
           <div className="flex flex-wrap gap-3">
@@ -353,7 +358,7 @@ export function App() {
             <Button onClick={() => void resolveUnsaved('discard')} disabled={savingChanges}>Discard changes</Button>
             <Button onClick={() => void resolveUnsaved('cancel')} disabled={savingChanges}>Cancel</Button>
           </div>
-        </ProjectDialog>}
+        </Dialog>}
       </main>
       <SimulationDock onOpen={openSessionRun} projects={catalog?.projects ?? []} />
     </div>

@@ -5,106 +5,21 @@ import { ControlsContainer, SigmaContainer, useRegisterEvents, useSigma, ZoomCon
 import '@react-sigma/core/lib/style.css';
 import { DEFAULT_STYLES } from 'sigma';
 import type { Sigma } from 'sigma';
-import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { applyEvents, EDGE_TYPES, emptyGraph, graphAtRound } from '@gnomi/engine/graph/index.ts';
-import type { EdgeType, GraphChanges, SwarmEdge, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.ts';
+import type { EdgeType, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.ts';
 import type { GnomiEvent, Segment } from '@gnomi/simulation/types.ts';
 import { Button, Check } from './ui.tsx';
 import { Icon } from './Icon.tsx';
-import { connectionMatches, summarizeConnections } from './swarm-view.ts';
+import { connectionMatches, EDGES, NO_SEGMENT, patch, POI_COLOR, reconcile, segmentColor, SMALL_GRAPH_LIMIT, summarizeConnections } from './swarm-view.ts';
 import type { GraphFilter } from './swarm-view.ts';
 import { roundMoments, selectMoments } from './swarm-moments.ts';
 import type { MomentView } from './swarm-moments.ts';
 import { MomentBubbles, MomentList } from './SwarmMoments.tsx';
 import './swarm.css';
 
-// Colours from docs/brand.md §5: the categorical sequence for segments, Ink for POIs, status colours for edge meaning.
-const SEGMENT_COLORS = ['#58684E', '#56768A', '#8A6A83', '#A27B36', '#417F78'];
-const NO_SEGMENT = '#686D65';
-const POI_COLOR = '#222823';
-const EDGES: Record<EdgeType, { label: string; color: string; description: string }> = {
-  used: { label: 'Product use', color: '#87917D99', description: 'A person interacted with a product area' },
-  talked: { label: 'Conversations', color: '#417F7888', description: 'People replied or reacted to one another' },
-  influenced: { label: 'Opinion shifts', color: '#496D85', description: 'A conversation contributed to a change of opinion' },
-  friction: { label: 'Friction', color: '#AA5147', description: 'A person reported difficulty with a product area' },
-};
 const BATCH_MS = 250; // tech.md §5.5: the live graph is patched at most four times a second
 const SETTLE_MS = 4000; // the layout stops this long after the last change
-const SMALL_GRAPH_LIMIT = 24;
 const DEFAULT_CONNECTIONS: EdgeType[] = [...EDGE_TYPES];
-
-const segmentColor = (segments: Segment[], id: string | null) => {
-  const index = segments.findIndex((segment) => segment.id === id);
-  return index < 0 ? NO_SEGMENT : SEGMENT_COLORS[index % SEGMENT_COLORS.length];
-};
-
-function nodeAttributes(node: SwarmNode, segments: Segment[]) {
-  return node.kind === 'poi'
-    ? { key: node.key, kind: 'poi', label: node.label, color: POI_COLOR, size: Math.min(15, 11 + Math.sqrt(node.friction_count) / 2) }
-    : { key: node.key, kind: 'persona', label: node.label, color: segmentColor(segments, node.segment_id), size: Math.min(10, 6 + Math.sqrt(node.step_count) * 0.5) };
-}
-
-function edgeAttributes(edge: SwarmEdge) {
-  return {
-    kind: edge.type, // not `type`, which sigma reads as the edge's rendering program
-    source: edge.source,
-    target: edge.target,
-    color: EDGES[edge.type].color,
-    size: Math.min(4, 0.5 + Math.log2(1 + edge.weight) * 0.5),
-    weight: edge.weight,
-    last_round: edge.last_round,
-  };
-}
-
-/** Upserts the given projection nodes and edges into the rendered graph; a new persona starts at a spot derived from its id. */
-function patch(graph: Graph, projection: SwarmGraph, changes: GraphChanges, segments: Segment[]) {
-  // Product areas are stable anchors; people settle around them as connections arrive.
-  const ring = 25 * Math.sqrt(projection.nodes.size);
-  for (const key of changes.nodes) {
-    const node = projection.nodes.get(key)!;
-    if (graph.hasNode(key)) graph.mergeNodeAttributes(key, nodeAttributes(node, segments));
-    else {
-      const hash = fnv1a(key);
-      const angle = (hash % 3600) / 3600 * 2 * Math.PI;
-      const radius = ring * (0.6 + 0.3 * ((hash >>> 12) % 1000) / 1000);
-      graph.addNode(key, { ...nodeAttributes(node, segments), x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
-    }
-  }
-  for (const key of changes.edges) {
-    const edge = projection.edges.get(key)!;
-    if (graph.hasEdge(key)) graph.mergeEdgeAttributes(key, edgeAttributes(edge));
-    else if (edge.type === 'talked') graph.addUndirectedEdgeWithKey(key, edge.source, edge.target, edgeAttributes(edge));
-    else graph.addDirectedEdgeWithKey(key, edge.source, edge.target, edgeAttributes(edge));
-  }
-  const pois = graph.filterNodes((_, attributes) => attributes.kind === 'poi').sort();
-  pois.forEach((key, i) => {
-    const angle = (i / pois.length) * 2 * Math.PI - Math.PI / 2;
-    const radius = pois.length > 1 ? ring * 0.6 : 0;
-    graph.mergeNodeAttributes(key, { x: radius * Math.cos(angle), y: radius * Math.sin(angle), fixed: true });
-  });
-  // A small audience needs no physics: an even ring gives every person a readable place immediately.
-  if (graph.order <= SMALL_GRAPH_LIMIT) {
-    const people = graph.filterNodes((_, attributes) => attributes.kind === 'persona').sort();
-    people.forEach((key, i) => {
-      const angle = (i / people.length) * 2 * Math.PI + Math.PI / 2;
-      const node = projection.nodes.get(key);
-      const steps = node?.kind === 'persona' ? node.step_count : 0;
-      graph.mergeNodeAttributes(key, { x: 120 * Math.cos(angle), y: 120 * Math.sin(angle), size: Math.min(13, 10 + Math.sqrt(steps) * 0.5) });
-    });
-    pois.forEach((key, i) => {
-      const angle = (i / pois.length) * 2 * Math.PI - Math.PI / 2;
-      const radius = pois.length > 1 ? 45 : 0;
-      graph.mergeNodeAttributes(key, { x: radius * Math.cos(angle), y: radius * Math.sin(angle), size: 14 });
-    });
-  }
-}
-
-/** Makes the rendered graph exactly the projection, keeping the positions of nodes it already had. */
-function reconcile(graph: Graph, projection: SwarmGraph, segments: Segment[]) {
-  for (const key of graph.edges()) if (!projection.edges.has(key)) graph.dropEdge(key);
-  for (const key of graph.nodes()) if (!projection.nodes.has(key)) graph.dropNode(key);
-  patch(graph, projection, { nodes: new Set(projection.nodes.keys()), edges: new Set(projection.edges.keys()) }, segments);
-}
 
 /** Clicks and hovers on the canvas; WebGL has no DOM, so the smoke test finds nodes through the instance on the container. */
 function Interaction({ onOpen, onHover, onFocus }: { onOpen(personaId: string): void; onHover(key: string | null): void; onFocus(key: string | null): void }) {
@@ -266,6 +181,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
       }],
     },
   }));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sigma reads the filter and graph through refs, so it is told to repaint when they change
   useEffect(() => {
     sigma.current?.refresh();
   }, [filter, shown]);
@@ -298,11 +214,11 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
         </div>
         <div className="swarm-viewbar">
           <div className="swarm-view-switch" role="group" aria-label="Map activity view">
-            {([['all', 'All activity', 'activity'], ['friction', 'Friction', 'alert'], ['social', 'Social', 'message']] as const).map(([view, label, icon]) => <button key={view} aria-pressed={momentView === view} onClick={() => changeMomentView(view)}><Icon name={icon} size={14} />{label}</button>)}
+            {([['all', 'All activity', 'activity'], ['friction', 'Friction', 'alert'], ['social', 'Social', 'message']] as const).map(([view, label, icon]) => <button type="button" key={view} aria-pressed={momentView === view} onClick={() => changeMomentView(view)}><Icon name={icon} size={14} />{label}</button>)}
           </div>
           <Check checked={bubbles} onChange={setBubbles}>Show bubbles</Check>
         </div>
-        <div className="swarm-canvas" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
+        <div className="swarm-canvas" role="group" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
           <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
             <Interaction onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
             {bubbles && <MomentBubbles moments={highlights} name={name} onOpen={onOpen} showConversations={types.has('talked')} />}

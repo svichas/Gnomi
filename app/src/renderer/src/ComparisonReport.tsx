@@ -4,7 +4,7 @@ import type { ComparisonAssessment, ComparisonCell, ComparisonReport as Comparis
 import { BASIS_LABELS, ComparisonEvidence, EvidenceLinks, evidenceCatalog } from './ComparisonEvidence.tsx';
 import { ACCESS_LABELS, ComparisonCoverage } from './ComparisonCoverage.tsx';
 import { Icon } from './Icon.tsx';
-import { Fold, Tile } from './reportParts.tsx';
+import { Fold, SectionHeading, Tile } from './reportParts.tsx';
 import type { Tone } from './reportParts.tsx';
 
 const ASSESSMENTS: Record<ComparisonAssessment, { label: string; tone: Tone }> = {
@@ -46,10 +46,6 @@ function names({ study }: ComparisonData, report: Report) {
     personaName: (id: string) => report.personas.find((persona) => persona.id === id)?.name ?? id,
     scopeName: (scope: { scenario_id: string; task_id: string; segment_id: string | null }) => `${scenarioName(scope.scenario_id)} · ${segmentName(scope.segment_id)} · ${taskName(scope.task_id)}`,
   };
-}
-
-function SectionHeading({ id, title, hint }: { id: string; title: string; hint: string }) {
-  return <div className="report-section-heading"><div><h3 id={id}>{title}</h3><p>{hint}</p></div></div>;
 }
 
 /** This component also renders every HTML/PDF export: the decision and denominators have one source. */
@@ -100,6 +96,7 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
             <h4 id={`comparison-scope-${groupIndex}`} className="comparison-scope">{scopeName(scope)} · {ACCESS_LABELS[scope.access_scope]}</h4>
             {task && <p className="comparison-task">{task.instruction}</p>}
           </div>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
           <div className="comparison-table-scroll" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
             <table className="comparison-matrix" style={{ minWidth: `${13 + study.targets.length * 12}rem` }}>
               <thead><tr><th scope="col">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id}>{target.name}{isFocal(target.id) && <span className="comparison-focal">Your tool</span>}</th>)}</tr></thead>

@@ -1,27 +1,19 @@
 // Run after the app build: node app/projects.smoke.ts. Uses a disposable library and the real Electron window.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { gymAssets } from '../demo/GymSite/assets.ts';
 import { startGym } from '../demo/GymSite/server.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-project-home-'));
+const dir = scratch('project-home');
 const exported = join(dir, 'exports');
 const trash = join(dir, 'trash');
 mkdirSync(exported);
 mkdirSync(trash);
 const gym = await startGym({ port: 0, captcha: true });
-const env = { ...process.env, GNOMI_FAKE_LLM: '1' };
-Reflect.deleteProperty(env, 'GNOMI_PROJECT_DIR');
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env,
-});
-setTimeout(() => { console.error('Project smoke timed out.'); process.exit(1); }, 180_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: undefined });
+deadline('Project smoke timed out.', 180_000);
 let passed = false;
 try {
   // Replace only OS dialogs/trash so the test never needs human input or leaves files in the user's Trash.
@@ -35,8 +27,7 @@ try {
   }, { exported, trash });
   const page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   const home = () => page.getByRole('button', { name: 'Projects', exact: true }).click();
   const card = (name: string) => page.getByRole('list', { name: 'Projects', exact: true }).getByRole('listitem').filter({ has: page.getByRole('heading', { name, exact: true }) });
   const manage = async (name: string) => {
@@ -53,8 +44,7 @@ try {
   await page.getByRole('heading', { name: 'Your projects.', exact: true }).waitFor();
   await create('Hiring app');
   await page.getByRole('heading', { name: 'What to test' }).waitFor();
-  mkdirSync(join(import.meta.dirname, 'test-results'), { recursive: true });
-  await page.screenshot({ path: join(import.meta.dirname, 'test-results', 'revamp-setup.png') });
+  await page.screenshot({ path: join(shots, 'revamp-setup.png') });
   assert.equal(await page.getByLabel('Project name', { exact: true }).inputValue(), 'Hiring app');
   await page.getByLabel('Start page URL').fill(`${gym.url}/candidates`);
   await page.getByLabel('Goal', { exact: true }).fill('Review a candidate');
@@ -75,7 +65,7 @@ try {
   assert.equal(await designPoi.getByLabel('Frame 1 step name').inputValue(), '');
   assert.equal(await designPoi.getByLabel('Frame 2 step name').inputValue(), 'Cart');
   await frames.nth(1).getByRole('img', { name: 'Cart', exact: true }).waitFor();
-  await designPoi.screenshot({ path: join(import.meta.dirname, 'test-results', 'design-frames.png') });
+  await designPoi.screenshot({ path: join(shots, 'design-frames.png') });
   await page.getByRole('button', { name: 'Save project', exact: true }).click();
   await page.getByText('Project saved.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Remove Design 2', exact: true }).click();
@@ -168,8 +158,8 @@ try {
     assert.ok(Math.abs(alignment.iconY - alignment.rowY) < 1, `centered dots at ${width}px`);
     assert.ok(alignment.width >= 40 && alignment.height >= 40, 'comfortable click target');
     assert.ok(alignment.left >= 0 && alignment.right <= width, `menu fits at ${width}px`);
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    await page.screenshot({ path: join(import.meta.dirname, 'test-results', `project-menu-${width}.png`) });
+    await assertFits(page);
+    await page.screenshot({ path: join(shots, `project-menu-${width}.png`) });
     await page.keyboard.press('Escape');
   }
   await page.setViewportSize({ width: 1100, height: 900 });
@@ -265,17 +255,15 @@ try {
   assert.equal(await page.getByLabel('Project name', { exact: true }).inputValue(), 'Second app');
   await home();
   assert.match(await card('Second app').innerText(), /Last opened/);
-  mkdirSync(join(import.meta.dirname, 'test-results'), { recursive: true });
-  await page.screenshot({ path: join(import.meta.dirname, 'test-results', 'projects-home.png') });
+  await page.screenshot({ path: join(shots, 'projects-home.png') });
   await page.setViewportSize({ width: 720, height: 780 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-  await page.screenshot({ path: join(import.meta.dirname, 'test-results', 'projects-home-narrow.png') });
+  await assertFits(page);
+  await page.screenshot({ path: join(shots, 'projects-home-narrow.png') });
   assert.deepEqual(errors, []);
   console.log('ok    reload retains the selected project; 720px home fits and has no runtime errors');
   passed = true;
 } catch (err) {
-  mkdirSync(join(import.meta.dirname, 'test-results'), { recursive: true });
-  await (await app.firstWindow()).screenshot({ path: join(import.meta.dirname, 'test-results', 'projects-failure.png') });
+  await (await app.firstWindow()).screenshot({ path: join(shots, 'projects-failure.png') });
   throw err;
 } finally {
   await app.close();

@@ -1,4 +1,5 @@
-import type { EventOf, GnomiEvent, Poi, ReportComparison } from '../types.ts';
+import type { GnomiEvent, Poi, ReportComparison } from '../types.ts';
+import { latestSurveys } from './friction.ts';
 import type { Context } from './themes.ts';
 
 /** Competitor POIs: observe-only web POIs, counted apart from the team's product when the run has one (tech.md §7). */
@@ -9,12 +10,9 @@ export function competitorIds(pois: Poi[]): Set<string> {
 
 /** Each competitor's survey comparisons with the team's product (poi/compare.ts), counted by segment; the latest answer per persona. */
 export function buildComparisons(events: GnomiEvent[], competitors: Set<string>, ctx: Context): ReportComparison[] {
-  const latest = new Map<string, EventOf<'persona.survey'>>();
-  for (const e of events) {
-    if (e.type === 'persona.survey' && e.persona_id && e.payload.comparison && competitors.has(e.payload.poi_id)) latest.set(`${e.payload.poi_id}\u0000${e.persona_id}`, e);
-  }
+  const latest = latestSurveys(events, (e) => !!e.payload.comparison && competitors.has(e.payload.poi_id));
   return [...competitors].flatMap((poi_id): ReportComparison[] => {
-    const surveys = [...latest.values()].filter((e) => e.payload.poi_id === poi_id);
+    const surveys = latest.filter((e) => e.payload.poi_id === poi_id);
     if (surveys.length === 0) return [];
     const answers = surveys.map((e) => {
       const persona = ctx.personas.get(e.persona_id!);

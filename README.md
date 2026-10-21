@@ -135,11 +135,14 @@ Run these commands from the repository root:
 | `npm run gym` | Start the local Gym web app. |
 | `npm test` | Run the workspace test suites. |
 | `npm run typecheck` | Type-check the workspaces. |
+| `npm run lint` | Lint the repository with Biome. |
 | `npm run build -w @gnomi/app` | Build the desktop application code. |
 | `npm run smoke -w @gnomi/app` | Build and run the scripted Electron smoke check. |
 | `npm run smoke:poi -w @gnomi/app` | Check the input setup flows in Electron. |
 | `npm run smoke:figma -w @gnomi/app` | Check the Figma import flow against the fixture API. |
 | `npm run acceptance -w @gnomi/simulation -- --m5 --out /tmp/gnomi-m5-demo` | Run the text/design acceptance rehearsal without provider calls; use a fresh output directory. |
+
+CI runs lint, typecheck, the tests and the app build on every pull request; see [CONTRIBUTING.md](CONTRIBUTING.md) before opening one.
 
 Live acceptance runs are opt-in and require provider credentials and an explicit spending allowance. The [acceptance guides](#documentation) distinguish structural checks, live measurements, and findings that still need review.
 
@@ -153,8 +156,7 @@ Live acceptance runs are opt-in and require provider credentials and an explicit
 | [`demo/GymSite/`](demo/GymSite/) | Demo web app, defect catalogue, design frames, and text fixtures. |
 | [`docs/`](docs/) | Product design, architecture, input contracts, evaluation guides, and roadmap. |
 | [`assets/brand/`](assets/brand/) | Logos, icons, typography, and brand assets. |
-| [`videos/`](videos/) | The introduction video, editable film project, audio, 3D models, animation source, and the README animation (`readme-gif/`, rebuilt with `node videos/readme-gif/render.mjs`). |
-| [`tasks/`](tasks/) | Implementation plans and progress notes. |
+| [`videos/readme-gif/`](videos/readme-gif/) | The README animation and the scene that renders it (`node videos/readme-gif/render.mjs`). |
 
 The desktop shell runs the engine in a separate process. The engine drives browser contexts and model calls, recording events in SQLite and evidence in local files. The graph, activity views, persona inspector, and reports are built from that history. The UI uses React and Sigma.js; model access uses the Vercel AI SDK.
 
@@ -175,19 +177,9 @@ The desktop shell runs the engine in a separate process. The engine drives brows
 
 Gnomi is under active development. Some design documents describe the intended architecture or future work. The input guide and acceptance guides record implementation limits and validation status; Figma imports have fixture coverage, while real-file validation remains open in the current documentation.
 
-## Video and creative assets
+## Video
 
-The introduction is **87 seconds, 1080p, at 24 fps**, with ElevenLabs narration, music, and sound effects, plus animated 3D models and app captures assembled in Synthcut.
-
-[Watch on YouTube](https://youtu.be/qgSt7nscow4) · [Download the video](videos/output/gnomi-film/Gnomi-explainer.mp4) · [English subtitles](videos/output/gnomi-film/Gnomi.en.srt) · [Storyboard](videos/output/gnomi-film/storyboard.jpg) · [Editable source bundle](videos/output/gnomi-film/Gnomi-editable.zip) · [3D personas](videos/output/gnomi-film/assets/gnomi-personas.glb)
-
-To edit the film, download and extract the source bundle. From the directory where you extracted it, rebuild the project's media paths:
-
-```sh
-python3 Gnomi-film/source/relink-project.py
-```
-
-Then open `Gnomi-film/Gnomi-relocated.aive` in Synthcut. The [narration script](videos/output/gnomi-film/narration.txt) and [production notes](videos/output/gnomi-film/production-notes.txt) are included alongside the film.
+The 87-second introduction is on [YouTube](https://youtu.be/qgSt7nscow4). The animation at the top of this README is rendered from [`videos/readme-gif/`](videos/readme-gif/) with `node videos/readme-gif/render.mjs`.
 
 ## License
 

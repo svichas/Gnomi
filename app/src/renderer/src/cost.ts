@@ -19,8 +19,3 @@ export function recordedCost(events: GnomiEvent[]): { cost_usd: number; unreport
   }
   return { cost_usd, unreported_usage_calls };
 }
-
-export function missingUsageText(count: number | undefined): string | null {
-  if (!count) return null;
-  return `${count} model call${count === 1 ? '' : 's'} did not report complete usage. Canceled or failed requests may still incur provider charges. Actual charges may exceed the recorded cost.`;
-}

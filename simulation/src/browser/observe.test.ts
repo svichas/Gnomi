@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, test } from 'node:test';
 import type { BrowserPool, PageOptions } from '../seams.ts';
 import { fetchRobots, parseRobots, rateLimiter, robotsAllows } from './observe.ts';
 import { launchBrowserPool } from './pool.ts';
+import { listen } from './server.fixture.ts';
 
 type Blocked = Parameters<PageOptions['onBlockedRequest']>[0];
 
@@ -65,9 +65,8 @@ test('fetchRobots: 2xx rules, a 4xx allows everything, a 5xx or no answer keeps 
     if (req.url !== '/robots.txt') return void res.writeHead(404).end();
     res.writeHead(answer.status, { 'content-type': 'text/plain' }).end(answer.body);
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = await listen(server);
   t.after(() => server.close());
-  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const at = (path: string, base = origin) => new URL(path, base);
 
   const parsed = await fetchRobots(`${origin}/start`);
@@ -110,8 +109,7 @@ before(async () => {
     hits.push({ method: 'UPGRADE', path: req.url!, at: Date.now() });
     socket.destroy();
   });
-  await new Promise<void>((resolve) => site.listen(0, resolve));
-  origin = `http://localhost:${(site.address() as AddressInfo).port}`;
+  origin = await listen(site, null);
   pool = await launchBrowserPool();
 });
 

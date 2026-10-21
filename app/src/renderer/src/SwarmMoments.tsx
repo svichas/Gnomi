@@ -11,6 +11,7 @@ export function MomentBubbles({ moments, name, onOpen, showConversations }: Prop
   const sigma = useSigma();
   const root = useRef<HTMLDivElement>(null);
   const marker = useId().replace(/:/g, '');
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showConversations mounts or removes the arrow paths, which must be queried again
   useEffect(() => {
     const items = moments.map((moment) => ({
       moment,
@@ -86,7 +87,7 @@ export function MomentBubbles({ moments, name, onOpen, showConversations }: Prop
         {showConversations && moment.target && <path data-arrow={moment.seq} className="swarm-social-arrow" markerEnd={`url(#${marker})`} />}
       </g>)}
     </svg>
-    {moments.map((moment) => <button key={moment.seq} data-bubble={moment.seq} data-tone={moment.tone} className="swarm-bubble" onClick={() => onOpen(moment.persona, moment.seq)} title={`${name(moment.persona)} · ${moment.label}${moment.target ? ` → ${name(moment.target)}` : ''}\n${moment.text}`} aria-label={`${name(moment.persona)}: ${moment.label}${moment.target ? ` to ${name(moment.target)}` : ''}. ${moment.text}. View activity`}>
+    {moments.map((moment) => <button type="button" key={moment.seq} data-bubble={moment.seq} data-tone={moment.tone} className="swarm-bubble" onClick={() => onOpen(moment.persona, moment.seq)} title={`${name(moment.persona)} · ${moment.label}${moment.target ? ` → ${name(moment.target)}` : ''}\n${moment.text}`} aria-label={`${name(moment.persona)}: ${moment.label}${moment.target ? ` to ${name(moment.target)}` : ''}. ${moment.text}. View activity`}>
       <span className="swarm-moment-label"><Icon name={momentIcon(moment)} size={12} />{moment.label}</span>
       <span className="swarm-bubble-text">{moment.target ? `→ ${name(moment.target)}` : moment.text}</span>
     </button>)}
@@ -96,9 +97,9 @@ export function MomentBubbles({ moments, name, onOpen, showConversations }: Prop
 export function MomentList({ moments, name, onOpen }: Props) {
   return <ol className="swarm-moments-list" aria-label="Recent persona moments">
     {moments.map((moment) => <li key={moment.seq} data-tone={moment.tone}>
-      <button onClick={() => onOpen(moment.persona, moment.seq)}>
+      <button type="button" onClick={() => onOpen(moment.persona, moment.seq)}>
         <span className="swarm-moment-label"><Icon name={momentIcon(moment)} size={14} />{moment.label}{moment.detail && <small>{moment.detail}</small>}</span>
-        <span className="swarm-moment-people">{name(moment.persona)}{moment.target && <> <span aria-label="to">→</span> {name(moment.target)}</>}</span>
+        <span className="swarm-moment-people">{name(moment.persona)}{moment.target && <> <span role="img" aria-label="to">→</span> {name(moment.target)}</>}</span>
         <span className="swarm-moment-quote">{moment.text}</span>
       </button>
     </li>)}

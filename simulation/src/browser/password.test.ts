@@ -1,11 +1,11 @@
 // Disposable signup forms exercised through the real browser driver, never a real registration service.
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { after, before, test, type TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
 import type { Device } from '../types.ts';
 import { launchBrowserPool } from './pool.ts';
+import { listen } from './server.fixture.ts';
 
 const PASSWORD = 'Fixture-Password-A!';
 const OTHER_PASSWORD = 'Fixture-Password-B!';
@@ -53,8 +53,7 @@ before(async () => {
       res.end(signup((url.searchParams.get('variant') ?? 'password') as Variant));
     }
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  origin = await listen(server);
   pool = await launchBrowserPool();
 });
 

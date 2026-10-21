@@ -1,20 +1,16 @@
 // Real Electron rendering of a stopped-run fixture. No model calls or provider credentials.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { newRunConfig } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-budget-smoke-'));
+const dir = scratch('budget-smoke');
 const projectDir = join(dir, 'budget.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const project: ProjectConfig = {
   name: 'Budget stop fixture', description: 'Scripted cost-report verification',
   pois: [{ id: 'gym', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], reset_hook_url: null }],
@@ -41,18 +37,13 @@ store.append({ ...base, type: 'run.stopped', payload: { reason: 'cost_budget', d
 store.finishRun(config.run_id, 'stopped', 'cost_budget: the $5 recorded cost cap was reached', 5.25);
 store.close();
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Budget smoke timed out.'); process.exit(1); }, 120_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Budget smoke timed out.', 120_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(20_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Past runs', exact: true }).click();
@@ -72,7 +63,7 @@ try {
   await page.screenshot({ path: join(shots, 'budget-stopped-report.png'), fullPage: true });
   await page.setViewportSize({ width: 720, height: 800 });
   await report.scrollIntoViewIfNeeded();
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await assertFits(page);
   await page.screenshot({ path: join(shots, 'budget-stopped-report-narrow.png') });
   assert.deepEqual(errors, []);
   console.log('ok    stopped-run cost, uncertain charges and 720px report render in Electron');

@@ -1,28 +1,19 @@
 // Report disclosure, evidence navigation, and responsive layout in a disposable Electron project.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import type { ReportTheme } from '@gnomi/simulation/types.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedFinishedRun, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-report-'));
+const dir = scratch('report');
 const projectDir = join(dir, 'report.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const { config: synthetic, events } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
 synthetic.project.name = 'Hiring app';
+const config = seedFinishedRun(projectDir, synthetic, events);
 const store = openProject(projectDir);
-store.saveProject(synthetic.project);
-const { run_id: _, ...snapshot } = synthetic;
-const config = store.createRun(snapshot);
-for (const { seq, ts, ...event } of events) store.append({ ...event, run_id: config.run_id, ...(event.type === 'run.started' && { payload: { config } }) } as typeof event);
-store.append({ run_id: config.run_id, persona_id: null, poi_id: null, round: 2, type: 'run.finished', payload: {} });
-store.finishRun(config.run_id, 'finished', null, 0);
 const report = buildReport(store.events(config.run_id));
 store.close();
 const friction = report.frictions[0];
@@ -40,18 +31,13 @@ report.themes = titles.map(theme);
 report.themes.push({ ...theme('One user wanted a keyboard shortcut', 6), personas: 1, prevalence: { personas: 1, exposed: 6, share: 1 / 6, low: 0.03, high: 0.56, level: 'single' } });
 report.themes.push({ ...theme('Users hesitated at the subscription price', 7), category: 'objection' });
 report.went_well = [{ text: 'The job preview was easy to scan', personas: 4, count: 4, seqs: [] }];
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Report smoke timed out.'); process.exit(1); }, 90_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Report smoke timed out.', 90_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   // Keep the real run and inspector; only replace the generated prose with a stable report fixture.
   await page.addInitScript((report) => {
@@ -94,7 +80,7 @@ try {
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await first.scrollIntoViewIfNeeded();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `expanded report overflow at ${width}`);
+    await assertFits(page, `expanded report overflow at ${width}`);
     await page.screenshot({ path: join(shots, `report-expanded-${width}.png`), fullPage: true });
   }
   await trigger.focus();
@@ -111,13 +97,13 @@ try {
   }
   assert.ok(await root.getByText('Recorded cost', { exact: true }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'all details fit a narrow viewport');
+  await assertFits(page, 'all details fit a narrow viewport');
   for (const variant of ['empty', 'legacy']) {
     await page.evaluate((value) => sessionStorage.setItem('report-variant', value), variant);
     await page.reload();
     await openReport();
     assert.ok(await root.getByText(variant === 'empty' ? 'No shared issues were reported in this run.' : friction.what, { exact: true }).first().isVisible());
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${variant} report fits a narrow viewport`);
+    await assertFits(page, `${variant} report fits a narrow viewport`);
   }
   assert.deepEqual(errors, []);
   console.log('ok    collapsed findings, keyboard toggles, evidence inspector, continued numbering, detail sections, empty/legacy reports, and 320–1440px layouts');

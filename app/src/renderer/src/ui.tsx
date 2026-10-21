@@ -30,6 +30,26 @@ export function Card({ title, children, description, id, className }: { title: s
   );
 }
 
+/** Keep the invoking control before React autofocus moves focus into the dialog. */
+export function Dialog({ title, onCancel, wide, children }: { title: string; onCancel(): void; wide?: boolean; children: ReactNode }) {
+  const element = useRef<HTMLDialogElement>(null);
+  const [invoker] = useState(() => document.activeElement);
+  useEffect(() => {
+    const dialog = element.current;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (invoker instanceof HTMLElement && invoker.isConnected) invoker.focus();
+    };
+  }, [invoker]);
+  return (
+    <dialog ref={element} aria-label={title} onCancel={(event) => { event.preventDefault(); onCancel(); }} className={`m-auto w-full space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-xl backdrop:bg-stone-900/30 ${wide ? 'max-h-[90vh] max-w-3xl overflow-auto' : 'max-w-md'}`}>
+      <h2 className="text-base font-semibold text-stone-900">{title}</h2>
+      {children}
+    </dialog>
+  );
+}
+
 /** A labelled control. The label is tied to it by id rather than wrapped around it, so its text stays "Goal" however much the control holds. */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactElement<{ id?: string; 'aria-describedby'?: string }> }) {
   const id = useId();
@@ -88,6 +108,7 @@ export function NumberInput(props: { value: number; onChange(value: number): voi
 export function ActionBar({ notice, children }: { notice?: ReactNode; children: ReactNode }) {
   const bar = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when a notice appears, not each time its content changes
   useEffect(() => { noticeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [!!notice]);
   useEffect(() => {
     const element = bar.current;
@@ -103,36 +124,6 @@ export function ActionBar({ notice, children }: { notice?: ReactNode; children: 
     {notice && <div ref={noticeRef} className="action-bar-notice">{notice}</div>}
     <div ref={bar} className="action-bar">{children}</div>
   </>;
-}
-
-/**
- * Brief notices floating at the top of the window, clear of the ActionBar: `notify` raises one, render `view` once.
- * Each leaves after a few seconds or when dismissed; the region is live, so screen readers hear each as it arrives.
- */
-export function usePills() {
-  const [pills, setPills] = useState<{ id: number; text: string }[]>([]);
-  const ids = useRef(0);
-  const dismiss = (id: number) => setPills((all) => all.filter((pill) => pill.id !== id));
-  const notify = (text: string) => {
-    const id = ++ids.current;
-    // The same notice again replaces its copy, so repeated clicks restart it rather than stack it.
-    setPills((all) => [...all.filter((pill) => pill.text !== text), { id, text }]);
-    window.setTimeout(() => dismiss(id), 5000);
-  };
-  const view = (
-    <div role="status" aria-atomic="false" className="pills">
-      {pills.map((pill) => <div key={pill.id} className="pill">{pill.text}<Button variant="quiet" aria-label="Dismiss" onClick={() => dismiss(pill.id)}><Icon name="close" size={16} /></Button></div>)}
-    </div>
-  );
-  return { notify, view };
-}
-
-export function ProgressBar({ value, max, label }: { value: number; max: number; label: string }) {
-  return (
-    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-2 w-full overflow-hidden rounded-full bg-stone-200">
-      <div className="h-full rounded-full bg-indigo-600 transition-[width]" style={{ width: `${max > 0 ? Math.min(100, (value / max) * 100) : 0}%` }} />
-    </div>
-  );
 }
 
 /** A screenshot, fetched only once it scrolls into view: a report or a timeline can hold hundreds. */
@@ -202,6 +193,11 @@ export function Note({ tone, children }: { tone: keyof typeof NOTE_ICONS; childr
 export interface Outcome {
   ok: boolean;
   text: string;
+}
+
+/** The message an action ended with, if it has ended. */
+export function OutcomeNote({ outcome }: { outcome: Outcome | null }) {
+  return outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>;
 }
 
 /** Runs one async action at a time, tracking whether it is in flight and the message it ended with. */

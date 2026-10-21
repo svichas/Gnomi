@@ -1,9 +1,10 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { FigmaFile, FigmaImport } from '@gnomi/engine/figma/frames.ts';
 import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call } from '../engine.ts';
-import { Button, Check, Field, inputClass, Note, OpenSettings, useAction } from '../ui.tsx';
+import { Button, Check, Dialog, Field, inputClass, Note, OpenSettings, useAction } from '../ui.tsx';
+import { move } from './index.ts';
 
 /** What the dialog hands back: the design to add, with the Figma frames as its steps. The engine has already stored the images. */
 export type FigmaDesign = Pick<DesignPoi, 'name' | 'frames'>;
@@ -15,17 +16,6 @@ const MAX_FRAMES = 100; // the engine's limit per import
  * reaches this page: the engine holds it and does the talking to Figma (engine/src/figma/).
  */
 export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesign): void; onClose(): void }) {
-  const element = useRef<HTMLDialogElement>(null);
-  const [invoker] = useState(() => document.activeElement);
-  useEffect(() => {
-    const dialog = element.current;
-    dialog?.showModal();
-    return () => {
-      dialog?.close();
-      if (invoker instanceof HTMLElement && invoker.isConnected) invoker.focus();
-    };
-  }, [invoker]);
-
   const [link, setLink] = useState('');
   const [file, setFile] = useState<FigmaFile | null>(null);
   const [picked, setPicked] = useState<string[]>([]); // frame ids, in the order they will be steps
@@ -60,12 +50,6 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
     });
   }
 
-  const move = (index: number, by: number) => {
-    const next = [...picked];
-    [next[index], next[index + by]] = [next[index + by], next[index]];
-    setPicked(next);
-  };
-
   function finish(assets: Record<string, string>) {
     if (file) onAdd({ name: file.name, frames: picked.filter((id) => assets[id]).map((id) => ({ asset: assets[id], name: nameOf(id) })) });
   }
@@ -95,8 +79,7 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
   return (
     // A token problem closes the dialog on its way to Settings.
     <OpenSettings.Provider value={openSettings && ((section) => { onClose(); openSettings(section); })}>
-    <dialog ref={element} aria-label="Add from Figma" onCancel={(event) => { event.preventDefault(); onClose(); }} className="m-auto max-h-[90vh] w-full max-w-3xl space-y-4 overflow-auto rounded-xl border border-stone-200 bg-white p-6 shadow-xl backdrop:bg-stone-900/30">
-      <h2 className="text-base font-semibold text-stone-900">Add from Figma</h2>
+    <Dialog title="Add from Figma" onCancel={onClose} wide>
       <form onSubmit={find} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
         <Field label="Figma link" hint="A link to a Figma file or to one of its frames. Gnomi reads it through Figma’s API with the access token from Settings.">
           <input value={link} onChange={(event) => setLink(event.target.value)} placeholder="https://www.figma.com/design/…" spellCheck={false} autoComplete="off" className={inputClass} />
@@ -149,8 +132,8 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
                   <li key={id} className="flex items-center gap-2 text-sm text-stone-800">
                     <span className="w-6 text-right text-stone-500">{index + 1}.</span>
                     <span className="min-w-0 flex-1 truncate">{nameOf(id)}</span>
-                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} up`} disabled={index === 0} onClick={() => move(index, -1)}>Up</Button>
-                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} down`} disabled={index === picked.length - 1} onClick={() => move(index, 1)}>Down</Button>
+                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} up`} disabled={index === 0} onClick={() => setPicked(move(picked, index, -1))}>Up</Button>
+                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} down`} disabled={index === picked.length - 1} onClick={() => setPicked(move(picked, index, 1))}>Down</Button>
                   </li>
                 ))}
               </ol>
@@ -179,7 +162,7 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
           </Button>
         )}
       </div>
-    </dialog>
+    </Dialog>
     </OpenSettings.Provider>
   );
 }

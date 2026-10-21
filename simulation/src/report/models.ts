@@ -87,12 +87,13 @@ export async function runReportModels({ config, round, llm, record, events }: Re
   const base = { run_id, round, persona_id: null } as const;
   const product = { name: project.name, description: project.description, goal: project.goal };
 
-  const all = frictionGroups(events(), project.pois[0]?.id ?? '');
-  const allLikes = likeGroups(events());
+  const log = events(); // the judge's input only; each POI's author call reads the log again, with that POI's themes
+  const all = frictionGroups(log, project.pois[0]?.id ?? '');
+  const allLikes = likeGroups(log);
   const pois = [...new Set([...all.map((g) => g.poi_id), ...allLikes.map((g) => g.poi_id)])];
   record({ ...base, poi_id: null, type: 'report.started', payload: { pois } });
   await Promise.all(pois.map(async (poi_id) => {
-    const { groups, posts, likes } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(events(), poi_id), undefined, undefined, allLikes.filter((g) => g.poi_id === poi_id));
+    const { groups, posts, likes } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(log, poi_id), undefined, undefined, allLikes.filter((g) => g.poi_id === poi_id));
     const social = posts.length > 0; // without posts or likes the call is the M3 one
     const liked = !!likes?.length;
     try {

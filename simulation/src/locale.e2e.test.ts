@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { startGym } from '../../demo/GymSite/server.ts';
 import { launchBrowserPool } from './browser/pool.ts';
-import { createScriptedGateway, DEMO_SURVEY } from './llm/scripted.ts';
+import { createScriptedGateway, DEMO_SURVEY, requestText } from './llm/scripted.ts';
 import { createFsBlobStore } from './log/blobs.ts';
 import { openProject } from './log/sqlite.ts';
 import { BUILTIN_PERSONA } from './persona.ts';
@@ -52,7 +52,7 @@ test('a German persona reaches the Gym with her locale, languages and Berlin tim
   const llm = createScriptedGateway({
     navigator: (request) => {
       if (request.purpose === 'survey') return DEMO_SURVEY;
-      snapshot = request.user.map((part) => part.type === 'text' ? part.text : '').join('\n');
+      snapshot = requestText(request);
       return { thought, feeling: 1, action: { type: 'done', ref: null, text: 'Sprache und Zeitzone geprüft.' }, friction: null };
     },
   }, record);

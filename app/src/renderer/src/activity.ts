@@ -3,6 +3,7 @@ import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
 import { placeName } from '@gnomi/simulation/poi/pois.ts';
+import type { PersonaStatus } from '@gnomi/engine/graph/index.ts';
 
 // The activity list: how a run's events read to a designer. Pure, so it can be tested without a window.
 
@@ -31,12 +32,6 @@ export interface Row {
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
   source?: { type: GnomiEvent['type']; round: number | null; poi_id: string | null; step?: number };
-}
-
-/** Quotes lead ordinary activity; a failed action or safety event always keeps its outcome visible. */
-export function timelineSummary(row: Row): string {
-  const quote = row.quote?.replace(/\s+/g, ' ').trim();
-  return quote && (row.tone === 'plain' || row.tone === 'notice') && row.badge?.ok !== false ? `“${quote}”` : row.title;
 }
 
 /** Keep thoughts, actions and problems prominent; routine feed reads and reactions remain in All events. */
@@ -275,7 +270,7 @@ export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[
   return [...waiting.values()];
 }
 
-export type PersonaState = 'waiting' | 'active' | 'blocked' | 'done' | 'abandoned' | 'unfinished';
+export type PersonaState = PersonaStatus;
 
 export const STATE_WORDS: Record<PersonaState, string> = {
   waiting: 'Waiting to start',
@@ -317,54 +312,6 @@ export function personaStates(events: GnomiEvent[], personas: Persona[]): Map<st
   }
   if (events.some(isEnd)) for (const [id, state] of states) if (state === 'waiting' || state === 'active') states.set(id, 'unfinished');
   return states;
-}
-
-export function countStates(states: Map<string, PersonaState>): Record<PersonaState, number> {
-  const counts: Record<PersonaState, number> = { waiting: 0, active: 0, blocked: 0, done: 0, abandoned: 0, unfinished: 0 };
-  for (const state of states.values()) counts[state] += 1;
-  return counts;
-}
-
-/** Once everyone ends, the scheduler skips remaining social phases and collects final feedback. */
-export function isPreparingReport(events: GnomiEvent[], states: Map<string, PersonaState>): boolean {
-  if (events.some((event) => event.type === 'run.started' && event.payload.config.project.comparison)) return false;
-  return !events.some(isEnd) && states.size > 0 && [...states.values()].every((state) => state === 'done' || state === 'abandoned' || state === 'unfinished');
-}
-
-export interface ReportStatus {
-  stage: 'surveys' | 'themes' | 'suggestions';
-  surveys: { done: number; total: number }; // one per persona and POI it started
-  pois: { total: number; themed: number; suggested: number }; // the POIs the judge and author run for
-  fraction: number; // 0–1, weighted by how long each stage takes: surveys .2, themes .5, suggestions .3
-}
-
-/** Where the report stands after the last episode, from the log alone, so a reopened run shows it too. */
-export function reportProgress(events: GnomiEvent[]): ReportStatus {
-  const episodes = new Set<string>();
-  const surveyed = new Set<string>();
-  const themed = new Set<string>();
-  const suggested = new Set<string>();
-  let started: string[] | null = null;
-  for (const event of events) {
-    if (event.type === 'persona.episode_started') episodes.add(`${event.persona_id} ${event.payload.poi_id}`);
-    else if (event.type === 'persona.survey') surveyed.add(`${event.persona_id} ${event.payload.poi_id}`);
-    else if (event.type === 'report.started') started = event.payload.pois;
-    else if (event.type === 'report.themes') themed.add(event.payload.poi_id);
-    // The author runs after the judge, so its answer also closes a judge that failed and logged no themes.
-    else if (event.type === 'report.suggestions') { themed.add(event.payload.poi_id); suggested.add(event.payload.poi_id); }
-  }
-  const total = episodes.size;
-  if (!started) {
-    const done = Math.min(surveyed.size, total);
-    return { stage: 'surveys', surveys: { done, total }, pois: { total: 0, themed: 0, suggested: 0 }, fraction: total ? 0.2 * done / total : 0 };
-  }
-  const pois = { total: started.length, themed: started.filter((id) => themed.has(id)).length, suggested: started.filter((id) => suggested.has(id)).length };
-  return {
-    stage: pois.themed < pois.total ? 'themes' : 'suggestions',
-    surveys: { done: total, total },
-    pois,
-    fraction: pois.total ? 0.2 + 0.5 * pois.themed / pois.total + 0.3 * pois.suggested / pois.total : 0.95, // no frictions: only saving is left
-  };
 }
 
 export type Category = 'steps' | 'frictions' | 'signals' | 'opinions' | 'social' | 'outcomes' | 'blocks' | 'containment' | 'run';

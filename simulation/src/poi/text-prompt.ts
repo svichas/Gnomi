@@ -3,7 +3,7 @@
 // persona block as the browsing prompt (agent/prompt.ts, §6.1); the engine checks every quoted passage against the text.
 import { z } from 'zod';
 import { personaEnvironment } from '../audience/locations.ts';
-import { firstLanguage, heardLines, PATIENCE, profileBlock, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { firstName, heardLines, languageRules, patienceRule, personaSection, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
@@ -43,33 +43,27 @@ export interface ReadMemory {
 export function readSystemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi: TextPoi): string {
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
-  const { locale } = personaEnvironment(persona);
-  const english = locale.toLowerCase().split('-')[0] === 'en';
   const familiarity = {
     low: `Products like this are new to ${p}: their jargon means little to ${obj}.`,
     medium: `${p} has used products like this before and knows the common terms.`,
     high: `${p} uses products like this every day and knows the jargon.`,
   }[persona.familiarity_with_category];
   const rules = [
-    `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`, // the engine enforces the part budget; stating it would steer when to stop
+    patienceRule(persona, w), // the engine enforces the part budget; stating it would steer when to stop
     familiarity,
-    ...(english ? [] : [firstLanguage(p, locale)]),
+    ...languageRules(p, personaEnvironment(persona).locale),
     ...(segment?.kind === 'buyer' ? [`${p} is weighing whether to buy ${project.name}, or to recommend it to whoever decides.`] : []),
   ];
   return `This is ${persona.name}. ${p} is reading "${poi.name}", a text about ${project.name}. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking it. Each turn shows the next part of the text, above these notes, and the question is always the same: what does ${p} make of it, and what does ${p} do next?
 
 People stop reading what wastes their time. When ${p} would stop, the true answer is that ${p} stops.
 
-<persona>
-${profileBlock(persona, project, segment, obj)}
-</persona>
+${personaSection(persona, project, segment, obj)}
 
 How ${p} reads:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}
+${taskSection(persona, project, segment, p)}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud while reading, in ${poss} own voice, in ${ENGLISH}, in at most 60 words.
@@ -106,7 +100,7 @@ export function readShared(opts: { poi: TextPoi; text: string; part: { start: nu
 /** The volatile part: which part this is, what the persona took from the earlier ones, its current opinion and what it heard. */
 export function readParts(opts: { persona: Persona; text: string; part: { start: number; end: number }; index: number; parts: number; memory: ReadMemory[]; opinion: Opinion | null; heard?: HeardPost[] }): UserPart[] {
   const { persona, text, part, index, parts, memory, opinion } = opts;
-  const p = persona.name.split(' ')[0];
+  const p = firstName(persona);
   const lines = [
     `${partLine(text, part, index, parts)} The part is the text quoted above.`,
     ...(memory.length ? ['', `What ${p} took from the earlier parts:`, ...memory.map((m) => `${m.part}. ${p} thought: "${inert(m.thought)}"${m.confusions.length ? ` Confused by: ${m.confusions.map((c) => `"${inert(c)}"`).join('; ')}` : ''}`)] : []),

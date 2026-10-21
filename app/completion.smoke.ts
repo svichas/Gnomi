@@ -1,10 +1,7 @@
 // A real Electron renderer with deterministic live completion events. No models or external sites.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
@@ -12,6 +9,7 @@ import { newRunConfig } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectInfo } from '../engine/src/protocol.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
 declare global {
   interface Window {
@@ -19,10 +17,8 @@ declare global {
   }
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-completion-'));
+const dir = scratch('completion');
 const projectDir = join(dir, 'completion.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const project: ProjectConfig = {
   name: 'All personas abandoned', description: 'Disposable run completion regression', goal: 'Complete an unavailable task', role: null, audience: null,
   pois: [{ id: 'fixture', type: 'web', mode: 'full', segments: null, name: 'Fixture', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], reset_hook_url: null }],
@@ -60,18 +56,13 @@ const info: ProjectInfo = { dir: projectDir, project, persona: personas[0], pers
 const report = buildReport(allEvents);
 store.close();
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Completion smoke timed out.'); process.exit(1); }, 60_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Completion smoke timed out.', 60_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.addInitScript(({ info, initialEvents, abandonedEvents, reportEvents, endEvents, report }) => {
     let port: MessagePort | undefined;
@@ -150,7 +141,7 @@ try {
   await page.screenshot({ path: join(shots, 'simulation-running.png'), fullPage: true });
   for (const width of [1440, 1024, 768, 375, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `the simulation fits ${width}px`);
+    await assertFits(page, `the simulation fits ${width}px`);
     await page.screenshot({ path: join(shots, `simulation-running-${width}.png`), fullPage: true });
   }
   await page.setViewportSize({ width: 1280, height: 900 });

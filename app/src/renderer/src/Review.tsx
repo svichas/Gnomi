@@ -1,20 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import { loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { effectiveComparisonPois } from '@gnomi/simulation/comparison/config.ts';
 import type { LlmRole, ProjectConfig, RunEstimate } from '@gnomi/simulation/types.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
-import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
+import { generatedCount, segmentVar, staleProfiles } from './audience.ts';
 import { AudienceSteps } from './Audience.tsx';
 import { estimateText } from './cost.ts';
 import { call, errorText } from './engine.ts';
-import { problemFor, rolesInUse, startHost } from './form.ts';
+import { problemFor, ROLE_TEXT, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { ROLE_TEXT } from './Settings.tsx';
-import { ActionBar, Button, Check, Note, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Check, Note, OutcomeNote, usd, useAction } from './ui.tsx';
 import './results.css';
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
@@ -65,10 +64,11 @@ export function Review(props: {
     onRecheck(); // a new login: save and check everything again
   });
   const personas = info?.personas ?? [];
-  const countChanged = !!saved?.audience && saved.audience.persona_count !== (info?.generated_persona_count ?? info?.project?.audience?.persona_count);
-  const profilesStale = !!saved?.audience && personas.some((persona) => !personaProfileIsCurrent(persona, saved));
+  const countChanged = !!saved?.audience && saved.audience.persona_count !== generatedCount(info);
+  const profilesStale = useMemo(() => !!saved?.audience && staleProfiles(personas, saved).size > 0, [saved, personas]);
   const audienceReady = personas.length > 0 && !countChanged && !profilesStale;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: checks once per mount; App saves and remounts Review with a new key on every visit
   useEffect(() => {
     if (!saved) return;
     let current = true;
@@ -146,7 +146,7 @@ export function Review(props: {
         </section>
       )}
       <RecordingPanel recorder={recorder} />
-      {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+      <OutcomeNote outcome={recorder.outcome} />
       {saved && (
         <div className="review-ready" data-ready={ready} role="status">
           <span className="audience-next-icon"><Icon name={ready ? 'check' : blocking ? 'alert' : 'clock'} size={24} /></span>
@@ -182,7 +182,7 @@ export function Review(props: {
                   {saved.audience.segments.map((segment, index) => {
                     const count = personas.filter((persona) => persona.segment_id === segment.id).length;
                     return (
-                      <li key={segment.id} style={{ '--segment-color': `var(--gnomi-segment-${index % 5 + 1})` } as CSSProperties}>
+                      <li key={segment.id} style={{ '--segment-color': segmentVar(index) } as CSSProperties}>
                         <span className="segment-dot" />
                         <span><strong>{segment.name || 'Unnamed segment'}</strong> {count} {count === 1 ? 'persona' : 'personas'} · {segment.share}% · {segment.role ? `${segment.role} login` : 'logged out'}</span>
                       </li>

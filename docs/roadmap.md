@@ -39,7 +39,7 @@ Total: about 27 weeks of calendar time with two engineers, roughly seven months 
 
 ## Implementation status — 16 October 2026
 
-M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3, M4 and M5 are built. **M2–M5 each still need full-scale live acceptance;** M6 and M7 have not started. The current gap-closure work is tracked in [the implementation plan](../tasks/plan.md) and [task checklist](../tasks/todo.md).
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3, M4 and M5 are built. **M2–M5 each still need full-scale live acceptance;** M6 and M7 have not started.
 
 The first M2 gap-closure batch adds:
 
@@ -62,7 +62,7 @@ The third batch adds:
 - Recorded-cost labels and missing-usage notices in the live meter, report and Markdown export. Provider SDK defaults do not turn missing usage into a known zero charge. Unpriced models are blocked in preflight.
 - An opt-in [M2 acceptance runner](m2-acceptance.md) with a frozen 50-person population, all Gym v1 defects, a German locale probe, retained transcripts/screenshots, report replay checks and evidence review sheets. Scripted rehearsals verify execution; they cannot pass live-provider criteria. The fixture excludes live persona-generation cost and quality.
 
-The no-cost rehearsal verified 50 terminal episodes at peak concurrency 12, the actual German browser environment, and both report replays. All live-model criteria remain `NOT_RUN`; no paid calls were made. Verification details are in [the task results](../tasks/todo.md#third-batch-results--15-october-2026).
+The no-cost rehearsal verified 50 terminal episodes at peak concurrency 12, the actual German browser environment, and both report replays. All live-model criteria remain `NOT_RUN`; no paid calls were made.
 
 **Still required for M2:** live-provider acceptance measurements. On 15 October the user chose to preserve concurrency and stop immediately at the recorded cost cap: cancel outstanding requests and dispatch no further requests, retries or browser actions. Already-started browser actions may finish, and already-billable provider calls may exceed the cap. Late returned usage belongs in the report; calls without complete usage must be flagged as uncertain charges. This replaces the original ambiguous “within one step” budget rule below.
 
@@ -87,7 +87,7 @@ All M3 acceptance criteria (recall, precision, stability, control-run false posi
 
 Live spread, influence plausibility and graph frame rate on a typical designer laptop are unmeasured at full scale.
 
-**First live runs, 16 October (reduced scale, DeepSeek).** To limit spend, the acceptance runner gained `--provider deepseek`, `--personas N`, `--seeds N` and an M3 mode; criteria set for fifty people stay `NOT_RUN` at a smaller size. Five runs recorded $0.80 in total. Reviews were done by Claude (AI), not a human. [Details and caveats](../tasks/todo.md#low-cost-live-acceptance-on-deepseek--16-october-2026).
+**First live runs, 16 October (reduced scale, DeepSeek).** To limit spend, the acceptance runner gained `--provider deepseek`, `--personas N`, `--seeds N` and an M3 mode; criteria set for fifty people stay `NOT_RUN` at a smaller size. Five runs recorded $0.80 in total. Reviews were done by Claude (AI), not a human.
 
 - M2 (4 personas and the German probe): episodes, replay and German browser pass; German thoughts and profile adherence look right on review.
 - M3 (4 personas, 2 seeds and a control run): precision 0.67–0.71 against a 0.7 target, high-severity recall 0.4, top-ten overlap 0.83. The control run fails: one theme came from an unchecked checkbox a text-only navigator could not read (prompt fixed), and one from a fixture goal no Gym build supports.

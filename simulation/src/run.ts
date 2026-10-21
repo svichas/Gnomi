@@ -1,14 +1,16 @@
 import { createComparisonRuntime, comparisonSession, ComparisonEnvironmentError } from './comparison/runtime.ts';
-import { effectiveComparisonPois, validateComparison } from './comparison/config.ts';
+import { admits, effectiveComparisonPois, inScenario, validateComparison } from './comparison/config.ts';
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, socialParts, socialSchema, socialSystemPrompt, surveyedName, surveyItems, surveyParts, surveySchema, surveySystemPrompt, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, type HeardPost } from './agent/prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt } from './agent/social.ts';
+import { surveyedName, surveyFacts, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
 import { personaEnvironment } from './audience/locations.ts';
 import { fnv1a, mulberry32 } from './audience/sample.ts';
 import { InvalidOutputError } from './llm/gateway.ts';
 import { costUsd, isPriced } from './llm/prices.ts';
-import { foldOpinions, sameOpinion, type CurrentOpinion } from './opinion/index.ts';
+import { foldOpinions, sameOpinion } from './opinion/index.ts';
 import { comparisonFor } from './poi/compare.ts';
 import { poiBudget, runnerFor } from './poi/index.ts';
 import { logsIn, poisFor, webPois } from './poi/pois.ts';
@@ -19,7 +21,7 @@ import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import { socialRounds } from './settings.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
-import { readBoard, selectFeed, type Board, type FeedPost } from './social/feed.ts';
+import { readBoard, selectFeed, type FeedPost } from './social/feed.ts';
 import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
 
@@ -115,6 +117,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     drain.abort();
     if (cancel) hard.abort();
   };
+  const fail = (err: unknown) => halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true);
 
   // Spend comes from the log, read incrementally, so it counts every llm.call any gateway recorded, retries included.
   let spent = 0;
@@ -149,8 +152,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return spent;
   };
   const checkRecordedBudget = () => {
-    if (spentUsd() < settings.cost_budget_usd) return;
+    const now = spentUsd();
+    if (now < settings.cost_budget_usd) return now;
     halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd} recorded-cost budget was reached` }, true);
+    return now;
   };
   const budgetedLlm: LlmGateway = {
     call(req) {
@@ -173,9 +178,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   let stepsDone = 0;
   const beginStep = (estimatedCost?: number) => {
     if (drain.signal.aborted) return false;
-    checkRecordedBudget();
+    const now = checkRecordedBudget();
     if (drain.signal.aborted) return false;
-    const now = spentUsd();
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
     if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
       halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
@@ -211,12 +215,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const beginComparisonBlock = (persona: Persona, task: ComparisonTask) => {
     if (drain.signal.aborted) return false;
     const now = spentUsd();
-    const scenario = project.comparison!.scenarios.find((item) => item.id === task.scenario_id)!;
-    if (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? '')) return true;
-    const targetCount = task.entries.filter((entry) => {
-      const poi = project.pois.find((item) => item.id === entry.poi_id)!;
-      return poi.segments === null || poi.segments.includes(persona.segment_id ?? '');
-    }).length;
+    if (!inScenario(project.comparison!, task.scenario_id, persona.segment_id)) return true;
+    const targetCount = task.entries.filter((entry) => admits(project.pois.find((item) => item.id === entry.poi_id)!, persona.segment_id)).length;
     // Unknown prices cannot support a dollar reservation. The comparison report discloses this explicitly;
     // observed charges take over once available, retaining the existing support for unpriced model routes.
     const navigatorCost = comparisonCallCost('navigation') ?? 0;
@@ -293,8 +293,6 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         if (!hard.signal.aborted) record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'persona.survey', payload });
         return;
       }
-      const ending = own.find((e) => e.type === 'persona.goal_done' || e.type === 'persona.abandoned');
-      const steps = own.flatMap((e) => (e.type === 'persona.step' && e.payload.result.error !== 'invalid_output' ? [e.payload] : []));
       const compare = comparisonFor(project, persona, poi, store.events(run_id, { personaId: persona.id, types: ['persona.survey'] })); // competitor POIs only
       const { object } = await budgetedLlm.call(compare.ask({
         role: 'navigator',
@@ -304,15 +302,12 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         round: base.round,
         purpose: 'survey',
         poi_id: poi.id,
-        system: surveySystemPrompt(persona, project, segmentOf(persona, project), poi),
+        system: surveySystemPrompt(persona, project, segment, poi),
         user: surveyParts({
           persona,
           product: surveyedName(project, poi),
           end,
-          detail: ending?.type === 'persona.goal_done' ? ending.payload.summary : ending?.type === 'persona.abandoned' ? ending.payload.reason : null,
-          steps: steps.length,
-          frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [e.payload.what] : [])),
-          thoughts: steps.slice(-5).flatMap((s) => (s.thought ? [s.thought] : [])),
+          ...surveyFacts(own),
           opinion,
         }),
         schema: surveySchema,
@@ -412,15 +407,14 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const poiNames = new Map(project.pois.map((poi) => [poi.id, poi.name]));
   // One socialiser call per persona and phase (tech.md §6.6), admitted like a step so a stop or the cost cap prevents it.
   // Resolves with the validated answer's recording, staged for the phase to apply in population order, or null when silent.
-  const socialise = async (persona: Persona, round: number, own: GnomiEvent[], feed: FeedPost[], board: Board, opinions: CurrentOpinion[]): Promise<(() => void) | null> => {
+  const socialise = async (persona: Persona, round: number, own: GnomiEvent[], feed: FeedPost[], posts: Map<string, FeedPost>, opinions: Map<string, Opinion>): Promise<(() => void) | null> => {
     if (!beginStep()) return null;
     try {
       const post_ids = feed.map((p) => p.post_id);
-      const posts = new Map(board.posts.map((p) => [p.post_id, p]));
       // A reply shows its parent's text too, so the parent reached the persona as well.
       const parent_ids = [...new Set(feed.flatMap((p) => (p.parent_id && posts.has(p.parent_id) ? [p.parent_id] : [])))];
       record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids, parent_ids } });
-      const opinionOf = (poi_id: string) => opinions.find((o) => o.persona_id === persona.id && o.poi_id === poi_id)?.opinion ?? null;
+      const opinionOf = (poi_id: string) => opinions.get(JSON.stringify([persona.id, poi_id])) ?? null;
       const pois = assigned.get(persona.id)!;
       const name = (id: string) => names.get(id) ?? id;
       const about = (poi_id: string | null) => (poi_id ? (poiNames.get(poi_id) ?? null) : null);
@@ -517,10 +511,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     });
     const { due, board, opinions } = planPhase(round);
     if (!admit(due.size, `the social phase of round ${round}`)) return;
+    // Looked up by every persona of the phase, so built once from the phase's snapshot.
+    const posts = new Map(board.posts.map((p) => [p.post_id, p]));
+    const current = new Map(opinions.map((o) => [JSON.stringify([o.persona_id, o.poi_id]), o.opinion]));
     const staged = new Map<Persona, () => void>();
     await inParallel(mixed([...due.keys()]), async (persona) => {
       const { feed, own } = due.get(persona)!;
-      const apply = await socialise(persona, round, own, feed, board, opinions);
+      const apply = await socialise(persona, round, own, feed, posts, current);
       if (apply) staged.set(persona, apply);
     });
     // In population order once every call has settled, so response speed cannot decide whose post is newest (new_simulation.md §5).
@@ -543,7 +540,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       while (running.size >= concurrency && !drain.signal.aborted) await Promise.race(running);
       if (drain.signal.aborted) break;
       const tracked: Promise<void> = work(persona)
-        .catch((err) => halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true))
+        .catch(fail)
         .finally(() => running.delete(tracked));
       running.add(tracked);
     }
@@ -551,7 +548,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const comparison = project.comparison ? createComparisonRuntime({
-    config, llm: budgetedLlm, blobs, record, events: () => store.events(run_id), signal: hard.signal,
+    config, llm: budgetedLlm, blobs, record, events: (opts) => store.events(run_id, opts), signal: hard.signal,
     openPage: (persona, target, poi) => openPage(persona, comparisonSession(config, target).session?.role ?? null, target)(poi),
     beginBlock: beginComparisonBlock,
     endBlock: (persona) => { spentUsd(); blockReservations.delete(persona.id); },
@@ -618,7 +615,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
       await schedule();
     } catch (err) {
-      halt(hard.signal.aborted ? { reason: 'user', detail: null } : { reason: 'error', detail: err instanceof Error ? err.message : String(err) }, true);
+      fail(err);
     } finally {
       comparison?.finishUnscheduled();
       if (!comparison) clearTimeout(clock);
@@ -632,7 +629,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
     const stopped = halted as EventPayloads['run.stopped'] | null;
     record(stopped ? { ...base, type: 'run.stopped', payload: stopped } : { ...base, type: 'run.finished', payload: {} });
-    const reason = stopped && (stopped.detail ? `${stopped.reason}: ${stopped.detail}` : stopped.reason);
+    const reason = stopped && said(stopped);
     store.finishRun(run_id, stopped ? 'stopped' : 'finished', reason, spentUsd());
     // The report is a fold over the log alone, never over in-memory state (tech.md §5.1).
     const report = buildReport(store.events(run_id));

@@ -5,7 +5,9 @@ import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ActionResult, PageSnapshot, Persona, ProjectConfig, Segment } from '../types.ts';
 import { z } from 'zod';
 import { buyerSystemPrompt } from './buyer.ts';
-import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveyItems, surveyParts, surveySchema, surveySystemPrompt, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { stepSchema, systemPrompt, userParts, type StepMemory } from './prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt } from './social.ts';
+import { surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './survey.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 
 const project: ProjectConfig = {
@@ -173,7 +175,7 @@ test('pronouns, background, a second language and the segment shape the card wit
   assert.match(system, /Kai is red–green colour-blind, so colour alone tells them nothing/);
   assert.match(system, /leaves them stuck/);
   assert.match(system, /in their own voice/);
-  assert.match(system, /account: new and empty, nothing set up yet\n  arrived: from a link a colleague shared\n  usually here to: review applicants; leave feedback/);
+  assert.match(system, /account: new and empty, nothing set up yet\n {2}arrived: from a link a colleague shared\n {2}usually here to: review applicants; leave feedback/);
   assert.match(system, /Kai's task: "Review the shortlisted candidates for the robotics role"/);
   assert.doesNotMatch(system, /\b(she|her|he|him|his)\b/i, 'no gendered pronoun for a they persona');
   assert.doesNotMatch(systemPrompt(BUILTIN_PERSONA, project, null), /second language/);

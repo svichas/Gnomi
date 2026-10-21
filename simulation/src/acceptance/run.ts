@@ -18,13 +18,13 @@ import { preflight } from '../poi/index.ts';
 import { buildReport } from '../report/build.ts';
 import { reportToMarkdown } from '../report/markdown.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '../run.ts';
-import type { BlobStore, BrowserPool, LlmGateway, Recorder, Responder } from '../seams.ts';
+import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Responder } from '../seams.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
 import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, pairedDifference, TOP, validateOptions, type Arm, type Criterion, type Facts, type Options, type Status } from './checks.ts';
 import { complaint, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
-import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase, type FrameMismatches } from './m5.ts';
+import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
 const json = (file: string, value: unknown) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -32,6 +32,12 @@ const hash = (value: string | Uint8Array) => createHash('sha256').update(value).
 const SCOPE = 'Browsing only: seeded traits and authored fixture prose; no live persona writing or writer quality evaluation.';
 const M4_SCOPE = 'Social swarm: one injected complaint over five run seeds of the frozen population, spread by segment, an influence audit sheet and scrubber replay from the reopened log. Graph frame rate is measured by the swarm graph check.';
 type Allowance = ReturnType<typeof createAllowance>;
+const CATALOGUE = resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml');
+const stopReason = (allowance: Allowance) => allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null;
+/** What a manifest pins of a population: its people, its audience and the profile schema they were written against. */
+const fixtureSha = (data: Fixture) => hash(JSON.stringify({ personas: data.personas, audience: data.project.audience, schema: data.project.persona_schema }));
+const parsedTranscripts = (store: Pick<ProjectStore, 'transcripts'>, run_id: string) =>
+  store.transcripts(run_id).map((entry) => ({ seq: entry.seq, request: JSON.parse(entry.request_json), response: JSON.parse(entry.response_json) }));
 interface CaseResult { id: string; criteria: Criterion[]; facts?: Facts; project?: string; skipped?: string }
 
 function scriptedNavigator(): Responder {
@@ -130,6 +136,15 @@ function provenance(out: string) {
   };
 }
 
+/** The suites' shared guards: a live run needs an allowance and a key, and earlier evidence is never overwritten. Returns the provenance. */
+function freshOutput(options: Options, env: Record<string, string | undefined>) {
+  validateOptions(options, env);
+  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
+  mkdirSync(dirname(options.out), { recursive: true });
+  mkdirSync(options.out);
+  return provenance(options.out);
+}
+
 async function runCase(id: string, data: Fixture, options: Options, pool: BrowserPool, allowance: Allowance, env: Record<string, string | undefined>): Promise<CaseResult> {
   const dir = join(options.out, id);
   mkdirSync(dir);
@@ -168,7 +183,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
       peak_contexts: measured.peak(), replay_equal,
     };
     json(join(dir, 'events.json'), events);
-    json(join(dir, 'transcripts.json'), store.transcripts(config.run_id).map((entry) => ({ seq: entry.seq, request: JSON.parse(entry.request_json), response: JSON.parse(entry.response_json) })));
+    json(join(dir, 'transcripts.json'), parsedTranscripts(store, config.run_id));
     json(join(dir, 'browser-evidence.json'), browserEvidence);
     json(join(dir, 'metrics.json'), { ...facts, setup_cost_usd: 0, steps: report.steps, calls: calls.length, input_tokens: report.input_tokens, output_tokens: report.output_tokens, outcomes: report.personas.map((p) => ({ id: p.id, outcome: p.outcome })), concurrency_changes: report.methods.concurrency_changes, attempts_without_usage: calls.filter((e) => e.payload.usage_reported !== true).map((e) => e.seq) });
     writeFileSync(join(dir, 'report.md'), reportToMarkdown(report));
@@ -190,11 +205,7 @@ async function runCase(id: string, data: Fixture, options: Options, pool: Browse
 
 /** Explicit live mode is the only path that constructs a paid gateway; preflight happens before Gym/browser startup. */
 export async function runAcceptance(options: Options, env: Record<string, string | undefined> = process.env) {
-  validateOptions(options, env);
-  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
-  mkdirSync(dirname(options.out), { recursive: true });
-  mkdirSync(options.out);
-  const source = provenance(options.out);
+  const source = freshOutput(options, env);
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const cases: CaseResult[] = [];
   let error: string | null = null;
@@ -209,7 +220,7 @@ export async function runAcceptance(options: Options, env: Record<string, string
     fixture_preparation_ms = Math.round(performance.now() - fixtureStart);
     json(join(options.out, 'manifest.json'), {
       version: 1, mode: options.mode, scope: SCOPE, seed: SEED, fixture_version: FIXTURE_VERSION, provider: options.provider, personas: base.personas.length,
-      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      fixture_sha256: fixtureSha(base),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: GYM_V1_DEFECT_IDS, candidates_delay_ms: 4000, login: false }, ...source, started_at: new Date(started).toISOString(),
@@ -233,7 +244,7 @@ export async function runAcceptance(options: Options, env: Record<string, string
   const elapsed_ms = Date.now() - started;
   const result = { status, mode: options.mode, scope: SCOPE, cases, error, setup_cost_usd: 0, live_writer_duration_ms: 0, fixture_preparation_ms,
     recorded_cost_usd: allowance.spent(), completed_case_recorded_cost_usd: cases.reduce((sum, result) => sum + (result.facts?.cost_usd ?? 0), 0),
-    missing_usage_attempts: allowance.unknown(), allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    missing_usage_attempts: allowance.unknown(), allowance_stop_reason: stopReason(allowance),
     run_duration_ms, overhead_duration_ms: elapsed_ms - run_duration_ms, elapsed_ms, billing_caveat: BILLING_CAVEAT };
   json(join(options.out, 'acceptance.json'), result);
   return result;
@@ -269,7 +280,7 @@ async function runSeed(name: string, seed: number, data: Fixture, options: Optio
     let transcripts: { seq: number; request: unknown; response: unknown }[];
     try {
       events = reopened.events(config.run_id);
-      transcripts = reopened.transcripts(config.run_id).map((entry) => ({ seq: entry.seq, request: JSON.parse(entry.request_json), response: JSON.parse(entry.response_json) }));
+      transcripts = parsedTranscripts(reopened, config.run_id);
     } finally { reopened.close(); }
     const spread = social ? spreadOf(events) : null;
     json(join(dir, 'events.json'), events);
@@ -305,11 +316,7 @@ function auditSheet(out: string, items: AuditItem[], live: boolean) {
 
 /** M4 mode: the same guards as M2 (explicit allowance for live, fresh output, retained evidence), over five seeded social runs. */
 export async function runM4Acceptance(options: Options, env: Record<string, string | undefined> = process.env) {
-  validateOptions(options, env);
-  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
-  mkdirSync(dirname(options.out), { recursive: true });
-  mkdirSync(options.out);
-  const source = provenance(options.out);
+  const source = freshOutput(options, env);
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const runs: SeedRun[] = [];
   let error: string | null = null;
@@ -322,7 +329,7 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'm4', mode: options.mode, scope: M4_SCOPE, seeds: M4_SEEDS.slice(0, options.seeds ?? M4_SEEDS.length), provider: options.provider, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
-      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      fixture_sha256: fixtureSha(base),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: GYM_V1_DEFECT_IDS, candidates_delay_ms: 4000, login: false }, ...source, started_at: new Date(started).toISOString(),
@@ -350,7 +357,7 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
     status, mode: options.mode, scope: M4_SCOPE, criteria, error, setup_cost_usd: 0,
     seeds: logs.map(({ seed, run_status, cost_usd, spread }) => ({ seed, run_status, cost_usd, evidence: run_status ? `seed-${seed}` : null, spread: spread && { same: spread.same, cross: spread.cross, same_population: spread.same_population, cross_population: spread.cross_population } })),
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
-    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
   };
   json(join(options.out, 'acceptance.json'), result);
@@ -383,12 +390,8 @@ function themeSheet(out: string, runs: { name: string; report?: Report }[], live
 
 /** M3 mode: seeded Gym v2 runs and a control run with the M2 guards; recall, precision and stability need the reviewed theme mapping. */
 export async function runM3Acceptance(options: Options, env: Record<string, string | undefined> = process.env) {
-  validateOptions(options, env);
-  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
-  mkdirSync(dirname(options.out), { recursive: true });
-  mkdirSync(options.out);
-  const source = provenance(options.out);
-  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
+  const source = freshOutput(options, env);
+  copyFileSync(CATALOGUE, join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const seeds = M3_SEEDS.slice(0, options.seeds ?? M3_SEEDS.length);
   const runs: { name: string; run?: SeedRun }[] = [...seeds.map((seed) => ({ name: `seed-${seed}` })), { name: 'control' }];
@@ -405,7 +408,7 @@ export async function runM3Acceptance(options: Options, env: Record<string, stri
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'm3', mode: options.mode, scope: M3_SCOPE, seeds, control_seed: SEED, provider: options.provider, personas: base.personas.length, fixture_version: FIXTURE_VERSION,
-      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      fixture_sha256: fixtureSha(base),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: DEFECT_IDS, control: [], catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
@@ -445,7 +448,7 @@ export async function runM3Acceptance(options: Options, env: Record<string, stri
     status, mode: options.mode, scope: M3_SCOPE, criteria, error, setup_cost_usd: 0,
     runs: runs.map(({ name, run }) => ({ name, run_status: run?.run_status ?? null, cost_usd: run?.cost_usd ?? null, themes: run?.report?.themes?.length ?? null, evidence: run ? name : null })),
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
-    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
   };
   json(join(options.out, 'acceptance.json'), result);
@@ -494,12 +497,8 @@ function d28Sheet(out: string, runs: { name: string; report?: Report }[], live: 
 
 /** M5 mode: no browser and no Gym server, because text and design POIs open no page. The guards are the M2 ones (explicit allowance for live, fresh output, retained evidence). */
 export async function runM5Acceptance(options: Options, env: Record<string, string | undefined> = process.env) {
-  validateOptions(options, env);
-  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
-  mkdirSync(dirname(options.out), { recursive: true });
-  mkdirSync(options.out);
-  const source = provenance(options.out);
-  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
+  const source = freshOutput(options, env);
+  copyFileSync(CATALOGUE, join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const live = options.mode === 'live';
   const pool = { newPage: () => Promise.reject(new Error('A text or design POI opened a browser page.')) } as unknown as BrowserPool;
@@ -526,11 +525,10 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
       if (bad) throw new Error(`The ${texts[i].name} project is refused: ${bad}`);
     }
     refusal = preflight(designCases[0].project, (id) => ids.includes(id)); // e.g. a navigator that cannot read images: skip the design case, spending nothing
-    const sha = (data: Fixture) => hash(JSON.stringify({ personas: data.personas, audience: data.project.audience, schema: data.project.persona_schema }));
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'm5', mode: options.mode, scope: M5_SCOPE, seeds, provider: options.provider, fixture_version: FIXTURE_VERSION,
       personas: { text: textCases[0].personas.length, buyers: textCases[0].personas.length - base.personas.length, design: designPersonas },
-      fixture_sha256: sha(base), case_sha256: { text: sha(textCases[0]), design: sha(designCases[0]) },
+      fixture_sha256: fixtureSha(base), case_sha256: { text: fixtureSha(textCases[0]), design: fixtureSha(designCases[0]) },
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: ['D26', 'D28'], control: [], catalogue: 'defects.yaml', login: false },
@@ -566,7 +564,7 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
     text: texts.map(summary),
     design: { skipped: refusal, frame: D26_FRAME + 1, personas: designPersonas, seeds: frames.map((entry) => ({ seed: entry.seed, ...summary(entry), mismatch: entry.run ? frameMismatches(entry.run.events) : null })), control: { ...summary(control), mismatch: controlMismatches } },
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
-    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
   };
   json(join(options.out, 'acceptance.json'), result);
@@ -603,13 +601,9 @@ const fmt = (x: number | null) => x === null ? 'n/a' : Number(x.toFixed(4)).toSt
 
 /** Evaluate mode (new_simulation.md §9): repeated matched replicates over the declared arms, per-arm means and paired differences from baseline. */
 export async function runEvaluation(options: Options, env: Record<string, string | undefined> = process.env) {
-  validateOptions(options, env);
-  if (existsSync(options.out)) throw new Error(`Acceptance output already exists: ${options.out}. Choose a fresh --out directory.`);
-  mkdirSync(dirname(options.out), { recursive: true });
-  mkdirSync(options.out);
-  const source = provenance(options.out);
-  const catalogue = readFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), 'utf8');
-  copyFileSync(resolve(import.meta.dirname, '../../../demo/GymSite/defects.yaml'), join(options.out, 'defects.yaml'));
+  const source = freshOutput(options, env);
+  const catalogue = readFileSync(CATALOGUE, 'utf8');
+  copyFileSync(CATALOGUE, join(options.out, 'defects.yaml'));
   const allowance = createAllowance(options.allowance_usd ?? Infinity);
   const arms: Arm[] = options.arms ?? (Object.keys(ARMS) as Arm[]);
   const seeds = Array.from({ length: options.repeats ?? 5 }, (_, r) => SEED + r);
@@ -628,7 +622,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'evaluate', mode: options.mode, scope: EVALUATE_SCOPE, repeats: seeds.length, seeds, arms: Object.fromEntries(arms.map((arm) => [arm, ARMS[arm]])),
       provider: options.provider, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
-      fixture_sha256: hash(JSON.stringify({ personas: base.personas, audience: base.project.audience, schema: base.project.persona_schema })),
+      fixture_sha256: fixtureSha(base),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0, benchmark: BENCHMARK,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
       gym: { defects: DEFECT_IDS, catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
@@ -674,7 +668,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
     intervals: primary.length ? `confirmatory for ${primary.join(', ')}; exploratory otherwise` : 'exploratory: no primary metric is declared', defect_metrics,
     replicates, means, differences,
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
-    allowance_stop_reason: allowance.signal.aborted ? (allowance.signal.reason instanceof Error ? allowance.signal.reason.message : String(allowance.signal.reason)) : null,
+    allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
   };
   json(join(options.out, 'results.json'), result);

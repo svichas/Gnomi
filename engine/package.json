@@ -5,7 +5,12 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
-    "./*": "./src/*"
+    "./audience/defaults.ts": "./src/audience/defaults.ts",
+    "./audience/file.ts": "./src/audience/file.ts",
+    "./figma/frames.ts": "./src/figma/frames.ts",
+    "./graph/feed.ts": "./src/graph/feed.ts",
+    "./graph/index.ts": "./src/graph/index.ts",
+    "./protocol.ts": "./src/protocol.ts"
   },
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
@@ -13,7 +18,9 @@
   },
   "dependencies": {
     "@gnomi/simulation": "0.0.0",
-    "playwright-core": "1.64.1",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
   }
 }

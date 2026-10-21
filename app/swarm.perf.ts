@@ -2,20 +2,16 @@
 // A synthetic run's first two rounds are written to a project log; the app opens it, then the rest streams in as live events
 // while the canvas is panned and zoomed. No model calls. `npm run build -w @gnomi/app && node app/swarm.perf.ts`.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { buildGraph } from '../engine/src/graph/index.ts';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import type { GnomiEvent } from '@gnomi/simulation/types.ts';
+import { collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-swarm-perf-'));
+const dir = scratch('swarm-perf');
 const projectDir = join(dir, 'swarm.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 
 const { config: synthetic, events } = syntheticRun();
 const store = openProject(projectDir);
@@ -28,17 +24,11 @@ for (const { seq, ts, ...event } of preloaded) store.append(event);
 store.close(); // left 'running': the app marks it interrupted on open, but with no end event it still reads as live
 const live = logged.slice(preloaded.length);
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Swarm perf timed out.'); process.exit(1); }, 180_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Swarm perf timed out.', 180_000);
 let passed = false;
 const page = await app.firstWindow();
-const errors: string[] = [];
-page.on('pageerror', (error) => errors.push(error.message));
-page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
+const errors = collectErrors(page, { console: true });
 try {
   page.setDefaultTimeout(30_000);
   // An occluded or unfocused window may throttle its frames; the measurement is of rendering, not of the desktop.

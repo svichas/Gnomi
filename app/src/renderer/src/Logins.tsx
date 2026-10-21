@@ -4,7 +4,7 @@ import { call, errorText } from './engine.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel } from './Recorder.tsx';
 import type { Recorder } from './Recorder.tsx';
-import { Button, Card, Field, inputClass, Note, when } from './ui.tsx';
+import { Button, Card, Field, inputClass, Note, OutcomeNote, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 
 function loginStatus(session: SessionInfo, checked: Outcome | 'checking' | undefined): { tone: string; label: string } {
@@ -103,7 +103,7 @@ export function Logins(props: {
         )}
 
         <RecordingPanel recorder={recorder} />
-        {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+        <OutcomeNote outcome={recorder.outcome} />
 
         {recorder.recording === null && (
           <div className="rounded-lg border border-dashed border-stone-300 p-3">

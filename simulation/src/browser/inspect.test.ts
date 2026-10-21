@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool } from '../seams.ts';
 import type { PageFlags } from '../types.ts';
 import { launchBrowserPool } from './pool.ts';
+import { listen, stop } from './server.fixture.ts';
 
 // Built at runtime so the source never holds anything that looks like a live key.
 const key = (prefix: string) => `${prefix}_${'live'}_${'x'.repeat(24)}`;
@@ -47,15 +47,13 @@ before(async () => {
     res.setHeader('content-type', 'text/html; charset=utf-8');
     res.end(pages[new URL(req.url!, 'http://x').pathname] ?? '<title>Page</title><h1>Page</h1>');
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  origin = await listen(server);
   pool = await launchBrowserPool();
 });
 
 after(async () => {
   await pool.close();
-  server.closeAllConnections();
-  server.close();
+  stop(server);
 });
 
 async function flagsAt(t: TestContext, path: string): Promise<PageFlags> {

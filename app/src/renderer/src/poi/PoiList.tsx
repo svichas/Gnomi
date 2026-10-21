@@ -6,7 +6,7 @@ import { Button, Check, Field, inputClass } from '../ui.tsx';
 import { Icon } from '../Icon.tsx';
 import { DesignPoiForm } from './DesignPoiForm.tsx';
 import { FigmaImportDialog, type FigmaDesign } from './FigmaImportDialog.tsx';
-import { draftOf, nextPoiId, POI_KINDS, poiOf, poiTitle, type PoiDraft, type PoiFormProps } from './index.ts';
+import { draftOf, move, nextPoiId, POI_KINDS, poiOf, poiTitle, type PoiDraft, type PoiFormProps } from './index.ts';
 import { TextPoiForm } from './TextPoiForm.tsx';
 import { WebPoiForm } from './WebPoiForm.tsx';
 
@@ -62,7 +62,7 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
   return (
     <li aria-label={title} className="poi-item" data-expanded={expanded}>
       <div className="poi-item-header">
-        <span className="poi-order" aria-label={`Step ${index + 1}`}>{index + 1}</span>
+        <span className="poi-order" role="img" aria-label={`Step ${index + 1}`}>{index + 1}</span>
         <h3>
           <button ref={toggle} type="button" className="poi-toggle" aria-label={`Edit ${title}`} aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
             <span className="poi-item-icon"><Icon name={FORMATS[draft.type].icon} size={18} /></span>
@@ -105,11 +105,6 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDr
   const heading = useId();
   // Apply async imports to the current sequence by id, even if another item was added or moved meanwhile.
   const update = (id: string, change: (draft: PoiDraft) => PoiDraft) => onChange((current) => current.map((draft) => draft.id === id ? change(draft) : draft));
-  const move = (index: number, by: number) => {
-    const next = [...pois];
-    [next[index], next[index + by]] = [next[index + by], next[index]];
-    onChange(() => next);
-  };
   const add = (draft: PoiDraft) => {
     setAdded(draft.id);
     setExpanded(draft.id);
@@ -130,7 +125,7 @@ export function PoiList(props: { pois: PoiDraft[]; onChange(update: (pois: PoiDr
       <ol className="poi-list" aria-label="Points of interest">
         {pois.map((draft, index) => <PoiEditor key={draft.id} draft={draft} index={index} count={pois.length} expanded={expanded === draft.id} focusName={added === draft.id}
           segments={segments} sessions={sessions} onToggle={() => setExpanded(expanded === draft.id ? null : draft.id)}
-          onChange={(change) => update(draft.id, change)} onMove={(by) => move(index, by)} onRemove={() => remove(index)} />)}
+          onChange={(change) => update(draft.id, change)} onMove={(by) => onChange(() => move(pois, index, by))} onRemove={() => remove(index)} />)}
       </ol>
       <div className="poi-add">
         <h3>{pois.length ? 'Add another point of interest' : 'What would you like to test?'}</h3>

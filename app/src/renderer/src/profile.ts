@@ -8,7 +8,9 @@ export const PROFILE_GROUPS: Record<ProfileGroup, string> = {
 export const ATTRIBUTE_TYPES: Record<ProfileAttribute['type'], string> = { text: 'Text', number: 'Number', choice: 'Choice', boolean: 'Yes / no', list: 'List of text' };
 export const NARRATIVE_FIELDS = new Set(['background', 'context_of_use', 'goal_interpretation', 'voice']);
 export const STALE_PROFILE_FIELDS = new Set([...NARRATIVE_FIELDS, 'job_title', 'industry']);
-const RESERVED_IDS = new Set([...getPersonaSchema().attributes.map((attribute) => attribute.id), 'id', 'segment_id', 'attributes', 'profile_signature', 'constructor', 'prototype', '__proto__']);
+/** The built-in attributes' ids; any other attribute is one the team added. */
+export const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
+const RESERVED_IDS = new Set([...DEFAULT_IDS, 'id', 'segment_id', 'attributes', 'profile_signature', 'constructor', 'prototype', '__proto__']);
 
 export function defaultRule(type: ProfileAttribute['type'], choices = ['Option A', 'Option B']): AttributeSamplingRule {
   if (type === 'number') return { kind: 'range', min: 1, max: 5, integer: true };

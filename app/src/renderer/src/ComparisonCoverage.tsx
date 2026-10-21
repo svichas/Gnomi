@@ -1,4 +1,5 @@
 import type { ComparisonOutcome, ComparisonReport } from '@gnomi/simulation/comparison/types.ts';
+import { pct } from './reportParts.tsx';
 
 export const ACCESS_LABELS = {
   public_site: 'Public-site evaluation',
@@ -22,6 +23,7 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
 }) {
   return <div className="space-y-4">
     <p className="text-sm text-stone-600">Completion uses completed, failed and abandoned valid attempts. Environment blocks, incomplete or invalid tasks and unattempted work are excluded and remain visible below.</p>
+    {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
     <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-label="Task coverage by target" tabIndex={0}>
       <table className="w-full min-w-160 text-left text-sm">
         <thead className="bg-stone-50 text-xs text-stone-600"><tr>
@@ -31,7 +33,7 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
         <tbody className="divide-y divide-stone-200">{comparison.coverage.map((row) => <tr key={JSON.stringify([row.target_id, row.scenario_id, row.task_id, row.segment_id, row.access_scope])}>
           <th scope="row" className="p-3 align-top font-normal"><strong className="font-medium">{targetName(row.target_id)}</strong><span className="mt-1 block text-xs text-stone-600">{scopeName(row)}<br />{ACCESS_LABELS[row.access_scope]}</span></th>
           <td className="p-3 align-top tabular-nums">{row.scheduled} / {row.attempted}</td>
-          <td className="p-3 align-top tabular-nums">{row.outcomes.completed} / {row.valid_attempts}<span className="block text-xs text-stone-600">{row.completion_rate === null ? 'Rate unavailable' : `${Math.round(row.completion_rate * 100)}% of valid attempts`}</span></td>
+          <td className="p-3 align-top tabular-nums">{row.outcomes.completed} / {row.valid_attempts}<span className="block text-xs text-stone-600">{row.completion_rate === null ? 'Rate unavailable' : `${pct(row.completion_rate)} of valid attempts`}</span></td>
           <td className="p-3 align-top"><dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">{outcomes.map((outcome) => <div key={outcome} className="contents"><dt>{OUTCOME_LABELS[outcome]}</dt><dd className="text-right tabular-nums">{row.outcomes[outcome]}</dd></div>)}</dl></td>
         </tr>)}</tbody>
       </table>

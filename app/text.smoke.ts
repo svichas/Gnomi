@@ -2,21 +2,17 @@
 // marked as buyers in the audience editor, then a scripted run (GNOMI_FAKE_LLM=1, no key, no cost) whose report quotes the text
 // and shows the buying survey.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { Segment } from '@gnomi/simulation/types.ts';
 import { gymAssets } from '../demo/GymSite/assets.ts';
+import { collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-text-'));
+const dir = scratch('text');
 const projectDir = join(dir, 'text.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const pricing = gymAssets({ defects: 'D28' }).copy.pricing;
 
 // Two segments of users, as every project before M5 has them; the smoke makes one of them buyers.
@@ -36,18 +32,13 @@ store.replacePersonas([
 ]);
 store.close();
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Text smoke timed out.'); process.exit(1); }, 180_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Text smoke timed out.', 180_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
 
   // A text POI from a .md file: the editor formats it, the form keeps it as a Markdown asset and shows it formatted.

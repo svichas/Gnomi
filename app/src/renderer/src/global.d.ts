@@ -18,11 +18,11 @@ interface Window {
     /** The engine asks Figma whether it accepts the saved token; main keeps the result. */
     testFigmaToken(): Promise<import('../../providers.ts').KeyTest>;
     /** Audiences saved for any project to start from, newest first. */
-    listAudiences(): Promise<import('../../audiences.ts').SavedAudience[]>;
+    listAudiences(): Promise<import('@gnomi/engine/audience/file.ts').SavedAudience[]>;
     /** Saving under a name already saved replaces that audience. */
-    saveAudience(name: string, audience: import('@gnomi/simulation/types.ts').Audience, schema: import('@gnomi/simulation/types.ts').PersonaSchema): Promise<import('../../audiences.ts').SavedAudience>;
+    saveAudience(name: string, audience: import('@gnomi/simulation/types.ts').Audience, schema: import('@gnomi/simulation/types.ts').PersonaSchema): Promise<import('@gnomi/engine/audience/file.ts').SavedAudience>;
     /** The saved audiences that remain. */
-    deleteAudience(id: string): Promise<import('../../audiences.ts').SavedAudience[]>;
+    deleteAudience(id: string): Promise<import('@gnomi/engine/audience/file.ts').SavedAudience[]>;
     listProjects(): Promise<import('../../projects.ts').ProjectCatalog>;
     /** Every project's saved runs, newest first. */
     listRuns(): Promise<import('../../projects.ts').WorkspaceRun[]>;

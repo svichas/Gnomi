@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ProjectConfig } from '../types.ts';
-import { draftComparison, effectiveComparisonPois, validateComparison } from './config.ts';
+import { admits, draftComparison, effectiveComparisonPois, inScenario, validateComparison } from './config.ts';
 
 export const comparisonProject = (): ProjectConfig => ({
   name: 'ATS comparison', description: 'Compare hiring tools', goal: 'Choose an ATS for a hiring team',
   role: null, audience: null, settings: DEFAULT_SETTINGS,
-  pois: ['Workable', 'Lever', 'Ashby', 'Teamtailor'].map((name, i) => ({
+  pois: ['Gym ATS', 'Rival ATS', 'Harbor ATS', 'Summit ATS'].map((name, i) => ({
     id: `poi-${i}`, name, type: 'web', start_url: `https://vendor${i}.example/`, mode: 'observe_only',
     segments: null, allowed_hosts: [], production_domains: [], reset_hook_url: null,
   })),
@@ -100,4 +100,13 @@ test('malformed URLs return issues and session roles respect the shared storage 
   assert.ok(validateComparison(project).some((issue) => /URL/.test(issue)));
   project.comparison.targets[0].session_role = `a${'b'.repeat(40)}`;
   assert.ok(validateComparison(project).some((issue) => /session_role/.test(issue)));
+});
+
+test('a scenario or source with a segment list takes only those segments, never the built-in persona', () => {
+  const study = draftComparison(comparisonProject());
+  assert.equal(inScenario(study, 'scenario-shared', null), true);
+  assert.equal(inScenario(study, 'scenario-missing', 'smb'), false);
+  study.scenarios[0].segment_ids = ['smb'];
+  assert.deepEqual(['smb', 'enterprise', null].map((segment) => inScenario(study, 'scenario-shared', segment)), [true, false, false]);
+  assert.deepEqual([null, ['smb']].map((segments) => [admits({ segments }, 'smb'), admits({ segments }, null)]), [[true, true], [true, false]]);
 });

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
-import { socialParts, socialSchema, socialSystemPrompt, stepSchema, surveySchema } from '../agent/prompt.ts';
+import { stepSchema } from '../agent/prompt.ts';
+import { socialParts, socialSchema, socialSystemPrompt } from '../agent/social.ts';
+import { surveySchema } from '../agent/survey.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { LlmAttempt, LlmRequest, Recorder } from '../seams.ts';

@@ -1,6 +1,9 @@
-import type { Audience, Persona, Segment } from '@gnomi/simulation/types.ts';
+import { defaultAudience } from '@gnomi/engine/audience/defaults.ts';
+import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { Audience, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { apportion as splitByShare } from '@gnomi/simulation/audience/sample.ts';
+import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 
 // The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
 
@@ -65,18 +68,9 @@ export function blankSegment(id: string, name: string, share: number): Segment {
   };
 }
 
-/** The "start from one segment" audience: everyone in one segment, with the shape of the product's own description. */
-export function blankAudience(description: string): Audience {
-  // Company size and accessibility keep the existing defaults until the profile schema editor.
-  return {
-    seed: newSeed(),
-    persona_count: 50,
-    segments: [{ ...blankSegment('seg-1', 'Everyone', 100), description }],
-    company_size: [20, 1000],
-    languages: { en: 1 },
-    countries: { US: 100 },
-    accessibility: { none: 0.92, low_vision: 0.03, colour_blind: 0.03, screen_reader: 0.01, motor: 0.01 },
-  };
+/** The "start from one segment" audience: the engine's default (engine/src/audience/defaults.ts) with a fresh seed. */
+export function blankAudience(project: Pick<ProjectConfig, 'name' | 'role' | 'goal'>): Audience {
+  return { ...defaultAudience(project), seed: newSeed() };
 }
 
 const withShares = (segments: Segment[], shares: number[]) => segments.map((segment, i) => ({ ...segment, share: shares[i] }));
@@ -174,4 +168,17 @@ export function addedByHand(persona: Persona, audienceSeed: number | null): bool
   if (persona.segment_id === null || audienceSeed === null) return false;
   const slot = Number(persona.id.slice(persona.id.lastIndexOf('-') + 1)) - 1;
   return persona.seed % 2 ** 32 === fnv1a(`${audienceSeed}/${persona.segment_id}/${slot}/added`);
+}
+
+/** A segment's colour by its place in the audience: the brand has five (assets/brand/brand-tokens.css), used in turn. */
+export const segmentVar = (index: number) => `var(--gnomi-segment-${index % 5 + 1})`;
+
+/** The persona count the written personas were made for: the last generation's setting, or the saved audience's before that was recorded. */
+export const generatedCount = (info: ProjectInfo | null) => info?.generated_persona_count ?? info?.project?.audience?.persona_count;
+
+/** The personas whose writer inputs changed since they were written, so their prose no longer fits; none without a project. */
+export function staleProfiles(personas: Persona[], project: ProjectConfig | null): Set<string> {
+  return new Set(project ? personas.filter((persona) => {
+    try { return !personaProfileIsCurrent(persona, project); } catch { return true; }
+  }).map((persona) => persona.id) : []);
 }

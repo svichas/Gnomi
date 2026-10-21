@@ -1,34 +1,21 @@
 // POI setup in real Electron: draft preservation, ordering, keyboard use, and responsive layout.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
-import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-poi-'));
+const dir = scratch('poi');
 const projectDir = join(dir, 'project.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const project = syntheticRun({ personas: 3, pois: 1, rounds: 1, seed: 4 }).config.project;
 project.name = 'Hiring app';
-const store = openProject(projectDir);
-store.saveProject(project);
-store.close();
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('POI smoke timed out.'); process.exit(1); }, 90_000).unref();
+seedProject(projectDir, project);
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('POI smoke timed out.', 90_000);
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  const errors = collectErrors(page, { console: true });
   await page.getByRole('heading', { name: 'Points of interest', exact: true }).waitFor();
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: join(shots, 'poi-initial.png'), fullPage: true });
@@ -62,7 +49,7 @@ try {
   await page.getByText('Project saved.', { exact: true }).waitFor();
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 1000 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `POI overflow at ${width}`);
+    await assertFits(page, `POI overflow at ${width}`);
     await page.screenshot({ path: join(shots, `poi-setup-${width}.png`), fullPage: true });
     await section.screenshot({ path: join(shots, `poi-section-${width}.png`) });
   }

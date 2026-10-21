@@ -1,8 +1,5 @@
 import type { Report, ReportBuyers, ReportLike } from '@gnomi/simulation/types.ts';
-
-const pct = (x: number) => `${Math.round(x * 100)}%`;
-const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
-const th = 'px-3 py-2 text-left text-xs font-medium text-stone-500';
+import { heading, pct, signed, Th } from './reportParts.tsx';
 
 function Top({ title, items }: { title: string; items: ReportLike[] }) {
   return (
@@ -30,11 +27,11 @@ function Rows({ rows }: { rows: ReportBuyers[] }) {
         <table className="w-full text-sm">
           <thead className="bg-stone-50">
             <tr>
-              <th scope="col" className={th}>Segment</th>
-              <th scope="col" className={th}>Surveyed</th>
-              <th scope="col" className={th}>Mean sentiment, −2 to +2</th>
-              <th scope="col" className={th}>Would buy or recommend</th>
-              <th scope="col" className={th}>Price: low / fair / high / unclear</th>
+              <Th>Segment</Th>
+              <Th>Surveyed</Th>
+              <Th>Mean sentiment, −2 to +2</Th>
+              <Th>Would buy or recommend</Th>
+              <Th>Price: low / fair / high / unclear</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
@@ -65,7 +62,7 @@ export function BuyerSurvey({ rows, pois }: { rows: ReportBuyers[]; pois: Report
   const shown = pois.filter((poi) => rows.some((row) => row.poi_id === poi.id));
   return (
     <section aria-labelledby="buyers-title" className="space-y-3">
-      <h3 id="buyers-title" className="text-base font-semibold text-stone-900">
+      <h3 id="buyers-title" className={heading}>
         Buying survey
       </h3>
       {shown.map((poi) => (

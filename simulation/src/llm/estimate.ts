@@ -4,6 +4,7 @@ import { poisFor } from '../poi/pois.ts';
 import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
+import { admits, inScenario } from '../comparison/config.ts';
 import { costUsd, isPriced } from './prices.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
@@ -23,6 +24,13 @@ const REPORT_CALLS: { role: 'judge' | 'author'; input: [number, number]; output:
   { role: 'author', input: [2_000, 20_000], output: [2_000, 8_000] },
 ];
 const REPORT_MINUTES = [0.2, 1] as const;
+
+/** One uncached call at `at`'s prices; nothing for a model with no known price, which the estimate lists as unpriced. */
+const price = (model: ModelChoice, input: number, output: number, at: Date) =>
+  isPriced(model) ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
+
+// Personas run side by side, but never more of them than there are.
+const parallelism = (settings: RunSettings, personas: Persona[]) => Math.max(1, Math.min(settings.concurrency, personas.length));
 
 /**
  * The pre-run estimate (tech.md §10.4–10.5): calls, a cost range and a time range for this population and routing. Pure.
@@ -56,8 +64,7 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
       ? social * costUsd(socialiser, { input_tokens: hit ? 0 : SOCIAL_PROMPT_TOKENS, output_tokens: OUTPUT_TOKENS, cache_read_tokens: SOCIAL_PROMPT_TOKENS * hit, cache_write_tokens: hit ? SOCIAL_PROMPT_TOKENS * (1 - hit) : 0 }, at)
       : 0;
 
-  // Personas run side by side, but never more of them than there are.
-  const parallel = Math.max(1, Math.min(settings.concurrency, personas.length));
+  const parallel = parallelism(settings, personas);
   const minutes = (steps: number, seconds: number) => (steps ? (steps * seconds) / parallel / 60 + OVERHEAD_MIN : 0);
 
   const report = estimateReport({ personas, settings, pois: pois?.length, at });
@@ -72,28 +79,25 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
 /** Comparison episodes collect evidence before assessment and optional verification; budget for both passes. */
 function estimateComparison({ personas, settings, pois, study, at }: { personas: Persona[]; settings: RunSettings; pois?: Poi[]; study: ComparisonStudy; at: Date }): RunEstimate {
   const tasks = personas.flatMap((persona) => study.tasks.flatMap((task) => {
-    const scenario = study.scenarios.find((candidate) => candidate.id === task.scenario_id);
-    if (!scenario || (scenario.segment_ids !== null && !scenario.segment_ids.includes(persona.segment_id ?? ''))) return [];
+    if (!inScenario(study, task.scenario_id, persona.segment_id)) return [];
     return task.entries.filter((entry) => {
       const source = pois?.find((poi) => poi.id === entry.poi_id);
-      return !pois || (source && (source.segments === null || source.segments.includes(persona.segment_id ?? '')));
+      return !pois || (!!source && admits(source, persona.segment_id));
     }).map(() => task);
   }));
   const episodes = tasks.length;
   if (!episodes) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
   const steps = tasks.reduce((sum, task) => sum + task.max_steps, 0);
-  const price = (model: ModelChoice, input: number, output: number) => isPriced(model)
-    ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
   const navigator = settings.routing.navigator;
   const judge = settings.routing.judge;
   const verifier = settings.routing[study.execution.verifier ?? 'judge'];
   const prompt = PROMPT_TOKENS + (settings.screenshots ? SCREENSHOT_TOKENS : 0);
   const lowSteps = steps * STEP_SHARE[0];
   const analyses = episodes * 2;
-  const parallel = Math.max(1, Math.min(settings.concurrency, personas.length));
+  const parallel = parallelism(settings, personas);
   return {
     calls: Math.round((lowSteps + steps) / 2) + analyses,
-    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS) + episodes * (price(judge, 4_000, 1_000) + price(verifier, 4_000, 1_000)), steps * price(navigator, prompt, OUTPUT_TOKENS) + episodes * (price(judge, 60_000, 6_000) + price(verifier, 60_000, 6_000))],
+    cost_usd: [lowSteps * price(navigator, prompt, OUTPUT_TOKENS, at) + episodes * (price(judge, 4_000, 1_000, at) + price(verifier, 4_000, 1_000, at)), steps * price(navigator, prompt, OUTPUT_TOKENS, at) + episodes * (price(judge, 60_000, 6_000, at) + price(verifier, 60_000, 6_000, at))],
     minutes: [(lowSteps * 2 + analyses * 5) / parallel / 60 + OVERHEAD_MIN, (steps * 6 + analyses * 30) / parallel / 60 + OVERHEAD_MIN],
     unpriced: [...new Set([navigator, judge, verifier].filter((model) => !isPriced(model)).map((model) => model.model))],
   };
@@ -102,12 +106,10 @@ function estimateComparison({ personas, settings, pois, study, at }: { personas:
 /** The judge and author calls after the episodes, uncached: one each per POI, none without personas. */
 export function estimateReport({ personas, settings, pois = 1, at = new Date() }: { personas: Persona[]; settings: RunSettings; pois?: number; at?: Date }): RunEstimate {
   if (personas.length === 0 || pois === 0) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
-  const price = (model: ModelChoice, input: number, output: number) =>
-    isPriced(model) ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
   const cost: [number, number] = [0, 0];
   for (const { role, input, output } of REPORT_CALLS) {
-    cost[0] += pois * price(settings.routing[role], input[0], output[0]);
-    cost[1] += pois * price(settings.routing[role], input[1], output[1]);
+    cost[0] += pois * price(settings.routing[role], input[0], output[0], at);
+    cost[1] += pois * price(settings.routing[role], input[1], output[1], at);
   }
   const unpriced = REPORT_CALLS.map(({ role }) => settings.routing[role]).filter((m) => !isPriced(m)).map((m) => m.model);
   return { calls: pois * REPORT_CALLS.length, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel

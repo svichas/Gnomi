@@ -1,5 +1,5 @@
 import type { EventOf, GnomiEvent, ReportBuyers, ReportLike } from '../types.ts';
-import { normaliseText } from './friction.ts';
+import { latestSurveys, normaliseText } from './friction.ts';
 import type { Context } from './themes.ts';
 
 // The buying survey in the report (tech.md §7, agent/buyer.ts): per POI and segment, the latest answer of each buyer. A pure fold.
@@ -24,9 +24,7 @@ function tally(answers: Survey[], pick: (s: Survey) => string[]): ReportLike[] {
 
 /** One row per POI and segment with a buyer's answer, in the project's and the audience's order. */
 export function buyerResults(events: GnomiEvent[], pois: { id: string }[], ctx: Pick<Context, 'personas' | 'segments'>): ReportBuyers[] {
-  const latest = new Map<string, Survey>();
-  for (const e of events) if (e.type === 'persona.survey' && e.persona_id && e.payload.buyer) latest.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e);
-  const answers = [...latest.values()];
+  const answers = latestSurveys(events, (e) => !!e.payload.buyer);
   return pois.flatMap((poi) => ctx.segments.flatMap((segment): ReportBuyers[] => {
     const own = answers.filter((s) => s.payload.poi_id === poi.id && ctx.personas.get(s.persona_id ?? '')?.segment_id === segment.id);
     if (own.length === 0) return [];

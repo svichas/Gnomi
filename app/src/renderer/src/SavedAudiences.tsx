@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { SavedAudience } from '../../audiences.ts';
+import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
 import { errorText } from './engine.ts';
 import { Icon } from './Icon.tsx';
-import { ProjectDialog } from './Projects.tsx';
-import { Button, Field, inputClass, Note, when } from './ui.tsx';
+import { Button, Dialog, Field, inputClass, Note, when } from './ui.tsx';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -32,13 +31,13 @@ export function SavedAudienceList({ onUse }: { onUse(saved: SavedAudience): void
         ))}
       </ul>
       {deleting && (
-        <ProjectDialog title="Delete saved audience?" onCancel={() => setDeleting(null)}>
+        <Dialog title="Delete saved audience?" onCancel={() => setDeleting(null)}>
           <p className="text-sm text-stone-700">Remove <strong>{deleting.name}</strong> from your saved audiences? Projects that started from it keep their own copy.</p>
           <div className="flex flex-wrap gap-3">
             <Button onClick={() => remove(deleting.id)} variant="primary">Delete</Button>
             <Button autoFocus onClick={() => setDeleting(null)}>Cancel</Button>
           </div>
-        </ProjectDialog>
+        </Dialog>
       )}
     </section>
   );
@@ -57,7 +56,7 @@ export function SaveToLibrary({ defaultName, disabled, onSave }: { defaultName: 
     <>
       <Button onClick={open} disabled={disabled} small><Icon name="folder" size={14} />Save to library</Button>
       {name !== null && (
-        <ProjectDialog title="Save to your audience library" onCancel={() => setName(null)}>
+        <Dialog title="Save to your audience library" onCancel={() => setName(null)}>
           <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setName(null); onSave(name.trim()); }}>
             <Field label="Audience name" hint={replacing ? 'An audience with this name is already saved. Saving replaces it.' : undefined}>
               <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80} className={inputClass} />
@@ -68,7 +67,7 @@ export function SaveToLibrary({ defaultName, disabled, onSave }: { defaultName: 
               <Button onClick={() => setName(null)}>Cancel</Button>
             </div>
           </form>
-        </ProjectDialog>
+        </Dialog>
       )}
     </>
   );

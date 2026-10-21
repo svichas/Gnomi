@@ -4,7 +4,7 @@ M5 spike from [roadmap.md](roadmap.md#m5--more-points-of-interest). Question: sh
 
 Context: [tech.md §7](tech.md#7-poi-ingestion-and-interaction) ("Figma frames" and "Figma prototype, simulated" rows) and [§4.16](tech.md#416-design-tool-ingestion). Gnomi never automates Figma's own prototype viewer: its terms and its lack of an accessibility tree rule that out, and nothing here changes that.
 
-Written 2026-10-16. The parser in [engine/src/figma/spike/](../engine/src/figma/spike/flow.ts) was written against the documented schema and a hand-built fixture. **It has never seen a real Figma file**: no token was used and no network call was made beyond reading documentation.
+Written 2026-10-16. The parser (removed; see `git show d3696fa:engine/src/figma/spike/flow.ts`) was written against the documented schema and a hand-built fixture. **It has never seen a real Figma file**: no token was used and no network call was made beyond reading documentation.
 
 ## 1. Recommendation
 
@@ -139,7 +139,7 @@ Anything in the "No" rows that appears on a flow's reachable path is counted in 
 
 ## 4. The rebuilt flow: data model and parser
 
-[engine/src/figma/spike/flow.ts](../engine/src/figma/spike/flow.ts) turns the JSON of `GET /v1/files/:key` into one `Prototype` per page that has a flow starting point. Only screens reachable from a starting point are kept; hotspots are relative to their screen; hidden layers are skipped.
+`engine/src/figma/spike/flow.ts` (removed; see `git show d3696fa:engine/src/figma/spike/flow.ts`) turns the JSON of `GET /v1/files/:key` into one `Prototype` per page that has a flow starting point. Only screens reachable from a starting point are kept; hotspots are relative to their screen; hidden layers are skipped.
 
 ```ts
 type Box = [x, y, width, height]                       // frame pixels, the tuple the engine already uses for targets
@@ -155,7 +155,7 @@ type Action    = { kind: 'navigate' | 'swap' | 'overlay' | 'scroll_to', to, tran
 
 Overlays are not a flag on a screen: whichever screen an `overlay` action targets is shown as an overlay *at that moment*, which the runtime knows from its stack. A frame's own interactions (a timer, say) become a hotspot covering the whole screen.
 
-The test builds the fixture in [fixture.json](../engine/src/figma/spike/fixture.json) (a five-screen checkout flow plus an overlay, a scrolling screen, a conditional, a component-state toggle, a dangling destination, an unreachable frame and a page with no flow) and checks reachability, relative boxes, every action kind, scroll and fixed layers, the unsupported report, and that no other source file imports the spike. The parser's known shortcuts are marked `shortcut:` in the code.
+The test (removed; see `git show d3696fa:engine/src/figma/spike/flow.test.ts`) builds the fixture in `fixture.json` (a five-screen checkout flow plus an overlay, a scrolling screen, a conditional, a component-state toggle, a dangling destination, an unreachable frame and a page with no flow) and checks reachability, relative boxes, every action kind, scroll and fixed layers, the unsupported report, and that no other source file imports the spike. The parser's known shortcuts are marked `shortcut:` in the code.
 
 ### Runtime sketch (not built)
 

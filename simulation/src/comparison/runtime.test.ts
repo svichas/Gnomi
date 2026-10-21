@@ -28,7 +28,6 @@ import { DEFAULT_SETTINGS } from '../settings.ts';
 import { draftComparison } from './config.ts';
 import { citationRejection, comparisonSession, createComparisonRuntime } from './runtime.ts';
 import type { GnomiEvent, NewEvent, PageSnapshot, ProjectConfig, RunConfig } from '../types.ts';
-import type { ComparisonStudy } from './types.ts';
 import type { LlmGateway, LlmRequest, PageDriver } from '../seams.ts';
 import { comparisonAssessmentSchema, type AssessedEpisode } from './prompts.ts';
 import { buildComparison } from '../report/comparison.ts';
@@ -50,7 +49,7 @@ function fixture(options: { sourceText?: string; reject?: boolean; invalid?: boo
   const llm: LlmGateway = { async call(req) {
     requests.push(req);
     if (req.role === 'navigator' && options.invalidNavigator) throw new InvalidOutputError('Invalid output after retry');
-    let output;
+    let output: unknown;
     if (req.purpose === 'comparison_assessment') {
       if (options.judgeFailure) throw new Error('Assessor is unavailable');
       const input = JSON.parse(req.user.find((p) => p.type === 'text')!.text);

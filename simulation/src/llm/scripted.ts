@@ -1,7 +1,7 @@
 import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import type { LlmAttempt, LlmGateway, LlmRequest, LlmResult, Recorder, Responder } from '../seams.ts';
 import type { LlmRole } from '../types.ts';
-import { InvalidOutputError, retryParts, transcriptRequest } from './gateway.ts';
+import { InvalidOutputError, recordAttempt, retryParts, transcriptRequest } from './gateway.ts';
 
 /** One entry per model call: the raw output object, or a function of the request that returns it. */
 export type Script = Array<object | ((req: LlmRequest<unknown>) => unknown)>;
@@ -90,7 +90,7 @@ export const DEMO_SURVEY = {
  * mismatch so the report has frame evidence to show. Every text says plainly that no model ran.
  */
 export const DEMO_DESIGNER: Responder = (req) => {
-  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const text = requestText(req);
   const screen = Number(/^Screen (\d+) of/m.exec(text)?.[1] ?? 1);
   const quiet = {
     thought: 'Scripted demo, no model is running, so nobody looked at this screen.',
@@ -133,7 +133,7 @@ export const DEMO_NAVIGATOR: Responder = (() => {
  * the top post of the feed, and sometimes posts. Every text says plainly that no model wrote it, and opinions never move.
  */
 export const DEMO_SOCIALISER: Responder = (req) => {
-  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const text = requestText(req);
   const feed = [...text.matchAll(/^\[post ([^\]\s]+)\]/gm)].map((m) => m[1]); // the feed lines of socialParts
   const about = /about_poi_id: "([^"]+)"/.exec(req.system)?.[1] ?? null;
   const next = mulberry32(fnv1a(`social/${req.run_id}/${req.persona_id}/${req.round}`));
@@ -144,6 +144,11 @@ export const DEMO_SOCIALISER: Responder = (req) => {
   if (u < 0.35) return { ...quiet, action: 'post', text: 'Scripted demo post: no model wrote this, so it says nothing about the product.', about_poi_id: about };
   return quiet;
 };
+
+/** The request's text parts, one per line, for responders that read the prompt. */
+export function requestText(req: LlmRequest<unknown>): string {
+  return req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+}
 
 /** The JSON object a report-model request carries as its one text part (report/models.ts). */
 function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
@@ -192,7 +197,7 @@ export const DEMO_AUTHOR: Responder = (req) => {
 
 /** The ref of the first `- role "name" … [ref=eN]` line in the request's page snapshot, for scripts that walk a known site. */
 export function findRef(req: LlmRequest<unknown>, role: string, name: string): string | null {
-  const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
+  const text = requestText(req);
   const quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`- ${role} "${quoted}".*?\\[ref=([^\\]\\s]+)\\]`).exec(text)?.[1] ?? null;
 }
@@ -234,20 +239,7 @@ export function createScriptedGateway(script: Script | Partial<Record<LlmRole, R
           },
           transcript: { request: transcriptRequest(req, user), response: { output, error } },
         };
-        if (req.run_id !== null) {
-          record(
-            {
-              run_id: req.run_id,
-              round: req.round,
-              persona_id: req.persona_id,
-              poi_id: req.poi_id ?? null,
-              type: 'llm.call',
-              payload: attempt.payload,
-            },
-            attempt.transcript,
-          );
-        }
-        req.onAttempt?.(attempt);
+        recordAttempt(req, attempt, record);
         if (parsed.success) return { object: parsed.data, cost_usd: spent };
         req.signal?.throwIfAborted();
         if (attemptNo === 2) throw new InvalidOutputError(`Invalid output twice: ${error}`);

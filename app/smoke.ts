@@ -2,13 +2,10 @@
 // It drives the real window with Playwright's Electron support and the scripted persona (GNOMI_FAKE_LLM=1),
 // so it needs no key and costs nothing. Screenshots land in app/test-results/.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import type { Locator, Page } from 'playwright-core';
 import { feedThreads, socialMemory } from '../engine/src/graph/feed.ts';
 import { buildGraph, graphAtRound } from '../engine/src/graph/index.ts';
@@ -17,18 +14,13 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { GnomiEvent } from '@gnomi/simulation/types.ts';
 import { startGym } from '../demo/GymSite/server.ts';
+import { deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const appDir = import.meta.dirname;
-const shots = join(appDir, 'test-results');
-mkdirSync(shots, { recursive: true });
-const tmp = mkdtempSync(join(tmpdir(), 'gnomi-smoke-'));
+const tmp = scratch('smoke');
 const userData = join(tmp, 'user-data');
 
 // A stuck stage must not hang the run: stop everything after ten minutes. Playwright takes the launched app down with the process.
-setTimeout(() => {
-  console.error('The smoke test did not finish in ten minutes.');
-  process.exit(1);
-}, 600_000).unref();
+deadline('The smoke test did not finish in ten minutes.', 600_000);
 
 let failures = 0;
 async function stage(name: string, body: () => Promise<void>) {
@@ -134,7 +126,7 @@ async function openReview(page: Page) {
 }
 
 /** Opens the Review step, starts the run from its bar and waits until the run's page is showing. */
-async function startRun(page: Page, runId: string) {
+async function startRun(page: Page) {
   const review = await openReview(page);
   await review.getByRole('button', { name: 'Start run', exact: true }).click();
   const heading = page.getByRole('region', { name: 'Run status' });
@@ -142,12 +134,7 @@ async function startRun(page: Page, runId: string) {
   assert.ok(await heading.isVisible(), `the run did not start: ${await review.getByRole('alert').allInnerTexts()}`);
 }
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  // The mock keychain keeps macOS from asking for Keychain access while the key storage is exercised.
-  args: ['--use-mock-keychain', `--user-data-dir=${userData}`, join(appDir, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: join(tmp, 'smoke.gnomi') },
-});
+const app = await launchApp(userData, { GNOMI_PROJECT_DIR: join(tmp, 'smoke.gnomi') });
 let gym: { close(): Promise<void> } | undefined;
 let ran = false;
 try {
@@ -187,7 +174,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listProjects', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
@@ -222,7 +209,7 @@ try {
     await page.getByLabel('Start page URL').fill(started.url);
     await page.getByLabel('Goal', { exact: true }).fill('Post a job for a backend engineer');
     await page.screenshot({ path: join(shots, 'project-filled.png') });
-    await startRun(page, 'r-0001');
+    await startRun(page);
     await openReport(page, { timeout: 180_000 });
     await expectReport(page);
     await page.screenshot({ path: join(shots, 'report.png'), fullPage: true });
@@ -273,7 +260,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
-      await startRun(page, 'r-0002');
+      await startRun(page);
       await openReport(page, { timeout: 180_000 });
       assert.match(await methodsText(page), /127\.0\.0\.1: \d+ requests?/);
       await page.screenshot({ path: join(shots, 'report-methods.png'), fullPage: true });
@@ -293,7 +280,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
-      await startRun(page, 'r-0003');
+      await startRun(page);
       const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
       await banner.waitFor({ timeout: 60_000 });
       assert.match(await banner.innerText(), /hit a CAPTCHA \(recaptcha\)\. Gnomi never solves these/);
@@ -313,7 +300,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/billing`);
-      await startRun(page, 'r-0004');
+      await startRun(page);
       await openReport(page, { timeout: 60_000 });
       const feed = await showActivity(page);
       await feed.scrollIntoViewIfNeeded(); // the feed draws only the rows on screen
@@ -367,7 +354,11 @@ try {
     assert.deepEqual(await options(), ['Anthropic', 'DeepSeek']);
     await navigator.selectOption('deepseek');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.deepseek.navigator.model);
-    await settings.getByText('DeepSeek reads text only, so the navigator will not see the screenshots.').waitFor();
+    // DeepSeek's default navigator model sees screenshots; V4 Pro reads text only, and the page says so.
+    const textOnly = settings.getByText('This model reads text only, so the navigator will not see the screenshots.');
+    assert.equal(await textOnly.count(), 0);
+    await settings.getByLabel('Navigator model').selectOption('deepseek-v4-pro');
+    await textOnly.waitFor();
     await settings.getByRole('button', { name: 'Remove DeepSeek' }).click();
     await page.waitForFunction(() => document.querySelector<HTMLSelectElement>('[aria-label="Navigator provider"]')?.value === 'anthropic');
     assert.equal(await settings.getByLabel('Navigator model').inputValue(), PROVIDER_DEFAULTS.anthropic.navigator.model);
@@ -450,7 +441,6 @@ try {
     await audience.getByLabel('Segment name').nth(0).fill('Recruiters');
     await audience.getByLabel('Segment name').nth(1).fill('Hiring managers');
     await audience.getByLabel('Number of personas', { exact: true }).fill('6');
-    await audience.getByRole('button', { name: 'Remove country United States' }).click();
     await audience.getByLabel('Add country').selectOption('DE');
     await audience.getByLabel('Employers for Recruiters').fill('Example GmbH');
     await audience.getByLabel('Employers for Hiring managers').fill('Beispiel AG');
@@ -531,7 +521,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(site.url);
-      await startRun(page, 'r-0005');
+      await startRun(page);
       await openReport(page, { timeout: 300_000 });
       await unfoldSection(page, 'audience-results-title');
       const segments = await page.getByRole('region', { name: 'Results by segment' }).innerText();
@@ -619,7 +609,7 @@ try {
     try {
       await tab('Project').click();
       await page.getByLabel('Start page URL').fill(`${site.url}/candidates`);
-      await startRun(page, 'r-0006');
+      await startRun(page);
       const banner = page.getByRole('alert', { name: 'Personas are waiting for you' });
       const status = page.getByRole('region', { name: 'Run status' });
       await banner.waitFor({ timeout: 120_000 });

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import type { GnomiEvent, RunConfig, RunRow } from '@gnomi/simulation/types.ts';
 import { runSetup } from './activity.ts';
 import { runProgress } from './runProgress.ts';
-import { missingUsageText, recordedCost } from './cost.ts';
+import { recordedCost } from './cost.ts';
+import { missingUsageText } from '@gnomi/simulation/report/markdown.ts';
 import { Button, usd } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 

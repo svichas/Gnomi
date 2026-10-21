@@ -1,4 +1,4 @@
-import { assetPlaces, placeName, withPois, type SavedProject } from '../poi/pois.ts';
+import { assetPlaces, placeName, runPois } from '../poi/pois.ts';
 import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, SignalKind, StepEvidence, Trust } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
@@ -58,17 +58,11 @@ export interface Group {
 // Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
 const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;
 
-const poisOf = (events: GnomiEvent[]) => {
-  const started = events.find((e) => e.type === 'run.started');
-  const project = (started?.payload.config as { project?: SavedProject } | undefined)?.project;
-  return project ? withPois(project).pois : [];
-};
-
 /** The readable names of the run's text and design files (poi/pois.ts), from its frozen project. */
-export const placesOf = (events: GnomiEvent[]): Map<string, string> => assetPlaces(poisOf(events));
+export const placesOf = (events: GnomiEvent[]): Map<string, string> => assetPlaces(runPois(events));
 
 /** Each POI's name by its id, from the run's frozen project. */
-export const poiNamesOf = (events: GnomiEvent[]): Map<string, string> => new Map(poisOf(events).map((poi) => [poi.id, poi.name]));
+export const poiNamesOf = (events: GnomiEvent[]): Map<string, string> => new Map(runPois(events).map((poi) => [poi.id, poi.name]));
 
 /**
  * host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. A text's
@@ -238,6 +232,13 @@ export interface LikeGroup {
   poi_id: string;
   where: string | null;
   members: Like[];
+}
+
+/** The latest survey `keep` accepts of each persona on each POI, in the order the pairs first answered. */
+export function latestSurveys(events: GnomiEvent[], keep: (e: EventOf<'persona.survey'>) => boolean): EventOf<'persona.survey'>[] {
+  const latest = new Map<string, EventOf<'persona.survey'>>();
+  for (const e of events) if (e.type === 'persona.survey' && e.persona_id && keep(e)) latest.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e);
+  return [...latest.values()];
 }
 
 /** Every survey like, grouped like survey frictions: by the part of the product it names, else by its words. */

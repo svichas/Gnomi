@@ -4,7 +4,7 @@ import { MAX_ROUNDS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/se
 import type { LlmRole, ModelChoice, ProjectConfig, ProviderId, RunSettings } from '@gnomi/simulation/types.ts';
 import { configuredProviders, egressList, PROVIDER_LABELS, routeOptions, routeProblem } from '../../providers.ts';
 import type { KeyTest, ProviderList } from '../../providers.ts';
-import { problemFor, ROLES } from './form.ts';
+import { problemFor, ROLE_TEXT, ROLES } from './form.ts';
 import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
@@ -14,14 +14,6 @@ import './audience-settings.css';
 const PROVIDER_NOTES: Partial<Record<ProviderId | 'figma', string>> = {
   deepseek: 'Its servers are in China. Its Flash model sees screenshots, V4 Pro reads text only, and it has no strict answer format: Gnomi checks every answer and asks once more when one does not fit.',
   openai_compatible: 'Any server that speaks the OpenAI API, such as Ollama or LM Studio. Saved with this project.',
-};
-
-export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boolean }> = {
-  navigator: { label: 'Navigator', hint: 'Drives the browser, step by step.', used: true },
-  persona_writer: { label: 'Persona writer', hint: 'Proposes segments and writes the personas.', used: true },
-  socialiser: { label: 'Socialiser', hint: 'Posts and replies in the swarm.', used: true },
-  judge: { label: 'Judge', hint: 'Groups and rates the findings.', used: false },
-  author: { label: 'Author', hint: 'Writes the report text.', used: false },
 };
 
 function TestResult({ test }: { test: KeyTest | null }) {
@@ -178,60 +170,36 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     return typeof saved === 'string' ? { ok: false, text: problemFor(saved, 'settings') } : null;
   }
 
-  /** Whether the provider was added, so the form can drop what was typed. */
-  async function add(provider: ProviderId, value: string): Promise<boolean> {
+  /** Whether the provider or the Figma token was added, so the form can drop what was typed. */
+  async function add(provider: ProviderId | 'figma', value: string): Promise<boolean> {
     let added = false;
     await changing.run(async () => {
       if (provider === 'openai_compatible') {
         added = true; // in the draft even when the project cannot be saved yet
         return saveLocal(value.trim());
       }
-      const entry = await window.gnomi.saveKey(provider, value);
+      const entry = await (provider === 'figma' ? window.gnomi.saveFigmaToken(value) : window.gnomi.saveKey(provider, value));
       added = true;
       await reloadProviders();
-      return entry.remembered ? null : { ok: true, text: 'Key accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
+      return entry.remembered ? null : { ok: true, text: `${provider === 'figma' ? 'Token' : 'Key'} accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.` };
     });
     return added;
   }
 
-  const remove = (provider: ProviderId) =>
+  const remove = (provider: ProviderId | 'figma') =>
     changing.run(async () => {
       if (provider === 'openai_compatible') return saveLocal(null);
-      await window.gnomi.clearKey(provider);
+      await (provider === 'figma' ? window.gnomi.clearFigmaToken() : window.gnomi.clearKey(provider));
       await reloadProviders();
       return null;
     });
 
-  async function addFigma(token: string): Promise<boolean> {
-    let added = false;
-    await changing.run(async () => {
-      const entry = await window.gnomi.saveFigmaToken(token);
-      added = true;
-      await reloadProviders();
-      return entry.remembered ? null : { ok: true, text: 'Token accepted for this session only. This computer has no secure place to keep it, so it is forgotten when you quit.' };
-    });
-    return added;
-  }
-
-  const removeFigma = () =>
-    changing.run(async () => {
-      await window.gnomi.clearFigmaToken();
-      await reloadProviders();
-      return null;
-    });
-
-  async function testFigma(): Promise<string | null> {
-    await window.gnomi.testFigmaToken();
-    await reloadProviders();
-    return null;
-  }
-
-  async function test(provider: ProviderId): Promise<string | null> {
+  async function test(provider: ProviderId | 'figma'): Promise<string | null> {
     if (provider === 'openai_compatible') {
       const saved = await save(); // the engine tests the address saved with the project
       if (typeof saved === 'string') return problemFor(saved, 'settings');
     }
-    await window.gnomi.testKey(provider);
+    await (provider === 'figma' ? window.gnomi.testFigmaToken() : window.gnomi.testKey(provider));
     await reloadProviders();
     return null;
   }
@@ -246,7 +214,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
   return (
     <div className="settings-workspace">
-      <div className="settings-overview" aria-label="Current settings">
+      <div className="settings-overview" role="group" aria-label="Current settings">
         <div><Icon name="globe" /><span><strong>{list ? `${connectedCount} ${connectedCount === 1 ? 'provider' : 'providers'} connected` : 'Loading connections…'}</strong><small>{list && connectedCount === 0 ? 'Add a provider to generate personas' : 'AI access for your projects'}</small></span></div>
         {!workspace && <><div><Icon name="clock" /><span><strong>${settings.cost_budget_usd} · {settings.wall_clock_budget_min} min</strong><small>Limits for each simulation</small></span></div>
         <div><Icon name="people" /><span><strong>{settings.concurrency} at a time</strong><small>Personas exploring in parallel</small></span></div></>}
@@ -301,12 +269,12 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
               detail={list.figma.remembered ? list.figma.masked : `${list.figma.masked} · this session only`}
               test={list.figma.test}
               disabled={changing.busy}
-              onTest={testFigma}
-              onRemove={removeFigma}
+              onTest={() => test('figma')}
+              onRemove={() => remove('figma')}
             />
           </ul>
         ) : (
-          list && <AddFigmaToken disabled={changing.busy} onAdd={addFigma} />
+          list && <AddFigmaToken disabled={changing.busy} onAdd={(token) => add('figma', token)} />
         )}
         <p className="mt-3 text-xs text-stone-500">Test checks that Figma accepts the token; whether it can open a particular file is checked when you import it. The token stays encrypted by your operating system, outside every project.</p>
       </Card>

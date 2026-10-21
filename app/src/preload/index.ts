@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { Startup } from '../startup.ts';
 
 // contextBridge cannot carry a MessagePort, so the engine port is re-posted into the page, which listens for it.
-ipcRenderer.on('gnomi-port', (event, startup: { startupError: string | null; sessionsPersist: boolean }) => {
+ipcRenderer.on('gnomi-port', (event, startup: Startup) => {
   window.postMessage({ gnomi: 'port', ...startup }, '*', event.ports);
 });
 

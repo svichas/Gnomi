@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Persona } from '@gnomi/simulation/types.ts';
+import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
+import type { Persona, ProjectConfig } from '@gnomi/simulation/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '@gnomi/simulation/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, generatedCount, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare, staleProfiles } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
   assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
@@ -14,13 +15,13 @@ test('country weights become percentages and adding, changing and removing a cou
 });
 
 test('employer lists are trimmed, deduplicated and saved without empty lines', () => {
-  const audience = blankAudience('ATS');
+  const audience = blankAudience({ name: 'ATS', role: null, goal: '' });
   audience.segments[0].employers = [' Acme ', '', 'Acme', 'Example GmbH'];
   assert.deepEqual(cleanAudience(audience).segments[0].employers, ['Acme', 'Example GmbH']);
 });
 
 test('country mix validation gives an actionable error before saving', () => {
-  const audience = blankAudience('ATS');
+  const audience = blankAudience({ name: 'ATS', role: null, goal: '' });
   assert.equal(audienceProblem({ ...audience, countries: undefined }), null);
   assert.equal(audienceProblem({ ...audience, countries: { DE: 60, GR: 40 } }), null);
   const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: 0 }, { DE: -1 }, { DE: NaN }];
@@ -68,17 +69,17 @@ test('whatever the slider does, shares are whole percents that add up to exactly
 });
 
 test('adding a segment takes an even slice, removing one hands its share back in proportion', () => {
-  const base = { ...blankAudience('d'), segments: setShare(addSegment(blankAudience('d')), 'seg-1', 75).segments };
+  const base = { ...blankAudience({ name: 'd', role: null, goal: '' }), segments: setShare(addSegment(blankAudience({ name: 'd', role: null, goal: '' })), 'seg-1', 75).segments };
   assert.deepEqual(base.segments.map((s) => s.share), [75, 25]);
   const three = addSegment(base);
   assert.deepEqual(three.segments.map((s) => [s.id, s.share]), [['seg-1', 50], ['seg-2', 17], ['seg-3', 33]]);
   const two = removeSegment(three, 'seg-2');
   assert.deepEqual(two.segments.map((s) => [s.id, s.share]), [['seg-1', 60], ['seg-3', 40]]);
-  assert.equal(removeSegment(blankAudience('d'), 'seg-1').segments.length, 1, 'the last segment stays');
+  assert.equal(removeSegment(blankAudience({ name: 'd', role: null, goal: '' }), 'seg-1').segments.length, 1, 'the last segment stays');
 });
 
 test('the audience is checked before it is saved', () => {
-  const audience = blankAudience('An ATS');
+  const audience = blankAudience({ name: 'An ATS', role: null, goal: '' });
   assert.equal(audienceProblem(audience), null);
   assert.equal(audienceProblem({ ...audience, persona_count: 1 }), null);
   assert.match(String(audienceProblem({ ...audience, persona_count: 0 })), /from 1 to 200/);
@@ -112,7 +113,7 @@ test('a persona the user added is told apart from one the shares allot, by the e
 
 test('the persona count splits by share with at least 3 per segment, fewer only when the run is too small', () => {
   const audience = (persona_count: number, shares: number[]) => {
-    const base = blankAudience('A product');
+    const base = blankAudience({ name: 'A product', role: null, goal: '' });
     return { ...base, persona_count, segments: shares.map((share, i) => ({ ...base.segments[0], id: `seg-${i + 1}`, share })) };
   };
   assert.deepEqual(segmentCounts(audience(50, [50, 30, 20])), [25, 15, 10]);
@@ -120,4 +121,15 @@ test('the persona count splits by share with at least 3 per segment, fewer only 
   assert.deepEqual(segmentCounts(audience(4, [90, 5, 5])), [2, 1, 1]);
   assert.deepEqual(segmentCounts(audience(1, [60, 40])), [1, 0]);
   assert.deepEqual(segmentCounts(audience(20, [100, 0])), [20, 0]);
+});
+
+test('personas are measured against the count they were written for, and a changed audience leaves signed profiles out of date', () => {
+  const project = { audience: { persona_count: 12 } } as ProjectInfo['project'];
+  assert.equal(generatedCount(null), undefined);
+  assert.equal(generatedCount({ generated_persona_count: 8, project } as ProjectInfo), 8);
+  assert.equal(generatedCount({ generated_persona_count: null, project } as ProjectInfo), 12, 'before generation recorded its count');
+  const unsigned = { id: 'p-1', segment_id: null, seed: 1 } as Persona; // current while the project has no profile schema
+  const signed = { ...unsigned, id: 'p-2', segment_id: 'gone', profile_signature: 'p1-old' } as Persona;
+  assert.deepEqual(staleProfiles([unsigned, signed], { audience: null } as ProjectConfig), new Set(['p-2']));
+  assert.deepEqual(staleProfiles([unsigned, signed], null), new Set(), 'nothing to compare with yet');
 });

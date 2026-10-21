@@ -2,9 +2,9 @@ import { useRef, useState } from 'react';
 import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call, errorText } from '../engine.ts';
 import { Button, Field, inputClass, Note, Screenshot } from '../ui.tsx';
-import { FRAME_TYPES, moveFrame } from './design.ts';
+import { FRAME_TYPES } from './design.ts';
 import { Icon } from '../Icon.tsx';
-import type { PoiFormProps } from './index.ts';
+import { move, type PoiFormProps } from './index.ts';
 
 /** The frames of a design in the order someone would see them: add images (pick or drop), name the steps, reorder, remove. */
 export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
@@ -31,6 +31,7 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a drop zone for dragged image files; the file picker below is the keyboard path
     <div
       className="space-y-4"
       onDragOver={(e) => e.preventDefault()}
@@ -60,8 +61,8 @@ export function DesignPoiForm({ draft, onChange }: PoiFormProps<DesignPoi>) {
                   />
                 </Field>
                 <div className="flex flex-wrap gap-2">
-                  <Button small variant="quiet" aria-label={`Move ${label} earlier`} disabled={index === 0} onClick={() => setFrames((frames) => moveFrame(frames, index, -1))}>Earlier</Button>
-                  <Button small variant="quiet" aria-label={`Move ${label} later`} disabled={index === draft.frames.length - 1} onClick={() => setFrames((frames) => moveFrame(frames, index, 1))}>Later</Button>
+                  <Button small variant="quiet" aria-label={`Move ${label} earlier`} disabled={index === 0} onClick={() => setFrames((frames) => move(frames, index, -1))}>Earlier</Button>
+                  <Button small variant="quiet" aria-label={`Move ${label} later`} disabled={index === draft.frames.length - 1} onClick={() => setFrames((frames) => move(frames, index, 1))}>Later</Button>
                   <Button small variant="quiet" aria-label={`Remove ${label}`} onClick={() => setFrames((frames) => frames.filter((_, i) => i !== index))}>Remove</Button>
                 </div>
               </li>
