@@ -54,8 +54,8 @@ export interface EpisodeDeps {
   /** The round the run is in, for every event and model call (tech.md §6.4). */
   round: () => number;
   /**
-   * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, page and memory intact, for
-   * its next usage slice. next() resolves with the persona's opinion of this POI as the social phase left it and the posts it read
+   * Social rounds: after every `steps` steps of the persona (counted across its POIs) the episode waits, memory intact, for its next
+   * usage slice; a web episode closes its page meanwhile. next() resolves with the persona's opinion of this POI as the social phase left it and the posts it read
    * there (`heard`, for the next step's prompt), or null when the run ended in between. Absent: one straight run.
    */
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
@@ -122,6 +122,14 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
   let lastGoodUrl = startUrl;
   let page = await deps.openPage(poi);
+  // A fresh page at the last unblocked URL, logged in with the role's current recorded session; false once the run is stopping.
+  const reopen = async () => {
+    if (signal.aborted) return false;
+    page = await deps.openPage(poi);
+    if (signal.aborted) return false;
+    await page.goto(lastGoodUrl);
+    return true;
+  };
 
   // The page checks of tech.md §9.1/§9.3 after every load. A blocked persona pauses until the user resumes it, then
   // continues on a fresh page at the last unblocked URL, memory intact. 'go' means carry on.
@@ -148,10 +156,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       const wake = await waiting;
       if (wake !== 'resumed') return wake === 'timeout' ? 'blocked' : 'stopped';
       await page.close().catch(() => {});
-      if (signal.aborted) return 'stopped';
-      page = await deps.openPage(poi);
-      if (signal.aborted) return 'stopped';
-      await page.goto(lastGoodUrl);
+      if (!(await reopen())) return 'stopped';
       url = lastGoodUrl;
       emit('persona.resumed', { step_no });
     }
@@ -188,10 +193,16 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const last = stepsBefore + step_budget;
     for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
       if (atSliceEnd(deps, step_no)) {
+        // A waiting persona holds no page, so open pages stay within the concurrency.
+        // shortcut: only the recorded login comes back, so unsaved input, session storage and cookies the persona set itself are lost between slices; carry the context's storage state over if a flow needs them.
+        await page.close().catch(() => {});
         const next = await deps.slice!.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
         heard = next.heard ?? [];
+        if (!(await reopen())) return 'stopped';
+        const back = await inspect(step_no - 1, lastGoodUrl);
+        if (back !== 'go') return back;
       }
       if (!deps.beginStep()) return 'stopped';
       const started = Date.now();

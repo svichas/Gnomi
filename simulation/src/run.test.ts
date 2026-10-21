@@ -1117,11 +1117,11 @@ test('rounds interleave usage and social phases while any episode remains, and e
   assert.ok(calls.filter(([role]) => role === 'navigator').every(([, round], i, all) => i === 0 || round >= all[i - 1][1]));
 });
 
-test('slices continue one episode: one page per persona kept open between rounds, steps and memory running on', async () => {
+test('slices continue one episode: its page closes between rounds and reopens, steps and memory running on', async () => {
   const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(3) });
   await r.run.done;
-  assert.equal(r.pages.length, 2);
-  assert.ok(r.pages.every((p) => p.closed && p.gotos.length === 1), 'one start-page load each, closed once the run is over');
+  assert.equal(r.pages.length, 6, 'a page per persona and round');
+  assert.ok(r.pages.every((p) => p.closed && p.gotos.length === 1), 'one page load each, closed once the run is over');
   for (const id of ['p-0', 'p-1']) assert.deepEqual(of(r.events, 'persona.step').filter((e) => e.persona_id === id).map((e) => e.payload.step_no), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   const fifth = r.transcripts.find((t) => t.persona_id === 'p-0' && /Step 5\./.test(t.request_json));
   assert.match(fifth?.request_json ?? '', /4\. scroll down/, 'step 5 remembers step 4 across the social phase');
