@@ -229,47 +229,113 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
   }
 }
 
-/** The activity list in time order, blocked requests as one updating row per host that keeps the place of the first. */
-export function chronologicalRows(events: GnomiEvent[]): Row[] {
-  const blocked = new Map<string, number>();
-  for (const event of events) if (event.type === 'containment.blocked_request') blocked.set(event.payload.host, (blocked.get(event.payload.host) ?? 0) + 1);
-  const shown = new Set<string>();
-  const places = placesOf(events);
-  return events.flatMap((event): Row[] => {
-    if (event.type !== 'containment.blocked_request') {
-      const row = describe(event, places);
-      return row ? [{ ...row, ts: event.ts, persona_id: event.persona_id, source: {
-        type: event.type, round: event.round, poi_id: event.poi_id,
-        ...('step_no' in event.payload ? { step: event.payload.step_no } : {}),
-      } }] : [];
-    }
-    const { host } = event.payload;
-    if (shown.has(host)) return [];
-    shown.add(host);
-    return [{ seq: event.seq, ts: event.ts, persona_id: null, label: 'Blocked', tone: 'notice', title: `Blocked requests to ${host} (${blocked.get(host)})` }];
-  });
+/** The activity feed folded batch by batch, so a live run costs its new events rather than the whole log. */
+export interface RowFold {
+  rows: Row[]; // newest first, so the latest step is always in view
+  hosts: Map<string, { at: number; count: number }>; // each blocked host's one row, by its place in time order, and its request count
+  places: Map<string, string>;
 }
 
-/** The activity feed: the same rows, newest first so the latest step is always in view. */
-export const toRows = (events: GnomiEvent[]): Row[] => chronologicalRows(events).reverse();
+export const emptyRows = (): RowFold => ({ rows: [], hosts: new Map(), places: new Map() });
+
+/**
+ * Adds the rows for a batch of later events, blocked requests as one updating row per host that keeps the place of the first.
+ * Returns the batch's rows in time order and the earlier rows it replaced, whose host count grew.
+ */
+export function foldRows(fold: RowFold, events: GnomiEvent[]): { added: Row[]; replaced: Row[] } {
+  const before = fold.rows.length;
+  const added: Row[] = [];
+  const recounted = new Set<string>();
+  for (const event of events) {
+    if (event.type === 'run.started') fold.places = placesOf([event]);
+    if (event.type !== 'containment.blocked_request') {
+      const row = describe(event, fold.places);
+      if (row) added.push({ ...row, ts: event.ts, persona_id: event.persona_id, source: {
+        type: event.type, round: event.round, poi_id: event.poi_id,
+        ...('step_no' in event.payload ? { step: event.payload.step_no } : {}),
+      } });
+      continue;
+    }
+    const { host } = event.payload;
+    const seen = fold.hosts.get(host);
+    if (seen) seen.count += 1;
+    else {
+      fold.hosts.set(host, { at: before + added.length, count: 1 });
+      added.push({ seq: event.seq, ts: event.ts, persona_id: null, label: 'Blocked', tone: 'notice', title: '' });
+    }
+    recounted.add(host);
+  }
+  if (!added.length && !recounted.size) return { added, replaced: [] };
+  // A fresh array, so a paused feed's snapshot of the old one never changes underneath it.
+  const rows = added.toReversed().concat(fold.rows); // concat copies a long array far faster than spreading it
+  const replaced: Row[] = [];
+  for (const host of recounted) {
+    const { at, count } = fold.hosts.get(host)!;
+    const row = { ...rows[rows.length - 1 - at], title: `Blocked requests to ${host} (${count})` };
+    rows[rows.length - 1 - at] = row;
+    if (at < before) replaced.push(row);
+    else added[at - before] = row;
+  }
+  fold.rows = rows;
+  return { added, replaced };
+}
+
+/** The activity feed, newest first. */
+export function toRows(events: GnomiEvent[]): Row[] {
+  const fold = emptyRows();
+  foldRows(fold, events);
+  return fold.rows;
+}
 
 export const isEnd = (event: GnomiEvent) => event.type === 'run.finished' || event.type === 'run.stopped';
 
 // The events that end a persona's episode: after one of these she is no longer waiting for anyone.
 const ENDS_EPISODE = new Set(['persona.goal_done', 'persona.abandoned', 'signal.budget_exceeded', 'signal.repeated_failure']);
 
-/** The persona.blocked events the user still has to act on: per persona, no resume or ending after it, and the run has not ended. */
-export function waitingBlocks(events: GnomiEvent[]): EventOf<'persona.blocked'>[] {
-  if (events.some(isEnd)) return [];
-  if (events.some((event) => event.type === 'run.started' && event.payload.config.project.comparison)) return [];
-  const waiting = new Map<string, EventOf<'persona.blocked'>>();
-  for (const event of events) {
-    if (event.persona_id === null) continue;
-    if (event.type === 'persona.blocked') waiting.set(event.persona_id, event);
-    else if (event.type === 'persona.resumed' || ENDS_EPISODE.has(event.type)) waiting.delete(event.persona_id);
-  }
-  return [...waiting.values()];
+/** What the run page reads from the whole log, folded batch by batch like the feed. */
+export interface LogFold {
+  config: RunConfig | undefined;
+  comparison: boolean;
+  ended: boolean;
+  reporting: boolean;
+  generatedSeq: number | undefined;
+  social: boolean; // the run has social rounds
+  posts: boolean;
+  statuses: PersonaStatuses;
+  progress: Map<string, { steps: number; feeling: number | null }>;
+  blocks: Map<string, EventOf<'persona.blocked'>>; // each persona's latest block with no resume or ending after it
 }
+
+export const emptyLog = (): LogFold => ({
+  config: undefined, comparison: false, ended: false, reporting: false, generatedSeq: undefined, social: false, posts: false,
+  statuses: emptyStatuses(), progress: new Map(), blocks: new Map(),
+});
+
+/** Folds later events in place; the returned copy is new, so a memo on it sees the change. */
+export function foldLog(log: LogFold, events: GnomiEvent[]): LogFold {
+  for (const event of events) {
+    foldStatus(log.statuses, event);
+    if (event.type === 'run.started') {
+      log.config ??= event.payload.config;
+      log.comparison ||= !!event.payload.config.project.comparison;
+    } else if (isEnd(event)) log.ended = true;
+    else if (event.type === 'report.started') log.reporting = true;
+    else if (event.type === 'report.generated') log.generatedSeq = event.seq;
+    log.social ||= event.type === 'run.round_started' || event.type.startsWith('social.');
+    log.posts ||= event.type === 'social.post';
+    if (event.persona_id === null) continue;
+    if (event.type === 'persona.step') log.progress.set(event.persona_id, { steps: Math.max(event.payload.step_no, log.progress.get(event.persona_id)?.steps ?? 0), feeling: event.payload.feeling });
+    if (event.type === 'persona.blocked') log.blocks.set(event.persona_id, event);
+    else if (event.type === 'persona.resumed' || ENDS_EPISODE.has(event.type)) log.blocks.delete(event.persona_id);
+  }
+  return { ...log };
+}
+
+/** The blocks the user still has to act on: none once the run has ended or is reporting, and none in a comparison, which never waits. */
+export const waitingOf = (log: LogFold): EventOf<'persona.blocked'>[] => (log.ended || log.reporting || log.comparison ? [] : [...log.blocks.values()]);
+
+/** The persona.blocked events the user still has to act on: per persona, no resume or ending after it, and the run has not ended. */
+export const waitingBlocks = (events: GnomiEvent[]): EventOf<'persona.blocked'>[] => waitingOf(foldLog(emptyLog(), events));
 
 export type PersonaState = PersonaStatus;
 
@@ -286,7 +352,7 @@ export const STATE_WORDS: Record<PersonaState, string> = {
 export const stateWord = (state: PersonaState, ended: boolean) => (ended && state === 'blocked' ? 'Blocked' : STATE_WORDS[state]);
 
 /** Each persona's status by the fold the swarm graph uses; `ended` also cuts short a run whose log has no end, such as an interrupted one. */
-const statesOf = (statuses: PersonaStatuses, personas: Persona[], ended = false) => new Map(personas.map((persona): [string, PersonaState] => {
+export const statesOf = (statuses: PersonaStatuses, personas: Persona[], ended = false) => new Map(personas.map((persona): [string, PersonaState] => {
   const state = statusOf(statuses, persona.id);
   return [persona.id, ended && (state === 'waiting' || state === 'active') ? 'unfinished' : state];
 }));
@@ -429,11 +495,11 @@ export function runSetup(config: RunConfig | undefined): RunSetup {
 export const FEELINGS: Record<number, string> = { [-2]: 'very frustrated', [-1]: 'annoyed', 0: 'neutral', 1: 'pleased', 2: 'delighted' };
 
 /** Steps taken and the latest feeling per persona, from the log. */
-export function personaProgress(events: GnomiEvent[]): Map<string, { steps: number; feeling: number | null }> {
-  const progress = new Map<string, { steps: number; feeling: number | null }>();
-  for (const event of events) {
-    if (event.type !== 'persona.step' || event.persona_id === null) continue;
-    progress.set(event.persona_id, { steps: Math.max(event.payload.step_no, progress.get(event.persona_id)?.steps ?? 0), feeling: event.payload.feeling });
-  }
-  return progress;
+export const personaProgress = (events: GnomiEvent[]): LogFold['progress'] => foldLog(emptyLog(), events).progress;
+
+/** The events `after` adds to `before`, or null when it is not `before` with events appended: a late event was sorted in. */
+export function appended(before: GnomiEvent[], after: GnomiEvent[]): GnomiEvent[] | null {
+  // merge keeps every event it had, in seq order, so the old last event stays in its place only if nothing came before it.
+  if (after.length < before.length || (before.length > 0 && after[before.length - 1] !== before.at(-1))) return null;
+  return after.slice(before.length);
 }

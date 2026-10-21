@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent } from '@gnomi/simulation/types.ts';
-import { toRows } from './activity.ts';
-import { activityMoments, momentKind, pendingActivityCount } from './activityFeed.ts';
+import { mulberry32 } from '@gnomi/simulation/audience/sample.ts';
+import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { appended, emptyLog, emptyRows, foldLog, foldRows, merge, toRows } from './activity.ts';
+import { activityMoments, emptyMoments, foldMoments, momentKind, pendingActivityCount } from './activityFeed.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id = 'p-1', round = 1, poi_id = 'poi-1'): GnomiEvent {
   return { seq, ts: seq, run_id: 'run-1', persona_id, round, poi_id, type, payload } as GnomiEvent;
@@ -80,4 +82,77 @@ test('paused updates count new events and changes to an existing aggregated even
   assert.equal(pendingActivityCount(frozen, frozen), 0);
   assert.equal(pendingActivityCount(toRows([step(2), step(1)]), frozen), 1);
   assert.equal(pendingActivityCount([{ ...frozen[0], title: 'Changed action' }], frozen), 1);
+});
+
+// The run page's live fold: the log, then the feed's rows and both moment views from the same added and replaced rows.
+function liveFold() {
+  let log = emptyLog();
+  const feed = { rows: emptyRows(), highlights: emptyMoments(), all: emptyMoments() };
+  return {
+    feed,
+    log: () => log,
+    add(events: GnomiEvent[]) {
+      log = foldLog(log, events);
+      const { added, replaced } = foldRows(feed.rows, events);
+      foldMoments(feed.highlights, added, replaced);
+      foldMoments(feed.all, added, replaced, true);
+    },
+  };
+}
+
+/** A synthetic run with blocked requests mixed in, so later batches recount a host's earlier row. */
+function blockedRun(seed: number, size: { personas: number; pois: number; rounds: number }) {
+  const random = mulberry32(seed);
+  return syntheticRun({ ...size, seed }).events
+    .flatMap((event) => random() < 0.05 ? [event, { ...event, type: 'containment.blocked_request', payload: { host: `ads-${Math.floor(random() * 3)}.test`, url: 'http://ads.test/p', method: 'GET' } } as GnomiEvent] : [event])
+    .map((event, i) => ({ ...event, seq: i + 1 }));
+}
+
+test('property: folding a log in random batches equals reading it whole', () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const random = mulberry32(seed);
+    const events = blockedRun(seed, { personas: 6 + Math.floor(random() * 20), pois: 1 + Math.floor(random() * 4), rounds: 1 + Math.floor(random() * 4) });
+    const live = liveFold();
+    for (let at = 0; at < events.length;) {
+      const next = at + 1 + Math.floor(random() * 80);
+      live.add(events.slice(at, next));
+      at = next;
+    }
+    const rows = toRows(events);
+    assert.deepEqual(live.feed.rows.rows, rows, `rows, seed ${seed}`);
+    assert.deepEqual(live.feed.highlights.list, activityMoments(rows), `highlights, seed ${seed}`);
+    assert.deepEqual(live.feed.all.list, activityMoments(rows, true), `all events, seed ${seed}`);
+    assert.deepEqual(live.log(), foldLog(emptyLog(), events), `log, seed ${seed}`);
+  }
+});
+
+test('a log only grows by appending; a late event sorted in means starting the fold over', () => {
+  const events = [step(1), step(2), step(3)];
+  const later = merge(events, [step(4), step(5)]);
+  assert.deepEqual(appended(events, later)?.map((event) => event.seq), [4, 5]);
+  assert.deepEqual(appended(events, events), []);
+  assert.equal(appended(events, merge(events, [step(0)])), null, 'the initial load raced the live feed');
+  assert.equal(appended(events, events.slice(1)), null);
+});
+
+test('a live batch costs its own events, not the whole log', () => {
+  const run = blockedRun(1, { personas: 400, pois: 10, rounds: 12 }); // about 50,000 events
+  const events = [...run, ...run.slice(1), ...run.slice(1)].map((event, i) => ({ ...event, seq: i + 1 })); // past tech.md's 100,000
+  const time = (work: () => void) => {
+    const start = performance.now();
+    work();
+    return performance.now() - start;
+  };
+  const live = liveFold();
+  live.add(events.slice(0, -1000));
+  const batches: number[] = [];
+  for (let at = events.length - 1000; at < events.length; at += 100) batches.push(time(() => live.add(events.slice(at, at + 100))));
+  // Before, each 100 ms flush read the whole log again: the rows, both moment views and the log's states.
+  const whole = time(() => {
+    const rows = toRows(events);
+    activityMoments(rows);
+    activityMoments(rows, true);
+    foldLog(emptyLog(), events);
+  });
+  assert.ok(Math.min(...batches) * 20 < whole, `a batch of 100 took ${Math.min(...batches).toFixed(2)} ms, the whole ${events.length}-event log ${whole.toFixed(1)} ms`);
 });
