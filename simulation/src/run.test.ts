@@ -168,6 +168,7 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
     saveProject: () => {},
     createRun: (snapshot) => ({ ...snapshot, run_id: 'r-0001' }),
     finishRun: (_run_id, status, stop_reason, cost_usd) => void finished.push({ status, stop_reason, cost_usd }),
+    setRunCost: () => {},
     listRuns: () => [],
     append(event) {
       const stored = { ...event, seq: events.length + 1, ts: Date.now() } as GnomiEvent;

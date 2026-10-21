@@ -61,12 +61,12 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
 
 - `runs <project dir> --json` lists runs, newest first.
 - `report <project dir> [--run r-0002] --format summary|md|json` rebuilds a run's report; `summary` is the default and the same object a run returns.
-- `rejudge <project dir> [--run r-0002] --json` runs an ended run's judge and author again with the current prompts and the run's own judge and author models, without browsing, and rewrites its report files. Use it after the theming rules change; it needs the judge's and author's keys and costs a few model calls (the result line gives `cost_usd`).
+- `rejudge <project dir> [--run r-0002] --json` runs an ended run's judge and author again with the current prompts and the run's own judge and author models, without browsing, and rewrites its report files. Use it after the theming rules change; it needs the judge's and author's keys and costs a few model calls (the result line gives `cost_usd`, and `runs` counts it in the run's cost). It spends at most what is left of the run's cost budget; when that is used up it refuses, and `--budget <usd>` sets what this rejudge may spend instead.
 
 ## Settings and keys
 
 - Keys come from the environment: `ANTHROPIC_API_KEY` for the default routing, or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY` when `--settings` routes to them. If a key is missing the command says which variable to set; ask the user, never guess or print a key.
-- `--settings settings.json` lays an object over the defaults, e.g. `{ "rounds": 3, "cost_budget_usd": 2, "concurrency": 6 }` or a different `routing`.
+- `--settings settings.json` lays an object over the defaults, e.g. `{ "rounds": 3, "cost_budget_usd": 2, "concurrency": 6 }`. A `routing` names only the roles it changes, e.g. `{ "routing": { "navigator": { "provider": "openai", "model": "gpt-6-luna" } } }`; the other roles keep their default model.
 - `--fake-llm` uses scripted answers and calls no model. It is for checking the workflow only: its findings are fixtures, never report them as results.
 
 ## Reporting back
