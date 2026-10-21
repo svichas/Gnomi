@@ -1,25 +1,17 @@
 // npm run smoke:profiles -w @gnomi/app. Real Electron UI with scripted personas; no keys or paid calls.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { startGym } from '../demo/GymSite/server.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
 type DownloadState = typeof globalThis & { profileSmokeDownload?: Promise<string> };
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-profile-editor-'));
+const dir = scratch('profile-editor');
 const templatePath = join(dir, 'profile-template.json');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const gym = await startGym({ port: 0, defects: 'all' });
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: join(dir, 'profiles.gnomi') },
-});
-setTimeout(() => { console.error('Profile smoke timed out.'); process.exit(1); }, 240_000).unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: join(dir, 'profiles.gnomi') });
+deadline('Profile smoke timed out.', 240_000);
 let passed = false;
 try {
   await app.evaluate(({ session }, path) => {
@@ -32,8 +24,7 @@ try {
   }, templatePath);
   const page = await app.firstWindow();
   page.setDefaultTimeout(20_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   const tab = (name: string) => page.locator(`#tab-${({ Project: 'project', Settings: 'settings', Audience: 'audience', Run: 'run' } as Record<string, string>)[name]}`).click();
   await page.getByText('Starting Gnomi...').waitFor({ state: 'detached' });
   await tab('Project');
@@ -143,7 +134,7 @@ try {
   await group('Work');
   await region.getByText('Configure Procurement region', { exact: true }).click();
   await region.scrollIntoViewIfNeeded();
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await assertFits(page);
   await page.screenshot({ path: join(shots, 'profiles-editor-narrow.png') });
   await page.setViewportSize({ width: 1100, height: 780 });
 

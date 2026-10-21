@@ -1,38 +1,26 @@
 // Real Electron with disposable data. Hold engine requests to inspect long-running UI states,
 // then release them to the scripted engine so completion uses the real saved population.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
-import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import type { PersonaProgress } from '@gnomi/simulation/types.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
 type HeldRequest = { release(): void; progress(done: number, total: number, detail?: Partial<PersonaProgress>): void; fail(): void };
 declare global { interface Window { audienceSmoke: HeldRequest | null; } }
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-audience-'));
+const dir = scratch('audience');
 const projectDir = join(dir, 'audience.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const project = syntheticRun({ personas: 3, pois: 1, rounds: 1, seed: 4 }).config.project;
 project.audience = null;
-const store = openProject(projectDir);
-store.saveProject(project);
-store.close();
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Audience smoke timed out.'); process.exit(1); }, 120_000).unref();
+seedProject(projectDir, project);
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+deadline('Audience smoke timed out.', 120_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.addInitScript(() => {
     const post = MessagePort.prototype.postMessage;
@@ -100,7 +88,7 @@ try {
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 960 });
     await panel.locator('.build-progress').scrollIntoViewIfNeeded();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `audience overflow at ${width}`);
+    await assertFits(page, `audience overflow at ${width}`);
     await page.screenshot({ path: join(shots, `audience-personas-${width}.png`) });
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -129,7 +117,7 @@ try {
   await details.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'audience-generation-details.png') });
   await page.setViewportSize({ width: 320, height: 960 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'diagnostics fit a narrow viewport');
+  await assertFits(page, 'diagnostics fit a narrow viewport');
   await page.setViewportSize({ width: 1100, height: 900 });
   const personaCount = panel.getByLabel('Number of personas', { exact: true });
   await personaCount.fill('49');
@@ -245,7 +233,7 @@ try {
   await panel.getByText(`${segmentCount} segments · 1 persona · Saved`).waitFor();
   for (const width of [1100, 320]) {
     await page.setViewportSize({ width, height: 960 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `saved audiences overflow at ${width}`);
+    await assertFits(page, `saved audiences overflow at ${width}`);
     await page.screenshot({ path: join(shots, `audience-saved-${width}.png`) });
   }
   await page.setViewportSize({ width: 1100, height: 900 });
