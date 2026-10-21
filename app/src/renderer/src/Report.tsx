@@ -1,17 +1,19 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
-import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportHomogeneity, ReportLike, ReportMethods, ReportPersona, ReportSpread, ReportTheme, SpreadStats, Trust } from '@gnomi/simulation/types.ts';
+import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { BLOCK_REASON_TEXT, COST_SCOPE_TEXT, missingUsageText, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
-import { matchesProfileValues, resetOutcome, stopText } from './activity.ts';
+import { COST_SCOPE_TEXT, missingUsageText, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
 import type { ProfileFilter } from './activity.ts';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
 import { count, Fold, heading, InFile, PersonaLink, pct, SectionHeading, signed, Th, Tile } from './reportParts.tsx';
-import type { Tone } from './reportParts.tsx';
+import type { Inspect, Tone } from './reportParts.tsx';
+import { Methods } from './ReportMethods.tsx';
+import { Spread } from './ReportSpread.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -94,8 +96,6 @@ function Share({ finding, noun }: { finding: { prevalence?: Prevalence; personas
 }
 
 const mood = (x: number) => (x <= -1 ? 'Negative' : x < -0.25 ? 'Leaning negative' : x <= 0.25 ? 'Neutral' : x < 1 ? 'Leaning positive' : 'Positive');
-
-type Inspect = (personaId: string, seq?: number) => void;
 
 // Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
 type RenderScreenshot = (path: string, alt: string) => ReactNode;
@@ -564,251 +564,6 @@ function Personas({ report, onInspect, renderScreenshot }: { report: ReportData;
         ))}
       </ul>
     </section>
-  );
-}
-
-/** Mean sentiment at each round's end on a −2…+2 scale, 0 dashed; each value is also written out beside it. */
-function SentimentLine({ rows }: { rows: SpreadStats['sentiment'] }) {
-  const points = rows.flatMap((r) => (r.mean === null ? [] : [{ ...r, mean: r.mean }]));
-  if (points.length === 0) return <p className="text-xs text-stone-500">No opinions recorded.</p>;
-  const width = 168;
-  const x = (round: number) => (rows.length === 1 ? (width + 16) / 2 : 24 + ((round - 1) / (rows.length - 1)) * (width - 32));
-  const y = (mean: number) => 8 + ((2 - mean) / 4) * 48;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <svg viewBox={`0 0 ${width} 64`} width={width} height={64} aria-hidden="true" className="shrink-0 overflow-visible">
-        {([[2, '+2'], [0, '0'], [-2, '−2']] as const).map(([v, label]) => (
-          <g key={v}>
-            <text x={0} y={y(v) + 3} className="fill-stone-400 text-[9px] tabular-nums">{label}</text>
-            <line x1={16} x2={width} y1={y(v)} y2={y(v)} strokeDasharray={v === 0 ? '3 3' : undefined} className={v === 0 ? 'stroke-stone-400' : 'stroke-stone-200'} />
-          </g>
-        ))}
-        <polyline points={points.map((p) => `${x(p.round)},${y(p.mean)}`).join(' ')} fill="none" strokeWidth={2} strokeLinejoin="round" className="stroke-indigo-600" />
-        {points.map((p) => (
-          <circle key={p.round} cx={x(p.round)} cy={y(p.mean)} r={4} strokeWidth={2} className="fill-indigo-600 stroke-white">
-            <title>{`Round ${p.round}: ${signed(p.mean)} (${count(p.personas, 'persona')})`}</title>
-          </circle>
-        ))}
-      </svg>
-      <ol className="flex flex-wrap gap-x-3 text-xs tabular-nums text-stone-600" aria-label="Mean sentiment by round, −2 to +2">
-        {rows.map((r) => (
-          <li key={r.round}>
-            Round {r.round}: {r.mean === null ? 'no opinions' : signed(r.mean)}
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-/** One POI's or theme's spread: counts, seed posts, repeats, segments reached, influence and the sentiment line. */
-function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; personas: ReportPersona[]; onInspect: Inspect }) {
-  const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
-  const crossed = stats.segments.filter((segment) => !segment.seed).length;
-  const figures = [
-    ['Posts', stats.posts],
-    ...(stats.posters ? [['Posted', stats.posters.length], ['Reached', stats.readers?.length ?? 0]] as const : []),
-    ['First-hand', stats.first_hand.length],
-    ['Second-hand', stats.second_hand.length],
-    ['Influence edges', stats.influence.length],
-  ] as const;
-  return (
-    <div className="space-y-3 text-sm">
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {figures.map(([label, value]) => (
-          <div key={label} className="rounded-lg bg-stone-50 px-3 py-1.5">
-            <dt className="text-xs text-stone-500">{label}</dt>
-            <dd className="font-medium tabular-nums text-stone-900">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <div>
-        <p className="text-xs font-medium text-stone-700">Seed posts</p>
-        <ul className="mt-1 space-y-2">
-          {stats.seeds.map((post) => (
-            <li key={post.post_id} className="border-l-4 border-stone-200 pl-3">
-              <p className="flex flex-wrap gap-x-2 text-xs text-stone-500">
-                <PersonaLink id={post.persona_id} name={post.persona_name} seq={post.seq} onInspect={onInspect} />
-                <span>round {post.round}</span>
-                {post.injected && <span className="font-medium text-amber-800">injected by the test harness</span>}
-              </p>
-              <p className="text-stone-900">&ldquo;{post.text}&rdquo;</p>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <p className="text-stone-700">
-        <span className="font-medium">Repeated without their own friction:</span>{' '}
-        {stats.second_hand.length === 0 ? 'nobody' : stats.second_hand.map(name).join(', ')}
-      </p>
-      <p className="text-stone-700">
-        <span className="font-medium">Segments reached:</span>{' '}
-        {stats.segments.map((segment) => `${segment.name} ${segment.personas}${segment.seed ? ' (seed)' : ''}`).join(', ') || 'none'}. Crossed into {count(crossed, 'other segment')}.
-      </p>
-      {stats.influence.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-stone-700">Influence</p>
-          <ul className="text-stone-700">
-            {stats.influence.slice(0, 5).map((edge) => (
-              <li key={`${edge.seq}/${edge.post_id}`}>
-                {name(edge.from)} → {name(edge.to)}, round {edge.round}, sentiment {signed(edge.delta)}
-              </li>
-            ))}
-          </ul>
-          {stats.influence.length > 5 && <p className="text-xs text-stone-500">And {count(stats.influence.length - 5, 'more edge')}.</p>}
-        </div>
-      )}
-      {stats.heard && stats.heard.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-stone-700">Heard before a change of mind, not counted as influence</p>
-          <ul className="text-stone-700">
-            {stats.heard.slice(0, 5).map((edge) => (
-              <li key={`${edge.seq}/${edge.from}`}>
-                {name(edge.from)} → {name(edge.to)}, round {edge.round}, sentiment {signed(edge.delta)}
-              </li>
-            ))}
-          </ul>
-          {stats.heard.length > 5 && <p className="text-xs text-stone-500">And {count(stats.heard.length - 5, 'more')}.</p>}
-        </div>
-      )}
-      <div>
-        <p className="text-xs font-medium text-stone-700">Mean sentiment by round, −2 to +2</p>
-        <SentimentLine rows={stats.sentiment} />
-      </div>
-    </div>
-  );
-}
-
-/** How talk about the product and each theme travelled on the simulated feed (tech.md §8.2 step 7). */
-function Spread({ spread, personas, onInspect }: { spread: ReportSpread[]; personas: ReportPersona[]; onInspect: Inspect }) {
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-stone-500">
-        First-hand: personas who met it before reading about it, as the problem counts them. Second-hand: personas who posted about it without meeting it first-hand. Reached: personas shown a post about it in a feed or at a step. Influence: a cited post moved a persona's sentiment by 0.5 or more, once per author and change.
-      </p>
-      {spread.length === 0 && <p className="text-sm text-stone-600">No post was about a particular text, design or site.</p>}
-      {spread.map((poi) => (
-        <div key={poi.poi_id} className="space-y-4">
-          <div className="space-y-2 rounded-lg border border-stone-200 p-4">
-            <h4 className="font-medium text-stone-900">About {poi.name}</h4>
-            <SpreadBody stats={poi} personas={personas} onInspect={onInspect} />
-          </div>
-          {poi.themes.length > 0 && (
-            <ol className="space-y-4" aria-label={`Themes talked about on the feed, about ${poi.name}`}>
-              {poi.themes.map((theme) => (
-                <li key={theme.theme_id} className="space-y-2 rounded-lg border border-stone-200 p-4">
-                  <h4 className="font-medium text-stone-900">{theme.title}</h4>
-                  <SpreadBody stats={theme} personas={personas} onInspect={onInspect} />
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Homogeneity({ value }: { value: ReportHomogeneity }) {
-  const mean = (x: number | null) => (x === null ? 'too few to compare' : x.toFixed(2));
-  return (
-    <div className="space-y-1">
-      <p>
-        Posts {mean(value.posts)} ({count(value.post_count, 'post')}), persona backgrounds {mean(value.narratives)}. Mean pairwise TF-IDF cosine, 0 to 1; a warning at {value.threshold.toFixed(2)}.
-      </p>
-      {value.warning && <p className="font-medium text-amber-800">{value.warning}</p>}
-    </div>
-  );
-}
-
-const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
-const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
-
-/** What the run was set up with, allowed to do and what got in its way (idea.md §6.5), so a team can change a setting and run again. */
-function Methods({ methods, personas }: { methods: ReportMethods; personas: ReportPersona[] }) {
-  const none = 'None';
-  const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
-  const models = Object.entries(methods.models);
-  const rows: [string, ReactNode][] = [
-    ['Seed', String(methods.seed)],
-    ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
-    ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}</ul>],
-    ['Budgets', `${usd(methods.budgets.cost_usd)} recorded cost limit, ${methods.budgets.wall_clock_min} minutes, ${methods.budgets.concurrency} browsers at a time`],
-    [
-      'Concurrency changes',
-      methods.concurrency_changes.length === 0 ? (
-        none
-      ) : (
-        <ul>
-          {methods.concurrency_changes.map((change, i) => (
-            <li key={i}>
-              Down to {change.concurrency}: {change.reason}
-            </li>
-          ))}
-        </ul>
-      ),
-    ],
-    ['Allowed hosts', `${methods.allowed_hosts.join(', ')}. Every other host was blocked.`],
-    [
-      'Blocked requests',
-      methods.blocked_requests.length === 0 ? (
-        none
-      ) : (
-        <ul>
-          {methods.blocked_requests.map(({ host, count: n, reason }) => (
-            <li key={`${host}/${reason ?? ''}`}>
-              {host}: {count(n, 'request')}
-              {reason && ` (${BLOCK_REASON_TEXT[reason]})`}
-            </li>
-          ))}
-        </ul>
-      ),
-    ],
-    [
-      'Blocked personas',
-      methods.blocked.length === 0 ? (
-        none
-      ) : (
-        <ul>
-          {methods.blocked.map((blocked, i) => (
-            <li key={i}>
-              {name(blocked.persona_id)}, step {blocked.step_no}: {BLOCK_REASONS[blocked.reason] ?? blocked.reason}
-              {blocked.detail && ` (${blocked.detail})`}, {blocked.resumed ? 'then resumed' : 'did not resume'}
-            </li>
-          ))}
-        </ul>
-      ),
-    ],
-    [
-      'Safety stops',
-      methods.tripwires.length === 0 ? (
-        none
-      ) : (
-        <ul>
-          {methods.tripwires.map((tripwire) => (
-            <li key={`${tripwire.kind}${tripwire.detail}`}>
-              {TRIPWIRES[tripwire.kind] ?? tripwire.kind}: {tripwire.detail}
-            </li>
-          ))}
-        </ul>
-      ),
-    ],
-    ['Reset hook', methods.reset === null ? 'Not used' : `${methods.reset.url}: ${resetOutcome(methods.reset).text}`],
-    ...(methods.signal_thresholds === undefined ? [] : [['Signal thresholds', methods.signal_thresholds === null ? 'Not frozen in this run' : (
-      <ul>{Object.entries(methods.signal_thresholds).map(([key, value]) => <li key={key}>{key.replaceAll('_', ' ')}: {JSON.stringify(value)}</li>)}</ul>
-    )] as [string, ReactNode]]),
-    ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),
-    ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
-  ];
-  return (
-    <dl className="divide-y divide-stone-100 rounded-lg border border-stone-200 text-sm">
-      {rows.map(([label, value]) => (
-        <div key={label} className="grid gap-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-          <dt className="text-stone-500">{label}</dt>
-          <dd className="break-words text-stone-900">{value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

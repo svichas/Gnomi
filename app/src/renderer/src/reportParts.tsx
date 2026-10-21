@@ -6,6 +6,8 @@ import { Icon } from './Icon.tsx';
 export type Tone = 'good' | 'warn' | 'high' | 'bad' | 'neutral';
 type IconName = Parameters<typeof Icon>[0]['name'];
 
+export type Inspect = (personaId: string, seq?: number) => void;
+
 /** True while the report is drawn into an exported file, which has no inspector to open and prints every fold open. */
 export const InFile = createContext(false);
 
@@ -24,7 +26,7 @@ export function SectionHeading({ id, title, hint }: { id?: string; title: ReactN
   return <div className="report-section-heading"><div><h3 id={id}>{title}</h3><p>{hint}</p></div></div>;
 }
 
-export function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: (personaId: string, seq?: number) => void }) {
+export function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
   if (useContext(InFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>;
   return (
     <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
