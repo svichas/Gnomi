@@ -240,6 +240,13 @@ export interface LikeGroup {
   members: Like[];
 }
 
+/** The latest survey `keep` accepts of each persona on each POI, in the order the pairs first answered. */
+export function latestSurveys(events: GnomiEvent[], keep: (e: EventOf<'persona.survey'>) => boolean): EventOf<'persona.survey'>[] {
+  const latest = new Map<string, EventOf<'persona.survey'>>();
+  for (const e of events) if (e.type === 'persona.survey' && e.persona_id && keep(e)) latest.set(`${e.persona_id}\u0000${e.payload.poi_id}`, e);
+  return [...latest.values()];
+}
+
 /** Every survey like, grouped like survey frictions: by the part of the product it names, else by its words. */
 export function likeGroups(events: GnomiEvent[]): LikeGroup[] {
   const groups = new Map<string, LikeGroup>();
