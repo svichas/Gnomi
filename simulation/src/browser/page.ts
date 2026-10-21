@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
-import type { Browser, BrowserContext, BrowserContextOptions, Page, Request } from 'playwright-core';
+import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page, Request } from 'playwright-core';
 import type { PageDriver, PageError, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
 import type { ActionRefusal, Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
+import { pickedValue } from './dates.ts';
 import { inspect } from './inspect.ts';
 import { pruneSnapshot, snapshotTargets, type PasswordState } from './prune.ts';
 
@@ -21,6 +22,13 @@ const PASSWORD = 'input[type="password" i], input[autocomplete*="password" i]';
 const SECRET = `${PASSWORD}, input[data-gnomi-password]`;
 // Model-supplied: reject anything that is not a ref before it reaches Playwright's selector engine.
 const REF = /^(?:f\d+)?e\d+$/;
+// Native inputs Chromium edits segment by segment (day, month, year, hour…).
+const SEGMENTED = new Set(['date', 'time', 'datetime-local', 'month', 'week']);
+
+const hasSize = async (locator: Locator) => {
+  const box = await locator.boundingBox({ timeout: 1_000 }).catch(() => null);
+  return box !== null && box.width >= 1 && box.height >= 1;
+};
 
 /** An error's first line, at most 200 characters: what the log keeps of it. */
 export const firstLine = (e: unknown) => (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 200);
@@ -184,6 +192,28 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     return locator;
   }
 
+  /** Types into a native date or time field key by key, as a person does: fill() only takes ISO and throws on "25/10/2026 09:00". */
+  async function typeSegments(input: Locator, type: string, text: string, timeout: number) {
+    await input.blur({ timeout }); // so the fill's focus lands on the first segment, not the one left focused
+    await input.fill('', { timeout });
+    for (const [group] of text.matchAll(/\d+|\p{L}+/gu)) {
+      // Chromium ignores typed separators: a full two-digit segment moves on by itself, a year (up to six digits) needs →.
+      if (/^\d{1,2}$/.test(group)) await page.keyboard.type(group.padStart(2, '0'));
+      else if (/^\d+$/.test(group)) {
+        await page.keyboard.type(group);
+        await page.keyboard.press('ArrowRight');
+      } else await page.keyboard.type(group[0]); // AM or PM
+    }
+    if ((await input.inputValue({ timeout })) !== '') return;
+    // Still empty: a phone's field takes no keys (its OS picker sets it), or the keys missed a segment such as AM/PM. Set what the picker would.
+    const dayFirst = await input.evaluate(() => {
+      const order = new Intl.DateTimeFormat(navigator.language).formatToParts(new Date(2000, 0, 2)).map((part) => part.type);
+      return order.indexOf('day') < order.indexOf('month');
+    }, null, { timeout });
+    const value = pickedValue(type, text, dayFirst);
+    if (value) await input.fill(value, { timeout });
+  }
+
   /** Performs the action; resolves to the text of a `read`, else null. Model mistakes throw an Error whose message is the code. */
   async function perform(action: Action, ref: string | null): Promise<string | null> {
     const timeout = ACTION_MS;
@@ -191,7 +221,15 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       case 'click': {
         const target = await locate(ref);
         formClick = await target.evaluate((el) => el.closest('form') !== null, null, { timeout }).catch(() => false);
-        await target.click({ timeout });
+        await target.click({ timeout }).catch(async (e) => {
+          // A person taps where the control shows: through what covers it (a custom select's search box over its placeholder),
+          // or on its nearest sized ancestor when it has no size of its own (a custom select's 0×0 input). A disabled one stays a timeout.
+          if (!(e instanceof errors.TimeoutError) || !(await target.isEnabled({ timeout }).catch(() => false))) throw e;
+          let spot = target;
+          for (let up = 0; up < 3 && !(await hasSize(spot)); up++) spot = spot.locator('xpath=..');
+          if (!(await hasSize(spot))) throw e;
+          await spot.click({ force: true, timeout });
+        });
         return null;
       }
       case 'press':
@@ -204,6 +242,14 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         const input = await locate(ref);
         if (action.text === null) throw new Error('type needs text');
         if (!(await input.isEditable({ timeout }).catch(() => false))) throw new Error('not_editable'); // false when disabled/readonly, throws on non-form elements
+        const kind = await input.evaluate((el) => {
+          const control = el instanceof HTMLInputElement ? el : el.closest('label')?.control;
+          return control instanceof HTMLInputElement ? control.type : '';
+        }, null, { timeout });
+        if (SEGMENTED.has(kind)) {
+          await typeSegments(input, kind, action.text, timeout);
+          return null;
+        }
         await input.fill(action.text, { timeout }).catch((e) => {
           throw /cannot be filled|not an <input>/.test(String(e)) ? new Error('not_editable') : e;
         });
@@ -220,7 +266,16 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       }
       case 'scroll': {
         if (ref) {
-          await (await locate(ref)).scrollIntoViewIfNeeded({ timeout });
+          const target = await locate(ref);
+          await target.scrollIntoViewIfNeeded({ timeout });
+          // Up or down on a list or panel that scrolls: the wheel over it, as a person scrolls a time list. Otherwise the ref is brought into view.
+          const direction = action.text === 'down' ? 1 : action.text === 'up' ? -1 : 0;
+          const scrolls = direction !== 0 && (await target.evaluate((el) => /auto|scroll/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight, null, { timeout }));
+          const box = scrolls ? await target.boundingBox({ timeout }) : null;
+          if (box) {
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await page.mouse.wheel(0, direction * box.height * 0.8);
+          }
         } else if (action.text === 'up' || action.text === 'down') {
           // The wheel, like a person: it scrolls whichever container is under the pointer.
           const { width, height } = page.viewportSize()!;
