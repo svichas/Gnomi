@@ -1,6 +1,6 @@
 import type { EventOf, GnomiEvent } from '../types.ts';
 import type { ComparisonAction, ComparisonCell, ComparisonCoverage, ComparisonEvidence, ComparisonFit, ComparisonOutcome, ComparisonReport, ComparisonScope } from '../comparison/types.ts';
-import { validateComparison } from '../comparison/config.ts';
+import { admits, inScenario, validateComparison } from '../comparison/config.ts';
 import { isPriced } from '../llm/prices.ts';
 
 const OUTCOMES: ComparisonOutcome[] = ['completed', 'task_failed', 'abandoned', 'blocked_environment', 'incomplete', 'invalid_task', 'not_applicable', 'not_attempted'];
@@ -45,21 +45,22 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
   }))];
   if (unpriced.length) limitations.add(`Model pricing was unavailable for ${unpriced.join(', ')}. Initial matched-block admission cannot reserve their dollar cost; recorded charges and observed costs are used when available. Actual spend may exceed the estimate.`);
   const assignmentKey = (personaId: string, taskId: string, targetId: string) => key(personaId, taskId, targetId);
+  // The study's own rule, not poi/pois.ts isEligible: a segment's kind does not matter, and any explicit list leaves out the built-in persona.
   const eligible = (personaId: string, taskId: string, targetId: string) => {
     const persona = personas.get(personaId);
     const task = study.tasks.find((item) => item.id === taskId);
-    const scenario = study.scenarios.find((item) => item.id === task?.scenario_id);
     const entry = task?.entries.find((item) => item.target_id === targetId);
     const poi = config.project.pois.find((item) => item.id === entry?.poi_id);
-    return !!persona && !!scenario && !!poi && (scenario.segment_ids === null || scenario.segment_ids.includes(persona.segment_id ?? '')) && (poi.segments === null || poi.segments.includes(persona.segment_id ?? ''));
+    return !!persona && !!task && !!poi && inScenario(study, task.scenario_id, persona.segment_id) && admits(poi, persona.segment_id);
+  };
+  const lookup = (personaId: string | null, scope: ComparisonScope) => {
+    const task = study.tasks.find((item) => item.id === scope.task_id);
+    return { persona: personas.get(personaId ?? ''), target: study.targets.find((item) => item.id === scope.target_id), task, entry: task?.entries.find((item) => item.target_id === scope.target_id) };
   };
   for (const event of ordered) {
     if (event.type !== 'comparison.episode_started') continue;
     const scope = event.payload;
-    const persona = personas.get(event.persona_id ?? '');
-    const target = study.targets.find((item) => item.id === scope.target_id);
-    const task = study.tasks.find((item) => item.id === scope.task_id);
-    const entry = task?.entries.find((item) => item.target_id === scope.target_id);
+    const { persona, target, task, entry } = lookup(event.persona_id, scope);
     const assignment = assignmentKey(event.persona_id ?? '', scope.task_id, scope.target_id);
     if (!persona || !target || task?.scenario_id !== scope.scenario_id || entry?.poi_id !== event.poi_id || scope.poi_id !== event.poi_id || scope.segment_id !== (persona.segment_id ?? null) || scope.access_scope !== target.access_scope || scope.replicate_id !== study.execution.replicate_id || starts.has(scope.episode_id) || assignments.has(assignment)) {
       limitations.add(`Ignored invalid or duplicate comparison episode at event #${event.seq}.`);
@@ -85,10 +86,7 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
       if (matches(event, starts.get(event.payload.episode_id)) && !finishes.has(event.payload.episode_id) && OUTCOMES.includes(event.payload.outcome)) finishes.set(event.payload.episode_id, event);
       else if (!starts.has(event.payload.episode_id) && event.payload.outcome === 'not_attempted') {
         const scope = event.payload;
-        const persona = personas.get(event.persona_id ?? '');
-        const target = study.targets.find((item) => item.id === scope.target_id);
-        const task = study.tasks.find((item) => item.id === scope.task_id);
-        const entry = task?.entries.find((item) => item.target_id === scope.target_id);
+        const { persona, target, task, entry } = lookup(event.persona_id, scope);
         if (persona && target && task && scope.scenario_id === task.scenario_id && scope.segment_id === (persona.segment_id ?? null) && scope.access_scope === target.access_scope && scope.replicate_id === study.execution.replicate_id && event.poi_id === entry?.poi_id && typeof scope.reason === 'string' && eligible(persona.id, task.id, target.id)) limitations.add(`Not attempted — ${target.name}, ${task.id}, segment ${scope.segment_id ?? 'built-in'}: ${scope.reason}`);
       }
     }
