@@ -24,6 +24,7 @@ export interface Board {
 /** The swarm feed so far, folded from the log: every post with its reactions, and each persona's social memory of what it saw. Pure. */
 export function readBoard(events: GnomiEvent[]): Board {
   const posts = new Map<string, FeedPost>();
+  const reactions = new Map<string, Map<string, 'agree' | 'disagree'>>(); // post id → persona id → latest reaction
   const seen = new Map<string, Set<string>>();
   const saw = (persona_id: string, ids: string[]) => {
     const set = seen.get(persona_id) ?? seen.set(persona_id, new Set()).get(persona_id)!;
@@ -36,9 +37,14 @@ export function readBoard(events: GnomiEvent[]): Board {
       posts.set(post_id, { post_id, author: e.persona_id, parent_id, text, about_poi_id, seq: e.seq, agree: 0, disagree: 0 });
       saw(e.persona_id, [post_id]);
     } else if (e.type === 'social.reaction') {
-      const post = posts.get(e.payload.post_id);
-      if (post) post[e.payload.kind]++;
+      (reactions.get(e.payload.post_id) ?? reactions.set(e.payload.post_id, new Map()).get(e.payload.post_id)!).set(e.persona_id, e.payload.kind);
     } else if (e.type === 'social.feed_viewed') saw(e.persona_id, e.payload.post_ids);
+  }
+  // Each persona's latest reaction counts once, as the app's feed counts it (engine/src/graph/feed.ts). The social schema only
+  // offers unseen posts, so a run never reacts twice; this keeps an injected or replayed log from counting a persona twice.
+  for (const [post_id, by] of reactions) {
+    const post = posts.get(post_id);
+    if (post) for (const kind of by.values()) post[kind]++;
   }
   return { posts: [...posts.values()], seen };
 }
