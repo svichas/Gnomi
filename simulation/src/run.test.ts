@@ -1085,6 +1085,25 @@ test('a reset hook that fails stops the run before any persona starts', async (t
   assert.match((await offline.run.done).stop_reason ?? '', /^error: The reset hook failed: fetch failed/);
 });
 
+test('a reset hook that redirects fails without following, and its query string stays out of the reset record and the report', async (t) => {
+  // An SSO proxy answers the POST with a redirect to its login page, which answers a GET with 200.
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    calls.push(`${req.method} ${req.url}`);
+    if (req.url?.startsWith('/__reset')) res.writeHead(302, { location: '/login' }).end();
+    else res.writeHead(200).end();
+  });
+  const url = `${await listen(server)}/__reset`;
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const r = begin([step('done', null, 'Done')], { config: { reset: true }, project: { pois: [{ ...web, reset_hook_url: `${url}?token=s3cret` }] } });
+  const report = await r.run.done;
+  assert.deepEqual(calls, ['POST /__reset?token=s3cret']);
+  assert.equal(report.stop_reason, 'error: The reset hook answered 302');
+  assert.deepEqual(report.methods.reset, { url, status: 302, error: null });
+  assert.deepEqual(of(r.events, 'run.reset_called').map((e) => e.payload.url), [url]);
+  assert.ok(!new TextDecoder().decode(r.files.get('runs/r-0001/report.json')).includes('s3cret'), 'the token stays out of the report');
+});
+
 // —— Social rounds (M4) ——
 
 const QUIET = { thought: 'Nothing to add.', action: 'nothing', post_id: null, text: null, reaction: null, about_poi_id: null, opinion_updates: [] };

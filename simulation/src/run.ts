@@ -593,14 +593,16 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const resetStaging = async (url: string) => {
     let status: number | null = null;
     let error: string | null = null;
+    const { origin, pathname } = new URL(url); // logged without the query string, which may carry a token
     try {
-      const res = await fetch(url, { method: 'POST', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
+      // A redirect fails rather than being followed: an SSO proxy's 302 to a login page would read as a reset that succeeded.
+      const res = await fetch(url, { method: 'POST', redirect: 'manual', signal: AbortSignal.any([hard.signal, AbortSignal.timeout(10_000)]) });
       status = res.status;
       await res.body?.cancel();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
-    record({ ...base, type: 'run.reset_called', payload: { url, status, error } });
+    record({ ...base, type: 'run.reset_called', payload: { url: origin + pathname, status, error } });
     if (error !== null || status === null || status < 200 || status > 299) throw new Error(`The reset hook ${error ? `failed: ${error}` : `answered ${status}`}`);
   };
 
