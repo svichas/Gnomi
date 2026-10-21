@@ -31,7 +31,7 @@ export function textParts(text: string, max = PART_CHARS): { start: number; end:
   return parts;
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * The passage a confusion quotes, checked against `text`: the model's offsets when they hold the quote, else the quote's occurrence
@@ -45,7 +45,7 @@ export function locatePassage(text: string, quote: string, start: number, end: n
   const hits: { start: number; end: number }[] = [];
   for (let at = text.indexOf(q); at !== -1; at = text.indexOf(q, at + 1)) hits.push({ start: at, end: at + q.length });
   if (hits.length === 0) {
-    for (const m of text.matchAll(new RegExp(q.split(/\s+/).map(escape).join('\\s+'), 'gi'))) hits.push({ start: m.index, end: m.index + m[0].length });
+    for (const m of text.matchAll(new RegExp(q.split(/\s+/).map(escapeRegExp).join('\\s+'), 'gi'))) hits.push({ start: m.index, end: m.index + m[0].length });
   }
   const best = hits.sort((a, b) => Math.abs(a.start - start) - Math.abs(b.start - start))[0];
   return best ? { ...best, text: text.slice(best.start, best.end) } : null;

@@ -106,7 +106,7 @@ export function withoutUnknownKeys<T>(schema: z.ZodType<T>, text: string | null)
   const first = schema.safeParse(value);
   if (first.success || !first.error.issues.every((i) => i.code === 'unrecognized_keys')) return undefined;
   for (const issue of first.error.issues) {
-    const owner = issue.path.reduce<any>((o, k) => o?.[k], value);
+    const owner = issue.path.reduce<Record<PropertyKey, unknown>>((o, k) => o?.[k] as Record<PropertyKey, unknown>, value as Record<PropertyKey, unknown>);
     for (const key of issue.keys) delete owner[key];
   }
   const second = schema.safeParse(value);

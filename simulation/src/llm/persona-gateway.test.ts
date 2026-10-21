@@ -29,7 +29,7 @@ function setup(over: Partial<Parameters<typeof createGateway>[0]> = {}) {
 }
 
 function stubCompletion(reasoningTokens?: number) {
-  const bodies: Array<Record<string, any>> = [];
+  const bodies: Array<{ thinking?: { type: string }; reasoning_effort?: string; max_tokens?: number }> = [];
   mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
     bodies.push(JSON.parse(String(init.body)));
     return Response.json({

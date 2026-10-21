@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { COPY_SAMPLES, FRAME_SEQUENCES, GYM_V3_DEFECT_IDS, assetFile, copyKey, frameKey, gymAssets } from "./assets.ts";
+import { COPY_SAMPLES, FRAME_SEQUENCES, GYM_V3_DEFECT_IDS, assetFile, gymAssets } from "./assets.ts";
 import { copyPlan, framePlan, pricingCopy } from "./design.ts";
 import { frameManifest, renderPages } from "./generate-assets.ts";
 
 const none = gymAssets({ defects: "none" });
 const readBytes = (path: string) => readFile(path);
-const sequences = Object.keys(FRAME_SEQUENCES) as (keyof typeof FRAME_SEQUENCES)[];
 const html = (sequence: keyof typeof FRAME_SEQUENCES, defect: boolean) =>
   framePlan().filter((f) => f.key.startsWith(`frames/${sequence}/${defect ? FRAME_SEQUENCES[sequence].defect : "control"}/`)).map((f) => f.html);
 

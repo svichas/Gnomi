@@ -175,7 +175,7 @@ test('pronouns, background, a second language and the segment shape the card wit
   assert.match(system, /Kai is red–green colour-blind, so colour alone tells them nothing/);
   assert.match(system, /leaves them stuck/);
   assert.match(system, /in their own voice/);
-  assert.match(system, /account: new and empty, nothing set up yet\n  arrived: from a link a colleague shared\n  usually here to: review applicants; leave feedback/);
+  assert.match(system, /account: new and empty, nothing set up yet\n {2}arrived: from a link a colleague shared\n {2}usually here to: review applicants; leave feedback/);
   assert.match(system, /Kai's task: "Review the shortlisted candidates for the robotics role"/);
   assert.doesNotMatch(system, /\b(she|her|he|him|his)\b/i, 'no gendered pronoun for a they persona');
   assert.doesNotMatch(systemPrompt(BUILTIN_PERSONA, project, null), /second language/);

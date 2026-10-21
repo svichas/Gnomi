@@ -376,7 +376,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
 }
 
 // Same-site paths only: a lone leading slash, no backslash or control characters (browsers strip tabs and newlines, so "/\t/evil" would become "//evil").
-const safeNext = (next: string | null): string => (next && /^\/(?![\/\\])[\x20-\x7e]*$/.test(next) ? next : "/");
+const safeNext = (next: string | null): string => (next && /^\/(?![/\\])[\x20-\x7e]*$/.test(next) ? next : "/");
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const options = (items: string[], selected: string) =>
   items.map((item) => `<option value="${esc(item)}"${item === selected ? " selected" : ""}>${esc(item)}</option>`).join("");
