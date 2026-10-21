@@ -135,11 +135,14 @@ Run these commands from the repository root:
 | `npm run gym` | Start the local Gym web app. |
 | `npm test` | Run the workspace test suites. |
 | `npm run typecheck` | Type-check the workspaces. |
+| `npm run lint` | Lint the repository with Biome. |
 | `npm run build -w @gnomi/app` | Build the desktop application code. |
 | `npm run smoke -w @gnomi/app` | Build and run the scripted Electron smoke check. |
 | `npm run smoke:poi -w @gnomi/app` | Check the input setup flows in Electron. |
 | `npm run smoke:figma -w @gnomi/app` | Check the Figma import flow against the fixture API. |
 | `npm run acceptance -w @gnomi/simulation -- --m5 --out /tmp/gnomi-m5-demo` | Run the text/design acceptance rehearsal without provider calls; use a fresh output directory. |
+
+CI runs lint, typecheck, the tests and the app build on every pull request; see [CONTRIBUTING.md](CONTRIBUTING.md) before opening one.
 
 Live acceptance runs are opt-in and require provider credentials and an explicit spending allowance. The [acceptance guides](#documentation) distinguish structural checks, live measurements, and findings that still need review.
 
