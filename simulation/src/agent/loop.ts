@@ -3,7 +3,7 @@ import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
-import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
+import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
 import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { readsImages } from '../settings.ts';
@@ -36,8 +36,11 @@ export interface EpisodeDeps {
   stepsBefore: number;
   /** The persona's opinion of this POI when the episode starts, from an earlier social phase; null or absent when it has none. */
   opinion?: Opinion | null;
-  /** A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely re-recorded. */
-  openPage: (poi: WebPoi) => Promise<PageDriver>;
+  /**
+   * A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely
+   * re-recorded. Between slices it gets the `state` the persona's last page left with instead.
+   */
+  openPage: (poi: WebPoi, state?: StorageState) => Promise<PageDriver>;
   llm: LlmGateway;
   blobs: BlobStore;
   record: Recorder;
@@ -122,10 +125,10 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
   let lastGoodUrl = startUrl;
   let page = await deps.openPage(poi);
-  // A fresh page at the last unblocked URL, logged in with the role's current recorded session; false once the run is stopping.
-  const reopen = async () => {
+  // A fresh page at the last unblocked URL, logged in with `state` or else the role's current recorded session; false once the run is stopping.
+  const reopen = async (state?: StorageState) => {
     if (signal.aborted) return false;
-    page = await deps.openPage(poi);
+    page = await deps.openPage(poi, state);
     if (signal.aborted) return false;
     await page.goto(lastGoodUrl);
     return true;
@@ -194,14 +197,15 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const last = stepsBefore + step_budget;
     for (let step_no = stepsBefore + 1; step_no <= last; step_no++) {
       if (atSliceEnd(deps, step_no)) {
-        // A waiting persona holds no page, so open pages stay within the concurrency.
-        // shortcut: only the recorded login comes back, so unsaved input, session storage and cookies the persona set itself are lost between slices; carry the context's storage state over if a flow needs them.
+        // A waiting persona holds no page, so open pages stay within the concurrency. Its cookies and local storage come back with it;
+        // shortcut: unsaved input and session storage are lost between slices; keep the page open if a flow needs them.
+        const kept = await page.storageState?.().catch(() => undefined);
         await page.close().catch(() => {});
         const next = await deps.slice!.next();
         if (!next) return 'stopped';
         opinion = next.opinion;
         heard = next.heard ?? [];
-        if (!(await reopen())) return 'stopped';
+        if (!(await reopen(kept))) return 'stopped';
         const back = await inspect(step_no - 1, lastGoodUrl);
         if (back !== 'go') return back;
       }

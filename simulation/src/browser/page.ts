@@ -357,6 +357,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       return drained;
     },
 
+    storageState: () => context.storageState(),
     close: () => context.close(),
   };
 }

@@ -94,6 +94,17 @@ test('between social rounds a persona holds no page: open pages stay within the 
   assert.ok(pages.every((p) => p.options.storageState === login), 'with the recorded login');
 });
 
+test('a woken persona carries on as the same visitor: its page reopens with the cookies and storage the last one left with', async () => {
+  const own = (n: number) => ({ cookies: [{ name: 'signed_up', value: `page-${n}` }] });
+  const { browsers, pages } = fakeBrowsers((_page, n) => ({ storageState: async () => own(n) }));
+  const { report } = await runWeb('carried', {
+    personas: personas(1), navigator: () => step('click', 'e1'), browsers, withLogin: true,
+    settings: { social: true, rounds: 3, concurrency: 1 }, project: { audience },
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.deepEqual(pages.map((p) => p.options.storageState), [login, own(1), own(2)]);
+});
+
 test('a page a late redirect replaces under the snapshot is read again; the persona goes on and nobody else is cancelled', async () => {
   let reads = 0;
   const { browsers } = fakeBrowsers((page) => ({

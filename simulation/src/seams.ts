@@ -146,6 +146,8 @@ export interface PageDriver {
   inspect(): Promise<PageFlags>;
   /** Console errors, uncaught exceptions and 4xx/5xx document/XHR/fetch responses from allowed hosts since the last call. */
   errors(): PageError[];
+  /** The cookies and local storage the page holds now, so a page reopened later carries on as the same visitor. */
+  storageState?(): Promise<StorageState>;
   close(): Promise<void>;
 }
 

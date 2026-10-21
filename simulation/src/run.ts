@@ -23,7 +23,7 @@ import { socialRounds } from './settings.ts';
 import { DEFAULT_SIGNALS } from './signals/index.ts';
 import { readBoard, selectFeed, type FeedPost } from './social/feed.ts';
 import { networkGraph } from './social/graph.ts';
-import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore } from './seams.ts';
+import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
@@ -244,7 +244,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   const observe = observeOptions(hard.signal); // robots.txt once per run and observe-only POI
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
-  const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi) => {
+  const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi, state?: StorageState) => {
     const login = poi.mode === 'full' ? role : null;
     const saved = login ? await sessions?.load(login) : null;
     if (target && saved && saved.info.target_id !== target.id) throw new ComparisonEnvironmentError(`The recorded session is not bound to ${target.name}; record its own test account.`);
@@ -258,7 +258,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       ...personaEnvironment(persona),
       allowedHosts: allowedHosts(poi),
       blockedDomains: poi.production_domains,
-      storageState: saved?.state ?? null,
+      storageState: state ?? saved?.state ?? null,
       observe: observing,
       onBlockedRequest: ({ host, url, method, navigation, reason }) => {
         record({ ...base, persona_id: persona.id, poi_id: poi.id, type: 'containment.blocked_request', payload: reason === 'host' ? { host, url, method } : { host, url, method, reason } });
