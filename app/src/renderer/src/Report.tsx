@@ -11,7 +11,7 @@ import { missingUsageText } from './cost.ts';
 import type { ProfileFilter } from './activity.ts';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
-import { Fold, InFile, Tile } from './reportParts.tsx';
+import { count, Fold, heading, InFile, PersonaLink, pct, SectionHeading, signed, Th, Tile } from './reportParts.tsx';
 import type { Tone } from './reportParts.tsx';
 
 function duration(ms: number | null) {
@@ -19,12 +19,6 @@ function duration(ms: number | null) {
   const seconds = Math.round(ms / 1000);
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
-
-const pct = (x: number) => `${Math.round(x * 100)}%`;
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
-const signed = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1)}`;
-const heading = 'text-base font-semibold text-stone-900';
-
 
 const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
   done: { text: 'Reached the goal', tone: 'good' },
@@ -107,16 +101,6 @@ type Inspect = (personaId: string, seq?: number) => void;
 // Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
 type RenderScreenshot = (path: string, alt: string) => ReactNode;
 
-
-function PersonaLink({ id, name, seq, onInspect }: { id: string; name: string; seq?: number; onInspect: Inspect }) {
-  if (useContext(InFile)) return <span className="font-medium normal-case tracking-normal text-stone-900">{name}</span>;
-  return (
-    <button type="button" onClick={() => onInspect(id, seq)} className="text-left font-medium normal-case tracking-normal text-indigo-700 underline decoration-indigo-300 hover:text-indigo-900">
-      {name}
-    </button>
-  );
-}
-
 /** Three quick signals: completion, shared issues, and sentiment or audience size. Always the full run. */
 function Glance({ report, themes: all }: { report: ReportData; themes: ReportTheme[] }) {
   // A competitor's problems are not the team's to fix.
@@ -150,12 +134,6 @@ function Passage({ passage }: { passage: ReportFriction['passage'] }) {
     </p>
   );
 }
-
-const Th = ({ children }: { children: ReactNode }) => (
-  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-stone-500">
-    {children}
-  </th>
-);
 
 const TRUST: Record<Trust, { text: string; style: string }> = {
   confirmed: { text: 'Confirmed', style: 'border-indigo-300 bg-indigo-50 text-indigo-900' },
@@ -287,7 +265,7 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
   return (
     <div className="report-priorities">
       <section aria-labelledby="themes-title">
-        <div className="report-section-heading"><div><h3 id="themes-title">What to improve <span>{problems.length}</span></h3><p>Where simulated users found friction. Open an issue for the suggested change and evidence.</p></div></div>
+        <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Open an issue for the suggested change and evidence." />
         <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
@@ -301,7 +279,7 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
 function LegacyFindings({ report, onInspect }: { report: ReportData; onInspect: Inspect }) {
   const inFile = useContext(InFile);
   return <section aria-labelledby="themes-title">
-    <div className="report-section-heading"><div><h3 id="themes-title">Reported friction <span>{report.frictions.length}</span></h3><p>Individual observations from simulated users.</p></div></div>
+    <SectionHeading id="themes-title" title={<>Reported friction <span>{report.frictions.length}</span></>} hint="Individual observations from simulated users." />
     {report.frictions.length === 0 ? <div className="report-empty"><Icon name="check" size={20} /><p>No friction was reported in this run.</p></div> : <ol className="report-finding-list">
       {[...report.frictions].sort(bySeverity).map((friction, i) => <li key={friction.seq} className="report-finding" data-tone={SEVERITY[level(friction.severity)].tone}>
         <details open={inFile}>
@@ -894,7 +872,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         {report.themes ? <Priorities themes={themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
       </>}
       <div className="report-details">
-        <div className="report-section-heading"><div><h3>Explore the details</h3><p>A closer look, whenever you need it.</p></div></div>
+        <SectionHeading title="Explore the details" hint="A closer look, whenever you need it." />
         {!report.comparison && <>
           {report.went_well && report.went_well.length > 0 && <Fold id="positive-title" title="What went well" hint="What users liked about the experience" icon="check"><WentWell likes={report.went_well} /></Fold>}
           <Fold id="audience-results-title" title="Audience breakdown" hint="Results by segment and profile" icon="people"><div className="space-y-6"><SegmentTable report={report} />{dimension && <DimensionTable dimension={dimension} selected={filter.value} />}</div></Fold>
