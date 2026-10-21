@@ -163,13 +163,6 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .action-bar-notice { margin-top: 16px; scroll-margin-bottom: calc(var(--action-bar-height, 66px) + 40px); }
 .app-main:has(.action-bar:not([hidden] *)) { padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
 html:has(.action-bar:not([hidden] *)) { scroll-padding-bottom: calc(var(--action-bar-height, 66px) + 48px); }
-/* Pills (ui.tsx usePills) float at the top, where the step and header controls are, and never meet the ActionBar. */
-.pills { position: fixed; z-index: 30; top: 16px; inset-inline: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
-.pill { pointer-events: auto; display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 4px 4px 4px 16px; border-radius: 999px; background: var(--gnomi-text); color: var(--gnomi-canvas); font-size: 13px; font-weight: 500; box-shadow: 0 8px 24px #22282329; animation: pill-in var(--gnomi-duration) ease-out; }
-.pill .quiet-button { padding: 6px; border-radius: 999px; color: inherit; }
-.pill .quiet-button:hover { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; }
-.pill :focus-visible { outline-color: currentColor; outline-offset: 2px; }
-@keyframes pill-in { from { opacity: 0; transform: translateY(-8px); } }
 .disclosure { border: 1px solid var(--gnomi-line); border-radius: 12px; background: var(--gnomi-surface); }
 .disclosure > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; list-style: none; padding: 16px 20px; font-size: 13px; font-weight: 500; }
 .disclosure > summary::-webkit-details-marker { display: none; }

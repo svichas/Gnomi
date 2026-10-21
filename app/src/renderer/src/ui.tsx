@@ -105,36 +105,6 @@ export function ActionBar({ notice, children }: { notice?: ReactNode; children: 
   </>;
 }
 
-/**
- * Brief notices floating at the top of the window, clear of the ActionBar: `notify` raises one, render `view` once.
- * Each leaves after a few seconds or when dismissed; the region is live, so screen readers hear each as it arrives.
- */
-export function usePills() {
-  const [pills, setPills] = useState<{ id: number; text: string }[]>([]);
-  const ids = useRef(0);
-  const dismiss = (id: number) => setPills((all) => all.filter((pill) => pill.id !== id));
-  const notify = (text: string) => {
-    const id = ++ids.current;
-    // The same notice again replaces its copy, so repeated clicks restart it rather than stack it.
-    setPills((all) => [...all.filter((pill) => pill.text !== text), { id, text }]);
-    window.setTimeout(() => dismiss(id), 5000);
-  };
-  const view = (
-    <div role="status" aria-atomic="false" className="pills">
-      {pills.map((pill) => <div key={pill.id} className="pill">{pill.text}<Button variant="quiet" aria-label="Dismiss" onClick={() => dismiss(pill.id)}><Icon name="close" size={16} /></Button></div>)}
-    </div>
-  );
-  return { notify, view };
-}
-
-export function ProgressBar({ value, max, label }: { value: number; max: number; label: string }) {
-  return (
-    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-2 w-full overflow-hidden rounded-full bg-stone-200">
-      <div className="h-full rounded-full bg-indigo-600 transition-[width]" style={{ width: `${max > 0 ? Math.min(100, (value / max) * 100) : 0}%` }} />
-    </div>
-  );
-}
-
 /** A screenshot, fetched only once it scrolls into view: a report or a timeline can hold hundreds. */
 export function Screenshot({ path, alt }: { path: string; alt: string }) {
   const box = useRef<HTMLDivElement>(null);

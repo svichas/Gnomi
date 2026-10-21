@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
-import { countStates, filterEvents, filterPersonas, isPreparingReport, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, reportProgress, resetOutcome, runSetup, stopText, timelineSummary, toRows, waitingBlocks } from './activity.ts';
+import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -11,24 +11,6 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 const blockedRequest = (seq: number, host: string, path: string) => event(seq, 'containment.blocked_request', { host, url: `http://${host}${path}`, method: 'GET' });
 const blocked = (seq: number, reason: 'captcha' | 'session_expired' = 'captcha', who = 'p-001') => event(seq, 'persona.blocked', { step_no: 2, reason, detail: 'recaptcha' }, who);
 const resumed = (seq: number, who = 'p-001') => event(seq, 'persona.resumed', { step_no: 2 }, who);
-
-test('the report is preparing after every episode ends, including final surveys inside an open social round', () => {
-  const personas = [{ ...BUILTIN_PERSONA, id: 'p-001' }, { ...BUILTIN_PERSONA, id: 'p-002' }];
-  const abandoned = event(2, 'persona.abandoned', { step_no: 6, reason: 'The form cannot be completed.' });
-  const done = event(3, 'persona.goal_done', { step_no: 4, summary: 'Complete' }, 'p-002');
-  const preparing = (events: GnomiEvent[], population = personas) => isPreparingReport(events, personaStates(events, population));
-  assert.equal(preparing([]), false);
-  assert.equal(preparing([], []), false);
-  assert.equal(preparing([abandoned]), false);
-  assert.equal(preparing([abandoned, blocked(3, 'captcha', 'p-002')]), false);
-  assert.equal(preparing([abandoned, done]), true);
-  const social = [event(1, 'run.round_started', {}, null), abandoned, done];
-  assert.equal(preparing(social), true, 'Final surveys can outlive the last episode; no further social phase will start.');
-  assert.equal(preparing([...social, event(4, 'run.round_ended', {}, null)]), true);
-  assert.equal(preparing(social.slice(0, 2)), false, 'Social rounds continue while another persona has not ended.');
-  assert.equal(preparing([abandoned, done, event(4, 'run.finished', {}, null)]), false);
-  assert.equal(preparing([event(2, 'signal.budget_exceeded', { step_no: 40, budget: 40 }), done]), true, 'An episode that ran out of steps has ended too.');
-});
 
 test('a repeated model failure reads as no valid answer and leaves the persona unfinished, not gave up', () => {
   const failed = event(1, 'signal.repeated_failure', { step_no: 3, action: 'wait', error: 'invalid_output' });
@@ -39,10 +21,7 @@ test('a repeated model failure reads as no valid answer and leaves the persona u
 test('timeline retains event time and puts a persona quote on the line without hiding failures', () => {
   const [post] = toRows([event(42, 'social.post', { post_id: 'post-1', parent_id: null, text: 'I found the next step.\nThat was easy.', about_poi_id: 'poi-1' })]);
   assert.equal(post.ts, 42);
-  assert.equal(timelineSummary(post), '“I found the next step. That was easy.”');
   assert.equal(post.quote, 'I found the next step.\nThat was easy.');
-  assert.equal(timelineSummary({ ...post, badge: { ok: false, text: 'failed' } }), post.title);
-  assert.equal(timelineSummary({ ...post, tone: 'alarm', title: 'Safety stop' }), 'Safety stop');
   assert.equal(toRows([blockedRequest(12, 'outside.test', '/a')])[0].ts, 12);
   assert.ok(isTimelineHighlight(post));
   assert.ok(isTimelineHighlight({ ...post, tone: 'alarm' }));
@@ -185,7 +164,6 @@ test('each persona is waiting, working, blocked, done or gave up, and a run that
     event(8, 'signal.repeated_failure', { step_no: 4, action: 'click', error: 'ref_not_found' }, 'e'),
   ];
   assert.deepEqual([...personaStates(events, people)], [['a', 'done'], ['b', 'abandoned'], ['c', 'blocked'], ['d', 'active'], ['e', 'unfinished'], ['f', 'waiting']]);
-  assert.deepEqual(countStates(personaStates(events, people)), { waiting: 1, active: 1, blocked: 1, done: 1, abandoned: 1, unfinished: 1 });
   const ended = personaStates([...events, event(9, 'run.stopped', { reason: 'user', detail: null }, null)], people);
   assert.deepEqual([...ended.values()], ['done', 'abandoned', 'blocked', 'unfinished', 'unfinished', 'unfinished']);
   assert.equal(personaStates([start(1, 'unknown')], people).has('unknown'), false, 'events of someone outside the population are ignored');
@@ -283,20 +261,6 @@ test('steps taken and the latest feeling are counted per persona', () => {
   const progress = personaProgress([step(1, 'a', 1, 0), step(2, 'b', 1, -2), step(3, 'a', 2, 1), event(4, 'run.finished', {}, null)]);
   assert.deepEqual([...progress], [['a', { steps: 2, feeling: 1 }], ['b', { steps: 1, feeling: -2 }]]);
 });
-
-test('report progress follows the log: surveys, then the judge and the author for each POI', () => {
-  const started = (seq: number, who: string, poi: string) => event(seq, 'persona.episode_started', { poi_id: poi, device: 'desktop', start_url: 'http://gym.test/' }, who);
-  const survey = (seq: number, who: string, poi: string) => event(seq, 'persona.survey', { poi_id: poi, sentiment: 0, confidence: 0.5, likes: [], frictions: [], would_continue: true, reason: 'Fine.' }, who);
-  const log = [started(1, 'a', 'web'), started(2, 'b', 'web'), started(3, 'b', 'copy'), survey(4, 'a', 'web'), survey(5, 'b', 'web')];
-  assert.deepEqual(reportProgress(log), { stage: 'surveys', surveys: { done: 2, total: 3 }, pois: { total: 0, themed: 0, suggested: 0 }, fraction: 0.2 * 2 / 3 });
-  log.push(event(6, 'report.started', { pois: ['web', 'copy'] }, null));
-  assert.deepEqual([reportProgress(log).stage, reportProgress(log).fraction], ['themes', 0.2], 'a survey that never came does not hold the report back');
-  log.push(event(7, 'report.themes', { poi_id: 'web', themes: [] }, null));
-  log.push(event(8, 'report.suggestions', { poi_id: 'copy', suggestions: [] }, null)); // its judge failed, the author still answered
-  assert.deepEqual(reportProgress(log), { stage: 'suggestions', surveys: { done: 3, total: 3 }, pois: { total: 2, themed: 2, suggested: 1 }, fraction: 0.2 + 0.5 + 0.15 });
-  assert.equal(reportProgress([started(1, 'a', 'web'), event(2, 'report.started', { pois: [] }, null)]).fraction, 0.95, 'without frictions only saving is left');
-});
-
 
 test('a text or design starts as reading or looking through it, by its name, not its stored file', () => {
   const pois = [
