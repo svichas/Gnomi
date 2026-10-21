@@ -36,8 +36,6 @@ export function socialSchema(feedIds: string[], poiIds: [string, ...string[]]) {
   });
 }
 
-export type SocialOutput = z.infer<ReturnType<typeof socialSchema>>;
-
 /** Personas written before M4 have no sampled propensity: they rarely post. */
 export const DEFAULT_POSTING_PROPENSITY = 0.2;
 
