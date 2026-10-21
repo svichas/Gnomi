@@ -18,6 +18,7 @@
     "./llm/gateway.ts": "./src/llm/gateway.ts",
     "./llm/scripted.ts": "./src/llm/scripted.ts",
     "./log/blobs.ts": "./src/log/blobs.ts",
+    "./log/describe.ts": "./src/log/describe.ts",
     "./log/sqlite.ts": "./src/log/sqlite.ts",
     "./opinion/index.ts": "./src/opinion/index.ts",
     "./persona.ts": "./src/persona.ts",
@@ -41,7 +42,6 @@
   "scripts": {
     "test": "node --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p .",
-    "cli": "node src/cli.ts",
     "acceptance": "node src/acceptance.ts"
   },
   "dependencies": {
