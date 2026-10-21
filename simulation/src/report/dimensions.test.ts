@@ -114,4 +114,6 @@ test('a persona the model gave no valid answer for counts in the row but not in 
   const outcomes = [['p1', 'done'], ['p2', 'model_failed'], ['p3', 'not_started']].map(([id, outcome]) => ({ id, outcome }) as ReportPersona);
   const [row] = buildDimensions(people, outcomes, new Map(), schema(), new Set()).find((d) => d.id === 'region')!.values;
   assert.deepEqual([row.personas, row.completion], [3, 1]);
+  const [none] = buildDimensions(people.slice(1), outcomes.slice(1), new Map(), schema(), new Set()).find((d) => d.id === 'region')!.values;
+  assert.deepEqual([none.personas, none.completion, none.with_friction], [2, null, null], 'no rate over nobody');
 });

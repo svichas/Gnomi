@@ -312,6 +312,19 @@ test('sentiment, what went well and the analysis appendix appear when the report
   for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
 });
 
+test('page and model text cannot add HTML, images or links to the export, and evidence pages lose their query strings', () => {
+  const hostile = '<img src="https://t.example/p.gif"> ![x](https://t.example/i.png) [Verify your account](https://phish) `x` \\[';
+  const page = 'http://localhost:3001/reset?token=s3cret#t';
+  const md = reportToMarkdown({
+    ...report,
+    themes: [{ ...theme, description: hostile, pages: ['localhost:3001/[a](b)'], evidence: [{ ...theme.evidence[0], quote: hostile, url: page }] }],
+    frictions: [{ ...report.frictions[0], what: hostile, url: page }],
+  });
+  assert.ok(md.includes('&lt;img src="https://t.example/p.gif"&gt; !\\[x\\](https://t.example/i.png) \\[Verify your account\\](https://phish) \\`x\\` \\\\\\['), 'shown as text');
+  assert.doesNotMatch(md, /<img|(?<!\\)\]\(|(?<!\\)`x/);
+  assert.ok(md.includes('   - Page: http://localhost:3001/reset\n') && !md.includes('s3cret'), 'no token in the export');
+});
+
 test('missing-usage copy names the count and preserves uncertainty about provider billing', () => {
   assert.equal(missingUsageText(undefined), null);
   assert.equal(missingUsageText(0), null);

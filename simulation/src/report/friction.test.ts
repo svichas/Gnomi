@@ -141,3 +141,24 @@ test('an exception in a step where containment refused a request stays a candida
   ), 'poi');
   assert.deepEqual(candidates.map((c) => [c.step_no, c.trust, c.text]), [[1, 'reported', 'The page broke'], [1, 'observed', 'Uncaught exception: x is not defined']]);
 });
+
+test('a signal seen after its step’s action cites the next step’s screenshot, the one taken after it; none when there is no next step', () => {
+  const CHECKOUT = 'http://gym.test/checkout';
+  const CONFIRM = 'http://gym.test/checkout/confirm';
+  const click = (step_no: number, from: string, to: string) => ({ ...step(step_no), result: { ...step(step_no).result, url_before: from, url_after: to } });
+  const events = log(
+    ['persona.step', 'p1', click(4, CHECKOUT, CONFIRM)],
+    ['signal.error', 'p1', { step_no: 4, url: CONFIRM, ref: 'e1', kind: 'http', status: 500, message: 'POST http://gym.test/api/confirm' }],
+    ['persona.step', 'p1', step(5, CONFIRM)],
+    ['signal.small_target', 'p1', { step_no: 5, url: CONFIRM, ref: 'e1', box: [0, 0, 10, 10] }],
+    ['signal.validation_error', 'p1', { step_no: 5, url: CONFIRM, ref: 'e1', message: 'Card number is required' }],
+  );
+  assert.deepEqual(buildCandidates(events, 'poi').map((c) => [c.kind, c.url, c.screenshot]), [
+    ['error', CONFIRM, 'shots/5.jpg'], // step 4's shows /checkout, before the click
+    ['small_target', CONFIRM, 'shots/5.jpg'], // about the tap itself: the page before it
+    ['validation_error', CONFIRM, null], // the message appeared after step 5, the last
+  ]);
+  // The persona's next step is on its next POI: that screenshot shows another product.
+  const next = { ...log(['persona.step', 'p1', step(6, 'http://other.test/')])[0], poi_id: 'poi-2', seq: 6 } as GnomiEvent;
+  assert.equal(buildCandidates([...events, next], 'poi').at(-1)?.screenshot, null);
+});

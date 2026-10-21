@@ -47,7 +47,7 @@ export interface ReportDimension {
   id: string;
   name: string;
   type: ProfileAttribute['type'];
-  values: { value: AttributeValue; personas: number; completion: number; with_friction: number; sentiment: number | null }[];
+  values: { value: AttributeValue; personas: number; completion: number | null; with_friction: number | null; sentiment: number | null }[]; // rates null with nobody started
 }
 
 export interface ReportSegment {
@@ -56,10 +56,10 @@ export interface ReportSegment {
   share: number; // percent, as the audience set it
   personas: number;
   outcomes: Record<Outcome, number>;
-  completion: number; // done ÷ personas who started
-  with_friction: number; // personas with a self-report, survey friction or signal in a friction theme ÷ personas who started
+  completion: number | null; // done ÷ personas who started; null when none started
+  with_friction: number | null; // personas with a self-report, survey friction or signal in a friction theme ÷ personas who started
   frictions: number;
-  pois?: { poi_id: string; personas: number; completion: number }[]; // per non-competitor POI, of those who started it; only with more than one
+  pois?: { poi_id: string; personas: number; completion: number | null }[]; // per non-competitor POI, of those who started it; only with more than one
 }
 
 /** Evidence trust within the simulation (tech.md §8.1): a self-report backed by a signal, a signal alone, a self-report alone. */
@@ -160,7 +160,7 @@ export interface Report {
   personas: ReportPersona[]; // in start order
   segments: ReportSegment[];
   dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values
-  weighted: { completion: number; with_friction: number }; // Σ share × rate over segments: each segment counts by its share, not its persona count
+  weighted: { completion: number | null; with_friction: number | null }; // Σ share × rate over segments: each segment counts by its share, not its persona count; null when none started
   steps: number; // all personas together
   frictions: ReportFriction[]; // in seq order
   // M3 friction pipeline; absent in reports written before it. Themes are ranked within each POI.

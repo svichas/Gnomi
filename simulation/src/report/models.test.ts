@@ -6,7 +6,8 @@ import type { LlmGateway, Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { GnomiEvent, LlmRole, NewEvent, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
-import { runReportModels } from './models.ts';
+import { judgeSchema, runReportModels } from './models.ts';
+import { TEXT_MAX } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const config: RunConfig = {
@@ -72,6 +73,12 @@ test('a malformed judge answer is retried once, then the themes stay determinist
   assert.deepEqual(types, ['report.started', 'llm.call', 'llm.call', 'llm.call', 'report.suggestions']);
   assert.deepEqual(report.themes?.map((t) => [t.title, t.named_by]), [['Reported friction on /jobs/new', 'rules'], ['Reported friction on /', 'rules']]);
   assert.match(report.methods.limitations?.[0] ?? '', /^The judge model did not name the themes/);
+});
+
+test('a theme description the report keeps whole is a valid judge answer, so one long theme cannot void every title', () => {
+  const theme = (length: number) => ({ themes: [{ title: 'Plans hide the seat limit', description: 'x'.repeat(length), group_ids: ['g1'] }] });
+  assert.ok(judgeSchema.safeParse(theme(TEXT_MAX)).success);
+  assert.ok(!judgeSchema.safeParse(theme(TEXT_MAX + 1)).success);
 });
 
 test('without a model (no key, no responder) only the start is logged and the report falls back to rules', async () => {

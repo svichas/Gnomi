@@ -501,8 +501,8 @@ test('M2: the same audience and seed regenerate identical personas with no write
   assert.ok(counts(changed.personas)['seg-1'] > counts(first.personas)['seg-1']);
   const run2 = await w.go(bySegment(changed.personas), { project: { ...w.project, audience: after }, personas: changed.personas });
 
-  assert.ok(Math.abs(run1.report.weighted.completion - 0.4) < 1e-9, `weighted completion ${run1.report.weighted.completion}`);
-  assert.ok(Math.abs(run2.report.weighted.completion - 0.7) < 1e-9, `weighted completion ${run2.report.weighted.completion}`);
+  assert.ok(Math.abs(run1.report.weighted.completion! - 0.4) < 1e-9, `weighted completion ${run1.report.weighted.completion}`);
+  assert.ok(Math.abs(run2.report.weighted.completion! - 0.7) < 1e-9, `weighted completion ${run2.report.weighted.completion}`);
   assert.deepEqual(
     run2.report.segments.map((s) => [s.id, s.personas]),
     Object.entries(counts(changed.personas)),
