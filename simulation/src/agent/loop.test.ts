@@ -93,3 +93,37 @@ test('between social rounds a persona holds no page: open pages stay within the 
   assert.ok(reopened.every((p) => p.gotos[0] === 'http://gym.test/jobs'), 'at its last good URL');
   assert.ok(pages.every((p) => p.options.storageState === login), 'with the recorded login');
 });
+
+test('a page a late redirect replaces under the snapshot is read again; the persona goes on and nobody else is cancelled', async () => {
+  let reads = 0;
+  const { browsers } = fakeBrowsers((page) => ({
+    async snapshot() {
+      // The second look of the first persona to get there runs into the navigation.
+      if (++reads === 2) throw new Error('page.evaluate: Execution context was destroyed, most likely because of a navigation');
+      const url = page.gotos.at(-1)!;
+      return { url, title: 'Gym', text: '- link "Jobs" [ref=e1]', hash: url };
+    },
+  }));
+  const { report, events } = await runWeb('redirect', {
+    personas: personas(2), browsers, settings: { concurrency: 2 },
+    navigator: (req) => (/Step 2\./.test(JSON.stringify(req.user)) ? step('done', null, 'Posted') : step('scroll', null, 'down')),
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.deepEqual(report.personas.map((p) => p.outcome), ['done', 'done']);
+  assert.equal(of(events, 'persona.step').length, 4);
+});
+
+test('a timed-out model call is a failed step, as an invalid answer is, and the run goes on', async () => {
+  let calls = 0;
+  const { browsers } = fakeBrowsers();
+  const { report, events } = await runWeb('timeout', {
+    personas: personas(1), browsers,
+    navigator: () => {
+      if (++calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return step('done', null, 'Posted');
+    },
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.deepEqual(of(events, 'persona.step').map((e) => e.payload.result.error), ['invalid_output', null]);
+  assert.equal(report.personas[0].outcome, 'done');
+});

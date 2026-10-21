@@ -141,6 +141,18 @@ test('a mismatch the persona gave no words for is filed on the frame whose expec
   assert.equal(frictions[0].payload.expected, 'A confirmation that my order is placed');
 });
 
+test('a timed-out model call on a screen is a failed step, as an invalid answer is, and the run goes on', async () => {
+  let screens = 0;
+  const slow = (req: LlmRequest<unknown>) => {
+    if (req.purpose === 'design' && ++screens === 2) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    return shopper(req);
+  };
+  const { report, events } = await runCheckout('none', slow, 'timeout');
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const steps = events.filter((e): e is EventOf<'persona.step'> => e.type === 'persona.step');
+  assert.deepEqual(steps.map((s) => s.payload.result.error), [null, 'invalid_output', null, null, null, null]);
+});
+
 test('the demo responder answers design screens in the schema, with a labelled sample mismatch on the second', () => {
   const ask = (screen: number) => DEMO_NAVIGATOR({ role: 'navigator', model: PROVIDER_DEFAULTS.anthropic.navigator, run_id: 'r', persona_id: 'p', round: 1, purpose: 'design', system: '', user: [{ type: 'text', text: `Screen ${screen} of 3.` }], schema: designSchema });
   const [first, second] = [designSchema.parse(ask(1)), designSchema.parse(ask(2))];

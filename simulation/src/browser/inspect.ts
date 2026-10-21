@@ -18,6 +18,17 @@ const SCAN_CHARS = 2_000_000;
 
 /** Login-page, bot-challenge and live-key checks on the page as it is now (tech.md §9.1, §9.3). */
 export async function inspect(page: Page): Promise<PageFlags> {
+  try {
+    return await check(page);
+  } catch (err) {
+    // A redirect that lands after act()'s settle cap destroys the page's context mid-check: check the new page once it has loaded.
+    if (!String(err).includes('Execution context was destroyed')) throw err;
+    await page.waitForLoadState('load', { timeout: 10_000 }).catch(() => {});
+    return check(page);
+  }
+}
+
+async function check(page: Page): Promise<PageFlags> {
   const [loginForms, found] = await Promise.all([
     // A lone password field that is not for a new password: two side by side, or new-password, set or change one.
     Promise.all(page.frames().map((frame) => frame.locator('input[type="password" i]:visible').evaluateAll((inputs) => inputs.length === 1 && !/\bnew-password\b/i.test(inputs[0].getAttribute('autocomplete') ?? '')).catch(() => false))),

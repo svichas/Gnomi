@@ -180,19 +180,24 @@ test('scripted demo runs read a text too: the demo confusion quotes its first li
   assert.deepEqual(report.buyers?.map((b) => [b.name, b.surveyed, b.price.unclear]), [['Team leads buying', 1, 1]]);
 });
 
-test('failed text model calls stop with a technical error, without inventing impatience or survey feedback', async () => {
+test('a reader the model fails, twice invalid or timed out, ends as model_failed without inventing a read, impatience or survey feedback; the run goes on', async () => {
   const purposes: string[] = [];
   const { report, events } = await runText({
-    text: 'A short product pitch.', personas: [users[0]], audience,
-    navigator: (req) => { purposes.push(req.purpose!); return {}; },
+    text: 'A short product pitch.', personas: [users[0], users[1], buyers[0]], audience,
+    navigator: (req) => {
+      if (req.persona_id === 'u2') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      if (req.persona_id === 'b1') return DEMO_NAVIGATOR(req);
+      purposes.push(req.purpose!);
+      return {};
+    },
   });
-  assert.equal(report.status, 'stopped');
-  assert.match(report.stop_reason ?? '', /error: .*Invalid output twice/);
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
   assert.deepEqual(purposes, ['read_text', 'read_text'], 'only the bounded gateway retry runs');
-  assert.equal(of(events, 'persona.step').length, 0, 'a failed model call is not a persona action');
+  const failed = (e: GnomiEvent) => e.persona_id === 'u1' || e.persona_id === 'u2';
+  assert.equal(of(events, 'persona.step').filter(failed).length, 0, 'a failed model call is not a persona action');
   assert.equal(of(events, 'signal.budget_exceeded').length, 0, 'model failure did not exhaust persona patience');
-  assert.equal(of(events, 'persona.survey').length, 0);
-  assert.equal(report.personas[0].outcome, 'incomplete');
+  assert.equal(of(events, 'persona.survey').filter(failed).length, 0);
+  assert.deepEqual(report.personas.map((p) => [p.id, p.outcome]).sort(), [['b1', 'done'], ['u1', 'model_failed'], ['u2', 'model_failed']]);
 });
 
 test('a long text takes one step per part: an impatient reader runs out before the end, a patient one reads on and remembers', async () => {

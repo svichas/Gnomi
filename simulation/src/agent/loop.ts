@@ -165,8 +165,9 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   // Looks at the page and asks the model what the persona does. output is null when the model twice failed to answer validly;
   // the whole result is null when stop() cancelled the call.
   const look = async (step_no: number) => {
-    const snapshot = await page.snapshot();
-    const shot = await page.screenshot();
+    // A redirect that lands after act()'s settle cap destroys the page's context under a read: the new page is read once more.
+    const read = async () => ({ snapshot: await page.snapshot(), shot: await page.screenshot() });
+    const { snapshot, shot } = await read().catch((err: unknown) => (String(err).includes('Execution context was destroyed') ? read() : Promise.reject(err)));
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
     const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
@@ -177,8 +178,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       return { snapshot, screenshot, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;
-      // A second invalid output is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
-      if (!(err instanceof InvalidOutputError)) throw err;
+      // A second invalid output or a timed-out call is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError')) throw err;
       return { snapshot, screenshot, output: null };
     }
   };
