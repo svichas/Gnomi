@@ -9,6 +9,7 @@ import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../proj
 import type { KeyTest } from '../providers.ts';
 import { REPORT_FORMATS } from '../reports.ts';
 import type { ReportFormat } from '../reports.ts';
+import type { Startup } from '../startup.ts';
 import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { keyedProvider, ProviderKeys } from './providers.ts';
@@ -91,11 +92,6 @@ async function loadSessionKey(): Promise<{ key: string; remembered: boolean }> {
   const remembered = await canRemember();
   if (remembered) await writeSecret('session.key', key);
   return { key, remembered }; // not remembered: recorded logins end with this app session
-}
-
-interface Startup {
-  startupError: string | null; // set instead of rejecting, so the page can show it
-  sessionsPersist: boolean; // false: recorded logins are forgotten when the app quits
 }
 
 /** Starts the engine, gives it the secrets and opens the project. */

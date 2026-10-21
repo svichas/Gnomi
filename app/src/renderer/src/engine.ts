@@ -1,5 +1,6 @@
 import type { Api, EngineToClient, Method, SessionRun } from '@gnomi/engine/protocol.ts';
 import type { GnomiEvent, PersonaProgress } from '@gnomi/simulation/types.ts';
+import type { Startup } from '../../startup.ts';
 
 // The engine client: typed requests over the MessagePort that main hands to the page (tech.md §11).
 let port: MessagePort | undefined;
@@ -18,7 +19,7 @@ let stop: (message: string) => void;
 export const stopped = new Promise<string>((resolve) => (stop = resolve));
 
 // Listens from module load: the preload posts the port as soon as the page has loaded, and again after a reload.
-export const connected = new Promise<{ startupError: string | null; sessionsPersist: boolean }>((resolve) => {
+export const connected = new Promise<Startup>((resolve) => {
   window.addEventListener('message', (e: MessageEvent) => {
     if (e.source !== window || e.data?.gnomi !== 'port' || !e.ports[0]) return;
     port = e.ports[0];
