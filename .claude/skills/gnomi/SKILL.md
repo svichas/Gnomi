@@ -27,7 +27,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
    npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --json > runs/acme.log 2>&1
    ```
    Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"`, or when the process has exited with an error on stderr.
-5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw.
+5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. A rate is `null`, not 0, when nobody it covers started (for example a segment a stopped run never reached). Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw.
 
 ## Points of interest
 
@@ -59,7 +59,7 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
 
 ## Earlier runs
 
-- `runs <project dir> --json` lists runs, newest first.
+- `runs <project dir> --json` lists runs, newest first. It only reads the folder, so a run the app is running stays `running`; so does one whose process was killed, until the next `run --project` on that folder or the app opens it.
 - `report <project dir> [--run r-0002] --format summary|md|json` rebuilds a run's report; `summary` is the default and the same object a run returns.
 - `rejudge <project dir> [--run r-0002] --json` runs an ended run's judge and author again with the current prompts and the run's own judge and author models, without browsing, and rewrites its report files. Use it after the theming rules change; it needs the judge's and author's keys and costs a few model calls (the result line gives `cost_usd`, and `runs` counts it in the run's cost). It spends at most what is left of the run's cost budget; when that is used up it refuses, and `--budget <usd>` sets what this rejudge may spend instead.
 
