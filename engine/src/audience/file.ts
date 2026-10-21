@@ -19,6 +19,13 @@ export interface AudienceFile extends SavedAudience {
   personas: Persona[];
 }
 
+/** What a saved audience must be, from a file or from the app's page: segments, a known country mix and a valid profile schema. */
+export function checkSavedAudience(audience: Audience | undefined, schema: unknown, noSegments: string): asserts schema is PersonaSchema {
+  if (!audience || typeof audience !== 'object' || !Array.isArray(audience.segments) || !audience.segments.length) throw new Error(noSegments);
+  validateCountries(audience.countries);
+  validatePersonaSchema(schema);
+}
+
 /** Reads and checks an audience file; anything that is not one is an error, so writing over it is never silent. */
 export function readAudienceFile(path: string): AudienceFile {
   let file: AudienceFile;
@@ -29,12 +36,10 @@ export function readAudienceFile(path: string): AudienceFile {
   }
   const bad = (what: string) => new Error(`${path} is not an audience file: ${what}.`);
   if (!file || typeof file !== 'object') throw bad('it holds no object');
-  if (!file.audience || !Array.isArray(file.audience.segments) || !file.audience.segments.length) throw bad('its audience has no segments');
+  checkSavedAudience(file.audience, file.schema, bad('its audience has no segments').message);
   const { product } = file;
   if (!product || typeof product.name !== 'string' || typeof product.description !== 'string' || typeof product.goal !== 'string') throw bad('it does not name the product');
   if (!Array.isArray(file.personas) || file.personas.some((p) => !p || typeof p.id !== 'string' || typeof p.segment_id !== 'string')) throw bad('its personas are not a list of personas');
-  validateCountries(file.audience.countries);
-  validatePersonaSchema(file.schema);
   return file;
 }
 

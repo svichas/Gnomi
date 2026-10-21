@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
-import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { Audience } from '@gnomi/simulation/types.ts';
-import type { SavedAudience } from '@gnomi/engine/audience/file.ts';
+import { checkSavedAudience, type SavedAudience } from '@gnomi/engine/audience/file.ts';
 
 const MAX_BYTES = 1_000_000;
 
@@ -34,9 +32,7 @@ export class AudienceLibrary {
   save(name: unknown, audience: unknown, schema: unknown): SavedAudience {
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 80) throw new Error('Give the audience a name of 1–80 characters.');
     const value = audience as Audience;
-    if (!value || typeof value !== 'object' || !Array.isArray(value.segments) || !value.segments.length) throw new Error('Only an audience with segments can be saved.');
-    validateCountries(value.countries);
-    validatePersonaSchema(schema);
+    checkSavedAudience(value, schema, 'Only an audience with segments can be saved.');
     const list = this.list();
     const same = list.find((entry) => entry.name.toLowerCase() === name.trim().toLowerCase());
     const entry: SavedAudience = { id: same?.id ?? randomUUID(), name: name.trim(), savedAt: Date.now(), audience: value, schema };
