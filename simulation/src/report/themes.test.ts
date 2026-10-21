@@ -297,6 +297,16 @@ test('replayed judge answers and suggestions are dropped when their group ids no
   assert.ok(analyseFrictions([...run, old], ctx).limitations.includes(unchecked), 'a log from before keys keeps its titles but says they are unchecked');
 });
 
+test('after a rejudge, suggestions older than the newest judge answer are not used: they were written for the earlier themes', () => {
+  const current = groupKey(groupCandidates(buildCandidates(run, 'poi'))[0].members[0]);
+  const answer = (seq: number) => ({ ...run[0], seq, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Save is broken', description: 'd', group_ids: ['g1'] }], keys: { g1: current } } }) as GnomiEvent;
+  const suggested = { ...run[0], seq: 100, persona_id: null, type: 'report.suggestions', payload: { poi_id: 'poi', suggestions: [{ theme_id: 'g1', change: 'Fix Save.', solution: 's' }] } } as GnomiEvent;
+  assert.equal(analyseFrictions([...run, answer(99), suggested], ctx).themes[0].suggestion?.change, 'Fix Save.');
+  const rejudged = analyseFrictions([...run, answer(99), suggested, answer(101)], ctx);
+  assert.equal(rejudged.themes[0].suggestion, null);
+  assert.ok(rejudged.limitations.includes('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).'));
+});
+
 test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {
   const buyer = { ...survey(['Too expensive for us'], []), buyer: { would_buy: false, price: 'high', objections: ['Too expensive for us'], unclear: [] } } as EventPayloads['persona.survey'];
   const kinds = buildCandidates(log(['persona.survey', 'a1', buyer], ['persona.survey', 'a2', survey(['It was long.'], [])]), 'poi').map((c) => [c.kind, c.element, c.severity]);

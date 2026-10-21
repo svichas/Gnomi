@@ -605,7 +605,9 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       .sort((a, b) => EVIDENCE_ORDER[b.prevalence!.level] - EVIDENCE_ORDER[a.prevalence!.level] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
     ranked.forEach((t, i) => (t.rank = i + 1));
 
-    const suggested = lastFor(events, 'report.suggestions', poi_id);
+    // After a rejudge, suggestions older than the newest answer were written for the earlier themes.
+    const latest = lastFor(events, 'report.suggestions', poi_id);
+    const suggested = judged && latest && latest.seq < judged.seq ? undefined : latest;
     const given = suggested?.payload.suggestions;
     const suggestions = Array.isArray(given) ? given.filter((s) => !(typeof s?.theme_id === 'string' && s.theme_id.split('+').some(stale))) : given;
     const dropped = (judged?.payload.themes?.length ?? 0) - (judgedThemes?.length ?? 0) + (judged?.payload.posts?.length ?? 0) - (judgedPosts?.length ?? 0);
