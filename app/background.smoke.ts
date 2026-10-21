@@ -176,7 +176,16 @@ try {
   }
   await page.setViewportSize({ width: 1100, height: 780 });
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
-  assert.equal(await history.count(), 0, 'history belongs to the open project');
+  await history.click();
+  const everyRun = page.getByRole('region', { name: 'All project runs', exact: true }).getByRole('button');
+  assert.equal(await everyRun.filter({ hasText: 'Pricing & plans' }).count(), 2, 'the projects page lists every project\'s runs');
+  assert.match(await everyRun.filter({ hasText: 'Hiring workspace' }).innerText(), /Stopped/);
+  await page.screenshot({ path: join(shots, 'workspace-runs.png') });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('heading', { name: 'Connections', exact: true }).waitFor();
+  assert.equal(await page.locator('.workspace-page').getByText('Saved with this project').count(), 0, 'the projects page shows only shared settings');
+  await page.screenshot({ path: join(shots, 'workspace-settings.png'), fullPage: true });
+  await page.getByRole('button', { name: 'All projects', exact: true }).click();
   await page.getByRole('button', { name: 'Open Hiring workspace', exact: true }).click();
   await history.click();
   assert.equal(await historyRows.count(), 1, 'another project has only its own runs');

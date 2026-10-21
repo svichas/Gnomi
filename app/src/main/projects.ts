@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSy
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
-import type { ProjectEntry } from '../projects.ts';
+import type { ProjectEntry, WorkspaceRun } from '../projects.ts';
 
 const NAME_FILE = 'project-name.json';
 
@@ -84,6 +84,20 @@ export class ProjectLibrary {
     return ids.flatMap((id) => {
       try { return [this.entry(id)]; } catch { return []; } // an unreadable folder does not hide the remaining projects
     }).sort((a, b) => b.updatedAt - a.updatedAt || a.name.localeCompare(b.name));
+  }
+
+  /** Every project's saved runs, newest first, read without opening a project in the engine. */
+  runs(): WorkspaceRun[] {
+    return this.list().flatMap((project) => {
+      try {
+        return database(this.directory(project.id), (db) => db.prepare('SELECT id, status, stop_reason, cost_usd, started_at, ended_at, snapshot_json FROM run').all(), true).map((row) => ({
+          run_id: String(row.id), status: row.status as WorkspaceRun['status'], stop_reason: row.stop_reason === null ? null : String(row.stop_reason),
+          cost_usd: Number(row.cost_usd), started_at: Number(row.started_at), ended_at: row.ended_at === null ? null : Number(row.ended_at),
+          // shortcut: the snapshot as stored, without the engine's older-version upgrade; enough to list a run, which opens through the engine
+          config: JSON.parse(String(row.snapshot_json)), project_id: project.id, project_name: project.name,
+        }));
+      } catch { return []; } // an unreadable project does not hide the others' runs
+    }).sort((a, b) => b.started_at - a.started_at);
   }
 
   create(value: string): ProjectEntry {

@@ -24,6 +24,8 @@ interface Window {
     /** The saved audiences that remain. */
     deleteAudience(id: string): Promise<import('../../audiences.ts').SavedAudience[]>;
     listProjects(): Promise<import('../../projects.ts').ProjectCatalog>;
+    /** Every project's saved runs, newest first. */
+    listRuns(): Promise<import('../../projects.ts').WorkspaceRun[]>;
     projectAction(action: import('../../projects.ts').ProjectAction): Promise<import('../../projects.ts').ProjectActionResult>;
     /** Shrunk evidence screenshots as data URLs, by blob path; one that cannot be read is absent. */
     reportThumbnails(paths: string[]): Promise<Record<string, string>>;

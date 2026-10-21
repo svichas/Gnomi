@@ -159,15 +159,16 @@ function ModelSelect({ role, choice, onChange }: { role: LlmRole; choice: ModelC
   );
 }
 
-export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void> }) {
-  const { settings, onSettings, save, list, reloadProviders } = props;
+export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean }) {
+  const { settings, onSettings, save, list, reloadProviders, workspace } = props;
   const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
 
-  const localUrl = settings.local_base_url?.trim() || null;
+  // The local endpoint is saved with a project, so the workspace's settings, with no project open, show only what every project shares.
+  const localUrl = workspace ? null : settings.local_base_url?.trim() || null;
   const configured = list && configuredProviders(list.keys, localUrl);
-  const addable = (Object.keys(PROVIDER_LABELS) as ProviderId[]).filter((id) => configured && !configured.includes(id));
+  const addable = (Object.keys(PROVIDER_LABELS) as ProviderId[]).filter((id) => configured && !configured.includes(id) && !(workspace && id === 'openai_compatible'));
 
   /** Saves the project with the local endpoint changed; the engine only ever reaches the address saved with it. */
   async function saveLocal(local_base_url: string | null): Promise<Outcome | null> {
@@ -247,10 +248,10 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
     <div className="settings-workspace">
       <div className="settings-overview" aria-label="Current settings">
         <div><Icon name="globe" /><span><strong>{list ? `${connectedCount} ${connectedCount === 1 ? 'provider' : 'providers'} connected` : 'Loading connections…'}</strong><small>{list && connectedCount === 0 ? 'Add a provider to generate personas' : 'AI access for your projects'}</small></span></div>
-        <div><Icon name="clock" /><span><strong>${settings.cost_budget_usd} · {settings.wall_clock_budget_min} min</strong><small>Limits for each simulation</small></span></div>
-        <div><Icon name="people" /><span><strong>{settings.concurrency} at a time</strong><small>Personas exploring in parallel</small></span></div>
+        {!workspace && <><div><Icon name="clock" /><span><strong>${settings.cost_budget_usd} · {settings.wall_clock_budget_min} min</strong><small>Limits for each simulation</small></span></div>
+        <div><Icon name="people" /><span><strong>{settings.concurrency} at a time</strong><small>Personas exploring in parallel</small></span></div></>}
       </div>
-      <div className="settings-layout">
+      <div className={workspace ? 'settings-layout settings-layout-single' : 'settings-layout'}>
       <div className="settings-connections">
       <div className="settings-group-heading"><p>Connections</p><span>Manage AI and design access</span></div>
       <Card id="settings-providers" title="Providers">
@@ -324,7 +325,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
       </Card>
 
       </div>
-      <div className="settings-run-options">
+      {!workspace && <div className="settings-run-options">
       <div className="settings-group-heading"><p>Run settings</p><span>Saved with this project</span></div>
       <Card title="Budgets">
         <div className="space-y-4">
@@ -370,9 +371,9 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         </div>
       </Card>
 
+      </div>}
       </div>
-      </div>
-      <details className="disclosure settings-models"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
+      {!workspace && <details className="disclosure settings-models"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
         <p className="mb-4 text-sm text-stone-600">With one connected provider, Gnomi assigns it to every task automatically. You can choose a provider and model for each task below. Changing the provider selects its recommended model.</p>
         <div className="space-y-3">
           {ROLES.map((role) => {
@@ -409,18 +410,18 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         </div>
       </Card>
 
-      </div></details>
+      </div></details>}
 
       <p className="text-xs text-stone-500">Gnomi is free software under the GNU AGPL v3.0. Source: github.com/svichas/Gnomi</p>
 
-      <ActionBar notice={saving.outcome && !saving.outcome.ok && <Note tone="error">{saving.outcome.text}</Note>}>
+      {!workspace && <ActionBar notice={saving.outcome && !saving.outcome.ok && <Note tone="error">{saving.outcome.text}</Note>}>
         <p className="settings-save-hint">Provider keys save immediately. Save to apply this project’s run settings.</p>
         {saving.outcome?.ok && <Note tone="ok">{saving.outcome.text}</Note>}
         {saving.busy && <p className="text-sm text-stone-500">Working...</p>}
         <Button onClick={onSave} disabled={saving.busy} loading={saving.busy} variant="primary">
           Save settings
         </Button>
-      </ActionBar>
+      </ActionBar>}
     </div>
   );
 }

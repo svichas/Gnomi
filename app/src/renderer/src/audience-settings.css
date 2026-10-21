@@ -130,3 +130,5 @@
 .saved-audiences li > div { display: grid; flex: 1; gap: 2px; min-width: 0; }
 .saved-audiences li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
 .saved-audiences li span { font-size: 12px; line-height: 1.5; color: var(--gnomi-text-muted); }
+.settings-layout-single { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
+.settings-overview:has(> div:only-child) { grid-template-columns: minmax(0, 1fr); max-width: 760px; }
