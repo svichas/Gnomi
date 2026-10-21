@@ -91,7 +91,7 @@ export const design: PoiRunner<DesignPoi> = {
 
       const { asset } = poi.frames[index];
       const url = `asset:${asset}`;
-      const end = output?.action === 'abandon' ? 'abandon' : index === poi.frames.length - 1 ? 'done' : null;
+      const end = output?.action === 'abandon' ? 'abandon' : output && index === poi.frames.length - 1 ? 'done' : null;
       const summary = `Looked through all ${poi.frames.length} screens of ${poi.name}`;
       const action: Action = end ? { type: end, ref: null, text: end === 'abandon' ? (output?.reason ?? '') : summary } : { type: 'read', ref: null, text: null };
       const recorded = emit('persona.step', {
@@ -119,6 +119,11 @@ export const design: PoiRunner<DesignPoi> = {
 
       const own = log.ended(step_no, action);
       if (own) return own;
+      // No answer on the last screen is not having looked through them all: the model failed, which takes no survey.
+      if (!output && index === poi.frames.length - 1) {
+        emit('signal.repeated_failure', { step_no, action: action.type, error: 'invalid_output' });
+        return 'model_failed';
+      }
       said = output;
     }
     emit('signal.budget_exceeded', { step_no: stepsBefore + last, budget });
