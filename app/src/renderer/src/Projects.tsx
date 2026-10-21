@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ProjectAction, ProjectCatalog } from '../../projects.ts';
-import { Button, Dialog, Field, inputClass, Note, useAction, when } from './ui.tsx';
+import { Button, Dialog, Field, inputClass, Note, OutcomeNote, useAction, when } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 
 function ProjectMenu({ name, disabled, children }: { name: string; disabled: boolean; children: ReactNode }) {
@@ -78,7 +78,7 @@ export function Projects({ catalog, onAction, onReturn }: { catalog: ProjectCata
         </form>
         {action.outcome && !action.outcome.ok && <Note tone="error">{action.outcome.text}</Note>}
       </Dialog>}
-      {action.outcome && !creating && <Note tone={action.outcome.ok ? 'ok' : 'error'}>{action.outcome.text}</Note>}
+      {!creating && <OutcomeNote outcome={action.outcome} />}
       {action.busy && <p role="status" className="text-sm text-stone-500">Working on the project…</p>}
       <ul aria-label="Projects" className="project-list">
         {visibleProjects.map((project) => (

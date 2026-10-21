@@ -224,6 +224,11 @@ export interface Outcome {
   text: string;
 }
 
+/** The message an action ended with, if it has ended. */
+export function OutcomeNote({ outcome }: { outcome: Outcome | null }) {
+  return outcome && <Note tone={outcome.ok ? 'ok' : 'error'}>{outcome.text}</Note>;
+}
+
 /** Runs one async action at a time, tracking whether it is in flight and the message it ended with. */
 export function useAction() {
   const [busy, setBusy] = useState(false);

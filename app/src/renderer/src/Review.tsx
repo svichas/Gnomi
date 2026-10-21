@@ -14,7 +14,7 @@ import { problemFor, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
 import { ROLE_TEXT } from './Settings.tsx';
-import { ActionBar, Button, Check, Note, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Check, Note, OutcomeNote, usd, useAction } from './ui.tsx';
 import './results.css';
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
@@ -146,7 +146,7 @@ export function Review(props: {
         </section>
       )}
       <RecordingPanel recorder={recorder} />
-      {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+      <OutcomeNote outcome={recorder.outcome} />
       {saved && (
         <div className="review-ready" data-ready={ready} role="status">
           <span className="audience-next-icon"><Icon name={ready ? 'check' : blocking ? 'alert' : 'clock'} size={24} /></span>

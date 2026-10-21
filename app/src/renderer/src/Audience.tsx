@@ -17,7 +17,7 @@ import { CountryMix } from './CountryMix.tsx';
 import { SavedAudienceList, SaveToLibrary } from './SavedAudiences.tsx';
 import { SegmentCard } from './Segments.tsx';
 import { SocialRounds } from './SocialRounds.tsx';
-import { ActionBar, Button, Card, Field, Note, NumberInput, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Card, Field, Note, NumberInput, OutcomeNote, usd, useAction } from './ui.tsx';
 import { Icon } from './Icon.tsx';
 import { BuildProgress } from './BuildProgress.tsx';
 import './audience-settings.css';
@@ -215,7 +215,7 @@ export function AudienceTab(props: {
           <Button onClick={generate} disabled={busy} variant={needsPersonas ? 'primary' : 'secondary'}><Icon name="people" size={18} />Generate personas<Icon name="arrow" size={16} /></Button>
         </div>
       )}
-      {plan.outcome && <Note tone={plan.outcome.ok ? 'ok' : 'error'}>{plan.outcome.text}</Note>}
+      <OutcomeNote outcome={plan.outcome} />
       <Card title="Audience">
         {building === 'audience' && <div ref={buildPanel}><BuildProgress kind="audience" progress={progress} /></div>}
         <fieldset disabled={busy} className="audience-fields" hidden={building === 'audience' && audience === null}>
@@ -313,7 +313,7 @@ export function AudienceTab(props: {
 
       {!building && <GenerationDetails calls={info?.setup_calls ?? []} />}
 
-      {people.outcome && <Note tone={people.outcome.ok ? 'ok' : 'error'}>{people.outcome.text}</Note>}
+      <OutcomeNote outcome={people.outcome} />
       {audience !== null && personas.length > 0 && (
         <PersonaList
           personas={personas}

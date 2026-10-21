@@ -1,7 +1,7 @@
 import type { EventOf, Persona } from '@gnomi/simulation/types.ts';
 import { call } from './engine.ts';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { Button, Note, useAction } from './ui.tsx';
+import { Button, OutcomeNote, useAction } from './ui.tsx';
 
 /** The engine words a CAPTCHA block as "A recaptcha challenge is showing. ..."; the banner only needs the name of the challenge. */
 function challengeKind(detail: string): string | null {
@@ -83,8 +83,8 @@ export function BlockedBanner(props: {
           End run
         </Button>
       </div>
-      {retry.outcome && <Note tone={retry.outcome.ok ? 'ok' : 'error'}>{retry.outcome.text}</Note>}
-      {recorder.outcome && <Note tone={recorder.outcome.ok ? 'ok' : 'error'}>{recorder.outcome.text}</Note>}
+      <OutcomeNote outcome={retry.outcome} />
+      <OutcomeNote outcome={recorder.outcome} />
     </section>
   );
 }

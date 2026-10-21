@@ -3,7 +3,7 @@ import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { PersonaSchema, ProfileAttribute, ProfileGroup, Segment } from '@gnomi/simulation/types.ts';
 import { ATTRIBUTE_TYPES, choiceValues, customAttribute, parseProfileTemplate, profileProblem, PROFILE_GROUPS, serializeProfileTemplate, setAttributeChoices } from './profile.ts';
 import { ProfileAttributeEditor } from './ProfileAttributeEditor.tsx';
-import { Button, Card, Field, inputClass, Note, secondaryButton, useAction } from './ui.tsx';
+import { Button, Card, Field, inputClass, Note, OutcomeNote, secondaryButton, useAction } from './ui.tsx';
 
 const DEFAULT_IDS = new Set(getPersonaSchema().attributes.map((attribute) => attribute.id));
 
@@ -44,7 +44,7 @@ export function ProfileEditor({ schema, segments, disabled, onSchema }: { schema
         <label className={`${secondaryButton} profile-load-template cursor-pointer`}>Load template<input type="file" accept=".json,application/json" aria-label="Load profile template" className="sr-only" disabled={template.busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadTemplate(file); event.target.value = ''; }} /></label>
         <Button onClick={() => onSchema(getPersonaSchema())}>Restore default attributes</Button>
       </div>
-      {template.outcome && <Note tone={template.outcome.ok ? 'ok' : 'error'}>{template.outcome.text}</Note>}
+      <OutcomeNote outcome={template.outcome} />
       {problem && <Note tone="error">{problem}</Note>}
       {(Object.entries(PROFILE_GROUPS) as [ProfileGroup, string][]).map(([id, label]) => {
         const members = attributes.attributes.filter((attribute) => attribute.group === id);
