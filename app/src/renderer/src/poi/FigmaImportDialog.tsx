@@ -4,6 +4,7 @@ import type { FigmaFile, FigmaImport } from '@gnomi/engine/figma/frames.ts';
 import type { DesignPoi } from '@gnomi/simulation/types.ts';
 import { call } from '../engine.ts';
 import { Button, Check, Dialog, Field, inputClass, Note, OpenSettings, useAction } from '../ui.tsx';
+import { move } from './index.ts';
 
 /** What the dialog hands back: the design to add, with the Figma frames as its steps. The engine has already stored the images. */
 export type FigmaDesign = Pick<DesignPoi, 'name' | 'frames'>;
@@ -48,12 +49,6 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
       return null;
     });
   }
-
-  const move = (index: number, by: number) => {
-    const next = [...picked];
-    [next[index], next[index + by]] = [next[index + by], next[index]];
-    setPicked(next);
-  };
 
   function finish(assets: Record<string, string>) {
     if (file) onAdd({ name: file.name, frames: picked.filter((id) => assets[id]).map((id) => ({ asset: assets[id], name: nameOf(id) })) });
@@ -137,8 +132,8 @@ export function FigmaImportDialog({ onAdd, onClose }: { onAdd(design: FigmaDesig
                   <li key={id} className="flex items-center gap-2 text-sm text-stone-800">
                     <span className="w-6 text-right text-stone-500">{index + 1}.</span>
                     <span className="min-w-0 flex-1 truncate">{nameOf(id)}</span>
-                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} up`} disabled={index === 0} onClick={() => move(index, -1)}>Up</Button>
-                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} down`} disabled={index === picked.length - 1} onClick={() => move(index, 1)}>Down</Button>
+                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} up`} disabled={index === 0} onClick={() => setPicked(move(picked, index, -1))}>Up</Button>
+                    <Button small variant="quiet" aria-label={`Move ${nameOf(id)} down`} disabled={index === picked.length - 1} onClick={() => setPicked(move(picked, index, 1))}>Down</Button>
                   </li>
                 ))}
               </ol>
