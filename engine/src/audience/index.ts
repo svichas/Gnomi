@@ -27,7 +27,7 @@ export interface AudienceDeps {
 }
 
 const PREFERRED_MIN_PER_SEGMENT = 3;
-const MAX_PERSONAS = 200;
+export const MAX_PERSONAS = 200;
 
 // Starting points the user sees and edits (idea.md §11), not measurements: about 15% think in a first language other than English.
 const LANGUAGES: Record<string, number> = { en: 0.85, es: 0.04, de: 0.02, fr: 0.02, pt: 0.02, hi: 0.02, zh: 0.02, ar: 0.01 };

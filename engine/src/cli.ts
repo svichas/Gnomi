@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { defaultAudience, diversityReport, proposeAudience, syncPersonas } from './audience/index.ts';
+import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { audienceDeps, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
@@ -22,7 +22,7 @@ import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunSettings } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -203,6 +203,12 @@ function summarize(report: Report) {
   };
 }
 
+/** How many personas were written rather than kept from before. */
+function rewritten(before: Persona[], after: Persona[]): number {
+  const kept = new Map(before.map((p) => [p.id, p.profile_signature]));
+  return after.filter((p) => kept.get(p.id) !== p.profile_signature).length;
+}
+
 /** Drafts and setup calls of persona writing go to a throwaway project; the audience file is what is kept. */
 async function inTempProject<T>(work: (store: ProjectStore, blobs: BlobStore) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-'));
@@ -228,8 +234,7 @@ async function writeAudience(path: string, previous: AudienceFile | null, config
     product: { name: config.name, description: config.description, goal: config.goal },
     personas,
   });
-  const kept = new Map(previous?.personas.map((p) => [p.id, p.profile_signature]));
-  const written = personas.filter((p) => kept.get(p.id) !== p.profile_signature).length;
+  const written = rewritten(previous?.personas ?? [], personas);
   const cost = spent + cost_usd;
   const { warning } = diversityReport(personas);
   out(
@@ -240,19 +245,18 @@ async function writeAudience(path: string, previous: AudienceFile | null, config
 
 async function createAudienceFile(v: Values): Promise<void> {
   if (!v.out || !v.goal) throw new Error(`audience create needs --out and --goal.\n\n${USAGE}`);
-  const { out: path, goal } = v;
+  const { out: path } = v;
   const count = v.count === undefined ? undefined : Number(v.count);
-  if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 200)) throw new Error('--count must be a whole number from 1 to 200.');
+  if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS)) throw new Error(`--count must be a whole number from 1 to ${MAX_PERSONAS}.`);
   // Writing over an earlier audience file keeps every persona whose slot is unchanged; anything else there is never overwritten.
   const previous: AudienceFile | null = existsSync(path) ? readAudienceFile(path) : null;
   const settings = settingsFrom(v);
   requireKey(settings, 'persona_writer', v['fake-llm']);
   await inTempProject(async (store, blobs) => {
     const pois = v.pois || v.url ? await poisFrom(v, blobs) : [];
-    const name = v.name ?? pois[0]?.name;
-    if (!name) throw new Error('Name the product with --name, or pass its --pois or --url.');
+    if (!(v.name ?? pois[0]?.name)) throw new Error('Name the product with --name, or pass its --pois or --url.');
     const persona_schema = getPersonaSchema();
-    const config: ProjectConfig = { name, description: v.product ?? '', pois, goal, role: null, audience: null, settings, persona_schema };
+    const config: ProjectConfig = { ...configFor(v, null, pois, settings), persona_schema };
     store.saveProject(config);
     const llm = projectGateway({ fake: v['fake-llm'], secrets: envSecrets, config, record: timeline(store) });
     let spent = 0;
@@ -272,7 +276,7 @@ async function updateAudienceFile(v: Values, path: string | undefined): Promise<
   if (!path) throw new Error(`audience update needs the audience file.\n\n${USAGE}`);
   const file = readAudienceFile(path);
   const { persona_count } = file.audience;
-  if (!Number.isInteger(persona_count) || persona_count < 1 || persona_count > 200) throw new Error(`${path}: "persona_count" must be a whole number from 1 to 200.`);
+  if (!Number.isInteger(persona_count) || persona_count < 1 || persona_count > MAX_PERSONAS) throw new Error(`${path}: "persona_count" must be a whole number from 1 to ${MAX_PERSONAS}.`);
   const settings = settingsFrom(v);
   requireKey(settings, 'persona_writer', v['fake-llm']);
   await inTempProject(async (store) => {
@@ -336,10 +340,9 @@ async function runSimulation(v: Values): Promise<void> {
     if (file) {
       const llm = projectGateway({ fake, secrets: envSecrets, config, record });
       const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
-      const saved = new Map(file.personas.map((p) => [p.id, p.profile_signature]));
-      const rewritten = personas.filter((p) => saved.get(p.id) !== p.profile_signature).length;
+      const again = rewritten(file.personas, personas);
       // Not saved back: the file stays what it was written for.
-      if (rewritten) note(`${rewritten} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
+      if (again) note(`${again} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
       store.replacePersonas(personas, file.audience.persona_count);
     }
     const personas = checkRun(store, config, { reset: false, fake, secrets: envSecrets });
