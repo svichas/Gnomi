@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
+import type { Page } from 'playwright-core';
 import type { BrowserPool } from '../seams.ts';
 import type { PageFlags } from '../types.ts';
+import { inspect } from './inspect.ts';
 import { launchBrowserPool } from './pool.ts';
 import { listen, stop } from './server.fixture.ts';
 
@@ -112,4 +114,27 @@ test('live_key: Stripe live prefixes in the page HTML, never the key itself', as
 test('live_key: only the first ~2 MB of HTML is scanned', async (t) => {
   assert.equal((await flagsAt(t, '/key-early')).live_key, 'pk_live_');
   assert.equal((await flagsAt(t, '/key-late')).live_key, null);
+});
+
+test('a redirect that destroys the page mid-check is checked again once the new page has loaded; other errors still throw', async () => {
+  const fake = (fail: string) => {
+    const calls: string[] = [];
+    const page = {
+      url: () => 'http://gym.test/login',
+      frames: () => [],
+      async evaluate() {
+        calls.push('evaluate');
+        if (calls.length === 1) throw new Error(fail);
+        return { challenge: 'recaptcha', live_key: null };
+      },
+      async waitForLoadState() {
+        calls.push('load');
+      },
+    };
+    return { page: page as unknown as Page, calls };
+  };
+  const redirected = fake('page.evaluate: Execution context was destroyed, most likely because of a navigation');
+  assert.deepEqual(await inspect(redirected.page), flags({ login: true, challenge: 'recaptcha' }));
+  assert.deepEqual(redirected.calls, ['evaluate', 'load', 'evaluate']);
+  await assert.rejects(inspect(fake('page.evaluate: Target page, context or browser has been closed').page), /has been closed/);
 });

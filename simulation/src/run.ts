@@ -343,7 +343,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   // What each persona read in its latest social phase, handed to its next step so word of mouth reaches the product (tech.md §6.1).
   const heard = new Map<string, HeardPost[]>();
 
-  // With social rounds an episode runs on across slices, page and memory intact; between slices it waits here for its turn.
+  // With social rounds an episode runs on across slices, memory intact; between slices it waits here for its turn, its page closed.
   const waiting = new Map<string, (go: boolean) => void>();
   const yielded = new Map<string, () => void>();
   const tasks = new Map<string, Promise<void>>();

@@ -2,6 +2,7 @@ import { personaEnvironment } from '../audience/locations.ts';
 import { fnv1a } from '../audience/sample.ts';
 import { readAsset } from '../assets.ts';
 import { atSliceEnd, episodeLog, type EpisodeDeps, type EpisodeEnd } from '../agent/loop.ts';
+import { InvalidOutputError } from '../llm/gateway.ts';
 import type { Action, Opinion, TextPoi } from '../types.ts';
 import type { PoiRunner } from './index.ts';
 import type { HeardPost } from '../agent/prompt.ts';
@@ -94,8 +95,11 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
       output = object;
     } catch (err) {
       if (signal.aborted) return 'stopped';
-      // The gateway already retried. A model failure must not turn into a read, exhausted patience or a survey answer.
-      throw err;
+      // The gateway already retried. No valid answer in time ends this reader as the model failing, with no read, exhausted
+      // patience or survey answer; any other model error ends the run.
+      if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError')) throw err;
+      emit('signal.repeated_failure', { step_no, action: 'read', error: 'invalid_output' });
+      return 'model_failed';
     } finally {
       deps.endStep();
     }
