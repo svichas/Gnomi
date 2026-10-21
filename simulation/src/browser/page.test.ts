@@ -36,12 +36,12 @@ const pages: Record<string, string> = {
   '/shared-label': `<!doctype html>${head}<label>Credentials<input aria-label="Username"><input aria-label="Password" type="password" value="${SECRET}"></label>`,
   '/long': `<!doctype html><html><head>${head}<title>Long page</title></head><body><main><h1>Long page</h1>
 <p>${'Lorem ipsum dolor sit amet. '.repeat(150)}</p><div style="height:1500px"></div><ul>${items}</ul><div style="height:3000px"></div><button>Bottom button</button></main></body></html>`,
-  // A custom drop-down closed with opacity 0, as workable.com/pricing builds it, and a native checkbox under a custom skin.
+  // A custom drop-down closed with opacity 0, as a real vendor pricing page builds it, and a native checkbox under a custom skin.
   '/custom-select': `<!doctype html><html><head>${head}<title>Custom select</title></head><body>
 <div role="combobox" aria-label="Dropdown"><button type="button" onclick="this.nextElementSibling.style.opacity = '1'; this.nextElementSibling.style.pointerEvents = 'auto'">1 - 20 employees</button>
 <div style="opacity:0;pointer-events:none"><ol><li>1 - 20 employees</li><li>21 - 50 employees</li></ol></div></div>
 <label><input type="checkbox" style="opacity:0"> Annual billing</label></body></html>`,
-  // A phone menu collapsed as workable.com builds it: zero height and pointer-events: none, its links still in the accessibility tree.
+  // A phone menu collapsed as a real marketing site builds it: zero height and pointer-events: none, its links still in the accessibility tree.
   '/mobile-menu': `<!doctype html><html><head>${head}<title>Mobile menu</title></head><body>
 <header><div><button aria-label="menu button" onclick="const n = document.querySelector('nav'); n.style.height = 'auto'; n.style.pointerEvents = 'auto'">☰</button></div>
 <nav style="height:0;overflow:hidden;pointer-events:none"><div><a href="/next">Pricing</a></div></nav></header>

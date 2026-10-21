@@ -57,8 +57,8 @@ test('allowedHosts puts the start host first, lower-cased and de-duplicated', ()
 });
 
 test('allowedHosts lets the start host redirect to its www twin and back, but never invents one for an address', () => {
-  assert.deepEqual(allowedHosts(poi({ start_url: 'https://workable.com/pricing' })), ['workable.com', 'www.workable.com']);
-  assert.deepEqual(allowedHosts(poi({ start_url: 'https://www.lever.co/' })), ['www.lever.co', 'lever.co']);
+  assert.deepEqual(allowedHosts(poi({ start_url: 'https://example.com/pricing' })), ['example.com', 'www.example.com']);
+  assert.deepEqual(allowedHosts(poi({ start_url: 'https://www.example.org/' })), ['www.example.org', 'example.org']);
   for (const url of ['http://localhost:3000/', 'http://127.0.0.1:8080/', 'http://[::1]/', 'https://www.com/'])
     assert.deepEqual(allowedHosts(poi({ start_url: url })), [new URL(url).hostname], url);
 });

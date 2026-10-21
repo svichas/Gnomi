@@ -100,14 +100,14 @@ For product A/B comparisons, use matched population/network realizations across 
 
 ### 3.1. What the comparison must fix
 
-Run r-0001 asked personas to find an ATS for their company across Workable, Lever, Ashby and Teamtailor. Its output largely answered a different question: what was frustrating about each website. These are observations about that saved run, not current claims about the vendors.
+Run r-0001 asked personas to find an ATS for their company across four vendors (A–D below). Its output largely answered a different question: what was frustrating about each website. These are observations about that saved run, not current claims about the vendors.
 
 | Failure in the saved report | Required change |
 | --- | --- |
 | The headline says 7 of 20 reached the goal, then prioritizes “Find ATS is a single-vendor marketing site, not a comparison tool,” reported by 19 personas. | Gnomi owns the cross-vendor synthesis. Visiting a vendor site to gather evidence must not require that site to offer an independent comparison directory. Separate per-tool task outcomes from the study's ability to support a decision. |
 | Occasional reviewers expected shared candidate profiles despite being sent to marketing homepages. | Freeze the task and its prerequisites before execution. Persona traits can change priorities and reactions, but cannot invent a different assignment, incoming email, account, candidate or deep link. |
 | “What to fix first” asks the reader to change competitors' websites. | Bind each recommendation to its owner. Changes to the user's tool, lessons from rivals, and buyer follow-ups have different destinations. |
-| Pairwise preferences appear late: Workable/Lever/no preference = 11/1/8; Workable/Ashby/no preference = 4/12/4; Workable/Teamtailor/no preference = 7/8/5. | Lead with common criteria across all tools. These different pairwise votes cannot establish an overall winner; distinguish a tie from missing evidence, ineligibility and rejection of both. |
+| Pairwise preferences appear late: A/B/no preference = 11/1/8; A/C/no preference = 4/12/4; A/D/no preference = 7/8/5. | Lead with common criteria across all tools. These different pairwise votes cannot establish an overall winner; distinguish a tie from missing evidence, ineligibility and rejection of both. |
 | Methods lists blocked login, app, documentation, API and CDN hosts, but says “Limitations: None.” Some broad themes contain unrelated quotes or generic console errors as confirmation. | Connect restrictions to the affected task and criterion. A blocked request or unrelated signal cannot confirm a product defect or missing capability. Validate what each evidence item actually supports. |
 
 The current [comparison helper](../simulation/src/poi/compare.ts) uses the first full-access web POI as the baseline and observe-only POIs as competitors. [Report aggregation](../simulation/src/report/build.ts) and [comparison rendering](../app/src/renderer/src/Report.tsx) consume that model. Changing report prose alone cannot repair the task, sampling and evidence problems. Replace the implicit experiment semantics first; reuse existing event and screenshot capture.
@@ -204,10 +204,10 @@ The saved r-0001 report supports a lesson about what to investigate next, not a 
 
 | Target | What the saved report records | Decision consequence / next check |
 | --- | --- | --- |
-| Workable | Some personas reached pricing; the dominant complaint incorrectly demands a multi-vendor directory. | Recheck the relevant plan and total-cost terms. Exclude the directory complaint from product-fit assessment. |
-| Lever | Personas report missing public prices and an unavailable quote form. | Cost remains unresolved. Check whether permitted resources make the form observable before calling it broken; a quote is a buyer follow-up, not a product failure. |
-| Ashby | Personas distinguish a displayed Foundations price from quote-based Plus pricing for their stated size. | Confirm the applicable tier before comparing costs. Do not use the smaller-company price as the price for these companies. |
-| Teamtailor | The report has a no-public-pricing theme, but includes unrelated candidate-review evidence. | Reassess the pricing claim using only relevant captures. Exclude unrelated quotes and leave unverified cost unknown. |
+| Vendor A | Some personas reached pricing; the dominant complaint incorrectly demands a multi-vendor directory. | Recheck the relevant plan and total-cost terms. Exclude the directory complaint from product-fit assessment. |
+| Vendor B | Personas report missing public prices and an unavailable quote form. | Cost remains unresolved. Check whether permitted resources make the form observable before calling it broken; a quote is a buyer follow-up, not a product failure. |
+| Vendor C | Personas distinguish a displayed entry-tier price from quote-based pricing for the next tier for their stated size. | Confirm the applicable tier before comparing costs. Do not use the smaller-company price as the price for these companies. |
+| Vendor D | The report has a no-public-pricing theme, but includes unrelated candidate-review evidence. | Reassess the pricing claim using only relevant captures. Exclude unrelated quotes and leave unverified cost unknown. |
 
 These are historical report statements, not newly verified vendor facts or a regenerated result. A new valid run should replace this limited summary with the matrix, segment-specific tradeoffs and supported owner/buyer actions above. More personas repeating the same mistaken task would not solve the problem.
 
