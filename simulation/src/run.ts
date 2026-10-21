@@ -27,6 +27,8 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Sessio
 
 import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
 
+const MODEL_TIMEOUT_MS = 120_000; // the whole call, retries included
+
 /** The run-scoped part of the project store: log/ implements the whole interface, the run needs only this. */
 export type RunStore = Pick<ProjectStore, 'events' | 'append' | 'saveTranscript' | 'finishRun'>;
 
@@ -163,6 +165,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       hard.signal.throwIfAborted();
       return llm.call({
         ...req,
+        // The wall clock only stops new work, so a call without its own deadline (steps, social) gets one: a stalled provider ends.
+        timeout_ms: req.timeout_ms ?? MODEL_TIMEOUT_MS,
         signal: req.signal ? AbortSignal.any([req.signal, hard.signal]) : hard.signal,
         onAttempt(attempt) {
           // The gateway has committed this attempt before notifying us; paid retries pass through here too.

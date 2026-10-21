@@ -1307,6 +1307,13 @@ test('the cost cap reached in a social phase stops the run there: no later round
   assert.ok(report.cost_usd <= budget + 12 * 0.01 + 1e-9);
 });
 
+test('step and social calls get a default deadline, so a stalled provider cannot hold a round past the wall clock', async () => {
+  const deadlines = new Set<string>();
+  const r = begin(swarmAnswers(), { personas: swarm(2), project: SWARM, settings: rounds(2), onCall: (req) => void deadlines.add(`${req.purpose} ${req.timeout_ms}`) });
+  await r.run.done;
+  assert.deepEqual([...deadlines].sort(), ['report_suggestions 180000', 'report_themes 180000', 'social 120000', 'step 120000', 'survey 30000']);
+});
+
 test('a failure between rounds ends the episodes waiting for a slice and closes their pages', async () => {
   const r = begin(swarmAnswers(), {
     personas: swarm(2),
