@@ -1,41 +1,31 @@
 // Figma frame import in real Electron, against the engine's fixture API (GNOMI_FAKE_FIGMA): no token, no network.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron, type Page } from 'playwright-core';
+import type { Page } from 'playwright-core';
 import { FAKE_KEY } from '../engine/src/figma/fake.ts';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import type { DesignPoi } from '@gnomi/simulation/types.ts';
+import { collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-figma-'));
+const dir = scratch('figma');
 const projectDir = join(dir, 'project.gnomi');
 const userData = join(dir, 'user-data');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const TOKEN = 'figd_smoke-token-0123456789abcdefghij';
 const link = `https://www.figma.com/design/${FAKE_KEY}/Acme-checkout?node-id=1-3`;
 const project = syntheticRun({ personas: 3, pois: 1, rounds: 1, seed: 4 }).config.project;
 project.audience = null;
-const store = openProject(projectDir);
-store.saveProject(project);
-store.close();
+seedProject(projectDir, project);
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${userData}`, join(import.meta.dirname, 'out/main/index.js')],
-  // frame 1:5 ("04 Cart 4") is one Figma cannot render
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_FAKE_FIGMA: JSON.stringify({ nullRender: ['1:5'] }), GNOMI_PROJECT_DIR: projectDir },
-});
-setTimeout(() => { console.error('Figma smoke timed out.'); process.exit(1); }, 120_000).unref();
+// frame 1:5 ("04 Cart 4") is one Figma cannot render
+const app = await launchApp(userData, { GNOMI_FAKE_FIGMA: JSON.stringify({ nullRender: ['1:5'] }), GNOMI_PROJECT_DIR: projectDir });
+deadline('Figma smoke timed out.', 120_000);
 let passed = false;
 try {
   const page: Page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   const dialog = page.getByRole('dialog', { name: 'Add from Figma' });
   const openDialog = async () => {

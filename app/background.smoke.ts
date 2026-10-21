@@ -1,23 +1,18 @@
 // Real Electron + real engine, with disposable projects and scripted models. No credentials or external sites.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
-import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { importText } from '@gnomi/simulation/assets.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 import { startGym } from '../demo/GymSite/server.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-background-'));
+const dir = scratch('background');
 const userData = join(dir, 'user-data');
 const library = join(userData, 'projects');
-const shots = join(import.meta.dirname, 'test-results');
 mkdirSync(library, { recursive: true });
-mkdirSync(shots, { recursive: true });
 const gym = await startGym({ port: 0, captcha: true });
 const settings = { ...structuredClone(DEFAULT_SETTINGS), social: false };
 const base = { description: 'Disposable background simulation fixture', role: null, audience: null, settings };
@@ -25,24 +20,16 @@ const hiring: ProjectConfig = { ...base, name: 'Hiring workspace', goal: 'Review
 const pricingDir = join(library, 'pricing.gnomi');
 const asset = await importText(createFsBlobStore(pricingDir), '# Pricing\nStarter costs $10 per month. Includes unlimited projects. Cancel at any time.', 'pricing.md');
 const pricing: ProjectConfig = { ...base, name: 'Pricing & plans', goal: 'Understand the Starter plan', pois: [{ id: 'pricing', type: 'text', segments: null, name: 'Pricing page', asset: asset.id }] };
-for (const [id, project] of [['hiring.gnomi', hiring], ['pricing.gnomi', pricing]] as const) {
-  const store = openProject(join(library, id));
-  store.saveProject(project);
-  store.close();
-}
+for (const [id, project] of [['hiring.gnomi', hiring], ['pricing.gnomi', pricing]] as const) seedProject(join(library, id), project);
 writeFileSync(join(userData, 'current-project'), 'hiring.gnomi');
-const env = { ...process.env, GNOMI_FAKE_LLM: '1' };
-Reflect.deleteProperty(env, 'GNOMI_PROJECT_DIR');
-const launch = () => electron.launch({ executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${userData}`, join(import.meta.dirname, 'out/main/index.js')], env });
+const launch = () => launchApp(userData, { GNOMI_PROJECT_DIR: undefined });
 let app = await launch();
 let passed = false;
-setTimeout(() => { console.error('Background smoke timed out.'); process.exit(1); }, 120_000).unref();
+deadline('Background smoke timed out.', 120_000);
 try {
   let page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   const dock = page.getByRole('complementary', { name: 'Session simulations' });
   const toggle = dock.getByRole('button', { name: 'Simulations', exact: true });
   const entries = dock.getByRole('list', { name: 'Simulations from this session' }).getByRole('listitem');
@@ -81,7 +68,7 @@ try {
     assert.ok(expanded.x >= 0 && expanded.x + expanded.width <= width);
     assert.ok(expanded.y >= 0 && expanded.y + expanded.height <= 780);
     assert.ok(Math.abs(780 - expanded.y - expanded.height - (width <= 700 ? 16 : 24)) < 1, 'without an action bar the pill stays near the bottom');
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await assertFits(page);
     await page.screenshot({ path: join(shots, `simulation-dock-${width}.png`) });
     await toggle.click();
     await page.waitForFunction(() => document.querySelector('.simulation-dock')!.getBoundingClientRect().height < 60);
@@ -140,7 +127,7 @@ try {
   await app.close();
   app = await launch();
   page = await app.firstWindow();
-  page.on('pageerror', (error) => errors.push(error.message));
+  collectErrors(page, { errors });
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   assert.equal(await page.getByRole('complementary', { name: 'Session simulations' }).count(), 0, 'a new app session hides the empty pill');
   console.log('ok    the pill hides when empty and sits above the next bar; project run history remains on disk');
@@ -169,7 +156,7 @@ try {
     await page.setViewportSize({ width, height: 780 });
     await history.click();
     await historyPanel.waitFor();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `history fits ${width}px`);
+    await assertFits(page, `history fits ${width}px`);
     await page.screenshot({ path: join(shots, `project-history-${width}.png`) });
     await page.getByRole('button', { name: 'Back to project', exact: true }).click();
     assert.equal(await page.locator('#tab-project').getAttribute('aria-current'), 'step', 'back returns to where history was opened');

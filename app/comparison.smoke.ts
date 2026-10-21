@@ -1,41 +1,28 @@
 // Real Electron setup -> persistence -> runtime -> comparison report. Disposable text assets and scripted models only.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { _electron as electron } from 'playwright-core';
-import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { EventPayloads, ProjectConfig, Report, RunConfig } from '@gnomi/simulation/types.ts';
+import { collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-comparison-'));
+const dir = scratch('comparison');
 const projectDir = join(dir, 'comparison.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
-const store = openProject(projectDir);
-store.saveProject({
+seedProject(projectDir, {
   name: 'Fictional hiring tools', description: 'A local comparison smoke fixture', pois: [], role: null, audience: null,
   goal: 'Compare the applicable cost and evaluation requirements for a 25-person company.',
   settings: { ...structuredClone(DEFAULT_SETTINGS), social: false, concurrency: 1 },
 });
-store.close();
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
-const timeout = setTimeout(() => { console.error('Comparison smoke timed out.'); process.exit(1); }, 120_000);
-timeout.unref();
+const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
+const timeout = deadline('Comparison smoke timed out.', 120_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   const compare = page.getByRole('checkbox', { name: 'Evaluate tools against shared tasks and requirements', exact: true });
   assert.equal(await compare.isChecked(), false, 'a comparison is explicitly enabled, never inferred from the goal');

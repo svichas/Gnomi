@@ -1,43 +1,25 @@
 // Project journey and timeline interactions in real Electron, using a disposable synthetic run.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
-import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { toRows } from './src/renderer/src/activity.ts';
 import { roundMoments, selectMoments } from './src/renderer/src/swarm-moments.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedFinishedRun, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-ui-'));
+const dir = scratch('ui');
 const projectDir = join(dir, 'perspectives.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const { config: synthetic, events } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
 synthetic.project.name = 'Hiring app';
-const store = openProject(projectDir);
-store.saveProject(synthetic.project);
-const { run_id: _, ...snapshot } = synthetic;
-const config = store.createRun(snapshot);
-for (const { seq, ts, ...event } of events) store.append({ ...event, run_id: config.run_id, ...(event.type === 'run.started' && { payload: { config } }) } as typeof event);
-store.append({ run_id: config.run_id, persona_id: null, poi_id: null, round: 2, type: 'run.finished', payload: {} });
-store.finishRun(config.run_id, 'finished', null, 0);
-store.close();
-const launch = () => electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
+const config = seedFinishedRun(projectDir, synthetic, events);
+const launch = () => launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
 let app = await launch();
-setTimeout(() => { console.error('UI smoke timed out.'); process.exit(1); }, 180_000).unref();
+deadline('UI smoke timed out.', 180_000);
 let passed = false;
 try {
   let page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  const errors = collectErrors(page, { console: true });
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor().catch(async (error) => {
     console.error('Initial UI:', await page.locator('body').innerText(), errors);
     await page.screenshot({ path: join(shots, 'ui-startup-failure.png') });
@@ -62,7 +44,7 @@ try {
 
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `setup overflow at ${width}`);
+    await assertFits(page, `setup overflow at ${width}`);
     for (const label of ['Setup', 'Audience', 'Review', 'Simulation']) {
       assert.ok(await page.getByRole('navigation', { name: 'Project steps' }).getByRole('button', { name: label, exact: true }).isVisible());
     }
@@ -113,7 +95,7 @@ try {
   await graphInspector.getByRole('button', { name: 'Close' }).click();
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `map overflow at ${width}`);
+    await assertFits(page, `map overflow at ${width}`);
     await graph.screenshot({ path: join(shots, `swarm-moments-${width}.png`) });
   }
   await page.setViewportSize({ width: 1100, height: 900 });
@@ -196,7 +178,7 @@ try {
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await activity.scrollIntoViewIfNeeded();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `timeline overflow at ${width}`);
+    await assertFits(page, `timeline overflow at ${width}`);
     await page.screenshot({ path: join(shots, `revamp-timeline-${width}.png`) });
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -217,7 +199,7 @@ try {
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `projects overflow at ${width}`);
+    await assertFits(page, `projects overflow at ${width}`);
     await page.screenshot({ path: join(shots, `revamp-projects-${width}.png`) });
   }
   const search = page.getByRole('searchbox', { name: 'Search projects' });

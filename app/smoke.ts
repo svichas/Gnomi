@@ -2,13 +2,10 @@
 // It drives the real window with Playwright's Electron support and the scripted persona (GNOMI_FAKE_LLM=1),
 // so it needs no key and costs nothing. Screenshots land in app/test-results/.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _electron as electron } from 'playwright-core';
 import type { Locator, Page } from 'playwright-core';
 import { feedThreads, socialMemory } from '../engine/src/graph/feed.ts';
 import { buildGraph, graphAtRound } from '../engine/src/graph/index.ts';
@@ -17,18 +14,13 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { GnomiEvent } from '@gnomi/simulation/types.ts';
 import { startGym } from '../demo/GymSite/server.ts';
+import { deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
-const appDir = import.meta.dirname;
-const shots = join(appDir, 'test-results');
-mkdirSync(shots, { recursive: true });
-const tmp = mkdtempSync(join(tmpdir(), 'gnomi-smoke-'));
+const tmp = scratch('smoke');
 const userData = join(tmp, 'user-data');
 
 // A stuck stage must not hang the run: stop everything after ten minutes. Playwright takes the launched app down with the process.
-setTimeout(() => {
-  console.error('The smoke test did not finish in ten minutes.');
-  process.exit(1);
-}, 600_000).unref();
+deadline('The smoke test did not finish in ten minutes.', 600_000);
 
 let failures = 0;
 async function stage(name: string, body: () => Promise<void>) {
@@ -142,12 +134,7 @@ async function startRun(page: Page, runId: string) {
   assert.ok(await heading.isVisible(), `the run did not start: ${await review.getByRole('alert').allInnerTexts()}`);
 }
 
-const app = await electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  // The mock keychain keeps macOS from asking for Keychain access while the key storage is exercised.
-  args: ['--use-mock-keychain', `--user-data-dir=${userData}`, join(appDir, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: join(tmp, 'smoke.gnomi') },
-});
+const app = await launchApp(userData, { GNOMI_PROJECT_DIR: join(tmp, 'smoke.gnomi') });
 let gym: { close(): Promise<void> } | undefined;
 let ran = false;
 try {

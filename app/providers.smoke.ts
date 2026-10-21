@@ -1,28 +1,19 @@
 // Provider routing and model controls in real Electron. Disposable keys and scripted AI answers only.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { _electron as electron, type Page } from 'playwright-core';
+import type { Page } from 'playwright-core';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedProject, shots } from './electron.fixture.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'gnomi-providers-'));
+const dir = scratch('providers');
 const projectDir = join(dir, 'project.gnomi');
-const shots = join(import.meta.dirname, 'test-results');
-mkdirSync(shots, { recursive: true });
 const project = syntheticRun({ personas: 3, pois: 1, rounds: 1, seed: 4 }).config.project;
 project.audience = null;
-const store = openProject(projectDir);
-store.saveProject(project);
-store.close();
-const launch = () => electron.launch({
-  executablePath: createRequire(import.meta.url)('electron') as string,
-  args: ['--use-mock-keychain', `--user-data-dir=${join(dir, 'user-data')}`, join(import.meta.dirname, 'out/main/index.js')],
-  env: { ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_PROJECT_DIR: projectDir },
-});
+seedProject(projectDir, project);
+const launch = () => launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
 const savedRouting = () => {
   const db = openProject(projectDir);
   try { return db.getProject()!.settings!.routing; } finally { db.close(); }
@@ -40,14 +31,12 @@ async function allRoutes(page: Page, provider: string) {
   }, provider);
 }
 let app = await launch();
-setTimeout(() => { console.error('Provider smoke timed out.'); process.exit(1); }, 120_000).unref();
+deadline('Provider smoke timed out.', 120_000);
 let passed = false;
 try {
   let page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  const errors: string[] = [];
-  const watchErrors = (page: Page) => page.on('pageerror', (error) => errors.push(error.message));
-  watchErrors(page);
+  const errors = collectErrors(page);
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('summary').filter({ hasText: 'Model choices' }).click();
@@ -81,7 +70,7 @@ try {
   app = await launch();
   page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
-  watchErrors(page);
+  collectErrors(page, { errors });
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.locator('#tab-audience').click();
   await page.getByRole('button', { name: 'Suggest an audience', exact: true }).click();
@@ -109,7 +98,7 @@ try {
   assert.equal(await page.getByLabel('Navigator provider', { exact: true }).inputValue(), 'deepseek');
   for (const width of [1100, 720, 320]) {
     await page.setViewportSize({ width, height: 950 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `settings overflow at ${width}`);
+    await assertFits(page, `settings overflow at ${width}`);
     await page.screenshot({ path: join(shots, `provider-models-${width}.png`), fullPage: true });
   }
   await page.getByRole('button', { name: 'Remove OpenAI', exact: true }).click();
