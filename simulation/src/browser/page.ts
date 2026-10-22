@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
 import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page, Request } from 'playwright-core';
 import type { PageDriver, PageError, StorageState } from '../seams.ts';
-import type { Action, ActionOutcome, ActionTarget, Device, PageSnapshot } from '../types.ts';
+import { PRESS_KEYS, type Action, type ActionOutcome, type ActionTarget, type Device, type PageSnapshot } from '../types.ts';
 import type { ActionRefusal, Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { pickedValue } from './dates.ts';
@@ -24,6 +24,8 @@ const PASSWORD = 'input[type="password" i], input[autocomplete*="password" i]';
 const SECRET = `${PASSWORD}, input[data-gnomi-password]`;
 // Model-supplied: reject anything that is not a ref before it reaches Playwright's selector engine.
 const REF = /^(?:f\d+)?e\d+$/;
+// Roles whose value lives in aria-valuetext or aria-valuenow, which the aria snapshot leaves out (a custom slider or stepper).
+const RANGES = new Set(['slider', 'spinbutton', 'progressbar']);
 // Native inputs Chromium edits segment by segment (day, month, year, hour…).
 const SEGMENTED = new Set(['date', 'time', 'datetime-local', 'month', 'week']);
 
@@ -195,8 +197,10 @@ export async function settle(page: Page, started: ReadonlySet<Request> = new Set
 }
 
 /** `refusals` drains containment's observe-only refusals (contain.ts), so an action that ran into one fails with it. */
-export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => []): Promise<PageDriver> {
+export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => [], device: Device = 'desktop'): Promise<PageDriver> {
   const page = await openPage(context);
+  // A phone is tapped: touch handlers (a menu on touchend) never hear a mouse click.
+  const tap = (locator: Locator, options: { force?: boolean; timeout: number }) => (device === 'mobile' ? locator.tap(options) : locator.click(options));
   let targets = new Map<string, ActionTarget>();
   let shown = ''; // the snapshot text the persona was last given
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
@@ -308,7 +312,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
           await target.evaluate((el) => (el as HTMLElement).click(), null, { timeout });
           return null;
         }
-        await target.click({ timeout }).catch(async (e) => {
+        await tap(target, { timeout }).catch(async (e) => {
           if (e instanceof errors.TimeoutError && loading(from)) return;
           // A person taps where the control shows: through a see-through layer of its own (a custom select's search box over its
           // placeholder), or on its nearest sized ancestor when it has no size (a custom select's 0×0 input), never on what
@@ -320,15 +324,18 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
           if (!(await hasSize(spot))) throw e;
           const covered = await target.evaluate(reach, await spot.elementHandle({ timeout }), { timeout });
           if (covered) throw new Error(covered);
-          await spot.click({ force: true, timeout });
+          await tap(spot, { force: true, timeout });
         });
         return null;
       }
+      case 'hover':
+        await (await locate(ref)).hover({ timeout });
+        return null;
       case 'press':
         // Enter submits a search box with no button; Escape closes a dialog. With no ref, the key goes to whatever has focus.
-        if (action.text !== 'Enter' && action.text !== 'Escape') throw new Error("press needs text 'Enter' or 'Escape'");
-        if (ref) await (await locate(ref)).press(action.text, { timeout });
-        else await page.keyboard.press(action.text);
+        if (!PRESS_KEYS.includes(action.text ?? '')) throw new Error(`press needs one of the keys ${PRESS_KEYS.join(', ')}`);
+        if (ref) await (await locate(ref)).press(action.text!, { timeout });
+        else await page.keyboard.press(action.text!);
         return null;
       case 'type': {
         const input = await locate(ref);
@@ -441,8 +448,11 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       );
       const passwordFields = new Map<string, PasswordState>();
       states.forEach((state, i) => { if (state !== null) passwordFields.set(textboxes[i], state); });
+      const ranges = [...targets].filter(([, target]) => RANGES.has(target.role)).map(([ref]) => ref);
+      const read = await Promise.all(ranges.map((ref) => page.getByRef(ref).evaluate((el) => el.getAttribute('aria-valuetext') ?? el.getAttribute('aria-valuenow'), null, { timeout: 1_000 }).catch(() => null)));
+      const values = new Map(ranges.flatMap((ref, i) => (read[i] === null ? [] : [[ref, read[i]] as const])));
       const viewportHeight = await page.evaluate(() => window.innerHeight);
-      const text = pruneSnapshot(raw, { passwordFields, viewportHeight });
+      const text = pruneSnapshot(raw, { passwordFields, values, viewportHeight });
       shown = text;
       return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
     },
@@ -489,7 +499,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       await settle(page, started);
       const opened = popup as Page | null; // set by the popup listener while the action ran
       // Nothing shown, loading or opened yet: a person keeps looking a moment, for a debounced search or a menu on a timer.
-      const unseen = error === null && !opened && ['click', 'type', 'press'].includes(action.type) && started.size === 0 && page.url() === url_before;
+      const unseen = error === null && !opened && ['click', 'hover', 'type', 'press'].includes(action.type) && started.size === 0 && page.url() === url_before;
       if (unseen && (await domVersion(page)) === echo) {
         for (let waited = 0; waited < GLANCE_MS; waited += POLL_MS) {
           await sleep(POLL_MS);

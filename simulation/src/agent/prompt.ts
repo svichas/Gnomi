@@ -6,7 +6,7 @@ import { countryName, personaEnvironment } from '../audience/locations.ts';
 import { ENGLISH, english, isEnglish } from '../llm/english.ts';
 import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { opinionSchema } from '../opinion/index.ts';
-import { ACTION_TYPES } from '../types.ts';
+import { ACTION_TYPES, PRESS_KEYS } from '../types.ts';
 import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 
@@ -30,9 +30,9 @@ export function stepSchema(persona: Persona) {
 
 export type StepOutput = z.infer<ReturnType<typeof stepSchema>>;
 
-/** Low-skill personas get a smaller vocabulary: they never type a web address (tech.md §6.3, §6.8). */
+/** Low-skill personas get a smaller vocabulary: they never type a web address (tech.md §6.3, §6.8). A phone has no pointer to hover. */
 function actionTypes(persona: Persona): readonly ActionType[] {
-  return persona.tech_skill >= 3 ? ACTION_TYPES : ACTION_TYPES.filter((t) => t !== 'navigate');
+  return ACTION_TYPES.filter((t) => !(t === 'navigate' && persona.tech_skill < 3) && !(t === 'hover' && persona.device === 'mobile'));
 }
 
 /** One past step as the volatile part of the prompt remembers it. */
@@ -73,10 +73,11 @@ export const ACCESSIBILITY: Record<Persona['accessibility_needs'], ((w: Words) =
 
 const ACTION_HELP: Record<ActionType, string> = {
   click: 'click: ref = the element',
+  hover: 'hover: ref = the element to rest the pointer on, for a menu or a tip that shows on hover',
   type: 'type: ref = the field, text = what to type',
   select: 'select: ref = the list, text = the label of the option',
   scroll: 'scroll: text = "up" or "down" for the page, or ref = an element to bring into view, or both to scroll inside a list or panel',
-  press: 'press: text = "Enter" or "Escape", ref = the element, or null for what has focus',
+  press: `press: text = a key (${PRESS_KEYS.join(', ')}), ref = the element, or null for what has focus`,
   back: 'back: return to the previous page',
   navigate: 'navigate: text = a web address to type',
   read: 'read: ref = a region to read closely',
@@ -233,6 +234,8 @@ function describeAction(a: Action, t: ActionTarget | null): string {
   switch (a.type) {
     case 'click':
       return `click ${el}`;
+    case 'hover':
+      return `hover over ${el}`;
     case 'type':
       return `type "${a.text ?? ''}" into ${el}`;
     case 'select':
@@ -261,6 +264,7 @@ function describeResult(r: ActionResult, action: Action): string {
   if (r.url_after !== r.url_before) return `went to ${where(r.url_after)}`;
   if (action.type === 'type') return action.text === '' ? 'field cleared' : 'text entered';
   if (action.type === 'scroll') return r.dom_changed ? 'it moved' : 'it did not move';
+  if (action.type === 'hover' && !r.dom_changed) return 'the pointer rests on it'; // a :hover menu changes no node, only what shows
   if (r.pending) return 'it is still working (the page has not finished)'; // so the persona does not save twice
   return r.dom_changed ? 'the page changed' : 'nothing visible changed';
 }

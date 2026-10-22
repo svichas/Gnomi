@@ -114,6 +114,19 @@ test('password state distinguishes empty, filled and unreadable fields without e
   assert.doesNotMatch(out, /canary/);
 });
 
+test('prints the value of a custom slider or stepper the caller read, and none for other lines', () => {
+  const out = pruneSnapshot(lines(
+    '- slider "Group size" [ref=e1]: ●',
+    '- slider "Price" [ref=e2]',
+    '- slider [ref=e3]',
+    '- button "Save" [ref=e4]',
+  ), { values: new Map([['e1', '5'], ['e2', '€80'], ['e3', '30']]) });
+  assert.match(out, /^- slider "Group size" \[ref=e1\] \[value=5\]: ●$/m);
+  assert.match(out, /^- slider "Price" \[ref=e2\] \[value=€80\]$/m);
+  assert.match(out, /^- slider \[ref=e3\] \[value=30\]$/m);
+  assert.match(out, /^- button "Save" \[ref=e4\]$/m);
+});
+
 test('drops lines that carry nothing, but keeps an unlabelled control', () => {
   const out = pruneSnapshot(
     lines(

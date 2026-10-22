@@ -36,6 +36,7 @@ interface Printed {
 
 interface Options {
   secrets: ReadonlyMap<string, PasswordState>;
+  values: ReadonlyMap<string, string>; // aria-valuetext or aria-valuenow of a custom slider or stepper, by ref
   viewportHeight: number;
 }
 
@@ -83,7 +84,8 @@ function keep(line: Line, opts: Options): Line[] {
     if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
     if (!kids.length && !CONTROLS.has(line.role)) return [];
   }
-  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '');
+  const shown = ref ? opts.values.get(ref) : undefined;
+  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '') + (shown === undefined ? '' : ` [value=${clip(shown)}]`);
   return [{ role: line.role, head, value: value === undefined ? undefined : clip(value), kids }];
 }
 
@@ -133,10 +135,10 @@ function render(lines: Printed[], limit: number): string {
 
 export function pruneSnapshot(
   raw: string,
-  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), viewportHeight = 800 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; viewportHeight?: number } = {},
+  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), values = new Map<string, string>(), viewportHeight = 800 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; values?: ReadonlyMap<string, string>; viewportHeight?: number } = {},
 ): string {
   const lines: Printed[] = [];
-  print(visit(parse(raw), { secrets: passwordFields, viewportHeight }), 0, -1, viewportHeight, lines);
+  print(visit(parse(raw), { secrets: passwordFields, values, viewportHeight }), 0, -1, viewportHeight, lines);
   const text = lines.map((l) => l.text).join('\n');
   if (text.length <= maxChars) return text;
   // Over the cap: drop what lies furthest from the viewport first (tech.md §6.2), so what the persona scrolled to stays.

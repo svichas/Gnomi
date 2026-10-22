@@ -273,11 +273,14 @@ export interface RunRow {
   config: RunConfig;
 }
 
-export const ACTION_TYPES = ['click', 'type', 'select', 'scroll', 'press', 'back', 'navigate', 'read', 'wait', 'done', 'abandon'] as const;
+export const ACTION_TYPES = ['click', 'hover', 'type', 'select', 'scroll', 'press', 'back', 'navigate', 'read', 'wait', 'done', 'abandon'] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
+// The keys press sends, as a person uses them on a form or a widget: Enter submits, Escape closes, Tab moves on, Space and the
+// arrows set a slider or pick up a sortable item.
+export const PRESS_KEYS = ['Enter', 'Escape', 'Tab', 'Shift+Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Backspace'];
 
 // One flat action shape from model output to event payload (tech.md §6.3, §10.6). `text` is the
-// typed text (type), option label (select), 'up' | 'down' (scroll), 'Enter' | 'Escape' (press), URL (navigate), summary (done)
+// typed text (type), option label (select), 'up' | 'down' (scroll), one of PRESS_KEYS (press), URL (navigate), summary (done)
 // or reason (abandon).
 export interface Action {
   type: ActionType;

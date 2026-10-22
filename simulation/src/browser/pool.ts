@@ -33,7 +33,7 @@ export async function launchBrowserPool(opts: { headless?: boolean } = {}): Prom
       try {
         context = await newContext(browser, device, storageState, containment.proxy, { locale, timezone, languages });
         await containment.install(context);
-        return await newPageDriver(context, containment.allows, containment.refusals);
+        return await newPageDriver(context, containment.allows, containment.refusals, device);
       } catch (e) {
         containment.close();
         await context?.close().catch(() => {});

@@ -88,6 +88,12 @@ test('behaviour rules and the action vocabulary follow the traits', () => {
   const navigate = { thought: 'Typing the address.', feeling: 0, action: { type: 'navigate', ref: null, text: 'http://gym.test/jobs' }, friction: null };
   assert.equal(stepSchema(BUILTIN_PERSONA).safeParse(navigate).success, true);
   assert.equal(stepSchema(sam).safeParse(navigate).success, false);
+  // A phone has no pointer to rest on a menu.
+  const hover = { thought: 'Opening the menu.', feeling: 0, action: { type: 'hover', ref: 'e1', text: null }, friction: null };
+  assert.equal(stepSchema(BUILTIN_PERSONA).safeParse(hover).success, true);
+  assert.equal(stepSchema(sam).safeParse(hover).success, false);
+  assert.match(priya, /hover: ref = /);
+  assert.doesNotMatch(system, /hover:/);
 });
 
 test('the step schema accepts the tech.md example and rejects out-of-range values', () => {
@@ -101,7 +107,7 @@ test('the step schema accepts the tech.md example and rejects out-of-range value
   assert.deepEqual(schema.parse(example), example);
   assert.equal(schema.safeParse({ ...example, feeling: 3 }).success, false);
   assert.equal(schema.safeParse({ ...example, friction: { ...example.friction, severity: 5 } }).success, false);
-  assert.equal(schema.safeParse({ ...example, action: { type: 'hover', ref: 'e1', text: null } }).success, false);
+  assert.equal(schema.safeParse({ ...example, action: { type: 'drag', ref: 'e1', text: null } }).success, false);
   assert.equal(schema.safeParse({ ...example, friction: undefined }).success, false); // nullable, never optional
   assert.equal(schema.safeParse({ ...example, friction: { ...example.friction, about_ref: 'e7' } }).success, true);
 });

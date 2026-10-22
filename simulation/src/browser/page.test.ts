@@ -120,6 +120,14 @@ label{display:block;position:relative;min-height:44px;padding:8px 8px 8px 40px;m
 <input type="radio" name="size" id="small" class="sr"><label for="small">Small</label>
 <input type="radio" name="size" id="large" class="sr"><label for="large">Large</label>
 <label class="skin"><input type="checkbox"><span>I agree to the terms</span></label></body></html>`,
+  // A menu that shows on :hover, a slider set by arrow keys, and a menu button that listens only for touch, as older phone menus do.
+  '/hover': `<!doctype html><html><head>${head}<title>Hover</title><style>.sub{display:none}.menu:hover .sub{display:block}</style></head><body>
+<nav><div class="menu"><a href="/next">Events</a><ul class="sub"><li><a href="/long">Create event</a></li></ul></div></nav></body></html>`,
+  '/slider': `<!doctype html><html><head>${head}<title>Slider</title></head><body><p>Group size</p>
+<div role="slider" tabindex="0" aria-label="Group size" aria-valuemin="1" aria-valuemax="20" aria-valuenow="5"
+onkeydown="const k = { ArrowRight: 1, ArrowLeft: -1 }[event.key]; if (k) this.ariaValueNow = Math.min(20, Math.max(1, +this.ariaValueNow + k))">●</div></body></html>`,
+  '/touch': `<!doctype html><html><head>${head}<title>Touch</title></head><body>
+<button ontouchend="event.preventDefault(); document.body.append('Menu open')">Menu</button></body></html>`,
   '/slow-form': `<!doctype html><html><head>${head}<title>Slow form</title></head><body><form method="post" action="/create"><button>Create event</button></form></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
@@ -420,7 +428,7 @@ test('wait settles and reports nothing changed', async (t) => {
   assert.deepEqual([outcome.ok, outcome.dom_changed, outcome.target, outcome.text], [true, false, null, null]);
 });
 
-test('press sends Enter or Escape to a field or to whatever has focus, and nothing else', async (t) => {
+test('press sends a key a person uses to a field or to whatever has focus, and nothing else', async (t) => {
   const page = await open(t, '/keys-and-tabs');
   const search = refOf((await page.snapshot()).text, /textbox "Search" \[ref=(\w+)\]/);
   await act(page, 'type', search, 'engineer');
@@ -428,7 +436,8 @@ test('press sends Enter or Escape to a field or to whatever has focus, and nothi
   assert.deepEqual([pressed.ok, pressed.dom_changed], [true, true]);
   assert.match((await page.snapshot()).text, /Searched for engineer/);
   assert.equal((await act(page, 'press', null, 'Escape')).ok, true);
-  assert.equal((await act(page, 'press', search, 'Tab')).error, "press needs text 'Enter' or 'Escape'");
+  assert.equal((await act(page, 'press', search, 'Tab')).ok, true);
+  assert.match((await act(page, 'press', search, 'F5')).error ?? '', /^press needs one of the keys Enter, Escape, Tab/);
 });
 
 test('a link that opens a new tab takes the persona there; a slow response marks the click pending, not dead', async (t) => {
@@ -511,13 +520,40 @@ test('a click that can never succeed times out instead of hanging', async (t) =>
 });
 
 test('a click on a control that is covered or has no size lands where it shows, as a person taps it', async (t) => {
-  const page = await open(t, '/react-select');
-  const { text } = await page.snapshot();
-  for (const [line, option] of [[/generic \[ref=(\w+)\][^\n]*: Choose a category/, /option "Hiking"/], [/combobox "Size" \[ref=(\w+)\]/, /option "Large"/]] as const) {
-    const outcome = await act(page, 'click', refOf(text, line));
-    assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], String(line));
-    assert.match((await page.snapshot()).text, option);
-  }
+  await Promise.all((['desktop', 'mobile'] as const).map(async (device) => {
+    const page = await open(t, '/react-select', device);
+    const { text } = await page.snapshot();
+    for (const [line, option] of [[/generic \[ref=(\w+)\][^\n]*: Choose a category/, /option "Hiking"/], [/combobox "Size" \[ref=(\w+)\]/, /option "Large"/]] as const) {
+      const outcome = await act(page, 'click', refOf(text, line));
+      assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], `${device} ${line}`);
+      assert.match((await page.snapshot()).text, option, device);
+    }
+  }));
+});
+
+test('hover shows a menu that opens on :hover without following its link', async (t) => {
+  const page = await open(t, '/hover');
+  const closed = (await page.snapshot()).text;
+  assert.doesNotMatch(closed, /Create event/);
+  const outcome = await act(page, 'hover', refOf(closed, /link "Events" \[ref=(\w+)\]/));
+  assert.deepEqual([outcome.ok, outcome.url_after], [true, `${origin}/hover`]);
+  const opened = (await page.snapshot()).text;
+  assert.equal((await act(page, 'click', refOf(opened, /link "Create event" \[ref=(\w+)\]/))).url_after, `${origin}/long`);
+});
+
+test('a custom slider shows its value and is set with the arrow keys', async (t) => {
+  const page = await open(t, '/slider');
+  const before = (await page.snapshot()).text;
+  assert.match(before, /slider "Group size" \[ref=\w+\] \[box=[\d,]+\] \[value=5\]/);
+  assert.equal((await act(page, 'press', refOf(before, /slider "Group size" \[ref=(\w+)\]/), 'ArrowRight')).ok, true);
+  assert.match((await page.snapshot()).text, /slider "Group size" [^\n]*\[value=6\]/);
+});
+
+test('on a phone a click is a tap, so a menu that listens for touch opens', async (t) => {
+  const page = await open(t, '/touch', 'mobile');
+  const outcome = await act(page, 'click', refOf((await page.snapshot()).text, /button "Menu" \[ref=(\w+)\]/));
+  assert.deepEqual([outcome.ok, outcome.dom_changed], [true, true]);
+  assert.match((await page.snapshot()).text, /Menu open/);
 });
 
 test('a click on a control under a banner, an overlay or a dialog, clipped or hidden since, says what is in the way and taps nothing', async (t) => {

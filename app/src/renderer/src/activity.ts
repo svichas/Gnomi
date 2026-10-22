@@ -52,6 +52,8 @@ function describeAction(action: Action, target: ActionTarget | null): string {
   switch (action.type) {
     case 'click':
       return `Clicked ${element}`;
+    case 'hover':
+      return `Hovered over ${element}`;
     case 'type':
       return `Typed "${action.text}" into ${element}`;
     case 'select':
