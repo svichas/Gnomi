@@ -106,9 +106,9 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
   root.innerHTML = '<button role="switch" aria-checked="false">Notify me</button>';
   root.firstChild.onclick = (e) => e.target.setAttribute('aria-checked', String(e.target.getAttribute('aria-checked') !== 'true'));
 } });</script></body></html>`,
-  // Controls a person's tap cannot reach: under a see-through 'Saving…' overlay, a chat bubble, a cookie bar at the bottom of a
-  // page that cannot scroll, a modal dialog; a link in an accordion and a menu item, each hidden since the snapshot. The title
-  // lists every click that landed.
+  // Controls a person's tap cannot reach: under a see-through 'Saving…' overlay, an unnamed backdrop, a chat bubble, a cookie
+  // bar at the bottom of a page that cannot scroll, a modal dialog; a link in an accordion and a menu item, each hidden since
+  // the snapshot. The title lists every click that landed.
   '/covers': `<!doctype html><html><head>${head}<title>clicks:</title></head><body style="margin:0">
 <script>document.addEventListener('click', (e) => { document.title += ' ' + (e.target.closest('[data-n]') ?? e.target).dataset.n }, true)</script>
 <button data-n="publish" style="position:absolute;left:20px;top:20px">Publish</button>
@@ -122,6 +122,7 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
 <div style="overflow:hidden"><a data-n="privacy" href="#privacy">Privacy policy</a></div><button data-n="returns">Returns</button></section>
 <div style="position:absolute;left:600px;top:20px"><button data-n="account" onclick="setTimeout(() => { menu.style.display = 'none' }, 200)">Account</button>
 <ul id="menu"><li><a data-n="logout" href="#logout">Log out</a></li></ul></div>
+<button data-n="later" style="position:absolute;left:20px;top:305px">Later</button><div data-n="veil" style="position:fixed;left:0;top:300px;width:200px;height:40px"></div>
 <button data-n="continue" style="position:absolute;left:20px;top:700px;width:300px;height:44px">Continue</button>
 <div data-n="cookies" role="region" aria-label="Cookies" style="position:fixed;left:0;right:0;bottom:0;height:140px;background:#eee">We use cookies. <button data-n="accept">Accept all</button></div>
 </body></html>`,
@@ -381,6 +382,10 @@ test('type where a person clicks first: a readonly picker opens and says readonl
     assert.deepEqual([result.ok, result.error], [false, 'readonly'], device);
     assert.match((await keys.snapshot()).text, /dialog "Calendar"/, `${device}: the click opened it`);
     assert.equal(failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' }), null, `${device}: not the product failing`);
+    // The persona's next click on the field finds the calendar open: what the typing opened, not a dead field.
+    const click: Action = { type: 'click', ref: action.ref, text: null };
+    const again = await keys.act(click);
+    assert.equal(failedAction({ step_no: 2, action: click, target: again.target, result: again, snapshot_hash: '' }, { step_no: 1, action, target: result.target, result, snapshot_hash: '' }), null, device);
     const select = await open(t, '/react-select', device);
     const outcome = await act(select, 'type', refOf((await select.snapshot()).text, /generic \[ref=(\w+)\][^\n]*: Choose a category/), 'Hik');
     assert.deepEqual([outcome.ok, outcome.error], [true, null], device);
@@ -779,6 +784,7 @@ test('a click on a control under a banner, an overlay or a dialog, clipped or hi
     [/button "Publish" \[ref=(\w+)\]/, null, 'covered by div "Saving…"', 'clicks:'],
     [/button "Next" \[ref=(\w+)\]/, null, 'covered by button "Open chat"', 'clicks:'],
     [/button "Continue" \[ref=(\w+)\]/, null, 'covered by region "Cookies"', 'clicks:'],
+    [/button "Later" \[ref=(\w+)\]/, null, 'covered by div', 'clicks:'], // an unnamed backdrop
     [/button "Save draft" \[ref=(\w+)\]/, /button "Delete event" \[ref=(\w+)\]/, 'covered by dialog "Delete this event?"', 'clicks: delete'],
     [/link "Privacy policy" \[ref=(\w+)\]/, /button "Shipping" \[ref=(\w+)\]/, 'not_visible', 'clicks: shipping'],
     [/link "Log out" \[ref=(\w+)\]/, /button "Account" \[ref=(\w+)\]/, 'not_visible', 'clicks: account'], // the menu closes 200 ms after this click

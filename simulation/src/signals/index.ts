@@ -24,10 +24,12 @@ const within = (steps: Step[], end: Step, window: number) => steps.filter((s) =>
 /** A click on a button: the only action here that can submit a form, so the only one that takes a snapshot after it. */
 export const isSubmit = (step: Step) => step.action.type === 'click' && step.result.ok && step.target?.role === 'button';
 
-export function failedAction(step: Step): SignalOf<'signal.failed_action'> | null {
+/** `previous` is the step before: a click on what its type clicked open (a picker, a custom list) finds it open already. */
+export function failedAction(step: Step, previous?: Step): SignalOf<'signal.failed_action'> | null {
   const { action, result } = step;
+  const opened = previous?.action.type === 'type' && previous.action.ref === action.ref && previous.result.dom_changed && /^(?:readonly|not_a_field)$/.test(previous.result.error ?? '');
   // A request still in flight or a tab opened: the click did something the page has not shown yet, or shows elsewhere.
-  const error = result.error !== null && FAILURES.has(result.error) ? result.error : action.type === 'click' && result.ok && !result.dom_changed && !result.pending && result.url_after === result.url_before ? 'no_effect' : null;
+  const error = result.error !== null && FAILURES.has(result.error) ? result.error : action.type === 'click' && result.ok && !result.dom_changed && !result.pending && result.url_after === result.url_before && !opened ? 'no_effect' : null;
   return error ? { type: 'signal.failed_action', payload: { ...base(step), action: action.type, error } } : null;
 }
 
@@ -100,7 +102,7 @@ export function smallTarget(step: Step, device: Device, t: SignalThresholds): Si
 export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds }): Signal[] {
   const { history, step, device, errors, before, after, thresholds: t } = input;
   const ended = step.action.type === 'done' || step.action.type === 'abandon';
-  const found: (Signal | null)[] = ended ? [] : [failedAction(step), loop(history, step, t), backtrack(history, step, t)];
+  const found: (Signal | null)[] = ended ? [] : [failedAction(step, history.at(-1)), loop(history, step, t), backtrack(history, step, t)];
   // An error belongs to the page it happened on: after a navigation, the one the step landed on.
   for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), url: step.result.url_after, ...error } });
   if (!ended) found.push(validationError(step, before, after), smallTarget(step, device, t));

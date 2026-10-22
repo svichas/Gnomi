@@ -248,7 +248,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         // What it is about: the element the persona names, else the last action when it failed or did nothing, else the next action's.
         const prev = history.at(-2);
         const about: { ref: string | null; target: ActionTarget | null } = about_ref ? { ref: about_ref, target: targetIn(snapshot.text, about_ref) }
-          : prev && (!prev.result.ok || failedAction(prev)) ? { ref: prev.action.ref, target: prev.target } : { ref: action.ref, target: null };
+          : prev && (!prev.result.ok || failedAction(prev, history.at(-3))) ? { ref: prev.action.ref, target: prev.target } : { ref: action.ref, target: null };
         emit('persona.friction_reported', { step_no, ...report, where: { url: snapshot.url, ref: about.ref }, heard_post_ids, ...(about.target && { about: about.target }) });
       }
 

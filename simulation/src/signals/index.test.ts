@@ -43,6 +43,16 @@ test('failed_action: a click with no URL or DOM change had no effect; one that c
   assert.equal(failedAction(step(2, 'click', A, A, { result: { dom_changed: false, pending: true } })), null, 'a slow save or a new tab is not a dead click');
 });
 
+test('failed_action: a click on what a type just clicked open finds it open, not dead; after a type that pressed nothing it is', () => {
+  const dead = step(2, 'click', A, A, { result: { dom_changed: false } });
+  const typed = (error: string, dom_changed: boolean, ref = 'e1') => step(1, 'type', A, A, { ref, result: { ok: false, error, dom_changed } });
+  for (const error of ['readonly', 'not_a_field']) assert.equal(failedAction(dead, typed(error, true)), null, error);
+  assert.equal(failedAction(dead, typed('not_a_field', false))?.payload.error, 'no_effect', 'a button typed into was never clicked');
+  assert.equal(failedAction(dead, typed('readonly', true, 'e2'))?.payload.error, 'no_effect', 'another element');
+  assert.equal(failedAction(dead, step(1, 'click', A, A))?.payload.error, 'no_effect');
+  assert.deepEqual(detectSignals({ history: [typed('readonly', true)], step: dead, device: 'desktop', errors: [], before: null, after: null, thresholds: T }), []);
+});
+
 test('loop: the same URL and snapshot seen three times within ten steps, reported once', () => {
   const steps = [step(1, 'click', A), step(2, 'click', B), step(3, 'click', A), step(4, 'click', B), step(5, 'click', A), step(6, 'click', B), step(7, 'click', A)];
   const found = replay(steps, (history, s) => loop(history, s, T));

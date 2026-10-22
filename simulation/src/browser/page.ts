@@ -111,7 +111,7 @@ function reach(el: Element, spot: Element | null): string | null {
   }
   if (!over) return null;
   const name = over.getAttribute('aria-label') ?? (over as HTMLElement).innerText?.trim().split('\n')[0] ?? '';
-  return `covered by ${over.getAttribute('role') ?? over.localName} "${name.slice(0, 40).replaceAll('"', "'")}"`;
+  return `covered by ${over.getAttribute('role') ?? over.localName}${name && ` "${name.slice(0, 40).replaceAll('"', "'")}"`}`; // an unnamed backdrop by its kind alone
 }
 
 // Runs in the page: the largest box of el and its labels, where a person taps a checkbox or radio.
