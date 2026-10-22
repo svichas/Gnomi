@@ -347,6 +347,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   const tap = (locator: Locator, options: { force?: boolean; timeout: number }) => (device === 'mobile' ? locator.tap(options) : locator.click(options));
   let targets = new Map<string, ActionTarget>();
   let shown = ''; // the snapshot text the persona was last given
+  let seen = ''; // the raw snapshot behind it, without what moves on every look (refs, boxes, focus): a change only CSS makes shows against it
   let failedNavigation: string | null = null; // the last main-frame page load that did not complete
   let popup: Page | null = null; // a tab the current action opened
   let downloaded = false; // the current action started a download
@@ -437,6 +438,14 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     });
   }
   drive(page, null);
+
+  /** The raw snapshot of what a person sees, as hideTransparent leaves it; `still` drops what moves on every look. */
+  async function look() {
+    const transparent = (hide: boolean) => Promise.all(page.frames().map((frame) => frame.evaluate(hideTransparent, hide).catch(() => {})));
+    await transparent(true);
+    return page.ariaSnapshot({ mode: 'ai', boxes: true, timeout: 10_000 }).finally(() => transparent(false));
+  }
+  const still = (raw: string) => raw.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]/g, '');
 
   /** Back, as a person goes back: a followed tab with no page before it closes, which returns the persona to the tab that opened it. */
   async function back(timeout: number) {
@@ -703,9 +712,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
 
     async snapshot(): Promise<PageSnapshot> {
       await rememberPasswords();
-      const transparent = (hide: boolean) => Promise.all(page.frames().map((frame) => frame.evaluate(hideTransparent, hide).catch(() => {})));
-      await transparent(true);
-      const raw = await page.ariaSnapshot({ mode: 'ai', boxes: true, timeout: 10_000 }).finally(() => transparent(false));
+      const raw = await look();
+      seen = still(raw);
       targets = snapshotTargets(raw);
       // Fail closed: a textbox whose type cannot be read is treated as a password.
       const textboxes = [...targets].filter(([, target]) => target.role === 'textbox').map(([ref]) => ref);
@@ -753,6 +761,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         if (box) target = { ...target, box };
       }
       const before = await domVersion(page);
+      const looked = seen; // the look the persona acts on: one from before an earlier action is stale
+      seen = '';
       const scrolled = action.type === 'scroll' ? await domVersion(page, 's') : '';
       let text: string | null = null;
       let error: string | null = null;
@@ -816,7 +826,10 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       if (outside) error = 'host_not_allowed';
       else if (observed) error = observed;
       // A scroll changes no node: whether the page or the list moved is what the persona needs to hear.
-      const dom_changed = (await domVersion(page)) !== before || (action.type === 'scroll' && (await domVersion(page, 's')) !== scrolled);
+      let dom_changed = (await domVersion(page)) !== before || (action.type === 'scroll' && (await domVersion(page, 's')) !== scrolled);
+      // Nor does a menu that opens on :hover or :focus-within: a fresh look tells. Last, as hiding for it changes nodes.
+      // shortcut: compared with the look before the persona chose, so a CSS-only animation meanwhile (a keyframe carousel) reads as the action's change, upgrade by looking again as act() starts if a target app does this.
+      if (!dom_changed && unseen && looked && action.type !== 'type') dom_changed = still(await look().catch(() => looked)) !== looked;
       return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, ...(pending && { pending }), target, text };
     },
 

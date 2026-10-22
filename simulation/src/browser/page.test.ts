@@ -139,7 +139,8 @@ label{display:block;position:relative;min-height:44px;padding:8px 8px 8px 40px;m
 <label class="skin"><input type="checkbox"><span>I agree to the terms</span></label></body></html>`,
   // A menu that shows on :hover, a slider set by arrow keys, and a menu button that listens only for touch, as older phone menus do.
   '/hover': `<!doctype html><html><head>${head}<title>Hover</title><style>.sub{display:none}.menu:hover .sub{display:block}</style></head><body>
-<nav><div class="menu"><a href="/next">Events</a><ul class="sub"><li><a href="/long">Create event</a></li></ul></div></nav></body></html>`,
+<nav><div class="menu"><a href="/next">Events</a><ul class="sub"><li><a href="/long">Create event</a></li></ul></div>
+<ul><li class="menu">Company<ul class="sub"><li><a href="/next">About us</a></li></ul></li></ul></nav></body></html>`,
   '/slider': `<!doctype html><html><head>${head}<title>Slider</title></head><body><p>Group size</p>
 <div role="slider" tabindex="0" aria-label="Group size" aria-valuemin="1" aria-valuemax="20" aria-valuenow="5"
 onkeydown="const k = { ArrowRight: 1, ArrowLeft: -1 }[event.key]; if (k) this.ariaValueNow = Math.min(20, Math.max(1, +this.ariaValueNow + k))">●</div></body></html>`,
@@ -766,7 +767,18 @@ test('hover shows a menu that opens on :hover without following its link', async
   const outcome = await act(page, 'hover', refOf(closed, /link "Events" \[ref=(\w+)\]/));
   assert.deepEqual([outcome.ok, outcome.url_after], [true, `${origin}/hover`]);
   const opened = (await page.snapshot()).text;
+  assert.equal(outcome.dom_changed, true, 'the menu showed');
   assert.equal((await act(page, 'click', refOf(opened, /link "Create event" \[ref=(\w+)\]/))).url_after, `${origin}/long`);
+});
+
+test('a click that shows a :hover menu, which changes no node, is a change, not a dead click', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/hover', device);
+    const action: Action = { type: 'click', ref: refOf((await page.snapshot()).text, /listitem \[ref=(\w+)\][^\n]*: Company/), text: null };
+    const result = await page.act(action);
+    assert.deepEqual([result.ok, result.dom_changed, failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' })], [true, true, null], device);
+    assert.match((await page.snapshot()).text, /link "About us" \[ref=/, device);
+  }
 });
 
 test('a custom slider shows its value and is set with the arrow keys', async (t) => {
