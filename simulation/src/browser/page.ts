@@ -495,6 +495,26 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     });
   }
 
+  /**
+   * Types `text` key by key. Playwright's US layout has no key for Greek, é or €, and inserts them with no keydown or keyup,
+   * which a keyup handler never hears: each goes to Chromium as one key of its own, as a person's own layout sends it.
+   */
+  async function typeKeys(text: string) {
+    if (/^[ -~\r\n\t]*$/.test(text)) return page.keyboard.type(text); // all on the US layout
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      for (const run of text.match(/[ -~\r\n\t]+|[^ -~\r\n\t]/gu) ?? []) {
+        if (/^[ -~\r\n\t]/.test(run)) await page.keyboard.type(run);
+        else {
+          await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: run, text: run, unmodifiedText: run });
+          await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: run });
+        }
+      }
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
+  }
+
   /** The option called `name` of a custom list: in the list, in the one it controls or owns, else in the one listbox open. */
   async function customOption(list: Locator, name: string, timeout: number): Promise<Locator | null> {
     const frame = (await (await list.elementHandle({ timeout })).ownerFrame()) ?? page.mainFrame();
@@ -587,9 +607,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         if (KEYED.has(kind)) {
           // Key by key, as a person types: masks, keyup handlers, split code boxes and a number field's own parsing see every key.
           // fill('') focuses the field a label's descendant points at. One line takes no Enter: it would submit the form.
-          // shortcut: characters outside Playwright's US layout (Greek, €) arrive as input events with no keydown or keyup, upgrade to CDP Input.dispatchKeyEvent if a keyup-only widget in such a locale shows up.
           await input.fill('', { timeout });
-          await page.keyboard.type(kind === 'textarea' ? action.text : action.text.replace(/\r?\n/g, ' '));
+          await typeKeys(kind === 'textarea' ? action.text : action.text.replace(/\r?\n/g, ' '));
           return null;
         }
         // Rich text, colour and range take the value at once.

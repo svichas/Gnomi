@@ -58,10 +58,12 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
 <div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3">Choose a size</div>
 <input role="combobox" aria-label="Size" readonly style="grid-area:1/1/2/3;width:1px;padding:0;border:0;position:relative;left:-100px;transform:scale(.01)"></div></div>
 <ul id="sizes" role="listbox" hidden><li role="option">Large</li></ul></body></html>`,
-  // Fields that listen for keys: a phone formatter and a counter on keyup, code boxes that move on, a number, a colour, a
-  // native select, a readonly date field that opens a calendar on click, as flatpickr does, a one-field form and a toolbar.
+  // Fields that listen for keys: a phone formatter, a city field and a counter on keyup, code boxes that move on, a number, a
+  // colour, a native select, a readonly date field that opens a calendar on click, as flatpickr does, a one-field form and a
+  // toolbar.
   '/keys': `<!doctype html><html><head>${head}<title>Keys</title></head><body>
 <input aria-label="Phone" onkeyup="this.value = this.value.replace(/\\D/g, '').replace(/(\\d{3})(?=\\d)/g, '$1 ')">
+<input aria-label="City" onkeyup="heard.textContent = 'Heard ' + event.key"><p id="heard"></p>
 <textarea aria-label="Summary" maxlength="80" onkeyup="count.textContent = this.value.length + ' / 80'"></textarea><p id="count">0 / 80</p>
 <fieldset><legend>Verification code</legend>${[1, 2, 3, 4, 5, 6].map((i) => `<input aria-label="Digit ${i}" maxlength="1" size="1" oninput="if (this.value) this.nextElementSibling?.focus()">`).join('')}</fieldset>
 <input type="number" step="0.01" aria-label="Price"> <input type="number" aria-label="Guests"> <input type="color" aria-label="Colour">
@@ -358,6 +360,7 @@ test('type goes in key by key, as a person types, so fields that listen for keys
   };
   await typed(/textbox "Phone" \[ref=(\w+)\]/, '6912345678');
   await typed(/textbox "Summary" \[ref=(\w+)\]/, 'Sunset hike!');
+  await typed(/textbox "City" \[ref=(\w+)\]/, 'Αθήνα 2€');
   await typed(/textbox "Digit 1" \[ref=(\w+)\]/, '482913');
   assert.equal((await typed(/spinbutton "Price" \[ref=(\w+)\]/, '12.50')).ok, true);
   await typed(/spinbutton "Guests" \[ref=(\w+)\]/, '12,50');
@@ -368,6 +371,7 @@ test('type goes in key by key, as a person types, so fields that listen for keys
   const after = (await page.snapshot()).text;
   assert.match(after, /textbox "Phone" [^\n]*: 691 234 567 8\n/);
   assert.match(after, /12 \/ 80/);
+  assert.match(after, /textbox "City" [^\n]*: Αθήνα 2€\n[\s\S]*Heard €/, 'a key off the US layout is a key too');
   const code = [1, 2, 3, 4, 5, 6].map((i) => new RegExp(`textbox "Digit ${i}" [^\\n]*: "?(\\d)`).exec(after)?.[1] ?? '_').join('');
   assert.equal(code, '482913');
   assert.match(after, /spinbutton "Price" [^\n]*: "12.50"/);
