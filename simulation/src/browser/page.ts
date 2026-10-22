@@ -15,6 +15,12 @@ const ACTION_MS = 5_000;
 const SETTLE_MS = 3_000; // cap on waiting for the page to go quiet after an action
 const QUIET_MS = 250; // no DOM mutation for this long counts as settled
 const GLANCE_MS = 800; // how long a person keeps looking when a click or keys showed nothing yet: a debounced search, a menu on a timer
+const FONTS_MS = 2_000; // how long a screenshot waits for web fonts: a person sees the page as it renders meanwhile
+
+// Playwright waits for every web font before a screenshot, with no cap of its own: a 1.5 MB icon font still downloading
+// (Material Symbols on nextadventure.gr) timed screenshots out and stopped runs. screenshot() waits FONTS_MS itself instead.
+// shortcut: PW_TEST_SCREENSHOT_NO_FONTS_READY is Playwright's internal switch, read at each screenshot, upgrade if a release drops it (the never-loading font test then fails).
+process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = '1';
 const POLL_MS = 100; // how often that look checks for a change
 const WAIT_MS = 1_000;
 const READ_CHARS = 2_000;
@@ -777,6 +783,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
 
     async screenshot() {
       await rememberPasswords();
+      await page.evaluate((ms) => Promise.race([document.fonts.ready.then(() => true), new Promise((done) => setTimeout(() => done(false), ms))]), FONTS_MS).catch(() => {});
       return page.screenshot({
         type: 'jpeg',
         quality: 70,
