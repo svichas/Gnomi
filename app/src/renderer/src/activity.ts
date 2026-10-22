@@ -45,13 +45,25 @@ const STEP_ERRORS: Record<string, string> = {
   host_not_allowed: 'outside the allowed site',
   timeout: 'timed out',
   invalid_output: 'the model gave an unusable answer',
+  readonly: 'the field takes no typing, so it was clicked',
+  not_a_field: 'not a field to type into',
+  invalid_value: 'a value the field cannot hold',
+  unreadable_date: 'a date the field could not read',
+  not_a_select: 'not a list to choose from',
+  option_not_found: 'no such option',
+  not_visible: 'no longer shown',
+  unsupported_file: 'no sample file of that kind',
 };
+/** A step error as a designer reads it; "covered by …" quotes the page, which the title keeps. */
+const stepError = (error: string) => STEP_ERRORS[error] ?? (error.startsWith('covered by ') ? 'something is in the way' : error);
 
 function describeAction(action: Action, target: ActionTarget | null): string {
   const element = target ? `${target.role} "${target.name}"` : action.ref ? `element ${action.ref}` : 'the page';
   switch (action.type) {
     case 'click':
       return `Clicked ${element}`;
+    case 'hover':
+      return `Hovered over ${element}`;
     case 'type':
       return `Typed "${action.text}" into ${element}`;
     case 'select':
@@ -121,7 +133,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
     }
     case 'persona.step': {
       const { step_no, action, target, result, thought } = event.payload;
-      const error = result.error && (STEP_ERRORS[result.error] ?? result.error);
+      const error = result.error && stepError(result.error);
       return {
         seq,
         label: `Step ${step_no}`,
@@ -196,7 +208,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
     // Objective signals (tech.md §8.1): what the engine detected, as opposed to what the persona said.
     case 'signal.failed_action': {
       const { step_no, action, error } = event.payload;
-      const title = error === 'no_effect' ? `Detected: the ${action} changed nothing` : `Detected: the ${action} failed (${STEP_ERRORS[error] ?? error})`;
+      const title = error === 'no_effect' ? `Detected: the ${action} changed nothing` : `Detected: the ${action} failed (${stepError(error)})`;
       return { seq, label: `Step ${step_no}`, tone: 'notice', title, detail: place(event.payload.url) };
     }
     case 'signal.loop':

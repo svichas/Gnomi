@@ -88,6 +88,12 @@ test('behaviour rules and the action vocabulary follow the traits', () => {
   const navigate = { thought: 'Typing the address.', feeling: 0, action: { type: 'navigate', ref: null, text: 'http://gym.test/jobs' }, friction: null };
   assert.equal(stepSchema(BUILTIN_PERSONA).safeParse(navigate).success, true);
   assert.equal(stepSchema(sam).safeParse(navigate).success, false);
+  // A phone has no pointer to rest on a menu.
+  const hover = { thought: 'Opening the menu.', feeling: 0, action: { type: 'hover', ref: 'e1', text: null }, friction: null };
+  assert.equal(stepSchema(BUILTIN_PERSONA).safeParse(hover).success, true);
+  assert.equal(stepSchema(sam).safeParse(hover).success, false);
+  assert.match(priya, /hover: ref = /);
+  assert.doesNotMatch(system, /hover:/);
 });
 
 test('the step schema accepts the tech.md example and rejects out-of-range values', () => {
@@ -101,7 +107,7 @@ test('the step schema accepts the tech.md example and rejects out-of-range value
   assert.deepEqual(schema.parse(example), example);
   assert.equal(schema.safeParse({ ...example, feeling: 3 }).success, false);
   assert.equal(schema.safeParse({ ...example, friction: { ...example.friction, severity: 5 } }).success, false);
-  assert.equal(schema.safeParse({ ...example, action: { type: 'hover', ref: 'e1', text: null } }).success, false);
+  assert.equal(schema.safeParse({ ...example, action: { type: 'drag', ref: 'e1', text: null } }).success, false);
   assert.equal(schema.safeParse({ ...example, friction: undefined }).success, false); // nullable, never optional
   assert.equal(schema.safeParse({ ...example, friction: { ...example.friction, about_ref: 'e7' } }).success, true);
 });
@@ -125,6 +131,26 @@ test('memory keeps the last six steps verbatim and a digest of the rest', () => 
   assert.match(textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 10, memory: retried, page, screenshot: null })), /tried: click link "Link 1" on \/ → went to \/job; click link "Link 2" on \/ → failed \(ref_not_found\); frictions/, 'a retry is listed once');
   assert.match(user, /^4\. click link "Link 4" → the page changed\. Priya thought: "thought 4"$/m);
   assert.match(user, /^9\. read link "Link 9" → the page changed\. Priya thought: "thought 9"\n {3}It read: <page>Open jobs: Senior Backend Engineer<\/page>$/m);
+  const upload = memory.map((m, i) => (i === 8 ? { ...m, action: { type: 'click' as const, ref: 'e8', text: null }, text: 'File chosen: photo.png' } : m));
+  assert.match(textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 10, memory: upload, page, screenshot: null })), /^9\. click link "Link 9" → the page changed\. Priya thought: "thought 9"\n {3}File chosen: photo\.png$/m, 'an upload is not a read of the page');
+});
+
+test('the history says a step is still working, whether a scroll moved, and which hash route a click went to', () => {
+  const at = 'http://gym.test/app';
+  const step = (step_no: number, action: StepMemory['action'], target: StepMemory['target'], result: ActionResult): StepMemory => ({ step_no, action, target, result, thought: '', friction: null, text: null });
+  const memory = [
+    step(1, { type: 'click', ref: 'e1', text: null }, { role: 'button', name: 'Save', box: null }, { ...ok(at, at), dom_changed: false, pending: true }),
+    step(2, { type: 'scroll', ref: null, text: 'down' }, null, ok(at, at)),
+    step(3, { type: 'scroll', ref: 'e2', text: 'down' }, { role: 'list', name: 'Stops', box: null }, { ...ok(at, at), dom_changed: false }),
+    step(4, { type: 'click', ref: 'e3', text: null }, { role: 'button', name: 'Continue', box: null }, ok(at, `${at}#/step-2`)),
+    step(5, { type: 'click', ref: 'e4', text: null }, { role: 'link', name: 'Top', box: null }, ok(`${at}#/step-2`, `${at}#top`)),
+  ];
+  const user = textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 6, memory, page, screenshot: null }));
+  assert.match(user, /^1\. click button "Save" → it is still working \(the page has not finished\)\.$/m);
+  assert.match(user, /^2\. scroll down → it moved\.$/m);
+  assert.match(user, /^3\. scroll down in list "Stops" → it did not move\.$/m);
+  assert.match(user, /^4\. click button "Continue" → went to \/app#\/step-2\.$/m);
+  assert.match(user, /^5\. click link "Top" → went to \/app\.$/m, 'an anchor is not a route');
 });
 
 test('the screenshot is sent ahead of the text only when given', () => {

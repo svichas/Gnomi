@@ -28,7 +28,10 @@ test('failed_action: not editable and timeout are failures; a model or containme
       payload: { step_no: 4, url: A, ref: 'e1', action: 'type', error },
     });
   }
-  for (const error of ['ref_not_found', 'invalid_output', 'password_field', 'host_not_allowed', 'option_not_found']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
+  // A tap that would land on a cookie bar, or on content no longer shown, is a step the persona retakes, not a product failure.
+  for (const error of ['ref_not_found', 'invalid_output', 'password_field', 'host_not_allowed', 'option_not_found', 'covered by region "Cookies"', 'not_visible']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
+  // Typing where a person clicks or picks (a readonly picker, a button, a colour name, a date in words) is the model's step to retake.
+  for (const error of ['readonly', 'not_a_field', 'invalid_value', 'unreadable_date']) assert.equal(failedAction(step(1, 'type', A, A, { result: { ok: false, error } })), null, error);
 });
 
 test('failed_action: a click with no URL or DOM change had no effect; one that changed the DOM or the URL did', () => {
@@ -38,6 +41,16 @@ test('failed_action: a click with no URL or DOM change had no effect; one that c
   assert.equal(failedAction(step(2, 'click', A, `${A}#top`, { result: { dom_changed: false } })), null, 'an anchor jump is a change');
   assert.equal(failedAction(step(2, 'read', A, A, { result: { dom_changed: false } })), null, 'reading changes nothing by design');
   assert.equal(failedAction(step(2, 'click', A, A, { result: { dom_changed: false, pending: true } })), null, 'a slow save or a new tab is not a dead click');
+});
+
+test('failed_action: a click on what a type just clicked open finds it open, not dead; after a type that pressed nothing it is', () => {
+  const dead = step(2, 'click', A, A, { result: { dom_changed: false } });
+  const typed = (error: string, dom_changed: boolean, ref = 'e1') => step(1, 'type', A, A, { ref, result: { ok: false, error, dom_changed } });
+  for (const error of ['readonly', 'not_a_field']) assert.equal(failedAction(dead, typed(error, true)), null, error);
+  assert.equal(failedAction(dead, typed('not_a_field', false))?.payload.error, 'no_effect', 'a button typed into was never clicked');
+  assert.equal(failedAction(dead, typed('readonly', true, 'e2'))?.payload.error, 'no_effect', 'another element');
+  assert.equal(failedAction(dead, step(1, 'click', A, A))?.payload.error, 'no_effect');
+  assert.deepEqual(detectSignals({ history: [typed('readonly', true)], step: dead, device: 'desktop', errors: [], before: null, after: null, thresholds: T }), []);
 });
 
 test('loop: the same URL and snapshot seen three times within ten steps, reported once', () => {
@@ -59,6 +72,11 @@ test('loop: reading a page twice is not a loop, nor are three visits spread over
   const changing = [1, 2, 3].map((n) => step(n, 'type', A, A, { hash: `h${n}` }));
   assert.deepEqual(replay(changing, (h, s) => loop(h, s, T)), []);
   assert.equal(replay([step(1, 'click', `${A}#x`, undefined, { hash: 'h' }), step(2, 'click', A, A, { hash: 'h' }), step(3, 'click', `${A}#y`, undefined, { hash: 'h' })], (h, s) => loop(h, s, T)).length, 1, 'the fragment is not part of the page');
+});
+
+test('loop: failed steps that never touched the page, such as guessed options, are not the persona going round', () => {
+  const guesses = [1, 2, 3].map((n) => step(n, 'select', A, A, { hash: 'h', result: { ok: false, error: 'option_not_found', dom_changed: false } }));
+  assert.deepEqual(replay(guesses, (h, s) => loop(h, s, T)), []);
 });
 
 test('loop: a loop that goes on is not reported again, one that comes back after a break is', () => {
@@ -113,6 +131,9 @@ test('validation_error: an invalid field and its message after a submit, even wh
 test('validation_error: an alert, or error wording on the same page, counts', () => {
   assert.equal(validationError(submit(B), FORM, `${FORM}\n- alert [ref=e40]: Payment failed`)?.payload.message, 'Payment failed');
   assert.equal(validationError(submit(), FORM, `${FORM}\n- generic [ref=e40]: Please enter a valid email`)?.payload.message, 'Please enter a valid email');
+  // The browser's own refusal, which the driver adds as an alert, in whatever words the browser uses.
+  const refused = "Contact email: Please include an '@' in the email address. 'bob' is missing an '@'.";
+  assert.equal(validationError(submit(), FORM, `${FORM}\n- alert [invalid]: ${refused}`)?.payload.message, refused);
 });
 
 test('validation_error: no new message, hints on a new page, a message already showing, or a non-submit action are not', () => {
@@ -128,6 +149,36 @@ test('validation_error: no new message, hints on a new page, a message already s
   assert.equal(validationError(submit(), FORM, `${FORM}\n- textbox "Enter a job title" [invalid] [ref=e50]`)?.payload.message, 'Enter a job title');
   const hint = (where: string) => `${FORM}\n- paragraph [ref=e50] ${where}: Fields marked * are required`;
   assert.equal(validationError(submit(), hint('[box=0,900,100,20] (off screen, below)'), hint('[box=0,300,100,20]')), null, 'a hint that scrolled into view');
+  assert.equal(validationError(submit(), hint('[box=1400,300,100,20] (off screen, right)'), hint('[box=300,300,100,20]')), null, 'a hint on a slide that came into view');
+});
+
+// A wizard's first step, its second step after "Next", and that step after "Add another ticket", as the driver showed them.
+const WIZARD = `- heading "Create an event" [level=1] [ref=e2] [box=8,21,1264,37]
+- text: Title
+- textbox "Title" [ref=e4] [box=38,80,153,21]: Sunset hike
+- button "Next" [ref=e5] [box=191,80,43,21]
+- button "Add another ticket" [ref=e6] [box=8,101,123,21]`;
+const STEP_2 = `- heading "Create an event" [level=1] [ref=e2] [box=8,21,1264,37]
+- heading "Step 2 of 3: Tickets" [level=2] [ref=e8] [box=8,80,1264,28]
+- paragraph [ref=e9] [box=8,128,1264,18]: Choose a ticket type for your guests.
+- combobox [ref=e10] [box=8,162,1264,18]: Select a category
+- text: Price (required)
+- spinbutton "Price (required)" [ref=e11] [box=109,180,153,21]
+- button "Continue" [ref=e12] [box=266,180,69,21]
+- button "Add another ticket" [ref=e6] [box=8,201,123,21]`;
+const ADDED = `${STEP_2.replace('ticket" [ref=e6]', 'ticket" [active] [ref=e6]')}
+- heading "Ticket 2" [level=3] [ref=e14] [box=8,241,1264,22]
+- paragraph [ref=e15] [box=8,281,1264,18]: Ticket name is required. Enter a name your guests will recognise.
+- textbox "Ticket name" [ref=e16] [box=8,315,153,21]`;
+
+test('validation_error: copy a click revealed along with new fields is not an error; an alert or an invalid field among them is', () => {
+  const next = step(3, 'click', A, A, { target: { role: 'button', name: 'Next', box: null }, ref: 'e5' });
+  const add = step(4, 'click', A, A, { target: { role: 'button', name: 'Add another ticket', box: null }, ref: 'e6' });
+  assert.equal(validationError(next, WIZARD, STEP_2), null, 'a wizard\'s next step');
+  assert.equal(validationError(add, STEP_2, ADDED), null, 'an added block\'s help text');
+  assert.equal(validationError(next, WIZARD, `${STEP_2}\n- alert [ref=e20]: Please choose a ticket type`)?.payload.message, 'Please choose a ticket type');
+  assert.equal(validationError(add, STEP_2, ADDED.replace('"Ticket name" [ref', '"Ticket name" [invalid] [ref'))?.payload.message, 'textbox "Ticket name" is marked invalid');
+  assert.equal(validationError(next, WIZARD, `${WIZARD}\n- generic [ref=e20]: Title is required`)?.payload.message, 'Title is required', 'no new field: wording still counts');
 });
 
 test('small_target: a mobile tap on an element under 40×40 CSS px; desktop taps and large targets never', () => {

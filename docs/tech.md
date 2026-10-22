@@ -540,7 +540,7 @@ The output schema for a browser step:
 
 | Phase | Actions | Notes |
 |---|---|---|
-| Browse (web POI) | `click(ref)`, `type(ref, text, submit?)`, `select(ref, option)`, `scroll(up|down|ref)`, `back()`, `navigate(url)`, `wait()`, `read(ref)` | `navigate` only to allowed hosts and only for tech skill ≥ 3; `read` expands a region's text; every action returns an outcome (URL change, DOM change hash, error) |
+| Browse (web POI) | `click(ref)`, `hover(ref)`, `press(key, ref?)`, `type(ref, text, submit?)`, `select(ref, option)`, `scroll(up|down|ref)`, `back()`, `navigate(url)`, `wait()`, `read(ref)` | `navigate` only to allowed hosts and only for tech skill ≥ 3; `read` expands a region's text; every action returns an outcome (URL change, DOM change hash, error) |
 | Judge (any POI) | `report_friction(...)` (as a field), `rate(poi, score, reason)`, `done(summary)`, `abandon(reason)` | `abandon` is a first-class, encouraged action |
 | Social | `post(text, about_poi?)`, `reply(post_id, text)`, `react(post_id, kind)`, `skip()` | `skip` is the default; most people lurk |
 | Static design | `predict(would_click, expectation)`, `next_frame()`, `report_mismatch(...)` | the expectation loop, see [§7](#7-poi-ingestion-and-interaction) |
@@ -655,7 +655,7 @@ Segment eligibility: each POI lists which segments engage with it (default: all 
 
 | Signal | Rule (defaults) |
 |---|---|
-| `failed_action` | ref not found, click produced no URL or DOM change within 3 s, type into a non-editable element, action timeout |
+| `failed_action` | ref not found, click produced no URL or DOM change within 3 s, type into a disabled field, action timeout |
 | `loop` | the same (normalised URL, snapshot hash) seen three times within ten steps |
 | `backtrack` | two or more `back()` within five steps, or returning to a page visited in the last four steps |
 | `budget_exceeded` | step budget or episode time budget (default 8 minutes) reached before `done` |

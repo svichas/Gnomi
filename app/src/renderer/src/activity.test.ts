@@ -239,6 +239,15 @@ test('detected signals read as sentences and have their own category', () => {
   assert.equal(filterEvents([...signals, blocked(8)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
 });
 
+test('a step error reads in words, and what covered the target as something in the way', () => {
+  const failed = (seq: number, error: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: false, url_before: '', url_after: '', dom_changed: false, error }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] });
+  assert.deepEqual(toRows([failed(1, 'readonly'), failed(2, 'covered by region "Cookies"'), failed(3, 'odd_code')]).reverse().map((row) => row.badge?.text), [
+    'error: the field takes no typing, so it was clicked',
+    'error: something is in the way',
+    'error: odd_code',
+  ]);
+});
+
 test('a change of pace is a row of its own', () => {
   const [row] = toRows([event(1, 'run.concurrency_changed', { concurrency: 6, reason: 'The provider rate-limited us' }, null)]);
   assert.equal(row.title, 'Now running 6 personas at a time');

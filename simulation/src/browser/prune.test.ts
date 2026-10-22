@@ -32,11 +32,18 @@ test('keeps what is on screen addressable inside a collapsed run', () => {
   assert.match(out, /… \(×\d+ more\)/);
 });
 
-test('a collapsed <select> still shows its selected option', () => {
-  const options = Array.from({ length: 60 }, (_, i) => `  - option "Country ${i}"${i === 41 ? ' [selected]' : ''} [box=0,0,0,0]`).join('\n');
-  const out = pruneSnapshot(lines('- combobox "Country" [ref=e1] [box=80,200,84,19]:', options));
-  assert.match(out, /option "Country 41" \[selected\]/);
-  assert.match(out, /… \(×54 more\)/);
+test('a closed <select> shows every option up to 30, and past that its selected option, the first few and the names of the rest', () => {
+  const select = (n: number, selected: number) =>
+    lines('- combobox "Country" [ref=e1] [box=80,200,84,19]:', ...Array.from({ length: n }, (_, i) => `  - option "Country ${i}"${i === selected ? ' [selected]' : ''} [box=0,0,0,0]`));
+  const short = pruneSnapshot(select(13, 0));
+  assert.equal(short.split('\n').filter((l) => l.includes('- option')).length, 13);
+  assert.doesNotMatch(short, /more/);
+  const long = pruneSnapshot(select(200, 141));
+  assert.match(long, /option "Country 141" \[selected\]/);
+  assert.match(long, /option "Country 4"/);
+  const marker = long.split('\n').find((l) => l.includes('more')) ?? '';
+  assert.match(marker, /^ {2}- … \(×194 more: Country 5, Country 6, .*…\)$/);
+  assert.ok(marker.length < 400, `${marker.length}`);
 });
 
 test('collapses runs of generic card wrappers, but never a run of form fields', () => {
@@ -112,6 +119,19 @@ test('password state distinguishes empty, filled and unreadable fields without e
   assert.match(out, /"Filled" \[ref=e2\] \[password: filled\]/);
   assert.match(out, /"Unreadable" \[ref=e3\] \[password: hidden\]/);
   assert.doesNotMatch(out, /canary/);
+});
+
+test('prints the value of a custom slider or stepper the caller read, and none for other lines', () => {
+  const out = pruneSnapshot(lines(
+    '- slider "Group size" [ref=e1]: ●',
+    '- slider "Price" [ref=e2]',
+    '- slider [ref=e3]',
+    '- button "Save" [ref=e4]',
+  ), { values: new Map([['e1', '5'], ['e2', '€80'], ['e3', '30']]) });
+  assert.match(out, /^- slider "Group size" \[ref=e1\] \[value=5\]: ●$/m);
+  assert.match(out, /^- slider "Price" \[ref=e2\] \[value=€80\]$/m);
+  assert.match(out, /^- slider \[ref=e3\] \[value=30\]$/m);
+  assert.match(out, /^- button "Save" \[ref=e4\]$/m);
 });
 
 test('drops lines that carry nothing, but keeps an unlabelled control', () => {
@@ -206,4 +226,45 @@ test('drops a link or button Playwright gave no ref, as in a collapsed menu, kee
     '  - button "menu button" [ref=e14] [cursor=pointer] [box=359,114,18,18]',
     '  - generic [ref=e178] [cursor=pointer] [box=34,510,24,24]',
   ));
+});
+
+test('keeps a disabled link or button Playwright gave no ref, as Bootstrap and Tailwind style one with pointer-events: none', () => {
+  // The raw lines of a greyed-out Publish and Continue: what a person sees, and why the form cannot go on yet.
+  const out = pruneSnapshot(lines(
+    '- generic [active] [ref=e1] [box=8,8,1264,704]:',
+    '  - button "Publish event" [disabled] [box=8,8,96,21]',
+    '  - link "Continue" [disabled] [box=104,9,59,18]:',
+    '    - /url: /x',
+    '  - button "Save draft" [ref=e2] [box=163,8,77,21]',
+  ));
+  assert.match(out, /^- button "Publish event" \[disabled\] \[box=8,8,96,21\]$/m);
+  assert.match(out, /^- link "Continue" \[disabled\] \[box=104,9,59,18\]:$/m);
+  assert.match(out, /^- button "Save draft" \[ref=e2\]/m);
+});
+
+test('marks lines beside the viewport as off screen, left or right, but not the 0×0 options of a closed <select>', () => {
+  const out = pruneSnapshot(lines(
+    '- link "Create event" [ref=e6] [cursor=pointer] [box=-209,0,80,18]:',
+    '  - /url: /new',
+    '- button "Trip 6" [ref=e18] [box=1821,81,50,21]',
+    '- button "Trip 2" [ref=e14] [box=1221,81,50,21]',
+    '- combobox "Country" [ref=e2] [box=80,200,84,19]:',
+    '  - option "Greece" [selected] [box=0,0,0,0]',
+  ), { viewportWidth: 1280 });
+  assert.equal(out, lines(
+    '- link "Create event" [ref=e6] [cursor=pointer] [box=-209,0,80,18] (off screen, left):',
+    '  - /url: /new',
+    '- button "Trip 6" [ref=e18] [box=1821,81,50,21] (off screen, right)',
+    '- button "Trip 2" [ref=e14] [box=1221,81,50,21]',
+    '- combobox "Country" [ref=e2] [box=80,200,84,19]:',
+    '  - option "Greece" [selected] [box=0,0,0,0]',
+  ));
+});
+
+test('keeps every card of a strip that scrolls sideways addressable, marking those beside the screen, not folding them away', () => {
+  const cards = Array.from({ length: 12 }, (_, i) => [`  - listitem [ref=e${10 + i}] [box=${i * 308},60,300,120]:`, `    - link "Trip ${i}" [ref=e${30 + i}] [box=${i * 308},60,40,18]`]).flat();
+  const out = pruneSnapshot(lines('- list [ref=e2] [box=0,60,393,120]:', ...cards), { viewportWidth: 393 });
+  assert.doesNotMatch(out, /more\)/);
+  assert.match(out, /link "Trip 9" \[ref=e39\] \[box=2772,60,40,18\] \(off screen, right\)$/m);
+  assert.match(out, /link "Trip 0" \[ref=e30\] \[box=0,60,40,18\]$/m);
 });
