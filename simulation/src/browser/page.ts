@@ -422,11 +422,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     // Headless Chromium cancels a file chooser nobody answers: the persona picks a file of the kind the field asks for, as a
     // person picks one from their device.
     tab.on('filechooser', (chooser) => {
-      chosen = chooser.element().getAttribute('accept').then(async (accept) => {
-        const file = sampleFile(accept ?? '');
-        await chooser.setFiles(file);
-        return file.name;
-      }).catch(() => null);
+      const pick = chooser.element().getAttribute('accept').catch(() => '').then((accept) => {
+        const file = sampleFile(accept ?? ''); // unsupported_file, which act() reports, for a kind none can be made of
+        return chooser.setFiles(file).then(() => file.name, () => null);
+      });
+      pick.catch(() => {}); // handled, in case act() has stopped looking: an unhandled rejection would end the run
+      chosen = pick;
     });
     if (!opener) return;
     openers.set(tab, opener);
@@ -774,7 +775,10 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const echo = action.type === 'type' ? await domVersion(page) : before;
       await settle(page, started);
       // A file chooser opens just after the click that opened it returns: its file, and what the page makes of it, are the action's.
-      const picked = await (chosen as Promise<string | null> | null); // set by the filechooser listener while the action ran
+      const picked = await (chosen as Promise<string | null> | null)?.catch((e: unknown) => { // set by the filechooser listener while the action ran
+        error ??= firstLine(e);
+        return null;
+      });
       if (picked) {
         text = `File chosen: ${picked}`;
         await settle(page, started);

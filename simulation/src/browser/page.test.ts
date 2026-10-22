@@ -160,12 +160,14 @@ render(); setTimeout(render, 800);</script></body></html>`,
   '/preview': `<!doctype html><html><head>${head}<title>Preview</title></head><body><p id="o"></p><button onclick="window.close()">Close preview</button>
 <script>o.textContent = window.opener ? 'has opener' : 'no opener'</script></body></html>`,
   // File fields as forms build them: a labelled native input, a styled button that clicks a hidden one, a react-dropzone area
-  // and a PDF-only input. The status says what each received, and an image's size as the browser decodes it.
+  // and inputs for PDF, JPEG and a spreadsheet only. The status says what each received, and an image's size as the browser
+  // decodes it.
   '/upload': `<!doctype html><html><head>${head}<title>Upload</title></head><body>
 <label for="cover">Cover image</label> <input id="cover" type="file" accept="image/*">
 <button type="button" onclick="photo.click()">Upload photo</button><input id="photo" type="file" accept="image/png,image/jpeg" hidden>
 <div role="presentation" tabindex="0" style="border:2px dashed #888;padding:24px;cursor:pointer" onclick="zone.click()"><p>Drag 'n' drop some files here, or click to select files</p></div><input id="zone" type="file" hidden>
-<label for="programme">Programme (PDF)</label> <input id="programme" type="file" accept=".pdf"><p id="received" role="status"></p>
+<label for="programme">Programme (PDF)</label> <input id="programme" type="file" accept=".pdf">
+<label for="avatar">Avatar (JPEG)</label> <input id="avatar" type="file" accept=".jpg,.jpeg"> <label for="sheet">Spreadsheet</label> <input id="sheet" type="file" accept=".xlsx"><p id="received" role="status"></p>
 <script>for (const input of document.querySelectorAll('input')) input.onchange = async () => {
   const file = input.files[0];
   const size = file.type.startsWith('image/') ? await createImageBitmap(file).then((b) => ' ' + b.width + 'x' + b.height) : '';
@@ -659,6 +661,7 @@ test('a file field takes a realistic file of the kind it asks for, through its c
       [/button "Upload photo" \[ref=(\w+)\]/, /photo: photo\.png image\/png (\d+)x(\d+)/],
       [/paragraph \[ref=(\w+)\][^\n]*: Drag 'n' drop/, /zone: photo\.png image\/png (\d+)x(\d+)/],
       [/button "Programme \(PDF\)" \[ref=(\w+)\]/, /programme: document\.pdf application\/pdf/],
+      [/button "Avatar \(JPEG\)" \[ref=(\w+)\]/, /avatar: photo\.jpg image\/jpeg (\d+)x(\d+)/],
     ] as const) {
       const action: Action = { type: 'click', ref: refOf(text, line), text: null };
       const result = await page.act(action);
@@ -671,6 +674,9 @@ test('a file field takes a realistic file of the kind it asks for, through its c
     const typed = await act(page, 'type', refOf(text, /button "Programme \(PDF\)" \[ref=(\w+)\]/), 'programme.pdf');
     assert.deepEqual([typed.ok, typed.error, typed.text], [true, null, 'File chosen: programme.pdf'], device);
     assert.match((await page.snapshot()).text, /programme: programme\.pdf application\/pdf/, device);
+    // A kind none can be made of is said, not handed over as text under its name.
+    const sheet = refOf(text, /button "Spreadsheet" \[ref=(\w+)\]/);
+    for (const result of [await act(page, 'click', sheet), await act(page, 'type', sheet, 'budget.xlsx')]) assert.deepEqual([result.ok, result.error], [false, 'unsupported_file'], device);
   }));
 });
 
