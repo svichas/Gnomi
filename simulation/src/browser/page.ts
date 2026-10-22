@@ -120,6 +120,29 @@ function labelBox(el: Element): [number, number, number, number] {
   return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
 }
 
+// Runs in the page: what a person's scroll up or down moves. Around el: el if it scrolls, else the nearest element around
+// it that does, across shadow roots and slots and short of the page (the paper a menu's list sits in), else the first one
+// inside it (a drawer's body). With no el: the topmost open modal's, else the page when it scrolls, else the largest
+// scroller on screen (an app shell's main column). Null when nothing does.
+function scroller(el: Element | null): Element | null {
+  const scrolls = (e: Element) => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight;
+  const page = document.scrollingElement ?? document.documentElement;
+  if (el) {
+    for (let e: Element | null = el; e && e !== page; e = e.assignedSlot ?? e.parentElement ?? (e.parentNode as ShadowRoot | null)?.host ?? null) if (scrolls(e)) return e;
+    return [...el.querySelectorAll('*')].find(scrolls) ?? null;
+  }
+  // A page locked behind a modal (overflow: hidden) takes no scroll from a person, though scrollBy would still move it.
+  const pageScrolls = page.scrollHeight > page.clientHeight && ![document.documentElement, document.body].some((e) => /hidden|clip/.test(getComputedStyle(e).overflowY));
+  const modal = [...document.querySelectorAll('[aria-modal="true"], :modal')].filter((m) => m.checkVisibility()).at(-1);
+  if (modal) return scroller(modal) ?? (pageScrolls ? page : null);
+  if (pageScrolls) return page;
+  const shown = (e: Element) => {
+    const r = e.getBoundingClientRect();
+    return Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+  };
+  return [...document.querySelectorAll('body *')].filter(scrolls).reduce<Element | null>((best, e) => (shown(e) > (best ? shown(best) : 0) ? e : best), null);
+}
+
 // Runs in the page: what people cannot see but the accessibility tree keeps is made visibility: hidden for the snapshot,
 // which Playwright does honour, then put back: content at opacity 0 (a closed custom drop-down would read as open), CSS
 // text inside display: none (a hidden tooltip's ::before), and what an overflow: hidden ancestor clips away entirely (a
@@ -566,22 +589,41 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         return null;
       }
       case 'scroll': {
+        const direction = action.text === 'down' ? 1 : action.text === 'up' ? -1 : 0;
+        const { width, height } = page.viewportSize()!;
         if (ref) {
           const target = await locate(ref);
-          await target.scrollIntoViewIfNeeded({ timeout });
-          // Up or down on a list or panel that scrolls: the wheel over it, as a person scrolls a time list. Otherwise the ref is brought into view.
-          const direction = action.text === 'down' ? 1 : action.text === 'up' ? -1 : 0;
-          const scrolls = direction !== 0 && (await target.evaluate((el) => /auto|scroll/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight, null, { timeout }));
-          const box = scrolls ? await target.boundingBox({ timeout }) : null;
-          if (box) {
-            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-            await page.mouse.wheel(0, direction * box.height * 0.8);
+          // Up or down in a list or panel: the wheel over the part of what scrolls there that shows, as a person scrolls a
+          // time list or a menu. Otherwise, or when nothing scrolls there, the ref is brought into view.
+          const list = direction ? (await target.evaluateHandle(scroller, null, { timeout })).asElement() : null;
+          const shown = async () => {
+            const box = await list?.boundingBox();
+            if (!box) return null;
+            const [x, y] = [Math.max(box.x, 0), Math.max(box.y, 0)];
+            const [w, h] = [Math.min(box.x + box.width, width) - x, Math.min(box.y + box.height, height) - y];
+            return w > 0 && h > 0 ? { x, y, w, h } : null;
+          };
+          let box = await shown();
+          if (list && !box) {
+            await list.scrollIntoViewIfNeeded({ timeout }); // a list below the fold: the page first
+            box = await shown();
           }
-        } else if (action.text === 'up' || action.text === 'down') {
-          // The wheel, like a person: it scrolls whichever container is under the pointer.
-          const { width, height } = page.viewportSize()!;
-          await page.mouse.move(width / 2, height / 2);
-          await page.mouse.wheel(0, (action.text === 'down' ? 1 : -1) * height * 0.8);
+          if (!box) await target.scrollIntoViewIfNeeded({ timeout });
+          else {
+            await page.mouse.move(box.x + box.w / 2, box.y + box.h / 2);
+            await page.mouse.wheel(0, direction * box.h * 0.8);
+          }
+          await list?.dispose();
+        } else if (direction) {
+          // The page as a person's scroll moves it, not the wheel at the centre, which whatever sits there takes: a map zooms, a
+          // focused number field steps. A page that scrolls nothing (a full-screen section slider) gets the wheel.
+          const moved = (await page.evaluateHandle(scroller, null)).asElement();
+          if (moved) await moved.evaluate((el, dy) => el.scrollBy({ top: dy * el.clientHeight * 0.8, behavior: 'instant' }), direction);
+          else {
+            await page.mouse.move(width / 2, height / 2);
+            await page.mouse.wheel(0, direction * height * 0.8);
+          }
+          await moved?.dispose();
         } else {
           throw new Error("scroll needs a ref, or text 'up' or 'down'");
         }

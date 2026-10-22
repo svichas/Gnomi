@@ -186,6 +186,18 @@ render(); setTimeout(render, 800);</script></body></html>`,
 <div style="opacity:0;pointer-events:none"><input aria-label="Search countries"><ul role="listbox" aria-label="Countries"><li role="option">Greece</li></ul></div>
 <div class="tip" style="display:none"></div>
 <form onsubmit="event.preventDefault(); document.body.append('Published')"><label for="ttl">Event title</label> <input id="ttl" required> <button>Publish</button></form></body></html>`,
+  // An open MUI-style menu: a fixed popover over a transparent backdrop, the page locked, and a paper that scrolls the list.
+  '/menu': `<!doctype html><html><head>${head}<title>Menu</title><style>body{overflow:hidden}</style></head><body><h1>New event</h1><div style="height:3000px"></div>
+<div role="presentation" style="position:fixed;inset:0"><div aria-hidden="true" style="position:fixed;inset:0;background:transparent"></div>
+<div style="position:absolute;top:100px;left:40px;width:240px;max-height:300px;overflow-y:auto;background:#fff"><ul role="listbox" aria-label="Category" style="margin:0;padding:0">
+${Array.from({ length: 30 }, (_, i) => `<li role="option" style="height:36px">Category ${i}</li>`).join('')}</ul></div></div></body></html>`,
+  // A side drawer whose body scrolls under its title, a number field at the centre of the screen, and a map below it that
+  // zooms on the wheel and keeps it from the page, on a page that scrolls.
+  '/scrollers': `<!doctype html><html><head>${head}<title>Scrollers</title></head><body><h1>Scrollers</h1><div style="height:4000px"></div>
+<div role="dialog" aria-label="Filters" style="position:fixed;top:0;right:0;width:120px;height:100%;display:flex;flex-direction:column;background:#fff">
+<h2>Filters</h2><div style="overflow-y:auto;flex:1">${Array.from({ length: 30 }, (_, i) => `<label style="display:block;height:40px"><input type="checkbox"> Option ${i}</label>`).join('')}</div></div>
+<input type="number" aria-label="Guests" style="position:absolute;top:calc(50vh - 30px);left:8px;width:60vw;height:60px">
+<div role="application" aria-label="Map" data-n="0" style="position:absolute;top:calc(100vh + 100px);left:8px;width:60vw;height:800px;background:#cde" onwheel="event.preventDefault(); this.dataset.n = +this.dataset.n + 1; this.textContent = 'Zoom ' + this.dataset.n">Zoom 0</div></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -557,7 +569,7 @@ test('read returns the element text, cut at 2,000 characters', async (t) => {
   assert.equal(outcome.dom_changed, false);
 });
 
-test('scroll moves the page by wheel, and to a ref', async (t) => {
+test('scroll moves the page, and to a ref', async (t) => {
   const page = await open(t, '/long');
   const headingY = async () => Number(/heading "Long page".*?\[box=-?\d+,(-?\d+),/.exec((await page.snapshot()).text)![1]);
   const top = await headingY();
@@ -874,6 +886,50 @@ test('scroll up or down on a list that scrolls moves the list under the wheel, n
   assert.ok((await y(late)) < before - 50, `${before} -> ${await y(late)}`);
   await act(page, 'scroll', list, 'up');
   assert.equal(await y(late), before);
+});
+
+test('scroll in a menu or a drawer moves what scrolls there, around or inside the ref, not the page', async (t) => {
+  const y = (text: string, line: RegExp) => Number(line.exec(text)?.[1]);
+  const heading = /heading "New event".*?\[box=-?\d+,(-?\d+),/;
+  const first = /option "Category 0".*?\[box=-?\d+,(-?\d+),/;
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/menu', device);
+    const text = (await page.snapshot()).text;
+    assert.doesNotMatch(text, /option "Category 29" \[ref=/, device);
+    // The list, then an option in it: the paper around them scrolls.
+    for (const line of [/listbox "Category" \[ref=(\w+)\]/, /option "Category 3" \[ref=(\w+)\]/]) {
+      const before = (await page.snapshot()).text;
+      const outcome = await act(page, 'scroll', refOf(before, line), 'down');
+      const after = (await page.snapshot()).text;
+      assert.deepEqual([outcome.ok, outcome.dom_changed], [true, true], `${device} ${line}`);
+      assert.ok(y(after, first) < y(before, first) - 100, `${device} ${line}: ${y(before, first)} -> ${y(after, first)}`);
+      assert.equal(y(after, heading), y(text, heading), `${device} ${line}: the page stays`);
+    }
+    for (let i = 0; i < 5 && !/option "Category 29" \[ref=/.test((await page.snapshot()).text); i++) await act(page, 'scroll', refOf(text, /listbox "Category" \[ref=(\w+)\]/), 'down');
+    assert.match((await page.snapshot()).text, /option "Category 29" \[ref=/, device);
+  }
+  const page = await open(t, '/scrollers');
+  const text = (await page.snapshot()).text;
+  const option = /checkbox "Option 0".*?\[box=-?\d+,(-?\d+),/;
+  assert.equal((await act(page, 'scroll', refOf(text, /dialog "Filters" \[ref=(\w+)\]/), 'down')).dom_changed, true);
+  const after = (await page.snapshot()).text;
+  assert.ok(y(after, option) < y(text, option) - 100, `${y(text, option)} -> ${y(after, option)}`);
+  assert.equal(y(after, /heading "Scrollers".*?\[box=-?\d+,(-?\d+),/), y(text, /heading "Scrollers".*?\[box=-?\d+,(-?\d+),/), 'the page stays');
+});
+
+test('scroll without a ref moves the page, never a focused number field or a map at the centre of the screen', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/scrollers', device);
+    const top = /heading "Scrollers".*?\[box=-?\d+,(-?\d+),/;
+    const text = (await page.snapshot()).text;
+    await act(page, 'type', refOf(text, /spinbutton "Guests" \[ref=(\w+)\]/), '40');
+    assert.equal((await act(page, 'scroll', null, 'down')).dom_changed, true, device);
+    const scrolled = (await page.snapshot()).text;
+    assert.match(scrolled, /spinbutton "Guests" [^\n]*: "40"/, device);
+    assert.ok(Number(top.exec(scrolled)?.[1]) < Number(top.exec(text)?.[1]) - 300, `${device}: the page moved`);
+    await act(page, 'scroll', null, 'down'); // the map now sits under the centre
+    assert.match((await page.snapshot()).text, /Zoom 0/, `${device}: the map never heard the wheel`);
+  }
 });
 
 test('done and abandon never reach act', async (t) => {
