@@ -18,7 +18,10 @@ export const SOCIAL_ACTIONS = ['nothing', 'post', 'reply', 'react'] as const;
  * cannot answer or cite a post it never saw; an answer that breaks a rule is retried like any invalid output.
  */
 export function socialSchema(feedIds: string[], poiIds: [string, ...string[]]) {
-  const shown = z.string().refine((id) => feedIds.includes(id), 'is not the id of a post in the feed shown');
+  // The retry sees only this message: naming the id and the feed's ids lets a model that mixed up round prefixes correct it.
+  const shown = z.string().refine((id) => feedIds.includes(id), {
+    error: (iss) => `"${iss.input}" is not the id of a post in the feed shown (its posts: ${feedIds.join(', ') || 'none'})`,
+  });
   return z.object({
     thought: english(z.string()),
     action: z.enum(SOCIAL_ACTIONS),
