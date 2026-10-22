@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@react-sigma/core": "6.0.0",
+    "@sigma/node-image": "4.0.1",
     "@tailwindcss/vite": "4.3.3",
     "@tiptap/extension-table": "3.31.4",
     "@tiptap/extensions": "3.31.4",

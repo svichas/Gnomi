@@ -10,7 +10,11 @@
 .swarm-canvas .react-sigma-controls { border-width: 1px; border-radius: var(--gnomi-radius-control); overflow: hidden; }
 .swarm-canvas .react-sigma-control > button { display: grid; place-items: center; width: 100%; height: 100%; line-height: 1; }
 .swarm-canvas .react-sigma-control > button:focus-visible { outline-offset: -4px; }
-.swarm-node-card { position: absolute; z-index: 2; top: 12px; left: 12px; max-width: min(280px, calc(100% - 24px)); padding: 12px 16px; border: 1px solid var(--gnomi-control-border); border-radius: var(--gnomi-radius-control); background: var(--gnomi-surface); color: var(--gnomi-text-muted); pointer-events: none; font-size: 12px; line-height: 1.6; box-shadow: 0 4px 12px #2228230d; }
+.swarm-node-card { position: absolute; z-index: 4; width: max-content; max-width: min(280px, calc(50cqw - 32px)); padding: 12px 16px; border: 1px solid var(--gnomi-control-border); border-radius: var(--gnomi-radius-control); background: var(--gnomi-surface); color: var(--gnomi-text-muted); pointer-events: none; font-size: 12px; line-height: 1.6; box-shadow: 0 8px 24px #2228231a; translate: 24px -50%; transform-origin: left center; animation: swarm-card-in .18s ease-out; }
+.swarm-node-card[data-side='left'] { translate: calc(-100% - 24px) -50%; transform-origin: right center; }
+@keyframes swarm-card-in { from { opacity: 0; scale: .94; } }
+.swarm-node-head { display: flex; align-items: flex-start; gap: 10px; }
+.swarm-node-icon { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-top: 2px; border-radius: 50%; color: #fff; }
 .swarm-node-kind { display: block; margin-bottom: 2px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
 .swarm-node-title { color: var(--gnomi-text); font-size: 14px; font-weight: 500; }
 .swarm-node-hint { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--gnomi-line); }
@@ -81,6 +85,7 @@
 .swarm-moment-people > span { color: var(--gnomi-info); padding-inline: 2px; }
 .swarm-moment-quote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 11px; line-height: 1.6; color: var(--gnomi-text-muted); margin-top: 2px; overflow-wrap: anywhere; }
 .swarm-moments-empty { color: var(--gnomi-text-muted); font-size: 12px; line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) { .swarm-node-card { animation: none; } }
 @container (max-width: 480px) {
   .swarm-moments-list { grid-template-columns: 1fr; }
   .swarm-viewbar { padding-inline: 16px; }

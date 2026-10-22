@@ -3,13 +3,16 @@ import Graph from 'graphology';
 import FA2Layout from 'graphology-layout-forceatlas2/worker';
 import { ControlsContainer, SigmaContainer, useRegisterEvents, useSigma, ZoomControl } from '@react-sigma/core';
 import '@react-sigma/core/lib/style.css';
+import { layerImage } from '@sigma/node-image';
 import { DEFAULT_STYLES } from 'sigma';
 import type { Sigma } from 'sigma';
+import { layerFill } from 'sigma/rendering';
+import { animateNodes } from 'sigma/utils';
 import { applyEvents, EDGE_TYPES, emptyGraph, graphAtRound } from '@gnomi/engine/graph/index.ts';
 import type { EdgeType, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.ts';
-import type { GnomiEvent, Segment } from '@gnomi/simulation/types.ts';
+import type { GnomiEvent, PoiType, Segment } from '@gnomi/simulation/types.ts';
 import { Button, Check } from './ui.tsx';
-import { Icon } from './Icon.tsx';
+import { Icon, iconImage } from './Icon.tsx';
 import { connectionMatches, EDGES, NO_SEGMENT, patch, POI_COLOR, reconcile, segmentColor, SMALL_GRAPH_LIMIT, summarizeConnections } from './swarm-view.ts';
 import type { GraphFilter } from './swarm-view.ts';
 import { roundMoments, selectMoments } from './swarm-moments.ts';
@@ -20,20 +23,71 @@ import './swarm.css';
 const BATCH_MS = 250; // tech.md §5.5: the live graph is patched at most four times a second
 const SETTLE_MS = 4000; // the layout stops this long after the last change
 const DEFAULT_CONNECTIONS: EdgeType[] = [...EDGE_TYPES];
+const POI_KINDS: Record<PoiType, { label: string; icon: 'globe' | 'image' | 'report' }> = { web: { label: 'Website', icon: 'globe' }, design: { label: 'Design', icon: 'image' }, text: { label: 'Text', icon: 'report' } };
+const NODE_IMAGES = { persona: iconImage('person'), web: iconImage('globe'), design: iconImage('image'), text: iconImage('report') };
+const motion = (ms: number) => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
+type Hover = { key: string; x: number; y: number; left: boolean };
+type NodeState = { isHovered: boolean; isHighlighted: boolean };
+type Easing = { stop(): void; targets: Record<string, Record<string, number>> };
+
+/**
+ * Eases what an update changed: new nodes grow in, and a small graph's ring slides to its new places (a larger one's positions belong to the layout).
+ * An update first finishes the previous easing, so no node is left part-grown or animated after the update drops it.
+ */
+function eased(graph: Graph, last: { current: Easing | null }, update: () => void) {
+  if (last.current) {
+    last.current.stop();
+    for (const [key, values] of Object.entries(last.current.targets)) if (graph.hasNode(key)) graph.mergeNodeAttributes(key, values);
+    last.current = null;
+  }
+  const before = new Map(graph.mapNodes((key, attributes) => [key, { x: attributes.x as number, y: attributes.y as number }]));
+  update();
+  if (!motion(1)) return;
+  const targets: Easing['targets'] = {};
+  graph.forEachNode((key, attributes) => {
+    const was = before.get(key);
+    if (!was) {
+      targets[key] = { size: attributes.size };
+      graph.setNodeAttribute(key, 'size', 0);
+    } else if (graph.order <= SMALL_GRAPH_LIMIT && (was.x !== attributes.x || was.y !== attributes.y)) {
+      targets[key] = { x: attributes.x, y: attributes.y };
+      graph.mergeNodeAttributes(key, was);
+    }
+  });
+  if (Object.keys(targets).length) last.current = { stop: animateNodes(graph, targets, { duration: 450, easing: 'cubicOut' }), targets };
+}
 
 /** Clicks and hovers on the canvas; WebGL has no DOM, so the smoke test finds nodes through the instance on the container. */
-function Interaction({ onOpen, onHover, onFocus }: { onOpen(personaId: string): void; onHover(key: string | null): void; onFocus(key: string | null): void }) {
+function Interaction({ focus, onOpen, onHover, onFocus }: { focus: string | null; onOpen(personaId: string): void; onHover(hover: Hover | null): void; onFocus(key: string | null): void }) {
   const sigma = useSigma();
   const register = useRegisterEvents();
   useEffect(() => {
     Object.assign(sigma.getContainer(), { sigma });
+    const graph = sigma.getGraph();
     register({
       clickNode: ({ node }) => node.startsWith('persona:') ? onOpen(node.slice('persona:'.length)) : onFocus(node),
       clickStage: () => onFocus(null),
-      enterNode: ({ node }) => onHover(node),
-      leaveNode: () => onHover(null),
+      enterNode: ({ node }) => {
+        // Hovering lights up a node's own connections; the styles fade everything else.
+        sigma.setNodesState(graph.neighbors(node), { isHighlighted: true });
+        sigma.setEdgesState(graph.edges(node), { isHighlighted: true });
+        const at = sigma.framedGraphToViewport(sigma.getNodeDisplayData(node)!);
+        const { width, height } = sigma.getDimensions();
+        onHover({ key: node, x: at.x, y: Math.max(72, Math.min(height - 72, at.y)), left: at.x > width / 2 });
+      },
+      leaveNode: () => {
+        sigma.setNodesState(graph.nodes(), { isHighlighted: false });
+        sigma.setEdgesState(graph.edges(), { isHighlighted: false });
+        onHover(null);
+      },
     });
   }, [sigma, register, onOpen, onHover, onFocus]);
+  useEffect(() => {
+    const camera = sigma.getCamera();
+    const at = focus ? sigma.getNodeDisplayData(focus) : undefined;
+    if (at) camera.animate({ x: at.x, y: at.y, ratio: Math.min(camera.ratio, 0.75) }, { duration: motion(600), easing: 'cubicInOut' });
+    else camera.reset({ duration: motion(600), easing: 'cubicInOut' });
+  }, [sigma, focus]);
   useEffect(() => {
     const resize = new ResizeObserver(([entry]) => {
       const padding = entry.contentRect.width < 480 ? 64 : 88;
@@ -49,12 +103,18 @@ const STATUS: Record<string, string> = { waiting: 'Waiting to start', active: 'E
 const count = (n: number, noun: string, tail = '') => `${n} ${noun}${n === 1 ? '' : 's'}${tail}`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${Number(n.toFixed(1))}`;
 
-function NodeCard({ node, segments }: { node: SwarmNode; segments: Segment[] }) {
+function NodeCard({ node, segments, at }: { node: SwarmNode; segments: Segment[]; at: Hover }) {
   const segmentName = (id: string) => segments.find((segment) => segment.id === id)?.name ?? 'No segment';
+  const poi = node.kind === 'poi' && node.poi_type ? POI_KINDS[node.poi_type] : null;
   return (
-    <div role="status" className="swarm-node-card">
-      <span className="swarm-node-kind">{node.kind === 'persona' ? 'Simulated person' : 'Product area'}</span>
-      <p className="swarm-node-title">{node.label}</p>
+    <div role="status" className="swarm-node-card" data-side={at.left ? 'left' : 'right'} style={{ left: at.x, top: at.y }}>
+      <div className="swarm-node-head">
+        <span aria-hidden className="swarm-node-icon" style={{ background: node.kind === 'persona' ? segmentColor(segments, node.segment_id) : POI_COLOR }}><Icon name={node.kind === 'persona' ? 'person' : poi?.icon ?? 'globe'} size={14} /></span>
+        <div>
+          <span className="swarm-node-kind">{node.kind === 'persona' ? 'Simulated person' : poi ? `Product area · ${poi.label}` : 'Product area'}</span>
+          <p className="swarm-node-title">{node.label}</p>
+        </div>
+      </div>
       {node.kind === 'persona' ? (
         <><p>{node.segment_id ? segmentName(node.segment_id) : 'No segment'} · {STATUS[node.status]}</p><p>{count(node.step_count, 'action')} · {count(node.friction_count, 'friction')}</p><p className="swarm-node-hint">Click to inspect their activity</p></>
       ) : (
@@ -76,7 +136,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   const [onlyRound, setOnlyRound] = useState(false);
   const [focus, setFocus] = useState<string | null>(null);
   const [moving, setMoving] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const [hovered, setHovered] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<Hover | null>(null);
   const [momentView, setMomentView] = useState<MomentView>('all');
   const [bubbles, setBubbles] = useState(true);
   const [shown, setShown] = useState<SwarmGraph>(emptyGraph); // what is drawn, for the counts and the hover card
@@ -89,6 +149,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   filterRef.current = filter;
   const layout = useRef<FA2Layout | null>(null);
   const settle = useRef<number | undefined>(undefined);
+  const easing = useRef<Easing | null>(null);
   const movingRef = useRef(moving);
   movingRef.current = moving;
 
@@ -121,7 +182,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
     if (scrub !== null) {
       // The scrubber replays the log alone up to that round; live events wait until it returns to the latest round.
       projection = graphAtRound(latest.current, scrub);
-      reconcile(graph, projection, segments);
+      eased(graph, easing, () => reconcile(graph, projection, segments));
       changed();
       return;
     }
@@ -139,8 +200,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
       }
       if (all.length === applied) return;
       const changes = applyEvents(projection, all.slice(applied));
-      if (applied === 0) reconcile(graph, projection, segments);
-      else patch(graph, projection, changes, segments);
+      eased(graph, easing, () => applied === 0 ? reconcile(graph, projection, segments) : patch(graph, projection, changes, segments));
       applied = all.length;
       changed();
     };
@@ -158,14 +218,22 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   // Filters are a style over the edges, not graph data: sigma 4 cannot repaint attribute changes on edges it has not indexed yet.
   const sigma = useRef<Sigma | null>(null);
   const [options] = useState(() => ({
-    settings: { itemSizesReference: 'screen' as const, labelRenderedSizeThreshold: 9, stagePadding: 88, minCameraRatio: 0.15, maxCameraRatio: 4 },
+    primitives: { nodes: { layers: [layerFill(), layerImage({ padding: 0.22 })] } },
+    // allowInvalidContainer: React detaches the canvas a frame or more before it kills sigma, and an easing may render in between.
+    settings: { allowInvalidContainer: true, itemSizesReference: 'screen' as const, labelRenderedSizeThreshold: 9, stagePadding: 88, minCameraRatio: 0.15, maxCameraRatio: 4 },
     styles: {
       nodes: [DEFAULT_STYLES.nodes, {
         cursor: 'pointer',
-        size: (attributes: { kind?: string; size?: number }) => (attributes.size ?? 6) * (attributes.kind === 'persona' && viewRef.current.nodeCount > 80 ? 0.65 : 1),
-        opacity: (attributes: { key?: string }) => viewRef.current.focus && !viewRef.current.connectedNodes.has(attributes.key ?? '') ? 0.2 : 1,
-        labelVisibility: (attributes: { kind?: string; key?: string }) => {
+        image: (attributes: { kind?: string; poi_type?: PoiType | null }) => attributes.kind === 'persona' ? NODE_IMAGES.persona : attributes.poi_type ? NODE_IMAGES[attributes.poi_type] : undefined,
+        size: (attributes: { kind?: string; size?: number }, state: NodeState) => (attributes.size ?? 6) * (attributes.kind === 'persona' && viewRef.current.nodeCount > 80 ? 0.65 : 1) * (state.isHovered ? 1.3 : 1),
+        opacity: (attributes: { key?: string }, state: NodeState, graphState: { hasHovered: boolean }) => {
+          if (graphState.hasHovered) return state.isHovered || state.isHighlighted ? 1 : 0.2;
+          return viewRef.current.focus && !viewRef.current.connectedNodes.has(attributes.key ?? '') ? 0.2 : 1;
+        },
+        labelVisibility: (attributes: { kind?: string; key?: string }, state: NodeState, graphState: { hasHovered: boolean }) => {
           const view = viewRef.current;
+          if (state.isHovered) return 'visible' as const;
+          if (graphState.hasHovered && !state.isHighlighted) return 'hidden' as const;
           if (view.focus && !view.connectedNodes.has(attributes.key ?? '')) return 'hidden' as const;
           return attributes.kind === 'poi' || view.nodeCount <= 20 || attributes.key === view.focus ? 'visible' as const : 'auto' as const;
         },
@@ -177,6 +245,8 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
         labelBackgroundPadding: 3,
       }],
       edges: [DEFAULT_STYLES.edges, {
+        size: (attributes: { size?: number }, state: NodeState) => (attributes.size ?? 1) * (state.isHighlighted ? 1.8 : 1),
+        opacity: (_: unknown, state: NodeState, graphState: { hasHovered: boolean }) => graphState.hasHovered && !state.isHighlighted ? 0.1 : 1,
         visibility: (attributes: { kind?: EdgeType; source?: string; target?: string; last_round?: number }) => attributes.kind && attributes.source && attributes.target && attributes.last_round !== undefined && connectionMatches({ type: attributes.kind, source: attributes.source, target: attributes.target, last_round: attributes.last_round }, filterRef.current) ? 'visible' as const : 'hidden' as const,
       }],
     },
@@ -188,7 +258,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
 
   const nodes = useMemo(() => [...shown.nodes.values()], [shown]);
   const personas = nodes.filter((node) => node.kind === 'persona').length;
-  const hoveredNode = hovered ? shown.nodes.get(hovered) : undefined;
+  const hoveredNode = hovered ? shown.nodes.get(hovered.key) : undefined;
   const focusedNode = focus ? shown.nodes.get(focus) : undefined;
   const filtered = types.size !== DEFAULT_CONNECTIONS.length || DEFAULT_CONNECTIONS.some((type) => !types.has(type)) || onlyRound || focus !== null || momentView !== 'all';
   const resetFilters = () => { setTypes(new Set(DEFAULT_CONNECTIONS)); setOnlyRound(false); setFocus(null); setMomentView('all'); };
@@ -220,13 +290,13 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
         </div>
         <div className="swarm-canvas" role="group" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
           <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
-            <Interaction onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
+            <Interaction focus={focus} onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
             {bubbles && <MomentBubbles moments={highlights} name={name} onOpen={onOpen} showConversations={types.has('talked')} />}
             <ControlsContainer position="bottom-right">
               <ZoomControl labels={{ zoomIn: 'Zoom in', zoomOut: 'Zoom out', reset: 'Fit the whole graph' }} />
             </ControlsContainer>
           </SigmaContainer>
-          {hoveredNode && <NodeCard node={hoveredNode} segments={segments} />}
+          {hovered && hoveredNode && <NodeCard key={hovered.key} node={hoveredNode} segments={segments} at={hovered} />}
           {shown.nodes.size === 0 && <div className="swarm-empty"><Icon name="people" size={28} /><strong>Your simulation map is taking shape</strong><p>{expectedPersonas ? `${expectedPersonas} simulated ${expectedPersonas === 1 ? 'person' : 'people'} will appear as they join.` : 'People and product areas appear as the simulation starts.'}</p></div>}
           {shown.nodes.size > 0 && <div className="swarm-canvas-caption"><span />{momentView === 'social' ? 'Arrows show who replied or reacted to whom' : 'Each bubble is a recorded persona moment'}</div>}
         </div>

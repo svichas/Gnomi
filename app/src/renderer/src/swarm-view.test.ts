@@ -34,7 +34,7 @@ test('round summaries do not include historical connections', () => {
 
 test('reconcile drops nodes missing from the projection and keeps the positions of the rest', () => {
   const projection = emptyGraph();
-  projection.nodes.set('poi:home', { kind: 'poi', key: 'poi:home', id: 'home', label: 'Home', friction_count: 0, sentiment_by_segment: {} });
+  projection.nodes.set('poi:home', { kind: 'poi', key: 'poi:home', id: 'home', label: 'Home', poi_type: 'web', friction_count: 0, sentiment_by_segment: {} });
   // More people than a small graph holds, so the layout, not the ring, places them.
   for (let i = 0; i <= SMALL_GRAPH_LIMIT; i++) {
     projection.nodes.set(`persona:p${i}`, { kind: 'persona', key: `persona:p${i}`, id: `p${i}`, label: `P${i}`, segment_id: null, status: 'active', step_count: 1, friction_count: 0 });

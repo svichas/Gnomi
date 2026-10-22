@@ -1,6 +1,6 @@
 import { withPois } from '@gnomi/simulation/poi/pois.ts';
 import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
-import type { EventOf, GnomiEvent } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, PoiType } from '@gnomi/simulation/types.ts';
 
 // The swarm graph (tech.md §5.5): a pure projection of one run's events. It is applied incrementally and reports what each
 // batch changed, so the live view patches only those nodes and edges; applying any split of a log equals building it at once.
@@ -25,6 +25,7 @@ export interface PoiNode {
   key: string; // 'poi:<id>'
   id: string;
   label: string;
+  poi_type: PoiType | null; // null until run.started names it
   friction_count: number;
   sentiment_by_segment: Record<string, number>; // mean latest sentiment, −2…+2, by segment id ('' for personas without one)
 }
@@ -149,7 +150,7 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
     case 'run.started': {
       graph.started = event;
       const project = event.payload.config.project;
-      for (const poi of project ? withPois(project).pois : []) Object.assign(poiNode(graph, changes, poi.id), { label: poi.name });
+      for (const poi of project ? withPois(project).pois : []) Object.assign(poiNode(graph, changes, poi.id), { label: poi.name, poi_type: poi.type });
       return;
     }
     case 'run.finished':
@@ -215,7 +216,7 @@ function personaNode(graph: SwarmGraph, changes: GraphChanges, id: string): Pers
 function poiNode(graph: SwarmGraph, changes: GraphChanges, id: string): PoiNode {
   const key = `poi:${id}`;
   let node = graph.nodes.get(key) as PoiNode | undefined;
-  if (!node) graph.nodes.set(key, (node = { kind: 'poi', key, id, label: id, friction_count: 0, sentiment_by_segment: {} }));
+  if (!node) graph.nodes.set(key, (node = { kind: 'poi', key, id, label: id, poi_type: null, friction_count: 0, sentiment_by_segment: {} }));
   changes.nodes.add(key);
   return node;
 }

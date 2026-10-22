@@ -15,6 +15,7 @@ const paths = {
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   settings: 'M4 7h16M4 17h16M8 4v6M16 14v6',
   globe: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z',
+  person: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM5 21a7 7 0 0 1 14 0',
   people: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM17 3a4 4 0 0 1 0 8M22 21v-2a4 4 0 0 0-3-3.87',
   activity: 'M4 5h16M4 12h11M4 19h14',
   message: 'M21 11a8 8 0 0 1-8 8H7l-4 3V11a9 9 0 0 1 18 0ZM7 10h10M7 14h6',
@@ -32,6 +33,9 @@ const paths = {
 export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
+
+/** A white glyph as an image, for WebGL graph nodes, which cannot draw the SVG element. */
+export const iconImage = (name: keyof typeof paths) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name]}"/></svg>`)}`;
 
 /** A stable, local identity for simulated people. Never relies on a remote avatar service. */
 export function PersonaAvatar({ name, id }: { name: string; id: string }) {
