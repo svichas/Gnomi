@@ -33,8 +33,9 @@ export function failedAction(step: Step): SignalOf<'signal.failed_action'> | nul
 
 /** The same page state (URL and snapshot hash) seen loop_visits times within loop_window steps; once per loop, not on every further visit. */
 export function loop(history: Step[], step: Step, t: SignalThresholds): SignalOf<'signal.loop'> | null {
-  // Reading, waiting and a model's unusable answer stay on the page by design: they are not the persona going round.
-  const moved = (s: Step) => s.action.type !== 'read' && s.action.type !== 'wait' && s.result.error !== 'invalid_output';
+  // Reading and waiting stay on the page by design, and a failed step (a model's unusable answer, an option it guessed) never
+  // touched it: none of them is the persona going round. A product's failures show as failed_action instead.
+  const moved = (s: Step) => s.result.ok && s.action.type !== 'read' && s.action.type !== 'wait';
   if (!moved(step)) return null;
   history = history.filter(moved);
   const steps = [...history, step];
@@ -62,12 +63,18 @@ export function backtrack(history: Step[], step: Step, t: SignalThresholds): Sig
 // Snapshot lines without what changes on every render (refs, boxes, focus), so the same message reads the same before and after.
 const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]| \(off screen, (?:above|below)\)/g, '').trim()));
 const textOf = (line: string) => /: (.+)$/.exec(line)?.[1] ?? /"(.+)"/.exec(line)?.[1] ?? line.replace(/^- /, '');
+const FIELD = /^- (?:textbox|searchbox|combobox|checkbox|radio|switch|spinbutton|slider)\b/;
+/** A field line's role and name, without its value or state. */
+const fieldOf = (line: string) => /^- \S+(?: "(?:[^"\\]|\\.)*")?/.exec(line)?.[0] ?? line;
 
 /** After a button click, a control newly marked aria-invalid, or a new line in error wording. */
 export function validationError(step: Step, before: string | null, after: string | null): SignalOf<'signal.validation_error'> | null {
   if (before === null || after === null || !isSubmit(step)) return null;
   const seen = lines(before);
-  const fresh = [...lines(after)].filter((line) => !seen.has(line));
+  const fields = new Set([...seen].filter((line) => FIELD.test(line)).map(fieldOf));
+  let fresh = [...lines(after)].filter((line) => !seen.has(line));
+  // A new field means the click revealed content (a wizard's next step, an added block), whose ordinary copy reads like errors.
+  if (fresh.some((line) => FIELD.test(line) && !fields.has(fieldOf(line)))) fresh = fresh.filter((line) => line.includes(' [invalid]') || line.startsWith('- alert'));
   const samePage = pageKey(step.result.url_after) === pageKey(step.result.url_before);
   const invalid = fresh.find((line) => line.includes(' [invalid]'));
   // A new page's "required" hints are not errors: after a navigation, wording counts only beside an invalid control or in an alert.

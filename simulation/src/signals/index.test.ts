@@ -61,6 +61,11 @@ test('loop: reading a page twice is not a loop, nor are three visits spread over
   assert.equal(replay([step(1, 'click', `${A}#x`, undefined, { hash: 'h' }), step(2, 'click', A, A, { hash: 'h' }), step(3, 'click', `${A}#y`, undefined, { hash: 'h' })], (h, s) => loop(h, s, T)).length, 1, 'the fragment is not part of the page');
 });
 
+test('loop: failed steps that never touched the page, such as guessed options, are not the persona going round', () => {
+  const guesses = [1, 2, 3].map((n) => step(n, 'select', A, A, { hash: 'h', result: { ok: false, error: 'option_not_found', dom_changed: false } }));
+  assert.deepEqual(replay(guesses, (h, s) => loop(h, s, T)), []);
+});
+
 test('loop: a loop that goes on is not reported again, one that comes back after a break is', () => {
   const visits = [1, 5, 9, 13, 17, 30, 31, 32].map((n) => step(n, 'click', A));
   assert.deepEqual(
@@ -128,6 +133,35 @@ test('validation_error: no new message, hints on a new page, a message already s
   assert.equal(validationError(submit(), FORM, `${FORM}\n- textbox "Enter a job title" [invalid] [ref=e50]`)?.payload.message, 'Enter a job title');
   const hint = (where: string) => `${FORM}\n- paragraph [ref=e50] ${where}: Fields marked * are required`;
   assert.equal(validationError(submit(), hint('[box=0,900,100,20] (off screen, below)'), hint('[box=0,300,100,20]')), null, 'a hint that scrolled into view');
+});
+
+// A wizard's first step, its second step after "Next", and that step after "Add another ticket", as the driver showed them.
+const WIZARD = `- heading "Create an event" [level=1] [ref=e2] [box=8,21,1264,37]
+- text: Title
+- textbox "Title" [ref=e4] [box=38,80,153,21]: Sunset hike
+- button "Next" [ref=e5] [box=191,80,43,21]
+- button "Add another ticket" [ref=e6] [box=8,101,123,21]`;
+const STEP_2 = `- heading "Create an event" [level=1] [ref=e2] [box=8,21,1264,37]
+- heading "Step 2 of 3: Tickets" [level=2] [ref=e8] [box=8,80,1264,28]
+- paragraph [ref=e9] [box=8,128,1264,18]: Choose a ticket type for your guests.
+- combobox [ref=e10] [box=8,162,1264,18]: Select a category
+- text: Price (required)
+- spinbutton "Price (required)" [ref=e11] [box=109,180,153,21]
+- button "Continue" [ref=e12] [box=266,180,69,21]
+- button "Add another ticket" [ref=e6] [box=8,201,123,21]`;
+const ADDED = `${STEP_2.replace('ticket" [ref=e6]', 'ticket" [active] [ref=e6]')}
+- heading "Ticket 2" [level=3] [ref=e14] [box=8,241,1264,22]
+- paragraph [ref=e15] [box=8,281,1264,18]: Ticket name is required. Enter a name your guests will recognise.
+- textbox "Ticket name" [ref=e16] [box=8,315,153,21]`;
+
+test('validation_error: copy a click revealed along with new fields is not an error; an alert or an invalid field among them is', () => {
+  const next = step(3, 'click', A, A, { target: { role: 'button', name: 'Next', box: null }, ref: 'e5' });
+  const add = step(4, 'click', A, A, { target: { role: 'button', name: 'Add another ticket', box: null }, ref: 'e6' });
+  assert.equal(validationError(next, WIZARD, STEP_2), null, 'a wizard\'s next step');
+  assert.equal(validationError(add, STEP_2, ADDED), null, 'an added block\'s help text');
+  assert.equal(validationError(next, WIZARD, `${STEP_2}\n- alert [ref=e20]: Please choose a ticket type`)?.payload.message, 'Please choose a ticket type');
+  assert.equal(validationError(add, STEP_2, ADDED.replace('"Ticket name" [ref', '"Ticket name" [invalid] [ref'))?.payload.message, 'textbox "Ticket name" is marked invalid');
+  assert.equal(validationError(next, WIZARD, `${WIZARD}\n- generic [ref=e20]: Title is required`)?.payload.message, 'Title is required', 'no new field: wording still counts');
 });
 
 test('small_target: a mobile tap on an element under 40×40 CSS px; desktop taps and large targets never', () => {
