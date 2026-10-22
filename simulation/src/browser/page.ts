@@ -298,26 +298,20 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     throw new Error('ref_not_found');
   }
 
-  /** Types into a native date or time field key by key, as a person does: fill() only takes ISO and throws on "25/10/2026 09:00". */
-  async function typeSegments(input: Locator, type: string, text: string, timeout: number) {
-    await input.blur({ timeout }); // so the fill's focus lands on the first segment, not the one left focused
-    await input.fill('', { timeout });
-    for (const [group] of text.matchAll(/\d+|\p{L}+/gu)) {
-      // Chromium ignores typed separators: a full two-digit segment moves on by itself, a year (up to six digits) needs →.
-      if (/^\d{1,2}$/.test(group)) await page.keyboard.type(group.padStart(2, '0'));
-      else if (/^\d+$/.test(group)) {
-        await page.keyboard.type(group);
-        await page.keyboard.press('ArrowRight');
-      } else await page.keyboard.type(group[0]); // AM or PM
-    }
-    if ((await input.inputValue({ timeout })) !== '') return;
-    // Still empty: a phone's field takes no keys (its OS picker sets it), or the keys missed a segment such as AM/PM. Set what the picker would.
-    const dayFirst = await input.evaluate(() => {
-      const order = new Intl.DateTimeFormat(navigator.language).formatToParts(new Date(2000, 0, 2)).map((part) => part.type);
-      return order.indexOf('day') < order.indexOf('month');
-    }, null, { timeout });
-    const value = pickedValue(type, text, dayFirst);
-    if (value) await input.fill(value, { timeout });
+  /**
+   * Sets a native date or time field to what the persona typed, read in the persona's order and words (ISO as the snapshot
+   * shows it reads too). Not by keys: the segments they fill follow the region of the machine running Gnomi, so the same keys
+   * would set another date there, and a phone's field takes none. Nor the raw text: a value Chromium cannot read clears it.
+   */
+  async function typeDate(input: Locator, type: string, text: string, timeout: number) {
+    const locale = await input.evaluate(() => navigator.language, null, { timeout });
+    const order = new Intl.DateTimeFormat(locale).formatToParts(new Date(2000, 0, 2)).map((part) => part.type);
+    const value = text.trim() === '' ? '' : pickedValue(type, text, order.indexOf('day') < order.indexOf('month'), locale);
+    // The persona hears it, rather than "text entered" over a field left as it was.
+    if (value === null) throw new Error('unreadable_date');
+    await input.fill(value, { timeout }).catch((e) => {
+      throw /Malformed value/.test(String(e)) ? new Error('unreadable_date') : e; // a week 53 the year does not have
+    });
   }
 
   /** Performs the action; resolves to the text of a `read`, else null. Model mistakes throw an Error whose message is the code. */
@@ -382,7 +376,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
           return null;
         }
         if (SEGMENTED.has(kind)) {
-          await typeSegments(input, kind, action.text, timeout);
+          await typeDate(input, kind, action.text, timeout);
           return null;
         }
         if (KEYED.has(kind)) {

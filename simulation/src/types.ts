@@ -299,7 +299,7 @@ export interface ActionResult {
   url_before: string;
   url_after: string;
   dom_changed: boolean;
-  error: string | null; // 'ref_not_found' | 'not_editable' (disabled) | 'readonly' | 'not_a_field' | 'invalid_value' | 'host_not_allowed' | 'timeout' | message; older logs may contain 'password_field'
+  error: string | null; // 'ref_not_found' | 'not_editable' (disabled) | 'readonly' | 'not_a_field' | 'invalid_value' | 'unreadable_date' | 'host_not_allowed' | 'timeout' | message; older logs may contain 'password_field'
   pending?: boolean; // a request the action started was still in flight, or it opened a tab: no change yet is not no effect
 }
 

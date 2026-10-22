@@ -188,8 +188,8 @@ after(async () => {
   server.close();
 });
 
-async function open(t: TestContext, path = '/', device: Device = 'desktop'): Promise<PageDriver> {
-  const page = await pool.newPage({ device, allowedHosts: [new URL(origin).hostname], blockedDomains: [], storageState: null, onBlockedRequest: () => {} });
+async function open(t: TestContext, path = '/', device: Device = 'desktop', locale?: string): Promise<PageDriver> {
+  const page = await pool.newPage({ device, locale, allowedHosts: [new URL(origin).hostname], blockedDomains: [], storageState: null, onBlockedRequest: () => {} });
   t.after(() => page.close());
   await page.goto(origin + path);
   return page;
@@ -678,26 +678,27 @@ test('a page load slower than the action timeout is the click or the navigate go
   assert.ok(Date.now() - started < 9_000, `${Date.now() - started} ms`);
 });
 
-test('type into a native date or time field goes in key by key, in the order the field shows', async (t) => {
-  for (const device of ['desktop', 'mobile'] as const) {
-    const page = await open(t, '/dates', device);
+test('type into a native date or time field sets the date the persona means, whatever the region of the machine running it', async (t) => {
+  // Asymmetric dates in each persona's own order, ISO as the snapshot shows values, words, eight digits, a 12-hour time.
+  await Promise.all((['desktop', 'mobile'] as const).flatMap((device) => (['en-US', 'el-GR'] as const).map(async (locale) => {
+    const page = await open(t, '/dates', device, locale);
     const { text } = await page.snapshot();
     const ref = (name: string) => refOf(text, new RegExp(`textbox "${name}" \\[ref=(\\w+)\\]`));
-    // Day equals month so either locale order reads the same; a 24-hour field ignores the AM.
     if (device === 'mobile') await act(page, 'click', ref('When')); // a tap opens the picker first, as it did for personas
-    for (const [name, typed] of [['Day', '05/05/2026'], ['Start time', '9:30 AM'], ['When', '5/5/2026, 9:30 AM'], ['When', '6/6/2026 10:15 AM']]) {
+    const own = locale === 'en-US' ? '10/25/2026' : '25/10/2026';
+    for (const [name, typed, value] of [['Day', own, '2026-10-25'], ['Day', '07072026', '2026-07-07'], ['Day', '2026-10-25', '2026-10-25'], ['Day', '25 October 2026', '2026-10-25'],
+      ['Start time', '9:30 AM', '09:30'], ['When', '2026-10-25T09:00', '2026-10-25T09:00'], ['When', '6/6/2026 10:15 AM', '2026-06-06T10:15']]) {
       const outcome = await act(page, 'type', ref(name), typed);
-      assert.deepEqual([outcome.ok, outcome.error], [true, null], `${device} ${name} ${typed}`);
+      assert.deepEqual([outcome.ok, outcome.error], [true, null], `${device} ${locale} ${name} ${typed}`);
+      assert.match((await page.snapshot()).text, new RegExp(`textbox "${name}" [^\\n]*: ${value}$`, 'm'), `${device} ${locale} ${name} ${typed}`);
     }
-    const after = (await page.snapshot()).text;
-    assert.match(after, /textbox "Day" [^\n]*: 2026-05-05/, device);
-    assert.match(after, /textbox "Start time" [^\n]*: 09:30/, device);
-    assert.match(after, /textbox "When" [^\n]*: 2026-06-06T10:15/, device); // the second typing replaced the first and the old value
-    if (device === 'mobile') continue;
-    // Digits with no separators only keys can enter: they read as no date to the phone's picker fallback.
-    await act(page, 'type', ref('Day'), '07072026');
-    assert.match((await page.snapshot()).text, /textbox "Day" [^\n]*: 2026-07-07/);
-  }
+    // Words it cannot read leave the field as it was and say so, never set another date.
+    const unread = await act(page, 'type', ref('Day'), 'next Friday');
+    assert.deepEqual([unread.ok, unread.error], [false, 'unreadable_date'], `${device} ${locale}`);
+    assert.match((await page.snapshot()).text, /textbox "Day" [^\n]*: 2026-10-25$/m, `${device} ${locale}`);
+    assert.equal((await act(page, 'type', ref('Day'), '')).ok, true);
+    assert.match((await page.snapshot()).text, /textbox "Day" [^:\n]*$/m, `${device} ${locale}: cleared`);
+  })));
 });
 
 test('scroll up or down on a list that scrolls moves the list under the wheel, not the page', async (t) => {
