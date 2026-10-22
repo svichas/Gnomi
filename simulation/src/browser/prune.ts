@@ -67,9 +67,10 @@ const collapsible = (line: Line) => REPEATED.has(line.role) || (line.role === 'g
 
 const closedOption = (line: Line) => line.role === 'option' && line.head.includes('[box=0,0,0,0]');
 
-function onScreen(line: Line, { viewportHeight, viewportWidth }: Options): boolean {
+// Height only: a row of cards beside the screen (a strip that scrolls sideways) stays addressable, marked off screen when printed.
+function onScreen(line: Line, viewportHeight: number): boolean {
   const box = BOX.exec(line.head);
-  return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight && +box[1] + +box[3] > 0 && +box[1] < viewportWidth;
+  return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight;
 }
 
 function keep(line: Line, opts: Options): Line[] {
@@ -106,7 +107,7 @@ function visit(lines: Line[], opts: Options): Line[] {
     // A closed native <select> has no box, so none of its options is on screen, yet a person who opens it sees them all.
     const closed = items.every(closedOption);
     // What the persona can see stays addressable, and so does the selected option: a long <select> must show its value.
-    let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts));
+    let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts.viewportHeight));
     if (items.length - shown.length < MIN_HIDDEN || (closed && run <= CLOSED_RUN)) shown = items;
     for (const line of shown) out.push(...keep(line, opts));
     // A longer one names what it hides, so the persona can select a country it does not see.

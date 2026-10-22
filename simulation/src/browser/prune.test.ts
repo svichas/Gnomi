@@ -260,3 +260,11 @@ test('marks lines beside the viewport as off screen, left or right, but not the 
     '  - option "Greece" [selected] [box=0,0,0,0]',
   ));
 });
+
+test('keeps every card of a strip that scrolls sideways addressable, marking those beside the screen, not folding them away', () => {
+  const cards = Array.from({ length: 12 }, (_, i) => [`  - listitem [ref=e${10 + i}] [box=${i * 308},60,300,120]:`, `    - link "Trip ${i}" [ref=e${30 + i}] [box=${i * 308},60,40,18]`]).flat();
+  const out = pruneSnapshot(lines('- list [ref=e2] [box=0,60,393,120]:', ...cards), { viewportWidth: 393 });
+  assert.doesNotMatch(out, /more\)/);
+  assert.match(out, /link "Trip 9" \[ref=e39\] \[box=2772,60,40,18\] \(off screen, right\)$/m);
+  assert.match(out, /link "Trip 0" \[ref=e30\] \[box=0,60,40,18\]$/m);
+});
