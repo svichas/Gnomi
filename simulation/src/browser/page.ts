@@ -48,6 +48,20 @@ function fieldKind(el: Element): string | null {
   return (control as HTMLInputElement).readOnly || control.getAttribute('aria-readonly') === 'true' ? 'readonly' : kind;
 }
 
+/** Lower case, spacing and width folded, a leading emoji or flag dropped: how a person reads '🇬🇷 Greece' as Greece. */
+const plain = (text: string) => text.normalize('NFKC').replace(/^(?:[\p{Extended_Pictographic}\p{Regional_Indicator}\s]|\u200d|\ufe0f)+/u, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/** The option a persona means by `text`: its exact label, else the only one that reads the same, else the only one that contains it. */
+function matchLabel(labels: string[], text: string): string | null {
+  if (labels.includes(text)) return text;
+  const want = plain(text);
+  for (const same of [(label: string) => plain(label) === want, (label: string) => want !== '' && plain(label).includes(want)]) {
+    const found = [...new Set(labels.filter(same))];
+    if (found.length === 1) return found[0];
+  }
+  return null;
+}
+
 const hasSize = async (locator: Locator) => {
   const box = await locator.boundingBox({ timeout: 1_000 }).catch(() => null);
   return box !== null && box.width >= 1 && box.height >= 1;
@@ -359,6 +373,23 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     });
   }
 
+  /** The option called `name` of a custom list: in the list, in the one it controls or owns, else in the one listbox open. */
+  async function customOption(list: Locator, name: string, timeout: number): Promise<Locator | null> {
+    const frame = (await (await list.elementHandle({ timeout })).ownerFrame()) ?? page.mainFrame();
+    const ids = [await list.getAttribute('aria-controls', { timeout }), await list.getAttribute('aria-owns', { timeout })].flatMap((names) => names?.split(/\s+/).filter(Boolean) ?? []);
+    const open = frame.getByRole('listbox');
+    const scopes = [list, ...ids.map((id) => frame.locator(`id=${id}`)), ...((await open.count()) === 1 ? [open] : [])];
+    const literal = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const anyCase = new RegExp(`^${literal}$`, 'i');
+    for (const scope of scopes) {
+      for (const named of [{ name, exact: true }, { name: anyCase }]) {
+        const option = scope.getByRole('option', named);
+        if ((await option.count()) === 1) return option;
+      }
+    }
+    return null;
+  }
+
   /** Performs the action; resolves to the text of a `read` or the file an upload chose, else null. Model mistakes throw an Error whose message is the code. */
   async function perform(action: Action, ref: string | null): Promise<string | null> {
     const timeout = ACTION_MS;
@@ -447,12 +478,28 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         return null;
       }
       case 'select': {
-        const select = await locate(ref);
+        const list = await locate(ref);
         if (action.text === null) throw new Error('select needs text');
-        await select.selectOption({ label: action.text }, { timeout }).catch((e) => {
-          if (e instanceof errors.TimeoutError) throw new Error('option_not_found');
-          throw /not a <select>/.test(String(e)) ? new Error('not_a_select') : e;
-        });
+        // A native <select>, or the one its label holds: the options a person can choose, and which are chosen.
+        const native = await list.evaluate((el) => {
+          const select = el.matches('select') ? el : el.closest('label')?.control;
+          if (!(select instanceof HTMLSelectElement)) return null;
+          return { multiple: select.multiple, options: [...select.options].filter((o) => !o.disabled).map((o) => ({ label: o.label, selected: o.selected })) };
+        }, null, { timeout });
+        if (!native) {
+          // A custom list: the option is clicked, as a person clicks it in the open list. Playwright scrolls to it.
+          // shortcut: a long list costs no scrolling steps, where a person flicks through it in a second anyway, upgrade if a report needs that cost.
+          const option = await customOption(list, action.text, timeout);
+          if (!option) throw new Error('not_a_select');
+          await tap(option, { timeout });
+          return null;
+        }
+        const label = matchLabel(native.options.map((o) => o.label), action.text);
+        if (label === null) throw new Error('option_not_found');
+        // A list that takes several adds the option, or drops one already chosen, as a person's Ctrl-click does.
+        const selected = native.options.filter((o) => o.selected).map((o) => o.label);
+        const labels = !native.multiple ? [label] : selected.includes(label) ? selected.filter((l) => l !== label) : [...selected, label];
+        await list.selectOption(labels.map((l) => ({ label: l })), { timeout });
         return null;
       }
       case 'scroll': {

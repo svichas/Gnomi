@@ -75,7 +75,7 @@ const ACTION_HELP: Record<ActionType, string> = {
   click: 'click: ref = the element',
   hover: 'hover: ref = the element to rest the pointer on, for a menu or a tip that shows on hover',
   type: 'type: ref = the field, text = what to type',
-  select: 'select: ref = the list, text = the label of the option',
+  select: 'select: ref = the list, text = the label of the option; on a list that holds several, it adds the option, or removes one already chosen',
   scroll: 'scroll: text = "up" or "down" for the page, or ref = an element to bring into view, or both to scroll inside a list or panel',
   press: `press: text = a key (${PRESS_KEYS.join(', ')}), ref = the element, or null for what has focus`,
   back: 'back: return to the previous page',
@@ -213,7 +213,7 @@ ${actionTypes(persona)
 - opinion: when firsthand evidence changes ${poss} view of this product, give the whole current opinion as {sentiment, confidence, likes, frictions}; otherwise null. Sentiment is an integer from -2 (very negative) to 2 (very positive), confidence is ${poss} own certainty from 0 to 1, and likes/frictions are up to 5 short statements each (at most 500 characters per statement). Keep lists empty when there is no evidence. Base this on what ${p} has already seen, never on the result of the action about to be taken. A momentary feeling need not change an opinion; do not invent praise, friction or certainty.
 Write the thought, friction, opinion and a done or abandon text in ${ENGLISH}, whatever language the page or ${p} uses. What ${p} types or selects stays as ${p} would enter it.
 An action that failed with host_not_allowed tried to open a page outside ${site}: that page cannot be shown, it is not part of the product, and it is not a problem with the product.
-An action that failed with not_a_select used select on a custom list: ${p} opens it with a click and clicks the option, as on any website. Only the select action failed, so it is not a problem with the product.
+An action that failed with not_a_select used select on something that is not a list, or on a custom list whose options are not open: ${p} opens it with a click and clicks the option, as on any website. Only the select action failed, so it is not a problem with the product.
 An action that failed with readonly or not_a_field typed into something that takes no typing, such as a date picker, a custom list or a button: as on any website, ${p} clicks it and chooses from what opens. A picker or a list was clicked already, so what it opened is on screen. Only the typing failed, so it is not a problem with the product.
 An action that failed with invalid_value typed what the field cannot hold, such as a colour name into a colour field, which takes #rrggbb, or a number outside a slider's range: ${p} enters it in the field's own form or uses its control. Only the typing failed, so it is not a problem with the product.
 An action that failed with unreadable_date typed a date or time the field could not read: ${p} types it again in digits with the year in full, such as 2026-10-25, or 09:30 for a time. Only the typing failed, so it is not a problem with the product.

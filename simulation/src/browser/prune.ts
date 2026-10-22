@@ -8,6 +8,8 @@ import type { ActionTarget } from '../types.ts';
 const MAX_TEXT = 200;
 const KEEP_RUN = 5; // leading siblings of a long run that always stay
 const MIN_HIDDEN = 3; // hiding fewer than this costs more tokens (the marker line) than it saves
+const CLOSED_RUN = 30; // options of a closed native <select> that always stay: a person who opens it sees them all
+const HIDDEN_NAMES = 300; // characters of the labels a longer one hides that its marker still names
 const TRUNCATED = '… (truncated)';
 // Roles that repeat as items. A run of `generic` wrappers (card grids, div-soup rows) collapses too, unless it holds form fields.
 const REPEATED = new Set(['listitem', 'row', 'option', 'article']);
@@ -62,6 +64,8 @@ const hasField = (line: Line): boolean => FIELDS.has(line.role) || line.kids.som
 const hasRef = (line: Line): boolean => REF.test(line.head) || line.kids.some(hasRef);
 const collapsible = (line: Line) => REPEATED.has(line.role) || (line.role === 'generic' && !hasField(line));
 
+const closedOption = (line: Line) => line.role === 'option' && line.head.includes('[box=0,0,0,0]');
+
 function onScreen(line: Line, viewportHeight: number): boolean {
   const box = BOX.exec(line.head);
   return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight;
@@ -95,11 +99,16 @@ function visit(lines: Line[], opts: Options): Line[] {
     let run = 1;
     if (collapsible(lines[i])) while (lines[i + run]?.role === lines[i].role && collapsible(lines[i + run])) run++;
     const items = lines.slice(i, i + run);
+    // A closed native <select> has no box, so none of its options is on screen, yet a person who opens it sees them all.
+    const closed = items.every(closedOption);
     // What the persona can see stays addressable, and so does the selected option: a long <select> must show its value.
     let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts.viewportHeight));
-    if (items.length - shown.length < MIN_HIDDEN) shown = items;
+    if (items.length - shown.length < MIN_HIDDEN || (closed && run <= CLOSED_RUN)) shown = items;
     for (const line of shown) out.push(...keep(line, opts));
-    if (shown.length < run) out.push({ role: '…', head: `… (×${run - shown.length} more)`, kids: [] });
+    // A longer one names what it hides, so the persona can select a country it does not see.
+    const hidden = closed ? items.filter((l) => !shown.includes(l)).map((l) => NAME.exec(l.head)?.[2] ?? '').join(', ') : '';
+    const names = hidden && `: ${hidden.length > HIDDEN_NAMES ? `${hidden.slice(0, HIDDEN_NAMES)}…` : hidden}`;
+    if (shown.length < run) out.push({ role: '…', head: `… (×${run - shown.length} more${names})`, kids: [] });
     i += run;
   }
   return out;

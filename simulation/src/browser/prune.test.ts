@@ -32,11 +32,18 @@ test('keeps what is on screen addressable inside a collapsed run', () => {
   assert.match(out, /… \(×\d+ more\)/);
 });
 
-test('a collapsed <select> still shows its selected option', () => {
-  const options = Array.from({ length: 60 }, (_, i) => `  - option "Country ${i}"${i === 41 ? ' [selected]' : ''} [box=0,0,0,0]`).join('\n');
-  const out = pruneSnapshot(lines('- combobox "Country" [ref=e1] [box=80,200,84,19]:', options));
-  assert.match(out, /option "Country 41" \[selected\]/);
-  assert.match(out, /… \(×54 more\)/);
+test('a closed <select> shows every option up to 30, and past that its selected option, the first few and the names of the rest', () => {
+  const select = (n: number, selected: number) =>
+    lines('- combobox "Country" [ref=e1] [box=80,200,84,19]:', ...Array.from({ length: n }, (_, i) => `  - option "Country ${i}"${i === selected ? ' [selected]' : ''} [box=0,0,0,0]`));
+  const short = pruneSnapshot(select(13, 0));
+  assert.equal(short.split('\n').filter((l) => l.includes('- option')).length, 13);
+  assert.doesNotMatch(short, /more/);
+  const long = pruneSnapshot(select(200, 141));
+  assert.match(long, /option "Country 141" \[selected\]/);
+  assert.match(long, /option "Country 4"/);
+  const marker = long.split('\n').find((l) => l.includes('more')) ?? '';
+  assert.match(marker, /^ {2}- … \(×194 more: Country 5, Country 6, .*…\)$/);
+  assert.ok(marker.length < 400, `${marker.length}`);
 });
 
 test('collapses runs of generic card wrappers, but never a run of form fields', () => {

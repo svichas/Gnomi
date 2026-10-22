@@ -72,8 +72,12 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
   '/dates': `<!doctype html><html><head>${head}<title>Dates</title></head><body>
 <input type="date" aria-label="Day"> <input type="time" aria-label="Start time"> <input type="datetime-local" aria-label="When" value="2020-01-01T10:00"></body></html>`,
   '/time-list': `<!doctype html><html><head>${head}<title>Time list</title></head><body><h1>Pick a time</h1>
-<ul role="listbox" aria-label="Time" style="height:100px;overflow-y:auto;margin:0">${Array.from({ length: 12 }, (_, h) => `<li role="option" style="height:30px">${String(h).padStart(2, '0')}:00</li>`).join('')}</ul>
+<input role="combobox" aria-label="Start" aria-controls="times"><ul id="times" role="listbox" aria-label="Time" style="height:100px;overflow-y:auto;margin:0" onclick="event.target.setAttribute('aria-selected', 'true')">${Array.from({ length: 12 }, (_, h) => `<li role="option" style="height:30px">${String(h).padStart(2, '0')}:00</li>`).join('')}</ul>
 <div style="height:3000px"></div></body></html>`,
+  // Native lists whose labels a person reads loosely: a flag, a long name, two that start the same, and one that takes several.
+  '/choose': `<!doctype html><html><head>${head}<title>Choose</title></head><body>
+<label for="pick">Pick</label> <select id="pick"><option>Choose…</option><option>Hiking</option><option>🇬🇷 Greece</option><option>United States of America</option><option>Category 1</option><option>Category 10</option></select>
+<label for="langs">Languages</label> <select id="langs" multiple><option>Greek</option><option>English</option><option>German</option></select></body></html>`,
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
@@ -365,6 +369,42 @@ test('select of an option that does not exist is option_not_found', async (t) =>
   const ref = refOf((await page.snapshot()).text, /combobox "Department" \[ref=(\w+)\]/);
   const outcome = await act(page, 'select', ref, 'Nope');
   assert.deepEqual([outcome.ok, outcome.error], [false, 'option_not_found']);
+});
+
+test('select reads an option as a person does: in any case, past its flag, by part of a long name, an exact label first', async (t) => {
+  const page = await open(t, '/choose');
+  const { text } = await page.snapshot();
+  const pick = refOf(text, /combobox "Pick" \[ref=(\w+)\]/);
+  for (const [typed, label] of [['hiking', 'Hiking'], ['Greece', '🇬🇷 Greece'], ['united states', 'United States of America'], ['Category 1', 'Category 1']]) {
+    const outcome = await act(page, 'select', pick, typed);
+    assert.deepEqual([outcome.ok, outcome.error], [true, null], typed);
+    assert.match((await page.snapshot()).text, new RegExp(`option "${label}" \\[selected\\]`), typed);
+  }
+  assert.doesNotMatch((await page.snapshot()).text, /option "Category 10" \[selected\]/);
+  assert.equal((await act(page, 'select', pick, 'Nope')).error, 'option_not_found');
+  assert.equal((await act(page, 'select', pick, 'Category')).error, 'option_not_found', 'two options contain it');
+});
+
+test('select on a list that takes several adds the option, and drops one already chosen', async (t) => {
+  const page = await open(t, '/choose');
+  const langs = refOf((await page.snapshot()).text, /listbox "Languages" \[ref=(\w+)\]/);
+  const chosen = async () => [...(await page.snapshot()).text.matchAll(/option "(\w+)" \[selected\]/g)].map(([, label]) => label);
+  await act(page, 'select', langs, 'Greek');
+  await act(page, 'select', langs, 'English');
+  assert.deepEqual(await chosen(), ['Greek', 'English']);
+  assert.equal((await act(page, 'select', langs, 'Greek')).ok, true);
+  assert.deepEqual(await chosen(), ['English']);
+});
+
+test('select on a custom list clicks the option by name, in the list or in the list a combobox controls', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    for (const [list, time] of [[/listbox "Time" \[ref=(\w+)\]/, '11:00'], [/combobox "Start" \[ref=(\w+)\]/, '09:00']] as const) {
+      const page = await open(t, '/time-list', device);
+      const outcome = await act(page, 'select', refOf((await page.snapshot()).text, list), time);
+      assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], `${device} ${list}`);
+      assert.match((await page.snapshot()).text, new RegExp(`option "${time}" \\[selected\\]`), `${device} ${list}`);
+    }
+  }
 });
 
 test('select on a custom list that is not a <select> is not_a_select', async (t) => {
