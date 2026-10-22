@@ -171,14 +171,17 @@ render(); setTimeout(render, 800);</script></body></html>`,
   received.textContent = input.id + ': ' + file.name + ' ' + file.type + size;
 }</script></body></html>`,
   // What the accessibility tree keeps but a person does not see, or misreads: a Quill-like editor (a role-less contenteditable
-  // whose placeholder is CSS), an accordion collapsed by max-height, a carousel's other slides, a CSS-only switch, a closed
-  // menu faded out with its search box, a hidden tooltip's CSS text; and a list that scrolls, whose rows a person can reach.
+  // whose placeholder is CSS), plain comment boxes, Quill 1's hidden clipboard, an accordion collapsed by max-height, a
+  // carousel's other slides, a CSS-only switch, a closed menu faded out with its search box, a hidden tooltip's CSS text; and
+  // a list that scrolls, whose rows a person can reach.
   '/seen': `<!doctype html><html><head>${head}<title>Seen</title><style>
 .ql-editor{min-height:60px;border:1px solid #888}.ql-blank::before{content:attr(data-placeholder);color:#999;position:absolute}
 .panel{max-height:0;overflow:hidden}.open .panel{max-height:300px}.tip::before{content:'Ghost tooltip'}
 .sw{display:inline-block;width:40px;height:20px;background:#ccc}#pub:checked+label .sw{background:green}</style></head><body>
 <span>Description</span><div id="ed" class="ql-editor ql-blank" contenteditable="true" data-placeholder="Describe your event…" oninput="this.classList.toggle('ql-blank', !this.textContent)"><p><br></p></div>
 <button type="button" onclick="this.textContent = 'role: ' + ed.getAttribute('role')">Check role</button>
+<span id="cl">Comment</span><div contenteditable="true" aria-labelledby="cl">Looks <b>great</b></div><span id="nl">Notes</span><div contenteditable="true" aria-labelledby="nl" style="min-height:40px"></div>
+<div class="ql-clipboard" contenteditable="true" tabindex="-1" style="position:absolute;left:-10000px;top:50%;height:1px;overflow-y:hidden"></div>
 <section><button type="button" onclick="this.parentNode.classList.toggle('open')">Shipping</button><div class="panel"><p>We ship worldwide.</p><a href="#privacy">Privacy policy</a></div></section>
 <div style="overflow:hidden;width:300px"><div style="display:flex;transform:translateX(0)"><div style="flex:0 0 300px"><a href="#sunset">Sunset hike</a></div><div style="flex:0 0 300px"><a href="#olympus">Olympus trek</a></div></div></div>
 <ul aria-label="Stops" style="height:60px;overflow:auto">${Array.from({ length: 10 }, (_, i) => `<li>Stop ${i}</li>`).join('')}</ul>
@@ -799,6 +802,11 @@ test('the snapshot shows what a person sees: no clipped, faded or hidden content
   const editor = refOf(shown, /textbox \[ref=(\w+)\]/);
   assert.deepEqual([(await act(page, 'type', editor, 'Sunrise hike')).ok], [true]);
   assert.match((await page.snapshot()).text, /textbox [^\n]*\[ref=\w+\][\s\S]*Sunrise hike/);
+  // A plain editable box shows its text as a field shows its value, before and after typing; a hidden one shows no box.
+  assert.match(shown, /^- textbox "Comment" \[ref=\w+\] \[box=[\d,]+\]: Looks great$/m);
+  assert.equal((await act(page, 'type', refOf(shown, /textbox "Notes" \[ref=(\w+)\]/), 'Bring water')).ok, true);
+  assert.match((await page.snapshot()).text, /^- textbox "Notes" \[active\] \[ref=\w+\] \[box=[\d,]+\]: Bring water$/m);
+  assert.doesNotMatch(shown, /- textbox [^\n]*\[box=-\d/, 'no clipboard box off to the left');
   await act(page, 'click', refOf(shown, /button "Check role" \[ref=(\w+)\]/));
   assert.match((await page.snapshot()).text, /button "role: null"/);
   const unticked = /checkbox "Public event" \[ref=(\w+)\]/;

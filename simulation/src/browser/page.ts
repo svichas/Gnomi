@@ -197,7 +197,10 @@ function hideTransparent(hide: boolean) {
     // So does what a visually hidden (sr-only, 1×1 px) box clips: its text names a control.
     if (r && (cx || cy) && (r.width > 1 || r.height > 1)) inner = [...inner, { el, box: r, x: cx, y: cy }];
     if (inner.length) clips.set(el, inner);
-    if (el.isContentEditable && !el.parentElement!.isContentEditable && !el.hasAttribute('role')) roles.push([el, { role: 'textbox' }]);
+    if (el.isContentEditable && !el.parentElement!.isContentEditable && !el.hasAttribute('role')) {
+      const box = r ?? el.getBoundingClientRect();
+      if (box.width > 1 && box.height > 1) roles.push([el, { role: 'textbox' }]); // not Quill 1's 0×1 clipboard off to the left
+    }
     const control = el instanceof HTMLLabelElement ? el.control : null;
     if (control instanceof HTMLInputElement && /^(?:checkbox|radio)$/.test(control.type) && !el.hasAttribute('role') && getComputedStyle(control).display === 'none') {
       roles.push([el, { role: control.type, 'aria-checked': String(control.checked) }]);
@@ -211,6 +214,14 @@ function hideTransparent(hide: boolean) {
     el.dataset.gnomiRole = JSON.stringify(Object.fromEntries(Object.keys(attributes).map((name) => [name, el.getAttribute(name)])));
     for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, value);
   }
+}
+
+// Runs in the page: what the snapshot leaves out of el's value: a custom slider's or stepper's aria-valuetext or aria-valuenow,
+// or an editable root's text, which Playwright drops from a textbox unless it sits in child blocks (Quill's paragraphs).
+function shownValue(el: Element): string | null {
+  if (!(el as HTMLElement).isContentEditable) return el.getAttribute('aria-valuetext') ?? el.getAttribute('aria-valuenow');
+  const blocks = [...el.childNodes].every((n) => (n instanceof Element ? getComputedStyle(n).display !== 'inline' : !n.textContent?.trim()));
+  return blocks ? null : (el as HTMLElement).innerText.replace(/\s+/g, ' ').trim() || null;
 }
 
 // Runs in every frame before page scripts: counts DOM mutations (n) and scrolls (s) so act() can tell whether anything changed.
@@ -692,8 +703,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       );
       const passwordFields = new Map<string, PasswordState>();
       states.forEach((state, i) => { if (state !== null) passwordFields.set(textboxes[i], state); });
-      const ranges = [...targets].filter(([, target]) => RANGES.has(target.role)).map(([ref]) => ref);
-      const read = await Promise.all(ranges.map((ref) => page.getByRef(ref).evaluate((el) => el.getAttribute('aria-valuetext') ?? el.getAttribute('aria-valuenow'), null, { timeout: 1_000 }).catch(() => null)));
+      const ranges = [...targets].filter(([, target]) => RANGES.has(target.role) || target.role === 'textbox').map(([ref]) => ref);
+      const read = await Promise.all(ranges.map((ref) => page.getByRef(ref).evaluate(shownValue, null, { timeout: 1_000 }).catch(() => null)));
       const values = new Map(ranges.flatMap((ref, i) => (read[i] === null ? [] : [[ref, read[i]] as const])));
       const { innerHeight: viewportHeight, innerWidth: viewportWidth } = await page.evaluate(() => ({ innerHeight, innerWidth }));
       // The browser's bubble over a field it refused, as the persona reads it on the screenshot. Not after a check of the

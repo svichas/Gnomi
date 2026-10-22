@@ -38,7 +38,7 @@ interface Printed {
 
 interface Options {
   secrets: ReadonlyMap<string, PasswordState>;
-  values: ReadonlyMap<string, string>; // aria-valuetext or aria-valuenow of a custom slider or stepper, by ref
+  values: ReadonlyMap<string, string>; // aria-valuetext or aria-valuenow of a custom slider or stepper, or an editable root's text, by ref
   viewportHeight: number;
   viewportWidth: number;
 }
@@ -90,7 +90,9 @@ function keep(line: Line, opts: Options): Line[] {
     if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
     if (!kids.length && !CONTROLS.has(line.role)) return [];
   }
-  const shown = ref ? opts.values.get(ref) : undefined;
+  let shown = ref && !password ? opts.values.get(ref) : undefined;
+  // An editable root's text, which Playwright leaves out of a textbox, reads as an input's value does, in place of its pieces.
+  if (shown !== undefined && line.role === 'textbox') [value, kids, shown] = [shown, [], undefined];
   const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '') + (shown === undefined ? '' : ` [value=${clip(shown)}]`);
   return [{ role: line.role, head, value: value === undefined ? undefined : clip(value), kids }];
 }
