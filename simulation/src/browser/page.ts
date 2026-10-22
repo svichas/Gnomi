@@ -28,6 +28,24 @@ const REF = /^(?:f\d+)?e\d+$/;
 const RANGES = new Set(['slider', 'spinbutton', 'progressbar']);
 // Native inputs Chromium edits segment by segment (day, month, year, hour…).
 const SEGMENTED = new Set(['date', 'time', 'datetime-local', 'month', 'week']);
+// Fields typed key by key. Not contenteditable: rich editors read a cleared selection late, and fill() replaces cleanly in each.
+const KEYED = new Set(['text', 'email', 'number', 'password', 'search', 'tel', 'url', 'textarea']);
+
+// Runs in the page: what typing meets at el, or at the field its label holds: the input's type, 'select', 'textarea' or
+// 'editable'; 'disabled' or 'readonly' when it takes no typing; 'pressable' for what a person presses or ticks, or a toolbar
+// or card holding such a control, which a click at its centre could press; null for what holds no text (a custom select's div).
+function fieldKind(el: Element): string | null {
+  const control = el.matches('input, select, textarea') ? el : (el.closest('label')?.control ?? el);
+  const PRESSABLE = 'a[href], button, summary, [role=button], [role=link], [role=checkbox], [role=radio], [role=switch], [role=tab]';
+  const kind = control instanceof HTMLSelectElement ? 'select'
+    : control instanceof HTMLTextAreaElement ? 'textarea'
+    : control instanceof HTMLInputElement ? (/^(?:checkbox|radio|button|submit|reset|image)$/.test(control.type) ? 'pressable' : control.type)
+    : (control as HTMLElement).isContentEditable ? 'editable'
+    : control.matches(`${PRESSABLE}, option, [role^=menuitem], [role=option]`) || control.querySelector(PRESSABLE) ? 'pressable' : null;
+  if (kind === 'pressable') return kind;
+  if (control.matches(':disabled') || control.closest('[aria-disabled="true"]')) return 'disabled';
+  return (control as HTMLInputElement).readOnly || control.getAttribute('aria-readonly') === 'true' ? 'readonly' : kind;
+}
 
 const hasSize = async (locator: Locator) => {
   const box = await locator.boundingBox({ timeout: 1_000 }).catch(() => null);
@@ -343,18 +361,41 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         else await page.keyboard.press(action.text!);
         return null;
       case 'type': {
-        const input = await locate(ref);
+        let input = await locate(ref);
         if (action.text === null) throw new Error('type needs text');
-        if (!(await input.isEditable({ timeout }).catch(() => false))) throw new Error('not_editable'); // false when disabled/readonly, throws on non-form elements
-        const kind = await input.evaluate((el) => {
-          const control = el instanceof HTMLInputElement ? el : el.closest('label')?.control;
-          return control instanceof HTMLInputElement ? control.type : '';
-        }, null, { timeout });
+        let kind = await input.evaluate(fieldKind, null, { timeout });
+        if (kind === 'disabled') throw new Error('not_editable');
+        if (kind === 'pressable') throw new Error('not_a_field'); // typing must never press it
+        if (kind === null || kind === 'readonly') {
+          // A person clicks where a picker or a custom select shows, then types into what took the caret: its own search box.
+          const frame = (await (await input.elementHandle({ timeout })).ownerFrame()) ?? page.mainFrame();
+          await perform({ type: 'click', ref, text: null }, ref);
+          const focused = frame.locator('*:focus').last();
+          const next = await focused.evaluate(fieldKind, null, { timeout: 1_000 }).catch(() => null);
+          if (next === null || next === 'pressable' || next === 'readonly' || next === 'disabled') throw new Error(kind ?? 'not_a_field');
+          [input, kind] = [focused, next];
+        }
+        if (kind === 'select') {
+          // A focused <select> jumps to the option that starts with the letters typed, as a person's typeahead does.
+          await input.evaluate((el) => ((el.matches('select') ? el : el.closest('label')!.control) as HTMLElement).focus(), null, { timeout });
+          await page.keyboard.type(action.text);
+          return null;
+        }
         if (SEGMENTED.has(kind)) {
           await typeSegments(input, kind, action.text, timeout);
           return null;
         }
+        if (KEYED.has(kind)) {
+          // Key by key, as a person types: masks, keyup handlers, split code boxes and a number field's own parsing see every key.
+          // fill('') focuses the field a label's descendant points at. One line takes no Enter: it would submit the form.
+          // shortcut: characters outside Playwright's US layout (Greek, €) arrive as input events with no keydown or keyup, upgrade to CDP Input.dispatchKeyEvent if a keyup-only widget in such a locale shows up.
+          await input.fill('', { timeout });
+          await page.keyboard.type(kind === 'textarea' ? action.text : action.text.replace(/\r?\n/g, ' '));
+          return null;
+        }
+        // Rich text, colour and range take the value at once.
         await input.fill(action.text, { timeout }).catch((e) => {
+          if (/Malformed value/.test(String(e))) throw new Error('invalid_value');
           throw /cannot be filled|not an <input>/.test(String(e)) ? new Error('not_editable') : e;
         });
         return null;

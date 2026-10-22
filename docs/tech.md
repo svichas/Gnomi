@@ -655,7 +655,7 @@ Segment eligibility: each POI lists which segments engage with it (default: all 
 
 | Signal | Rule (defaults) |
 |---|---|
-| `failed_action` | ref not found, click produced no URL or DOM change within 3 s, type into a non-editable element, action timeout |
+| `failed_action` | ref not found, click produced no URL or DOM change within 3 s, type into a disabled field, action timeout |
 | `loop` | the same (normalised URL, snapshot hash) seen three times within ten steps |
 | `backtrack` | two or more `back()` within five steps, or returning to a page visited in the last four steps |
 | `budget_exceeded` | step budget or episode time budget (default 8 minutes) reached before `done` |

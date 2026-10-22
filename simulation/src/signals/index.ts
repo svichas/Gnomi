@@ -11,7 +11,7 @@ type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 's
 export type Signal = { [K in Detected]: { type: K; payload: EventPayloads[K] } }[Detected];
 type SignalOf<K extends Detected> = Extract<Signal, { type: K }>;
 
-// The §8.1 failures. Model mistakes (a ref it made up) and Gnomi's own refusals (other hosts, password fields in older logs) are not the product's.
+// The §8.1 failures. Model mistakes (a ref it made up, typing where a person clicks) and Gnomi's own refusals (other hosts, password fields in older logs) are not the product's.
 const FAILURES = new Set(['not_editable', 'timeout']);
 // Validation wording, matched only on lines a button click made appear.
 const ERRORISH = /\b(?:error|invalid|required|incorrect|failed|went wrong|already (?:exists|taken|in use|registered|a user)|must (?:be|contain|match|include|have)|please (?:enter|choose|select|fill|provide|correct)|(?:enter|choose|select|provide) (?:a|an|your|the|at least)|not (?:valid|allowed|found|match))\b/i;

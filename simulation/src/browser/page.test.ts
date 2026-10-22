@@ -51,12 +51,24 @@ const pages: Record<string, string> = {
   '/react-select': `<!doctype html><html><head>${head}<title>React select</title></head><body>
 <div onmousedown="document.getElementById('categories').hidden = false" style="width:300px;border:1px solid #888">
 <div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3;cursor:default">Choose a category</div>
-<div style="grid-area:1/1/2/3"><input aria-label="Category" style="width:100%;border:0;padding:0;background:transparent"></div></div></div>
-<ul id="categories" role="listbox" hidden><li role="option">Hiking</li></ul>
+<div style="grid-area:1/1/2/3"><input aria-label="Category" style="width:100%;border:0;padding:0;background:transparent"
+oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerCase().startsWith(this.value.toLowerCase())"></div></div></div>
+<ul id="categories" role="listbox" hidden><li role="option">Hiking</li><li role="option">Climbing</li></ul>
 <div onmousedown="document.getElementById('sizes').hidden = false" style="width:300px;border:1px solid #888;margin-top:20px">
 <div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3">Choose a size</div>
 <input role="combobox" aria-label="Size" readonly style="grid-area:1/1/2/3;width:1px;padding:0;border:0;position:relative;left:-100px;transform:scale(.01)"></div></div>
 <ul id="sizes" role="listbox" hidden><li role="option">Large</li></ul></body></html>`,
+  // Fields that listen for keys: a phone formatter and a counter on keyup, code boxes that move on, a number, a colour, a
+  // native select, a readonly date field that opens a calendar on click, as flatpickr does, a one-field form and a toolbar.
+  '/keys': `<!doctype html><html><head>${head}<title>Keys</title></head><body>
+<input aria-label="Phone" onkeyup="this.value = this.value.replace(/\\D/g, '').replace(/(\\d{3})(?=\\d)/g, '$1 ')">
+<textarea aria-label="Summary" maxlength="80" onkeyup="count.textContent = this.value.length + ' / 80'"></textarea><p id="count">0 / 80</p>
+<fieldset><legend>Verification code</legend>${[1, 2, 3, 4, 5, 6].map((i) => `<input aria-label="Digit ${i}" maxlength="1" size="1" oninput="if (this.value) this.nextElementSibling?.focus()">`).join('')}</fieldset>
+<input type="number" step="0.01" aria-label="Price"> <input type="number" aria-label="Guests"> <input type="color" aria-label="Colour">
+<label for="level">Difficulty</label> <select id="level"><option>Easy</option><option>Moderate</option><option>Hard</option></select>
+<input readonly aria-label="Event date" onclick="calendar.hidden = false"><div id="calendar" role="dialog" aria-label="Calendar" hidden><button>25</button></div>
+<form onsubmit="event.preventDefault(); document.body.append('submitted')"><input aria-label="Title"></form>
+<div role="toolbar" aria-label="Format"><button onclick="document.body.append('made bold')">Bold</button></div></body></html>`,
   '/dates': `<!doctype html><html><head>${head}<title>Dates</title></head><body>
 <input type="date" aria-label="Day"> <input type="time" aria-label="Start time"> <input type="datetime-local" aria-label="When" value="2020-01-01T10:00"></body></html>`,
   '/time-list': `<!doctype html><html><head>${head}<title>Time list</title></head><body><h1>Pick a time</h1>
@@ -261,12 +273,60 @@ test('type fills a textbox, replacing what was there', async (t) => {
   assert.doesNotMatch(text, /Junior Engineer/);
 });
 
-test('type into something that cannot hold text is not_editable', async (t) => {
+test('type where a person would not type: a button is not_a_field, a readonly field readonly, a disabled one not_editable', async (t) => {
   const page = await open(t);
   const { text } = await page.snapshot();
-  for (const line of [/button "Save" \[ref=(\w+)\]/, /textbox "Locked" \[ref=(\w+)\]/, /textbox "Off" \[disabled\] \[ref=(\w+)\]/, /combobox "Department" \[ref=(\w+)\]/]) {
+  for (const [line, error] of [[/button "Save" \[ref=(\w+)\]/, 'not_a_field'], [/textbox "Locked" \[ref=(\w+)\]/, 'readonly'], [/textbox "Off" \[disabled\] \[ref=(\w+)\]/, 'not_editable'], [/combobox "Department" \[ref=(\w+)\]/, null]] as const) {
     const outcome = await act(page, 'type', refOf(text, line), 'x');
-    assert.deepEqual([outcome.ok, outcome.error], [false, 'not_editable'], String(line));
+    assert.deepEqual([outcome.ok, outcome.error], [error === null, error], String(line));
+  }
+  assert.doesNotMatch((await page.snapshot()).text, /Saved!/, 'typing never pressed the button');
+});
+
+test('type goes in key by key, as a person types, so fields that listen for keys hear them', async (t) => {
+  const page = await open(t, '/keys');
+  const { text } = await page.snapshot();
+  const ref = (line: RegExp) => refOf(text, line);
+  const typed = async (line: RegExp, value: string) => {
+    const outcome = await act(page, 'type', ref(line), value);
+    assert.doesNotMatch(String(outcome.error), /locator\./, `${line} ${value}: no raw Playwright error`);
+    return outcome;
+  };
+  await typed(/textbox "Phone" \[ref=(\w+)\]/, '6912345678');
+  await typed(/textbox "Summary" \[ref=(\w+)\]/, 'Sunset hike!');
+  await typed(/textbox "Digit 1" \[ref=(\w+)\]/, '482913');
+  assert.equal((await typed(/spinbutton "Price" \[ref=(\w+)\]/, '12.50')).ok, true);
+  await typed(/spinbutton "Guests" \[ref=(\w+)\]/, '12,50');
+  assert.equal((await typed(/textbox "Colour" \[ref=(\w+)\]/, 'red')).error, 'invalid_value');
+  assert.equal((await typed(/combobox "Difficulty" \[ref=(\w+)\]/, 'Mod')).ok, true);
+  assert.equal((await typed(/textbox "Title" \[ref=(\w+)\]/, 'a\nb')).ok, true);
+  assert.equal((await typed(/toolbar "Format" \[ref=(\w+)\]/, 'Bold')).error, 'not_a_field');
+  const after = (await page.snapshot()).text;
+  assert.match(after, /textbox "Phone" [^\n]*: 691 234 567 8\n/);
+  assert.match(after, /12 \/ 80/);
+  const code = [1, 2, 3, 4, 5, 6].map((i) => new RegExp(`textbox "Digit ${i}" [^\\n]*: "?(\\d)`).exec(after)?.[1] ?? '_').join('');
+  assert.equal(code, '482913');
+  assert.match(after, /spinbutton "Price" [^\n]*: "12.50"/);
+  assert.match(after, /option "Moderate" \[selected\]/);
+  assert.match(after, /textbox "Title" [^\n]*: a b/);
+  assert.doesNotMatch(after, /submitted/, 'a newline in one line is not Enter');
+  assert.doesNotMatch(after, /made bold/, 'typing into a toolbar never presses its button');
+});
+
+test('type where a person clicks first: a readonly picker opens and says readonly, a custom select takes the typing in its search box', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const keys = await open(t, '/keys', device);
+    const action: Action = { type: 'type', ref: refOf((await keys.snapshot()).text, /textbox "Event date" \[ref=(\w+)\]/), text: '25/10/2026' };
+    const result = await keys.act(action);
+    assert.deepEqual([result.ok, result.error], [false, 'readonly'], device);
+    assert.match((await keys.snapshot()).text, /dialog "Calendar"/, `${device}: the click opened it`);
+    assert.equal(failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' }), null, `${device}: not the product failing`);
+    const select = await open(t, '/react-select', device);
+    const outcome = await act(select, 'type', refOf((await select.snapshot()).text, /generic \[ref=(\w+)\][^\n]*: Choose a category/), 'Hik');
+    assert.deepEqual([outcome.ok, outcome.error], [true, null], device);
+    const shown = (await select.snapshot()).text;
+    assert.match(shown, /option "Hiking"/, device);
+    assert.doesNotMatch(shown, /option "Climbing"/, device);
   }
 });
 
