@@ -201,6 +201,10 @@ ${Array.from({ length: 30 }, (_, i) => `<li role="option" style="height:36px">Ca
 <h2>Filters</h2><div style="overflow-y:auto;flex:1">${Array.from({ length: 30 }, (_, i) => `<label style="display:block;height:40px"><input type="checkbox"> Option ${i}</label>`).join('')}</div></div>
 <input type="number" aria-label="Guests" style="position:absolute;top:calc(50vh - 30px);left:8px;width:60vw;height:60px">
 <div role="application" aria-label="Map" data-n="0" style="position:absolute;top:calc(100vh + 100px);left:8px;width:60vw;height:800px;background:#cde" onwheel="event.preventDefault(); this.dataset.n = +this.dataset.n + 1; this.textContent = 'Zoom ' + this.dataset.n">Zoom 0</div></body></html>`,
+  // A sidebar a script scrolls on the wheel, as perfect-scrollbar does: overflow: hidden, its lower links out of view.
+  '/wheel': `<!doctype html><html><head>${head}<title>Wheel</title></head><body><h1>Admin</h1>
+<nav id="side" aria-label="Sections" style="height:160px;width:240px;overflow:hidden"><ul style="margin:0">${Array.from({ length: 30 }, (_, i) => `<li><a href="#s${i}">Section ${i}</a></li>`).join('')}</ul></nav>
+<div style="height:3000px"></div><script>side.addEventListener('wheel', (e) => { e.preventDefault(); side.scrollTop += e.deltaY }, { passive: false })</script></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -923,6 +927,20 @@ test('scroll in a menu or a drawer moves what scrolls there, around or inside th
   const after = (await page.snapshot()).text;
   assert.ok(y(after, option) < y(text, option) - 100, `${y(text, option)} -> ${y(after, option)}`);
   assert.equal(y(after, /heading "Scrollers".*?\[box=-?\d+,(-?\d+),/), y(text, /heading "Scrollers".*?\[box=-?\d+,(-?\d+),/), 'the page stays');
+});
+
+test('a list a script scrolls on the wheel shows its rows, and a scroll turns the wheel over it', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/wheel', device);
+    const text = (await page.snapshot()).text;
+    assert.match(text, /link "Section 29" \[ref=/, device);
+    const first = /link "Section 0".*?\[box=-?\d+,(-?\d+),/;
+    const outcome = await act(page, 'scroll', refOf(text, /navigation "Sections" \[ref=(\w+)\]/), 'down');
+    const after = (await page.snapshot()).text;
+    assert.deepEqual([outcome.ok, outcome.dom_changed], [true, true], device);
+    assert.ok(Number(first.exec(after)?.[1]) < Number(first.exec(text)?.[1]) - 20, `${device}: the list moved`); // a phone's wheel moves a third as far
+    assert.equal(/heading "Admin".*?\[box=-?\d+,(-?\d+),/.exec(after)?.[1], /heading "Admin".*?\[box=-?\d+,(-?\d+),/.exec(text)?.[1], `${device}: the page stays`);
+  }
 });
 
 test('scroll without a ref moves the page, never a focused number field or a map at the centre of the screen', async (t) => {

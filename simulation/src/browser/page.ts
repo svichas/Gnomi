@@ -125,7 +125,12 @@ function labelBox(el: Element): [number, number, number, number] {
 // inside it (a drawer's body). With no el: the topmost open modal's, else the page when it scrolls, else the largest
 // scroller on screen (an app shell's main column). Null when nothing does.
 function scroller(el: Element | null): Element | null {
-  const scrolls = (e: Element) => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.scrollHeight > e.clientHeight;
+  const wheel = (window as unknown as { __gnomi?: { wheel: WeakSet<EventTarget> } }).__gnomi?.wheel;
+  // overflow: hidden scrolls too when a script moves it on the wheel (perfect-scrollbar, a virtual list).
+  const scrolls = (e: Element) => {
+    const y = getComputedStyle(e).overflowY;
+    return (/auto|scroll/.test(y) || (y === 'hidden' && !!wheel?.has(e))) && e.scrollHeight > e.clientHeight;
+  };
   const page = document.scrollingElement ?? document.documentElement;
   if (el) {
     for (let e: Element | null = el; e && e !== page; e = e.assignedSlot ?? e.parentElement ?? (e.parentNode as ShadowRoot | null)?.host ?? null) if (scrolls(e)) return e;
@@ -146,10 +151,11 @@ function scroller(el: Element | null): Element | null {
 // Runs in the page: what people cannot see but the accessibility tree keeps is made visibility: hidden for the snapshot,
 // which Playwright does honour, then put back: content at opacity 0 (a closed custom drop-down would read as open), CSS
 // text inside display: none (a hidden tooltip's ::before), and what an overflow: hidden ancestor clips away entirely (a
-// collapsed accordion, a carousel's other slides). A form field at opacity 0 stays: a native checkbox or <select> under a
-// custom skin, or a file input over its button, is transparent on purpose, unless what holds it takes no pointer events (a
-// closed menu with a search box). What the tree misreads gets a role for the snapshot: an editable root without one (Quill)
-// is a textbox, and a label whose checkbox or radio is display: none (a CSS-only switch) is that control, with its state.
+// collapsed accordion, a carousel's other slides) unless a script scrolls that ancestor on the wheel. A form field at
+// opacity 0 stays: a native checkbox or <select> under a custom skin, or a file input over its button, is transparent on
+// purpose, unless what holds it takes no pointer events (a closed menu with a search box). What the tree misreads gets a
+// role for the snapshot: an editable root without one (Quill) is a textbox, and a label whose checkbox or radio is
+// display: none (a CSS-only switch) is that control, with its state.
 // shortcut: light DOM only, and a fixed element inside a transformed ancestor counts as unclipped, upgrade if a target app needs either.
 function hideTransparent(hide: boolean) {
   const FIELD = 'input:not([type="hidden" i]), select, textarea';
@@ -170,6 +176,7 @@ function hideTransparent(hide: boolean) {
     return;
   }
   type Clip = { el: Element; box: DOMRect; x: boolean; y: boolean };
+  const wheel = (window as unknown as { __gnomi?: { wheel: WeakSet<EventTarget> } }).__gnomi?.wheel;
   const clips = new Map<Element, Clip[]>(); // by element, the ancestors whose overflow clips what it holds, and on which axes
   const hidden: HTMLElement[] = [];
   const roles: [HTMLElement, Record<string, string>][] = [];
@@ -184,7 +191,8 @@ function hideTransparent(hide: boolean) {
     const around = clips.get(el.parentElement!) ?? [];
     const cb = style.position === 'absolute' ? el.offsetParent : null;
     const outer = style.position === 'fixed' ? [] : style.position === 'absolute' ? around.filter((c) => cb && c.el.contains(cb)) : around;
-    const [cx, cy] = [/hidden|clip/.test(style.overflowX), /hidden|clip/.test(style.overflowY)];
+    const wheels = style.overflowY === 'hidden' && !!wheel?.has(el); // perfect-scrollbar, a virtual list: what it holds is scrolled to as in a list that scrolls
+    const [cx, cy] = [/hidden|clip/.test(style.overflowX), /hidden|clip/.test(style.overflowY) && !wheels];
     const r = outer.length || cx || cy ? el.getBoundingClientRect() : null; // a box is read only where a clip is in play
     // What is 1 px or less stays: a visually hidden control (react-select's dummy input, an sr-only checkbox) is its widget's handle.
     if (r && (r.width > 1 || r.height > 1) && outer.some(({ box, x, y }) => (x && (r.right <= box.left || r.left >= box.right)) || (y && (r.bottom <= box.top || r.top >= box.bottom)))) {
@@ -192,7 +200,7 @@ function hideTransparent(hide: boolean) {
       continue;
     }
     // What el holds can be scrolled to on an axis el scrolls, so clips around el stop there; one that hides clips it.
-    const [sx, sy] = [/auto|scroll/.test(style.overflowX), /auto|scroll/.test(style.overflowY)];
+    const [sx, sy] = [/auto|scroll/.test(style.overflowX), wheels || /auto|scroll/.test(style.overflowY)];
     let inner = sx || sy ? outer.map((c) => ({ ...c, x: c.x && !sx, y: c.y && !sy })).filter((c) => c.x || c.y) : outer;
     // So does what a visually hidden (sr-only, 1×1 px) box clips: its text names a control.
     if (r && (cx || cy) && (r.width > 1 || r.height > 1)) inner = [...inner, { el, box: r, x: cx, y: cy }];
@@ -228,7 +236,7 @@ function shownValue(el: Element): string | null {
 // Playwright ships both this and passwordState to the page with toString(), so they must stay self-contained.
 // shortcut: every mutation and input event counts, so a page that animates or fires synthetic input events on a timer always reads as changed (masking a dead click), upgrade by ignoring style-only churn if real apps do this.
 function countMutations() {
-  const state = { id: Math.random().toString(36).slice(2), n: 0, s: 0 };
+  const state = { id: Math.random().toString(36).slice(2), n: 0, s: 0, wheel: new WeakSet<EventTarget>() };
   (window as unknown as { __gnomi: typeof state }).__gnomi = state;
   const observer = new MutationObserver((records) => {
     state.n += records.length;
@@ -250,6 +258,13 @@ function countMutations() {
   document.addEventListener('focusin', (e) => (e.composedPath()[0] as Element).matches?.(FIELD) && state.n++, true);
   // Counted apart: Playwright scrolls a target into view before clicking it, which would hide a dead button below the fold.
   document.addEventListener('scroll', () => state.s++, true);
+  // What listens for the wheel itself: a list a script scrolls (perfect-scrollbar, a virtual list) is overflow: hidden, which
+  // the snapshot would clip and a scroll would pass by.
+  const listen = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<EventTarget['addEventListener']>) {
+    if (/wheel|mousescroll/i.test(args[0])) state.wheel.add(this);
+    return listen.apply(this, args);
+  };
 }
 
 // Runs in every frame before page scripts: the first field the browser refused since act() last cleared it, and the browser's
