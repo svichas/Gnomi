@@ -145,6 +145,15 @@ onkeydown="const k = { ArrowRight: 1, ArrowLeft: -1 }[event.key]; if (k) this.ar
 const render = () => { list.innerHTML = '<li><a href="/next">Sunset hike</a></li><li><a href="/long">Olympus trek</a></li>' };
 render(); setTimeout(render, 800);</script></body></html>`,
   '/slow-form': `<!doctype html><html><head>${head}<title>Slow form</title></head><body><form method="post" action="/create"><button>Create event</button></form></body></html>`,
+  // A form whose state lives in script, with a guidelines link that opens a new tab, a preview window that talks to its opener
+  // and closes itself, and a partner link on a host the run may not reach. Loads counts page loads of this tab.
+  '/form-tabs': `<!doctype html><html><head>${head}<title>New event</title></head><body><h1>New event</h1>
+<label for="ttl">Title</label> <input id="ttl" oninput="saved.textContent = 'Saved title: ' + this.value"><p id="saved">Saved title: (none)</p><p id="loads"></p>
+<a href="/guidelines" target="_blank">Guidelines</a> <button type="button" onclick="window.open('/preview')">Preview</button> <a id="partner" target="_blank">Partner site</a>
+<script>partner.href = location.origin.replace('127.0.0.1', 'localhost') + '/next'; sessionStorage.loads = +(sessionStorage.loads ?? 0) + 1; loads.textContent = 'Loads: ' + sessionStorage.loads</script></body></html>`,
+  '/guidelines': `<!doctype html><html><head>${head}<title>Guidelines</title></head><body><h1>Guidelines</h1><a href="/next">Examples</a></body></html>`,
+  '/preview': `<!doctype html><html><head>${head}<title>Preview</title></head><body><p id="o"></p><button onclick="window.close()">Close preview</button>
+<script>o.textContent = window.opener ? 'has opener' : 'no opener'</script></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -522,6 +531,31 @@ test('a link that opens a new tab takes the persona there; a slow response marks
   assert.equal((await page.snapshot()).title, 'Next page');
   const plain = await act(page, 'wait');
   assert.equal(plain.pending, undefined, 'only a step that started something carries the flag');
+});
+
+test('a new tab opens in front of the form, which waits behind it as the persona left it until back or the tab\'s own Close returns there', async (t) => {
+  const page = await open(t, '/form-tabs');
+  const form = (await page.snapshot()).text;
+  await act(page, 'type', refOf(form, /textbox "Title" \[ref=(\w+)\]/), 'Sunrise hike');
+  const tab = await act(page, 'click', refOf(form, /link "Guidelines" \[ref=(\w+)\]/));
+  assert.deepEqual([tab.ok, tab.url_after, tab.pending], [true, `${origin}/guidelines`, true]);
+  // Back moves within the new tab first, then closes it.
+  assert.equal((await act(page, 'click', refOf((await page.snapshot()).text, /link "Examples" \[ref=(\w+)\]/))).url_after, `${origin}/next`);
+  assert.equal((await act(page, 'back')).url_after, `${origin}/guidelines`);
+  const back = await act(page, 'back');
+  assert.deepEqual([back.ok, back.url_after, back.dom_changed], [true, `${origin}/form-tabs`, true]);
+  const again = (await page.snapshot()).text;
+  assert.match(again, /Saved title: Sunrise hike/);
+  assert.match(again, /Loads: 1/, 'the form was not loaded again');
+  const preview = await act(page, 'click', refOf(again, /button "Preview" \[ref=(\w+)\]/));
+  assert.equal(preview.url_after, `${origin}/preview`);
+  const shown = (await page.snapshot()).text;
+  assert.match(shown, /has opener/);
+  const closed = await act(page, 'click', refOf(shown, /button "Close preview" \[ref=(\w+)\]/));
+  assert.deepEqual([closed.ok, closed.url_after, closed.dom_changed], [true, `${origin}/form-tabs`, true]);
+  const partner = await act(page, 'click', refOf((await page.snapshot()).text, /link "Partner site" \[ref=(\w+)\]/));
+  assert.deepEqual([partner.ok, partner.error, partner.url_after], [false, 'host_not_allowed', `${origin}/form-tabs`]);
+  assert.match((await page.snapshot()).text, /Saved title: Sunrise hike/);
 });
 
 test('the persona sees what the page shows a moment later: a debounced search, a slow GET, a menu on a timer, a slow save', async (t) => {

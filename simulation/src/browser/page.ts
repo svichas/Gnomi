@@ -216,7 +216,7 @@ export async function settle(page: Page, started: ReadonlySet<Request> = new Set
 
 /** `refusals` drains containment's observe-only refusals (contain.ts), so an action that ran into one fails with it. */
 export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => [], device: Device = 'desktop'): Promise<PageDriver> {
-  const page = await openPage(context);
+  let page = await openPage(context); // the tab the persona is on: the first one, or a tab it followed
   // A phone is tapped: touch handlers (a menu on touchend) never hear a mouse click.
   const tap = (locator: Locator, options: { force?: boolean; timeout: number }) => (device === 'mobile' ? locator.tap(options) : locator.click(options));
   let targets = new Map<string, ActionTarget>();
@@ -229,30 +229,10 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   // Every load, fetch and XHR the current action started that has not finished: settle waits for them.
   // shortcut: a page's own GETs meanwhile (analytics, polling) hold settle too, up to SETTLE_MS, upgrade by ignoring repeated URLs if real apps hit the cap.
   const started = new Set<Request>();
-  page.on('popup', (opened) => {
-    popup = opened;
-  });
-  page.on('download', () => {
-    downloaded = true;
-  });
-  page.on('request', (request) => {
-    if (!ERROR_RESOURCES.has(request.resourceType())) return;
-    started.add(request);
-    // A script's GET (analytics, a long poll) is the page's own traffic and would hide a dead click; a write or a load is the action's.
-    if (request.resourceType() === 'document' || request.method() !== 'GET') inflight.add(request);
-  });
-  page.on('requestfinished', (request) => {
-    inflight.delete(request);
-    started.delete(request);
-  });
+  const openers = new WeakMap<Page, Page>(); // a tab the persona followed, and the tab that opened it
   const rememberPasswords = () => Promise.all(page.frames().map((frame) => frame.locator(PASSWORD).evaluateAll((inputs) => {
     for (const input of inputs) if (!input.hasAttribute('data-gnomi-password')) input.setAttribute('data-gnomi-password', '');
   })));
-  page.on('requestfailed', (request) => {
-    inflight.delete(request);
-    started.delete(request);
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) failedNavigation = request.url();
-  });
 
   const hostOf = (url: string) => URL.parse(url)?.hostname ?? '';
   // A page load slower than ACTION_MS is the action going somewhere, not a timeout: pending and the next snapshot tell where.
@@ -265,18 +245,72 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     const message = firstLine(error.message);
     if (pageErrors.length < MAX_ERRORS && !pageErrors.some((e) => e.kind === error.kind && e.status === error.status && e.message === message)) pageErrors.push({ ...error, message });
   };
-  page.on('console', (msg) => {
+
+  // Context-wide, so a new tab's first load counts too: it happens before the tab is handed over. Only the current tab's
+  // requests are the action's; every tab's errors are the product's. That first load is issued before its frame exists.
+  const frameOf = (request: Request) => {
+    try {
+      return request.frame();
+    } catch {
+      return null;
+    }
+  };
+  context.on('request', (request) => {
+    if (!ERROR_RESOURCES.has(request.resourceType()) || frameOf(request)?.page() !== page) return;
+    started.add(request);
+    // A script's GET (analytics, a long poll) is the page's own traffic and would hide a dead click; a write or a load is the action's.
+    if (request.resourceType() === 'document' || request.method() !== 'GET') inflight.add(request);
+  });
+  context.on('requestfinished', (request) => {
+    inflight.delete(request);
+    started.delete(request);
+  });
+  context.on('requestfailed', (request) => {
+    inflight.delete(request);
+    started.delete(request);
+    if (request.isNavigationRequest() && !frameOf(request)?.parentFrame()) failedNavigation = request.url();
+  });
+  context.on('console', (msg) => {
     // Chromium also logs every failed load as a console error: 4xx/5xx come from 'response' below, and containment's refusals are not the product's.
     if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource:')) capture({ kind: 'console', status: null, message: msg.text() });
   });
-  page.on('pageerror', (error) => capture({ kind: 'exception', status: null, message: error.message }));
-  page.on('response', (response) => {
+  context.on('weberror', (error) => capture({ kind: 'exception', status: null, message: error.error().message }));
+  context.on('response', (response) => {
     const request = response.request();
     if (response.status() < 400 || !ERROR_RESOURCES.has(request.resourceType())) return;
     const url = new URL(response.url());
     // The containment proxy answers unlisted hosts with a 403 of its own, so only allowed hosts count.
     if (allows(url.hostname)) capture({ kind: 'http', status: response.status(), message: `${request.method()} ${url.origin}${url.pathname}` }); // no query string: it can carry tokens
   });
+  // Every tab the persona has open reports the tabs it opens and its downloads.
+  function drive(tab: Page, opener: Page | null) {
+    tab.on('popup', (opened) => {
+      popup = opened;
+      drive(opened, tab);
+    });
+    tab.on('download', () => {
+      downloaded = true;
+    });
+    if (!opener) return;
+    openers.set(tab, opener);
+    // A tab that closes, by back or by its own script (a preview's Close button), leaves the persona on the tab it came from.
+    tab.once('close', () => {
+      if (page === tab) page = opener;
+    });
+  }
+  drive(page, null);
+
+  /** Back, as a person goes back: a followed tab with no page before it closes, which returns the persona to the tab that opened it. */
+  async function back(timeout: number) {
+    const opener = openers.get(page);
+    if (opener && !(await page.evaluate(() => navigation.canGoBack).catch(() => false))) {
+      await page.close();
+      page = opener;
+      return;
+    }
+    await page.goBack({ timeout, waitUntil: 'domcontentloaded' });
+  }
+
   /** True when the page load that just happened was refused by containment (a failed load or a refusal page on an unlisted host). */
   const refusedByContainment = () => {
     const url = page.url();
@@ -427,7 +461,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       }
       case 'back': {
         const from = page.url();
-        await page.goBack({ timeout, waitUntil: 'domcontentloaded' }).catch((e) => {
+        await back(timeout).catch((e) => {
           if (!(e instanceof errors.TimeoutError && loading(from))) throw e;
         });
         return null;
@@ -549,12 +583,11 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         }
       }
       if (opened) {
-        // The persona follows a tab the action opened in the one tab Gnomi drives; containment checks the load as any other.
+        // The persona follows a tab the action opened, and the tab it came from stays as it was behind it, form and all, as
+        // window.opener expects. Containment checks the load as any other.
         await opened.waitForLoadState('domcontentloaded', { timeout: ACTION_MS }).catch(() => {});
-        const url = opened.url();
-        await opened.close().catch(() => {});
-        if (/^https?:/.test(url)) {
-          await page.goto(url, { timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => {});
+        if (!opened.isClosed()) {
+          page = opened;
           await settle(page, started);
         }
       }
@@ -565,7 +598,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const observed = refusals().map((r) => (r !== 'write_blocked' ? r : formClick ? 'submit_blocked' : null)).find((r) => r !== null) ?? null;
       if (outside || (observed && page.url().startsWith('chrome-error://'))) {
         // The persona should hear "that leads outside the product" and still be on the page it was on, not on a browser error page.
-        await page.goBack({ timeout: ACTION_MS, waitUntil: 'domcontentloaded' }).catch(() => null);
+        await back(ACTION_MS).catch(() => null);
         await settle(page, started);
       }
       if (outside) error = 'host_not_allowed';
