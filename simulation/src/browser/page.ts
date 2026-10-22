@@ -120,9 +120,14 @@ function labelBox(el: Element): [number, number, number, number] {
   return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
 }
 
-// Runs in the page: opacity 0 hides content from people but not from the accessibility tree (a closed custom drop-down
-// would read as open), so it is made visibility: hidden for the snapshot, which Playwright does honour, then put back.
-// A form field is left alone: a native checkbox or <select> under a custom skin is often transparent on purpose.
+// Runs in the page: what people cannot see but the accessibility tree keeps is made visibility: hidden for the snapshot,
+// which Playwright does honour, then put back: content at opacity 0 (a closed custom drop-down would read as open), CSS
+// text inside display: none (a hidden tooltip's ::before), and what an overflow: hidden ancestor clips away entirely (a
+// collapsed accordion, a carousel's other slides). A form field at opacity 0 stays: a native checkbox or <select> under a
+// custom skin, or a file input over its button, is transparent on purpose, unless what holds it takes no pointer events (a
+// closed menu with a search box). What the tree misreads gets a role for the snapshot: an editable root without one (Quill)
+// is a textbox, and a label whose checkbox or radio is display: none (a CSS-only switch) is that control, with its state.
+// shortcut: light DOM only, and a fixed element inside a transformed ancestor counts as unclipped, upgrade if a target app needs either.
 function hideTransparent(hide: boolean) {
   const FIELD = 'input:not([type="hidden" i]), select, textarea';
   if (!hide) {
@@ -132,12 +137,56 @@ function hideTransparent(hide: boolean) {
       if (!el.getAttribute('style')) el.removeAttribute('style');
       delete el.dataset.gnomiVisibility;
     }
+    for (const el of document.querySelectorAll<HTMLElement>('[data-gnomi-role]')) {
+      for (const [name, value] of Object.entries(JSON.parse(el.dataset.gnomiRole!) as Record<string, string | null>)) {
+        if (value === null) el.removeAttribute(name);
+        else el.setAttribute(name, value);
+      }
+      delete el.dataset.gnomiRole;
+    }
     return;
   }
+  type Clip = { el: Element; box: DOMRect; x: boolean; y: boolean };
+  const clips = new Map<Element, Clip[]>(); // by element, the ancestors whose overflow clips what it holds, and on which axes
+  const hidden: HTMLElement[] = [];
+  const roles: [HTMLElement, Record<string, string>][] = [];
+  // Read everything first, then write: a style written between reads would make the browser lay the page out again each time.
   for (const el of document.querySelectorAll<HTMLElement>('body *')) {
-    if (getComputedStyle(el).opacity !== '0' || el.matches(FIELD) || el.querySelector(FIELD)) continue;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || (style.opacity === '0' && !el.matches(FIELD) && !(el.querySelector(FIELD) && style.pointerEvents !== 'none'))) {
+      hidden.push(el);
+      continue;
+    }
+    // A fixed element escapes every clip, an absolute one those outside its containing block.
+    const around = clips.get(el.parentElement!) ?? [];
+    const cb = style.position === 'absolute' ? el.offsetParent : null;
+    const outer = style.position === 'fixed' ? [] : style.position === 'absolute' ? around.filter((c) => cb && c.el.contains(cb)) : around;
+    const [cx, cy] = [/hidden|clip/.test(style.overflowX), /hidden|clip/.test(style.overflowY)];
+    const r = outer.length || cx || cy ? el.getBoundingClientRect() : null; // a box is read only where a clip is in play
+    // What is 1 px or less stays: a visually hidden control (react-select's dummy input, an sr-only checkbox) is its widget's handle.
+    if (r && (r.width > 1 || r.height > 1) && outer.some(({ box, x, y }) => (x && (r.right <= box.left || r.left >= box.right)) || (y && (r.bottom <= box.top || r.top >= box.bottom)))) {
+      hidden.push(el);
+      continue;
+    }
+    // What el holds can be scrolled to on an axis el scrolls, so clips around el stop there; one that hides clips it.
+    const [sx, sy] = [/auto|scroll/.test(style.overflowX), /auto|scroll/.test(style.overflowY)];
+    let inner = sx || sy ? outer.map((c) => ({ ...c, x: c.x && !sx, y: c.y && !sy })).filter((c) => c.x || c.y) : outer;
+    // So does what a visually hidden (sr-only, 1×1 px) box clips: its text names a control.
+    if (r && (cx || cy) && (r.width > 1 || r.height > 1)) inner = [...inner, { el, box: r, x: cx, y: cy }];
+    if (inner.length) clips.set(el, inner);
+    if (el.isContentEditable && !el.parentElement!.isContentEditable && !el.hasAttribute('role')) roles.push([el, { role: 'textbox' }]);
+    const control = el instanceof HTMLLabelElement ? el.control : null;
+    if (control instanceof HTMLInputElement && /^(?:checkbox|radio)$/.test(control.type) && !el.hasAttribute('role') && getComputedStyle(control).display === 'none') {
+      roles.push([el, { role: control.type, 'aria-checked': String(control.checked) }]);
+    }
+  }
+  for (const el of hidden) {
     el.dataset.gnomiVisibility = JSON.stringify([el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
     el.style.setProperty('visibility', 'hidden', 'important');
+  }
+  for (const [el, attributes] of roles) {
+    el.dataset.gnomiRole = JSON.stringify(Object.fromEntries(Object.keys(attributes).map((name) => [name, el.getAttribute(name)])));
+    for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, value);
   }
 }
 
@@ -169,6 +218,18 @@ function countMutations() {
   document.addEventListener('scroll', () => state.s++, true);
 }
 
+// Runs in every frame before page scripts: the first field the browser refused since act() last cleared it, and the browser's
+// own message ("Please fill out this field."), which shows only as a bubble that no snapshot holds.
+function recordInvalid() {
+  const page = window as unknown as { __gnomiInvalid: string | null };
+  page.__gnomiInvalid = null;
+  document.addEventListener('invalid', (e) => {
+    const field = e.target as HTMLInputElement;
+    const label = (field.labels?.[0]?.innerText || field.getAttribute('aria-label') || field.name || '').replace(/\s+/g, ' ').trim();
+    page.__gnomiInvalid ??= `${label && `${label}: `}${field.validationMessage}`.replace(/\s+/g, ' ');
+  }, true);
+}
+
 /** An isolated context for a persona or a session check: desktop or phone, service workers blocked, behind its containment proxy, optionally logged in. */
 export async function newContext(browser: Browser, device: Device, storageState: StorageState | null, proxy: Containment['proxy'], environment: Partial<LocaleEnvironment> = {}): Promise<BrowserContext> {
   const { locale, timezone, languages } = personaEnvironment({ language: environment.locale ?? 'en-US', timezone: environment.timezone, languages: environment.languages });
@@ -197,6 +258,7 @@ export async function newContext(browser: Browser, device: Device, storageState:
 
 export async function openPage(context: BrowserContext): Promise<Page> {
   await context.addInitScript(countMutations);
+  await context.addInitScript(recordInvalid);
   return context.newPage();
 }
 
@@ -241,6 +303,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let downloaded = false; // the current action started a download
   let formClick = false; // the current action clicked something inside a form
   let chosen: Promise<string | null> | null = null; // the file the current action chose in a file chooser
+  let submitting = false; // the last action was a click or a key, which can submit a form the browser then refuses
   const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
   // Every load, fetch and XHR the current action started that has not finished: settle waits for them.
   // shortcut: a page's own GETs meanwhile (analytics, polling) hold settle too, up to SETTLE_MS, upgrade by ignoring repeated URLs if real apps hit the cap.
@@ -590,8 +653,11 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const ranges = [...targets].filter(([, target]) => RANGES.has(target.role)).map(([ref]) => ref);
       const read = await Promise.all(ranges.map((ref) => page.getByRef(ref).evaluate((el) => el.getAttribute('aria-valuetext') ?? el.getAttribute('aria-valuenow'), null, { timeout: 1_000 }).catch(() => null)));
       const values = new Map(ranges.flatMap((ref, i) => (read[i] === null ? [] : [[ref, read[i]] as const])));
-      const viewportHeight = await page.evaluate(() => window.innerHeight);
-      const text = pruneSnapshot(raw, { passwordFields, values, viewportHeight });
+      const { innerHeight: viewportHeight, innerWidth: viewportWidth } = await page.evaluate(() => ({ innerHeight, innerWidth }));
+      // The browser's bubble over a field it refused, as the persona reads it on the screenshot. Not after a check of the
+      // page's own (checkValidity() on typing): only a click or a key can submit.
+      const refused = submitting ? (await Promise.all(page.frames().map((frame) => frame.evaluate(() => (window as unknown as { __gnomiInvalid?: string | null }).__gnomiInvalid ?? null).catch(() => null)))).find(Boolean) : null;
+      const text = pruneSnapshot(raw, { passwordFields, values, viewportHeight, viewportWidth }) + (refused ? `\n- alert [invalid]: ${refused.slice(0, 200)}` : '');
       shown = text;
       return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
     },
@@ -629,6 +695,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       inflight.clear();
       started.clear();
       refusals(); // what the page ran into before this action is not its doing
+      submitting = action.type === 'click' || action.type === 'press';
+      await Promise.all(page.frames().map((frame) => frame.evaluate(() => { (window as unknown as { __gnomiInvalid: string | null }).__gnomiInvalid = null; }).catch(() => {})));
       try {
         text = await perform(action, ref);
       } catch (e) {

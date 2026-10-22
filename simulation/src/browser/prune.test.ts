@@ -227,3 +227,36 @@ test('drops a link or button Playwright gave no ref, as in a collapsed menu, kee
     '  - generic [ref=e178] [cursor=pointer] [box=34,510,24,24]',
   ));
 });
+
+test('keeps a disabled link or button Playwright gave no ref, as Bootstrap and Tailwind style one with pointer-events: none', () => {
+  // The raw lines of a greyed-out Publish and Continue: what a person sees, and why the form cannot go on yet.
+  const out = pruneSnapshot(lines(
+    '- generic [active] [ref=e1] [box=8,8,1264,704]:',
+    '  - button "Publish event" [disabled] [box=8,8,96,21]',
+    '  - link "Continue" [disabled] [box=104,9,59,18]:',
+    '    - /url: /x',
+    '  - button "Save draft" [ref=e2] [box=163,8,77,21]',
+  ));
+  assert.match(out, /^- button "Publish event" \[disabled\] \[box=8,8,96,21\]$/m);
+  assert.match(out, /^- link "Continue" \[disabled\] \[box=104,9,59,18\]:$/m);
+  assert.match(out, /^- button "Save draft" \[ref=e2\]/m);
+});
+
+test('marks lines beside the viewport as off screen, left or right, but not the 0×0 options of a closed <select>', () => {
+  const out = pruneSnapshot(lines(
+    '- link "Create event" [ref=e6] [cursor=pointer] [box=-209,0,80,18]:',
+    '  - /url: /new',
+    '- button "Trip 6" [ref=e18] [box=1821,81,50,21]',
+    '- button "Trip 2" [ref=e14] [box=1221,81,50,21]',
+    '- combobox "Country" [ref=e2] [box=80,200,84,19]:',
+    '  - option "Greece" [selected] [box=0,0,0,0]',
+  ), { viewportWidth: 1280 });
+  assert.equal(out, lines(
+    '- link "Create event" [ref=e6] [cursor=pointer] [box=-209,0,80,18] (off screen, left):',
+    '  - /url: /new',
+    '- button "Trip 6" [ref=e18] [box=1821,81,50,21] (off screen, right)',
+    '- button "Trip 2" [ref=e14] [box=1221,81,50,21]',
+    '- combobox "Country" [ref=e2] [box=80,200,84,19]:',
+    '  - option "Greece" [selected] [box=0,0,0,0]',
+  ));
+});

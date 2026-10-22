@@ -61,7 +61,7 @@ export function backtrack(history: Step[], step: Step, t: SignalThresholds): Sig
 }
 
 // Snapshot lines without what changes on every render (refs, boxes, focus), so the same message reads the same before and after.
-const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]| \(off screen, (?:above|below)\)/g, '').trim()));
+const lines = (snapshot: string) => new Set(snapshot.split('\n').map((line) => line.replace(/ \[(?:ref|box|cursor)=[^\]]*\]| \[active\]| \(off screen, (?:above|below|left|right)\)/g, '').trim()));
 const textOf = (line: string) => /: (.+)$/.exec(line)?.[1] ?? /"(.+)"/.exec(line)?.[1] ?? line.replace(/^- /, '');
 const FIELD = /^- (?:textbox|searchbox|combobox|checkbox|radio|switch|spinbutton|slider)\b/;
 /** A field line's role and name, without its value or state. */
@@ -78,8 +78,9 @@ export function validationError(step: Step, before: string | null, after: string
   const samePage = pageKey(step.result.url_after) === pageKey(step.result.url_before);
   const invalid = fresh.find((line) => line.includes(' [invalid]'));
   // A new page's "required" hints are not errors: after a navigation, wording counts only beside an invalid control or in an alert.
-  // A field's name is often a placeholder ("Enter a job title"): it counts only when the field is marked invalid.
-  const worded = fresh.find((line) => ERRORISH.test(textOf(line)) && (samePage || invalid !== undefined || line.startsWith('- alert')) && (!/^- (?:text|search)box\b/.test(line) || line.includes(' [invalid]')));
+  // A field's name is often a placeholder ("Enter a job title"): it counts only when the field is marked invalid. The
+  // browser's own refusal ("Please include an '@'") is an error whatever its wording.
+  const worded = fresh.find((line) => (ERRORISH.test(textOf(line)) || line.startsWith('- alert [invalid]')) && (samePage || invalid !== undefined || line.startsWith('- alert')) && (!/^- (?:text|search)box\b/.test(line) || line.includes(' [invalid]')));
   const message = worded ? textOf(worded) : invalid ? `${invalid.replace(/^- | \[invalid\]/g, '')} is marked invalid` : null;
   return message ? { type: 'signal.validation_error', payload: { ...base(step), message: message.slice(0, 200) } } : null;
 }

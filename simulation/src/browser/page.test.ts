@@ -107,7 +107,7 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
   root.firstChild.onclick = (e) => e.target.setAttribute('aria-checked', String(e.target.getAttribute('aria-checked') !== 'true'));
 } });</script></body></html>`,
   // Controls a person's tap cannot reach: under a see-through 'Saving…' overlay, a chat bubble, a cookie bar at the bottom of a
-  // page that cannot scroll, a modal dialog; a link in a collapsed accordion; a menu item hidden since the snapshot. The title
+  // page that cannot scroll, a modal dialog; a link in an accordion and a menu item, each hidden since the snapshot. The title
   // lists every click that landed.
   '/covers': `<!doctype html><html><head>${head}<title>clicks:</title></head><body style="margin:0">
 <script>document.addEventListener('click', (e) => { document.title += ' ' + (e.target.closest('[data-n]') ?? e.target).dataset.n }, true)</script>
@@ -118,8 +118,8 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
 <button data-n="save" style="position:absolute;left:20px;top:220px">Save draft</button>
 <button data-n="delete" style="position:absolute;left:20px;top:260px" onclick="document.querySelector('dialog').showModal()">Delete event</button>
 <dialog data-n="dialog"><p>Delete this event?</p></dialog>
-<section style="position:absolute;left:300px;top:20px"><button data-n="shipping">Shipping</button>
-<div style="max-height:0;overflow:hidden"><a data-n="privacy" href="#privacy">Privacy policy</a></div><button data-n="returns">Returns</button></section>
+<section style="position:absolute;left:300px;top:20px"><button data-n="shipping" onclick="this.nextElementSibling.style.maxHeight = '0'">Shipping</button>
+<div style="overflow:hidden"><a data-n="privacy" href="#privacy">Privacy policy</a></div><button data-n="returns">Returns</button></section>
 <div style="position:absolute;left:600px;top:20px"><button data-n="account" onclick="setTimeout(() => { menu.style.display = 'none' }, 200)">Account</button>
 <ul id="menu"><li><a data-n="logout" href="#logout">Log out</a></li></ul></div>
 <button data-n="continue" style="position:absolute;left:20px;top:700px;width:300px;height:44px">Continue</button>
@@ -170,6 +170,22 @@ render(); setTimeout(render, 800);</script></body></html>`,
   const size = file.type.startsWith('image/') ? await createImageBitmap(file).then((b) => ' ' + b.width + 'x' + b.height) : '';
   received.textContent = input.id + ': ' + file.name + ' ' + file.type + size;
 }</script></body></html>`,
+  // What the accessibility tree keeps but a person does not see, or misreads: a Quill-like editor (a role-less contenteditable
+  // whose placeholder is CSS), an accordion collapsed by max-height, a carousel's other slides, a CSS-only switch, a closed
+  // menu faded out with its search box, a hidden tooltip's CSS text; and a list that scrolls, whose rows a person can reach.
+  '/seen': `<!doctype html><html><head>${head}<title>Seen</title><style>
+.ql-editor{min-height:60px;border:1px solid #888}.ql-blank::before{content:attr(data-placeholder);color:#999;position:absolute}
+.panel{max-height:0;overflow:hidden}.open .panel{max-height:300px}.tip::before{content:'Ghost tooltip'}
+.sw{display:inline-block;width:40px;height:20px;background:#ccc}#pub:checked+label .sw{background:green}</style></head><body>
+<span>Description</span><div id="ed" class="ql-editor ql-blank" contenteditable="true" data-placeholder="Describe your event…" oninput="this.classList.toggle('ql-blank', !this.textContent)"><p><br></p></div>
+<button type="button" onclick="this.textContent = 'role: ' + ed.getAttribute('role')">Check role</button>
+<section><button type="button" onclick="this.parentNode.classList.toggle('open')">Shipping</button><div class="panel"><p>We ship worldwide.</p><a href="#privacy">Privacy policy</a></div></section>
+<div style="overflow:hidden;width:300px"><div style="display:flex;transform:translateX(0)"><div style="flex:0 0 300px"><a href="#sunset">Sunset hike</a></div><div style="flex:0 0 300px"><a href="#olympus">Olympus trek</a></div></div></div>
+<ul aria-label="Stops" style="height:60px;overflow:auto">${Array.from({ length: 10 }, (_, i) => `<li>Stop ${i}</li>`).join('')}</ul>
+<input type="checkbox" id="pub" style="display:none"><label for="pub" style="cursor:pointer"><span class="sw"></span> Public event</label>
+<div style="opacity:0;pointer-events:none"><input aria-label="Search countries"><ul role="listbox" aria-label="Countries"><li role="option">Greece</li></ul></div>
+<div class="tip" style="display:none"></div>
+<form onsubmit="event.preventDefault(); document.body.append('Published')"><label for="ttl">Event title</label> <input id="ttl" required> <button>Publish</button></form></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -745,7 +761,7 @@ test('a click on a control under a banner, an overlay or a dialog, clipped or hi
     [/button "Next" \[ref=(\w+)\]/, null, 'covered by button "Open chat"', 'clicks:'],
     [/button "Continue" \[ref=(\w+)\]/, null, 'covered by region "Cookies"', 'clicks:'],
     [/button "Save draft" \[ref=(\w+)\]/, /button "Delete event" \[ref=(\w+)\]/, 'covered by dialog "Delete this event?"', 'clicks: delete'],
-    [/link "Privacy policy" \[ref=(\w+)\]/, null, 'not_visible', 'clicks:'],
+    [/link "Privacy policy" \[ref=(\w+)\]/, /button "Shipping" \[ref=(\w+)\]/, 'not_visible', 'clicks: shipping'],
     [/link "Log out" \[ref=(\w+)\]/, /button "Account" \[ref=(\w+)\]/, 'not_visible', 'clicks: account'], // the menu closes 200 ms after this click
   ] as const;
   // Each waits out Playwright's timeout first: side by side, on pages of their own.
@@ -759,6 +775,41 @@ test('a click on a control under a banner, an overlay or a dialog, clipped or hi
     assert.equal((await page.snapshot()).title, clicks, `${line}: nothing in the way was clicked`);
     assert.equal(failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' }), null, String(line));
   }));
+});
+
+test('the snapshot shows what a person sees: no clipped, faded or hidden content, a role-less editor as a textbox, a CSS-only switch as a checkbox', async (t) => {
+  const page = await open(t, '/seen');
+  const shown = (await page.snapshot()).text;
+  for (const unseen of [/We ship worldwide|Privacy policy/, /Olympus trek/, /Search countries|Greece/, /Ghost tooltip/]) assert.doesNotMatch(shown, unseen);
+  assert.match(shown, /link "Sunset hike" \[ref=/);
+  assert.match(shown, /listitem[^\n]*: Stop 9/, 'rows a list scrolls to stay');
+  // The editor takes typing and shows it, and the page gets its element back as it was.
+  const editor = refOf(shown, /textbox \[ref=(\w+)\]/);
+  assert.deepEqual([(await act(page, 'type', editor, 'Sunrise hike')).ok], [true]);
+  assert.match((await page.snapshot()).text, /textbox [^\n]*\[ref=\w+\][\s\S]*Sunrise hike/);
+  await act(page, 'click', refOf(shown, /button "Check role" \[ref=(\w+)\]/));
+  assert.match((await page.snapshot()).text, /button "role: null"/);
+  const unticked = /checkbox "Public event" \[ref=(\w+)\]/;
+  const result = await act(page, 'click', refOf(shown, unticked));
+  assert.deepEqual([result.ok, result.dom_changed], [true, true]);
+  assert.match((await page.snapshot()).text, /checkbox "Public event" \[checked\]/);
+  await act(page, 'click', refOf(shown, /button "Shipping" \[ref=(\w+)\]/));
+  assert.match((await page.snapshot()).text, /link "Privacy policy" \[ref=/, 'shows once the accordion opens');
+});
+
+test('a field the browser refuses on submit shows its bubble\'s message as an alert, which validation_error reads', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/seen', device);
+    const before = (await page.snapshot()).text;
+    const publish: Action = { type: 'click', ref: refOf(before, /button "Publish" \[ref=(\w+)\]/), text: null };
+    const result = await page.act(publish);
+    const after = (await page.snapshot()).text;
+    assert.match(after, /^- alert \[invalid\]: Event title: .+$/m, device);
+    const message = validationError({ step_no: 1, action: publish, target: result.target, result, snapshot_hash: '' }, before, after)?.payload.message;
+    assert.match(message ?? '', /^Event title: ./, device);
+    await act(page, 'type', refOf(after, /textbox "Event title"[^\n]*\[ref=(\w+)\]/), 'Sunrise hike');
+    assert.doesNotMatch((await page.snapshot()).text, /alert \[invalid\]/, `${device}: gone with the next action`);
+  }
 });
 
 test('a checkbox or radio under a skin or beside its label ticks at once, and its label is the tap target measured', async (t) => {

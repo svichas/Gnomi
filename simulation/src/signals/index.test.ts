@@ -121,6 +121,9 @@ test('validation_error: an invalid field and its message after a submit, even wh
 test('validation_error: an alert, or error wording on the same page, counts', () => {
   assert.equal(validationError(submit(B), FORM, `${FORM}\n- alert [ref=e40]: Payment failed`)?.payload.message, 'Payment failed');
   assert.equal(validationError(submit(), FORM, `${FORM}\n- generic [ref=e40]: Please enter a valid email`)?.payload.message, 'Please enter a valid email');
+  // The browser's own refusal, which the driver adds as an alert, in whatever words the browser uses.
+  const refused = "Contact email: Please include an '@' in the email address. 'bob' is missing an '@'.";
+  assert.equal(validationError(submit(), FORM, `${FORM}\n- alert [invalid]: ${refused}`)?.payload.message, refused);
 });
 
 test('validation_error: no new message, hints on a new page, a message already showing, or a non-submit action are not', () => {
@@ -136,6 +139,7 @@ test('validation_error: no new message, hints on a new page, a message already s
   assert.equal(validationError(submit(), FORM, `${FORM}\n- textbox "Enter a job title" [invalid] [ref=e50]`)?.payload.message, 'Enter a job title');
   const hint = (where: string) => `${FORM}\n- paragraph [ref=e50] ${where}: Fields marked * are required`;
   assert.equal(validationError(submit(), hint('[box=0,900,100,20] (off screen, below)'), hint('[box=0,300,100,20]')), null, 'a hint that scrolled into view');
+  assert.equal(validationError(submit(), hint('[box=1400,300,100,20] (off screen, right)'), hint('[box=300,300,100,20]')), null, 'a hint on a slide that came into view');
 });
 
 // A wizard's first step, its second step after "Next", and that step after "Add another ticket", as the driver showed them.

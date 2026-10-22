@@ -40,6 +40,7 @@ interface Options {
   secrets: ReadonlyMap<string, PasswordState>;
   values: ReadonlyMap<string, string>; // aria-valuetext or aria-valuenow of a custom slider or stepper, by ref
   viewportHeight: number;
+  viewportWidth: number;
 }
 
 export type PasswordState = 'empty' | 'filled' | 'hidden';
@@ -66,9 +67,9 @@ const collapsible = (line: Line) => REPEATED.has(line.role) || (line.role === 'g
 
 const closedOption = (line: Line) => line.role === 'option' && line.head.includes('[box=0,0,0,0]');
 
-function onScreen(line: Line, viewportHeight: number): boolean {
+function onScreen(line: Line, { viewportHeight, viewportWidth }: Options): boolean {
   const box = BOX.exec(line.head);
-  return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight;
+  return !!box && +box[2] + +box[4] > 0 && +box[2] < viewportHeight && +box[1] + +box[3] > 0 && +box[1] < viewportWidth;
 }
 
 function keep(line: Line, opts: Options): Line[] {
@@ -82,8 +83,9 @@ function keep(line: Line, opts: Options): Line[] {
   }
   kids = visit(kids, opts);
   // Playwright refs every element that is visible and takes pointer events, so a link or button without one cannot be
-  // tapped: a collapsed menu (pointer-events: none) would otherwise read as open. Keep only what inside it can be.
-  if (!ref && TAPPABLE.has(line.role)) return kids.filter(hasRef);
+  // tapped: a collapsed menu (pointer-events: none) would otherwise read as open. Keep only what inside it can be. A
+  // disabled one stays (Bootstrap and Tailwind give it pointer-events: none): a greyed-out Publish is what a person sees.
+  if (!ref && TAPPABLE.has(line.role) && !line.head.includes('[disabled]')) return kids.filter(hasRef);
   if (!NAME.test(line.head) && value === undefined && !line.head.includes('[cursor=pointer]')) {
     if (line.role === 'generic') return kids; // a bare wrapper: hoist its children
     if (!kids.length && !CONTROLS.has(line.role)) return [];
@@ -102,7 +104,7 @@ function visit(lines: Line[], opts: Options): Line[] {
     // A closed native <select> has no box, so none of its options is on screen, yet a person who opens it sees them all.
     const closed = items.every(closedOption);
     // What the persona can see stays addressable, and so does the selected option: a long <select> must show its value.
-    let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts.viewportHeight));
+    let shown = items.filter((l, k) => k < KEEP_RUN || l.head.includes('[selected]') || onScreen(l, opts));
     if (items.length - shown.length < MIN_HIDDEN || (closed && run <= CLOSED_RUN)) shown = items;
     for (const line of shown) out.push(...keep(line, opts));
     // A longer one names what it hides, so the persona can select a country it does not see.
@@ -115,15 +117,17 @@ function visit(lines: Line[], opts: Options): Line[] {
 }
 
 // A line without a box (a text or /url child, a "… more" marker) sits where the line printed before it does.
-// A line with a box off the viewport says so: the persona sees only the screen until it scrolls.
-function print(lines: Line[], depth: number, parent: number, viewportHeight: number, out: Printed[]): void {
+// A line with a box off the viewport says so: the persona sees only the screen until it scrolls, or opens the drawer or
+// pages the carousel that holds it. Above or below first: scrolling the page brings those.
+function print(lines: Line[], depth: number, parent: number, opts: Options, out: Printed[]): void {
   for (const line of lines) {
     const tail = line.value !== undefined ? `: ${line.value}` : line.kids.length ? ':' : '';
     const box = BOX.exec(line.head);
-    const dist = box ? Math.max(-(+box[2] + +box[4]), +box[2] - viewportHeight, 0) : (out.at(-1)?.dist ?? 0);
-    const where = box && dist > 0 ? ` (off screen, ${+box[2] < 0 ? 'above' : 'below'})` : '';
+    const dist = box ? Math.max(-(+box[2] + +box[4]), +box[2] - opts.viewportHeight, 0) : (out.at(-1)?.dist ?? 0);
+    const side = box && +box[3] > 0 && (+box[1] + +box[3] <= 0 ? 'left' : +box[1] >= opts.viewportWidth ? 'right' : null); // a 0×0 box (a closed <select>'s option) is nowhere
+    const where = box && dist > 0 ? ` (off screen, ${+box[2] < 0 ? 'above' : 'below'})` : side ? ` (off screen, ${side})` : '';
     out.push({ text: `${'  '.repeat(depth)}- ${line.head}${where}${tail}`, dist, parent });
-    print(line.kids, depth + 1, out.length - 1, viewportHeight, out);
+    print(line.kids, depth + 1, out.length - 1, opts, out);
   }
 }
 
@@ -144,10 +148,11 @@ function render(lines: Printed[], limit: number): string {
 
 export function pruneSnapshot(
   raw: string,
-  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), values = new Map<string, string>(), viewportHeight = 800 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; values?: ReadonlyMap<string, string>; viewportHeight?: number } = {},
+  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), values = new Map<string, string>(), viewportHeight = 800, viewportWidth = 1280 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; values?: ReadonlyMap<string, string>; viewportHeight?: number; viewportWidth?: number } = {},
 ): string {
   const lines: Printed[] = [];
-  print(visit(parse(raw), { secrets: passwordFields, values, viewportHeight }), 0, -1, viewportHeight, lines);
+  const opts: Options = { secrets: passwordFields, values, viewportHeight, viewportWidth };
+  print(visit(parse(raw), opts), 0, -1, opts, lines);
   const text = lines.map((l) => l.text).join('\n');
   if (text.length <= maxChars) return text;
   // Over the cap: drop what lies furthest from the viewport first (tech.md §6.2), so what the persona scrolled to stays.
