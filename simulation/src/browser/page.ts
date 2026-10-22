@@ -29,6 +29,8 @@ const REF = /^(?:f\d+)?e\d+$/;
 const RANGES = new Set(['slider', 'spinbutton', 'progressbar']);
 // Native inputs Chromium edits segment by segment (day, month, year, hour…).
 const SEGMENTED = new Set(['date', 'time', 'datetime-local', 'month', 'week']);
+// How each takes its value from the persona: typed, as Chromium's own calendar and clock never stay open for it (act() shuts them).
+const TYPED_AS: Record<string, string> = { date: 'type the date as YYYY-MM-DD', time: 'type the time as HH:MM', 'datetime-local': 'type the date and time as YYYY-MM-DD HH:MM', month: 'type the month as YYYY-MM', week: 'type the week as YYYY-Www' };
 // Fields typed key by key. Not contenteditable: rich editors read a cleared selection late, and fill() replaces cleanly in each.
 const KEYED = new Set(['text', 'email', 'number', 'password', 'search', 'tel', 'url', 'textarea']);
 
@@ -80,7 +82,8 @@ function passwordState(el: Element, selector: string): 'empty' | 'filled' | null
 // null when it would: on el, in spot, or through see-through layers of el's own (a custom select's search box over its
 // placeholder). An ancestor that clips spot makes it not_visible; an overlay, a fixed bar or a modal on top covers it.
 // With no spot, el is a checkbox or radio that does not show where it sits (sr-only, transparent under a skin, under its
-// label): it is tapped through its largest label. 'plain' when el is anything else, or shows itself.
+// label): it is tapped through its largest label. 'plain' when el is anything else, or shows itself. A fixed or sticky bar over
+// it is scrolled clear first, as Playwright does for a target it can click itself.
 // shortcut: light-DOM ancestors only, so a layer across a shadow boundary goes unseen, upgrade if a target app nests them.
 function reach(el: Element, spot: Element | null): string | null {
   const root = el.getRootNode() as Document | ShadowRoot;
@@ -94,24 +97,36 @@ function reach(el: Element, spot: Element | null): string | null {
     const area = (e: Element) => e.getBoundingClientRect().width * e.getBoundingClientRect().height;
     spot = [el, ...(el.labels ?? [])].reduce((a, b) => (area(b) > area(a) ? b : a));
   }
-  const [x, y] = centre(spot);
-  for (let a = spot.parentElement; a && a !== document.body; a = a.parentElement) {
-    const r = a.getBoundingClientRect();
-    if (/hidden|clip|auto|scroll/.test(getComputedStyle(a).overflow) && !(x > r.left && x < r.right && y > r.top && y < r.bottom)) return 'not_visible'; // a collapsed panel has no inside at all
+  const at = spot;
+  // Why a tap at the centre of `at` misses el, and whether what is over it is a bar fixed to the screen; null when it reaches.
+  const blocked = (): { why: string; bar: boolean } | null => {
+    const [x, y] = centre(at);
+    for (let a = at.parentElement; a && a !== document.body; a = a.parentElement) {
+      const r = a.getBoundingClientRect();
+      if (/hidden|clip|auto|scroll/.test(getComputedStyle(a).overflow) && !(x > r.left && x < r.right && y > r.top && y < r.bottom)) return { why: 'not_visible', bar: false }; // a collapsed panel has no inside at all
+    }
+    const hit = root.elementFromPoint(x, y);
+    if (!hit) return { why: 'not_visible', bar: false };
+    if (at.contains(hit) || el.contains(hit)) return null;
+    let over: Element | null = hit;
+    while (over && !over.matches(':modal') && !/fixed|sticky/.test(getComputedStyle(over).position)) over = over.parentElement;
+    if (over?.contains(el)) over = null; // el's own layer, such as a fixed sheet it sits in
+    const bar = over !== null && !over.matches(':modal');
+    for (let e: Element | null = hit; !over && e && !e.contains(el); e = e.parentElement) {
+      const style = getComputedStyle(e);
+      if (style.opacity !== '0' && (!/^transparent$|, 0\)$/.test(style.backgroundColor) || style.backgroundImage !== 'none')) over = e;
+    }
+    if (!over) return null;
+    const name = over.getAttribute('aria-label') ?? (over as HTMLElement).innerText?.trim().split('\n')[0] ?? '';
+    return { why: `covered by ${over.getAttribute('role') ?? over.localName}${name && ` "${name.slice(0, 40).replaceAll('"', "'")}"`}`, bar }; // an unnamed backdrop by its kind alone
+  };
+  let found = blocked();
+  // A header or a form's bottom bar fixed to the screen covers only what has scrolled under it: a person scrolls it into the clear.
+  if (found?.bar) {
+    at.scrollIntoView({ block: 'center', inline: 'nearest' });
+    found = blocked();
   }
-  const hit = root.elementFromPoint(x, y);
-  if (!hit) return 'not_visible';
-  if (spot.contains(hit) || el.contains(hit)) return null;
-  let over: Element | null = hit;
-  while (over && !over.matches(':modal') && !/fixed|sticky/.test(getComputedStyle(over).position)) over = over.parentElement;
-  if (over?.contains(el)) over = null; // el's own layer, such as a fixed sheet it sits in
-  for (let e: Element | null = hit; !over && e && !e.contains(el); e = e.parentElement) {
-    const style = getComputedStyle(e);
-    if (style.opacity !== '0' && (!/^transparent$|, 0\)$/.test(style.backgroundColor) || style.backgroundImage !== 'none')) over = e;
-  }
-  if (!over) return null;
-  const name = over.getAttribute('aria-label') ?? (over as HTMLElement).innerText?.trim().split('\n')[0] ?? '';
-  return `covered by ${over.getAttribute('role') ?? over.localName}${name && ` "${name.slice(0, 40).replaceAll('"', "'")}"`}`; // an unnamed backdrop by its kind alone
+  return found?.why ?? null;
 }
 
 // Runs in the page: the largest box of el and its labels, where a person taps a checkbox or radio.
@@ -749,11 +764,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const ranges = [...targets].filter(([, target]) => RANGES.has(target.role) || target.role === 'textbox').map(([ref]) => ref);
       const read = await Promise.all(ranges.map((ref) => page.getByRef(ref).evaluate(shownValue, null, { timeout: 1_000 }).catch(() => null)));
       const values = new Map(ranges.flatMap((ref, i) => (read[i] === null ? [] : [[ref, read[i]] as const])));
+      const kinds = await Promise.all(textboxes.map((ref) => page.getByRef(ref).evaluate(fieldKind, null, { timeout: 1_000 }).catch(() => null)));
+      const notes = new Map(textboxes.flatMap((ref, i) => (kinds[i] && TYPED_AS[kinds[i]] ? [[ref, TYPED_AS[kinds[i]]] as const] : [])));
       const { innerHeight: viewportHeight, innerWidth: viewportWidth } = await page.evaluate(() => ({ innerHeight, innerWidth }));
       // The browser's bubble over a field it refused, as the persona reads it on the screenshot. Not after a check of the
       // page's own (checkValidity() on typing): only a click or a key can submit.
       const refused = submitting ? (await Promise.all(page.frames().map((frame) => frame.evaluate(() => (window as unknown as { __gnomiInvalid?: string | null }).__gnomiInvalid ?? null).catch(() => null)))).find(Boolean) : null;
-      const text = pruneSnapshot(raw, { passwordFields, values, viewportHeight, viewportWidth }) + (refused ? `\n- alert [invalid]: ${refused.slice(0, 200)}` : '');
+      const text = pruneSnapshot(raw, { passwordFields, values, notes, viewportHeight, viewportWidth }) + (refused ? `\n- alert [invalid]: ${refused.slice(0, 200)}` : '');
       shown = text;
       return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
     },
@@ -803,6 +820,11 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       // Typing's own input events are its echo, not the page reacting to it.
       const echo = action.type === 'type' ? await domVersion(page) : before;
       await settle(page, started);
+      // Chromium draws its own calendar, clock or colour panel for a native field: on the screenshot, never in the page, so no tap
+      // reaches it, and nothing the page or the driver cancels stops it opening. Escape shuts it, unheard by the page (a dialog
+      // around the field stays open); the field's [type the date as …] note says to type the value instead.
+      const pickers = await Promise.all(page.frames().map((frame) => frame.evaluate(() => document.querySelector('input:open') !== null).catch(() => false)));
+      if (pickers.some(Boolean)) await page.keyboard.press('Escape');
       // A file chooser opens just after the click that opened it returns: its file, and what the page makes of it, are the action's.
       const picked = await (chosen as Promise<string | null> | null)?.catch((e: unknown) => { // set by the filechooser listener while the action ran
         error ??= firstLine(e);

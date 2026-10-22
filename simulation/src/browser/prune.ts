@@ -39,6 +39,7 @@ interface Printed {
 interface Options {
   secrets: ReadonlyMap<string, PasswordState>;
   values: ReadonlyMap<string, string>; // aria-valuetext or aria-valuenow of a custom slider or stepper, or an editable root's text, by ref
+  notes: ReadonlyMap<string, string>; // how a field takes its value, by ref: a native date field's typed form
   viewportHeight: number;
   viewportWidth: number;
 }
@@ -94,7 +95,8 @@ function keep(line: Line, opts: Options): Line[] {
   let shown = ref && !password ? opts.values.get(ref) : undefined;
   // An editable root's text, which Playwright leaves out of a textbox, reads as an input's value does, in place of its pieces.
   if (shown !== undefined && line.role === 'textbox') [value, kids, shown] = [shown, [], undefined];
-  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '') + (shown === undefined ? '' : ` [value=${clip(shown)}]`);
+  const note = ref ? opts.notes.get(ref) : undefined;
+  const head = line.head.replace(NAME, (_, role, name) => `${role}"${clip(name)}"`) + (password ? ` [password: ${password}]` : '') + (shown === undefined ? '' : ` [value=${clip(shown)}]`) + (note ? ` [${note}]` : '');
   return [{ role: line.role, head, value: value === undefined ? undefined : clip(value), kids }];
 }
 
@@ -151,10 +153,10 @@ function render(lines: Printed[], limit: number): string {
 
 export function pruneSnapshot(
   raw: string,
-  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), values = new Map<string, string>(), viewportHeight = 800, viewportWidth = 1280 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; values?: ReadonlyMap<string, string>; viewportHeight?: number; viewportWidth?: number } = {},
+  { maxChars = 16000, passwordFields = new Map<string, PasswordState>(), values = new Map<string, string>(), notes = new Map<string, string>(), viewportHeight = 800, viewportWidth = 1280 }: { maxChars?: number; passwordFields?: ReadonlyMap<string, PasswordState>; values?: ReadonlyMap<string, string>; notes?: ReadonlyMap<string, string>; viewportHeight?: number; viewportWidth?: number } = {},
 ): string {
   const lines: Printed[] = [];
-  const opts: Options = { secrets: passwordFields, values, viewportHeight, viewportWidth };
+  const opts: Options = { secrets: passwordFields, values, notes, viewportHeight, viewportWidth };
   print(visit(parse(raw), opts), 0, -1, opts, lines);
   const text = lines.map((l) => l.text).join('\n');
   if (text.length <= maxChars) return text;
