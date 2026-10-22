@@ -92,6 +92,9 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
   '/choose': `<!doctype html><html><head>${head}<title>Choose</title></head><body>
 <label for="pick">Pick</label> <select id="pick"><option>Choose…</option><option>Hiking</option><option>🇬🇷 Greece</option><option>United States of America</option><option>Category 1</option><option>Category 10</option></select>
 <label for="langs">Languages</label> <select id="langs" multiple><option>Greek</option><option>English</option><option>German</option></select></body></html>`,
+  // Icons from a web font whose file never arrives, as a slow 1.5 MB icon font looks to a screenshot.
+  '/icon-font': `<!doctype html><html><head>${head}<title>Icon font</title><style>@font-face{font-family:Icons;src:url(/hold/icons.woff2) format('woff2');font-display:swap}.icon{font-family:Icons}</style></head>
+<body><span class="icon">menu</span><h1>Profile</h1></body></html>`,
   '/keys-and-tabs': `<!doctype html><html><head>${head}<title>Keys and tabs</title></head><body>
 <input aria-label="Search" onkeydown="if (event.key === 'Enter') document.body.append('Searched for ' + this.value)">
 <a href="/next" target="_blank">Open in a new tab</a>
@@ -241,6 +244,8 @@ before(async () => {
       // Two inputs whose values come from the query, to compare screenshots of different values.
       const { password = '', text = '' } = Object.fromEntries(url.searchParams);
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
+    } else if (url.pathname.startsWith('/hold/')) {
+      // Never answered: a font that never finishes loading.
     } else if (url.pathname.startsWith('/delay/')) {
       setTimeout(() => res.end('ok'), Number(url.pathname.slice('/delay/'.length)));
     } else if (url.pathname === '/create') {
@@ -529,6 +534,16 @@ test('a password stays masked when its enclosing label points at a different con
   assert.doesNotMatch(snapshot.text, new RegExp(SECRET));
   assert.match(snapshot.text, /textbox "Password"[^\n]*\[password: filled\]/);
   assert.doesNotMatch(snapshot.text, /textbox "Username"[^\n]*\[password:/);
+});
+
+test('a screenshot waits for web fonts a moment, never for one that does not load', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/icon-font', device);
+    const started = Date.now();
+    const shot = await page.screenshot();
+    assert.ok(shot.length > 0, device);
+    assert.ok(Date.now() - started < 5_000, `${device}: ${Date.now() - started} ms`); // Playwright alone waits until its 10 s timeout
+  }
 });
 
 test('screenshot is a JPEG at one pixel per CSS pixel', async (t) => {
