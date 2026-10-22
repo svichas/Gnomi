@@ -73,6 +73,18 @@ oninput="for (const o of categories.children) o.hidden = !o.textContent.toLowerC
 <div role="toolbar" aria-label="Format"><button onclick="document.body.append('made bold')">Bold</button></div></body></html>`,
   '/dates': `<!doctype html><html><head>${head}<title>Dates</title></head><body>
 <input type="date" aria-label="Day"> <input type="time" aria-label="Start time"> <input type="datetime-local" aria-label="When" value="2020-01-01T10:00"></body></html>`,
+  // A custom select's 0×0 input under a form's bottom bar fixed to the screen, on a page that scrolls: as on a phone.
+  '/sticky-bar': `<!doctype html><html><head>${head}<title>Sticky bar</title></head><body style="margin:0">
+<div style="height:calc(100vh - 100px)">Event details</div>
+<div onmousedown="document.getElementById('categories').hidden = false" style="width:300px;border:1px solid #888">
+<div style="display:grid;padding:8px"><div style="grid-area:1/1/2/3">Choose a category</div>
+<input role="combobox" aria-label="Category" readonly style="grid-area:1/1/2/3;width:1px;padding:0;border:0;position:relative;left:-100px;transform:scale(.01)"></div></div>
+<ul id="categories" role="listbox" hidden><li role="option">Hiking</li></ul><div style="height:1500px"></div>
+<div role="region" aria-label="Progress" style="position:fixed;left:0;right:0;bottom:0;height:140px;background:#fff">1 of 4 basics ready <button>Publish event</button></div></body></html>`,
+  // A native date field in a modal dialog; 1.5 s after the field takes focus, the page writes whether Chromium's own picker is open.
+  '/picker': `<!doctype html><html><head>${head}<title>Picker</title></head><body>
+<dialog id="sheet"><button autofocus>Close</button><input type="datetime-local" aria-label="When" onfocus="setTimeout(() => { state.textContent = this.matches(':open') ? 'Picker open' : 'Picker closed' }, 1500)"><p id="state"></p></dialog>
+<script>sheet.showModal()</script></body></html>`,
   '/time-list': `<!doctype html><html><head>${head}<title>Time list</title></head><body><h1>Pick a time</h1>
 <input role="combobox" aria-label="Start" aria-controls="times"><ul id="times" role="listbox" aria-label="Time" style="height:100px;overflow-y:auto;margin:0" onclick="event.target.setAttribute('aria-selected', 'true')">${Array.from({ length: 12 }, (_, h) => `<li role="option" style="height:30px">${String(h).padStart(2, '0')}:00</li>`).join('')}</ul>
 <div style="height:3000px"></div></body></html>`,
@@ -912,6 +924,35 @@ test('type into a native date or time field sets the date the persona means, wha
     assert.equal((await act(page, 'type', ref('Day'), '')).ok, true);
     assert.match((await page.snapshot()).text, /textbox "Day" [^:\n]*$/m, `${device} ${locale}: cleared`);
   })));
+});
+
+test('a native date field says to type its value, and the picker Chromium draws for it never stays open', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const dates = await open(t, '/dates', device);
+    const shown = (await dates.snapshot()).text;
+    for (const [name, note] of [['Day', 'type the date as YYYY-MM-DD'], ['Start time', 'type the time as HH:MM'], ['When', 'type the date and time as YYYY-MM-DD HH:MM']]) {
+      assert.match(shown, new RegExp(`textbox "${name}" [^\\n]*\\[${note}\\]`), `${device} ${name}`);
+    }
+  }
+  // A phone's tap opens it: on the screenshot, never in the page. It is shut, and the dialog the field sits in stays open.
+  const page = await open(t, '/picker', 'mobile');
+  const tap = await act(page, 'click', refOf((await page.snapshot()).text, /textbox "When" \[ref=(\w+)\]/));
+  assert.deepEqual([tap.ok, tap.error, tap.dom_changed], [true, null, true]);
+  await act(page, 'wait');
+  const after = (await page.snapshot()).text;
+  assert.match(after, /Picker closed/);
+  assert.match(after, /dialog \[ref=/);
+  assert.equal((await act(page, 'type', refOf(after, /textbox "When" [^\n]*?\[ref=(\w+)\]/), '2026-10-25 09:30')).ok, true); // [active] now
+  assert.match((await page.snapshot()).text, /textbox "When" [^\n]*: 2026-10-25T09:30$/m);
+});
+
+test('a control that has scrolled under a bar fixed to the screen is scrolled clear and tapped, not reported covered', async (t) => {
+  await Promise.all((['desktop', 'mobile'] as const).map(async (device) => {
+    const page = await open(t, '/sticky-bar', device);
+    const outcome = await act(page, 'click', refOf((await page.snapshot()).text, /combobox "Category" \[ref=(\w+)\]/));
+    assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], device);
+    assert.match((await page.snapshot()).text, /option "Hiking"/, device);
+  }));
 });
 
 test('scroll up or down on a list that scrolls moves the list under the wheel, not the page', async (t) => {
