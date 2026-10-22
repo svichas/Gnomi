@@ -9,6 +9,7 @@ import { personaEnvironment, type LocaleEnvironment } from '../audience/location
 import { pickedValue } from './dates.ts';
 import { inspect } from './inspect.ts';
 import { pruneSnapshot, snapshotTargets, type PasswordState } from './prune.ts';
+import { sampleFile } from './upload.ts';
 
 const ACTION_MS = 5_000;
 const SETTLE_MS = 3_000; // cap on waiting for the page to go quiet after an action
@@ -225,6 +226,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let popup: Page | null = null; // a tab the current action opened
   let downloaded = false; // the current action started a download
   let formClick = false; // the current action clicked something inside a form
+  let chosen: Promise<string | null> | null = null; // the file the current action chose in a file chooser
   const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
   // Every load, fetch and XHR the current action started that has not finished: settle waits for them.
   // shortcut: a page's own GETs meanwhile (analytics, polling) hold settle too, up to SETTLE_MS, upgrade by ignoring repeated URLs if real apps hit the cap.
@@ -291,6 +293,15 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     tab.on('download', () => {
       downloaded = true;
     });
+    // Headless Chromium cancels a file chooser nobody answers: the persona picks a file of the kind the field asks for, as a
+    // person picks one from their device.
+    tab.on('filechooser', (chooser) => {
+      chosen = chooser.element().getAttribute('accept').then(async (accept) => {
+        const file = sampleFile(accept ?? '');
+        await chooser.setFiles(file);
+        return file.name;
+      }).catch(() => null);
+    });
     if (!opener) return;
     openers.set(tab, opener);
     // A tab that closes, by back or by its own script (a preview's Close button), leaves the persona on the tab it came from.
@@ -348,7 +359,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     });
   }
 
-  /** Performs the action; resolves to the text of a `read`, else null. Model mistakes throw an Error whose message is the code. */
+  /** Performs the action; resolves to the text of a `read` or the file an upload chose, else null. Model mistakes throw an Error whose message is the code. */
   async function perform(action: Action, ref: string | null): Promise<string | null> {
     const timeout = ACTION_MS;
     switch (action.type) {
@@ -412,6 +423,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         if (SEGMENTED.has(kind)) {
           await typeDate(input, kind, action.text, timeout);
           return null;
+        }
+        if (kind === 'file') {
+          // What a person picks from their device, named after what the persona typed: a bare file input does not show it.
+          const accept = await input.evaluate((el) => ((el.matches('input') ? el : (el.closest('label')?.control ?? el)) as HTMLInputElement).accept ?? '', null, { timeout });
+          const file = sampleFile(accept, action.text);
+          await input.setInputFiles(file, { timeout });
+          return `File chosen: ${file.name}`;
         }
         if (KEYED.has(kind)) {
           // Key by key, as a person types: masks, keyup handlers, split code boxes and a number field's own parsing see every key.
@@ -560,6 +578,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       popup = null;
       downloaded = false;
       formClick = false;
+      chosen = null;
       inflight.clear();
       started.clear();
       refusals(); // what the page ran into before this action is not its doing
@@ -571,6 +590,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       // Typing's own input events are its echo, not the page reacting to it.
       const echo = action.type === 'type' ? await domVersion(page) : before;
       await settle(page, started);
+      // A file chooser opens just after the click that opened it returns: its file, and what the page makes of it, are the action's.
+      const picked = await (chosen as Promise<string | null> | null); // set by the filechooser listener while the action ran
+      if (picked) {
+        text = `File chosen: ${picked}`;
+        await settle(page, started);
+      }
       const opened = popup as Page | null; // set by the popup listener while the action ran
       // Nothing shown, loading or opened yet: a person keeps looking a moment, for a debounced search or a menu on a timer.
       const unseen = error === null && !opened && ['click', 'hover', 'type', 'press'].includes(action.type) && started.size === 0 && page.url() === url_before;

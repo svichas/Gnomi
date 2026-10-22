@@ -305,7 +305,7 @@ export interface ActionResult {
 
 export interface ActionOutcome extends ActionResult {
   target: ActionTarget | null;
-  text: string | null; // read: the region's text
+  text: string | null; // read: the region's text; an upload: the file chosen
 }
 
 export interface PageSnapshot {

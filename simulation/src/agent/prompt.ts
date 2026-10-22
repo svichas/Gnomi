@@ -288,7 +288,8 @@ function digest(older: StepMemory[]): string {
 }
 
 function remember(m: StepMemory, last: boolean, p: string): string {
-  const read = last && m.text ? `\n   It read: <page>${inert(m.text.slice(0, 600))}</page>` : '';
+  // A read quotes the page; an upload's "File chosen: …" is Gnomi's own note.
+  const read = !last || !m.text ? '' : m.action.type === 'read' ? `\n   It read: <page>${inert(m.text.slice(0, 600))}</page>` : `\n   ${inert(m.text)}`;
   const thought = m.thought ? ` ${p} thought: "${m.thought}"` : '';
   const friction = m.friction ? ` ${p} reported: "${m.friction}"` : '';
   return `${m.step_no}. ${describeAction(m.action, m.target)} → ${describeResult(m.result, m.action)}.${thought}${friction}${read}`;

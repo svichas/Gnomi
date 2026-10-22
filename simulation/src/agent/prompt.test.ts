@@ -131,6 +131,8 @@ test('memory keeps the last six steps verbatim and a digest of the rest', () => 
   assert.match(textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 10, memory: retried, page, screenshot: null })), /tried: click link "Link 1" on \/ → went to \/job; click link "Link 2" on \/ → failed \(ref_not_found\); frictions/, 'a retry is listed once');
   assert.match(user, /^4\. click link "Link 4" → the page changed\. Priya thought: "thought 4"$/m);
   assert.match(user, /^9\. read link "Link 9" → the page changed\. Priya thought: "thought 9"\n {3}It read: <page>Open jobs: Senior Backend Engineer<\/page>$/m);
+  const upload = memory.map((m, i) => (i === 8 ? { ...m, action: { type: 'click' as const, ref: 'e8', text: null }, text: 'File chosen: photo.png' } : m));
+  assert.match(textOf(userParts({ persona: BUILTIN_PERSONA, stepNo: 10, memory: upload, page, screenshot: null })), /^9\. click link "Link 9" → the page changed\. Priya thought: "thought 9"\n {3}File chosen: photo\.png$/m, 'an upload is not a read of the page');
 });
 
 test('the history says a step is still working, whether a scroll moved, and which hash route a click went to', () => {

@@ -154,6 +154,18 @@ render(); setTimeout(render, 800);</script></body></html>`,
   '/guidelines': `<!doctype html><html><head>${head}<title>Guidelines</title></head><body><h1>Guidelines</h1><a href="/next">Examples</a></body></html>`,
   '/preview': `<!doctype html><html><head>${head}<title>Preview</title></head><body><p id="o"></p><button onclick="window.close()">Close preview</button>
 <script>o.textContent = window.opener ? 'has opener' : 'no opener'</script></body></html>`,
+  // File fields as forms build them: a labelled native input, a styled button that clicks a hidden one, a react-dropzone area
+  // and a PDF-only input. The status says what each received, and an image's size as the browser decodes it.
+  '/upload': `<!doctype html><html><head>${head}<title>Upload</title></head><body>
+<label for="cover">Cover image</label> <input id="cover" type="file" accept="image/*">
+<button type="button" onclick="photo.click()">Upload photo</button><input id="photo" type="file" accept="image/png,image/jpeg" hidden>
+<div role="presentation" tabindex="0" style="border:2px dashed #888;padding:24px;cursor:pointer" onclick="zone.click()"><p>Drag 'n' drop some files here, or click to select files</p></div><input id="zone" type="file" hidden>
+<label for="programme">Programme (PDF)</label> <input id="programme" type="file" accept=".pdf"><p id="received" role="status"></p>
+<script>for (const input of document.querySelectorAll('input')) input.onchange = async () => {
+  const file = input.files[0];
+  const size = file.type.startsWith('image/') ? await createImageBitmap(file).then((b) => ' ' + b.width + 'x' + b.height) : '';
+  received.textContent = input.id + ': ' + file.name + ' ' + file.type + size;
+}</script></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -556,6 +568,30 @@ test('a new tab opens in front of the form, which waits behind it as the persona
   const partner = await act(page, 'click', refOf((await page.snapshot()).text, /link "Partner site" \[ref=(\w+)\]/));
   assert.deepEqual([partner.ok, partner.error, partner.url_after], [false, 'host_not_allowed', `${origin}/form-tabs`]);
   assert.match((await page.snapshot()).text, /Saved title: Sunrise hike/);
+});
+
+test('a file field takes a realistic file of the kind it asks for, through its chooser on a click or named by what is typed', async (t) => {
+  await Promise.all((['desktop', 'mobile'] as const).map(async (device) => {
+    const page = await open(t, '/upload', device);
+    const { text } = await page.snapshot();
+    for (const [line, shown] of [
+      [/button "Cover image" \[ref=(\w+)\]/, /cover: photo\.png image\/png (\d+)x(\d+)/],
+      [/button "Upload photo" \[ref=(\w+)\]/, /photo: photo\.png image\/png (\d+)x(\d+)/],
+      [/paragraph \[ref=(\w+)\][^\n]*: Drag 'n' drop/, /zone: photo\.png image\/png (\d+)x(\d+)/],
+      [/button "Programme \(PDF\)" \[ref=(\w+)\]/, /programme: document\.pdf application\/pdf/],
+    ] as const) {
+      const action: Action = { type: 'click', ref: refOf(text, line), text: null };
+      const result = await page.act(action);
+      const failed = failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' });
+      assert.deepEqual([result.ok, result.dom_changed, failed, result.text?.startsWith('File chosen: ')], [true, true, null, true], `${device} ${line}`);
+      const status = shown.exec((await page.snapshot()).text);
+      assert.ok(status, `${device} ${line}`);
+      if (status[1]) assert.ok(+status[1] >= 800 && +status[2] >= 450, `${device} ${line}: ${status[0]}`);
+    }
+    const typed = await act(page, 'type', refOf(text, /button "Programme \(PDF\)" \[ref=(\w+)\]/), 'programme.pdf');
+    assert.deepEqual([typed.ok, typed.error, typed.text], [true, null, 'File chosen: programme.pdf'], device);
+    assert.match((await page.snapshot()).text, /programme: programme\.pdf application\/pdf/, device);
+  }));
 });
 
 test('the persona sees what the page shows a moment later: a debounced search, a slow GET, a menu on a timer, a slow save', async (t) => {
