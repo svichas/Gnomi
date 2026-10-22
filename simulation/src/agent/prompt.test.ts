@@ -307,8 +307,8 @@ test('the socialiser schema accepts silence and each action with what it needs, 
   bad({ action: 'post' }, /a post has text/);
   bad({ action: 'reply', text: 'Same.' }, /a reply names the post/);
   bad({ action: 'react', post_id: 'r1-p-a' }, /agree or disagree/);
-  bad({ action: 'react', post_id: 'r2-p-z', reaction: 'agree' }, /not the id of a post in the feed shown/);
-  bad({ opinion_updates: [{ poi_id: 'poi-1', ...opinion, post_ids: ['r0-unseen'] }] }, /not the id of a post in the feed shown/);
+  bad({ action: 'react', post_id: 'r2-p-z', reaction: 'agree' }, /\\"r2-p-z\\" is not the id of a post in the feed shown \(its posts: r1-p-a, inj-r1-1\)/);
+  bad({ opinion_updates: [{ poi_id: 'poi-1', ...opinion, post_ids: ['r0-unseen'] }] }, /\\"r0-unseen\\" is not the id of a post in the feed shown/);
   bad({ action: 'post', text: 'x'.repeat(501) }, /500/);
   bad({ action: 'post', text: '   ' }, /too_small|>=1/);
   bad({ about_poi_id: 'poi-9' }, /poi-1/);
