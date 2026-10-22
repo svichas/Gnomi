@@ -128,6 +128,10 @@ label{display:block;position:relative;min-height:44px;padding:8px 8px 8px 40px;m
 onkeydown="const k = { ArrowRight: 1, ArrowLeft: -1 }[event.key]; if (k) this.ariaValueNow = Math.min(20, Math.max(1, +this.ariaValueNow + k))">●</div></body></html>`,
   '/touch': `<!doctype html><html><head>${head}<title>Touch</title></head><body>
 <button ontouchend="event.preventDefault(); document.body.append('Menu open')">Menu</button></body></html>`,
+  // A list a poll re-renders with the same links, as innerHTML or an htmx swap does, between the snapshot and the click.
+  '/rerender': `<!doctype html><html><head>${head}<title>Events</title></head><body><ul id="list"></ul><script>
+const render = () => { list.innerHTML = '<li><a href="/next">Sunset hike</a></li><li><a href="/long">Olympus trek</a></li>' };
+render(); setTimeout(render, 800);</script></body></html>`,
   '/slow-form': `<!doctype html><html><head>${head}<title>Slow form</title></head><body><form method="post" action="/create"><button>Create event</button></form></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
@@ -368,6 +372,14 @@ test('unknown, malformed and stale refs are ref_not_found, never an exception', 
   const stale = await act(page, 'click', vanish);
   assert.deepEqual([stale.ok, stale.error], [false, 'ref_not_found']);
   assert.equal((await page.snapshot()).title, 'Gnomi fixture'); // the page survived all of it
+});
+
+test('a ref still reaches its element after the list it is in re-renders the same', async (t) => {
+  const page = await open(t, '/rerender');
+  const ref = refOf((await page.snapshot()).text, /link "Olympus trek" \[ref=(\w+)\]/);
+  await act(page, 'wait'); // the list re-renders meanwhile, as it does while the model thinks
+  const outcome = await act(page, 'click', ref);
+  assert.deepEqual([outcome.ok, outcome.url_after], [true, `${origin}/long`]);
 });
 
 test('missing ref or text is a short error, not an exception', async (t) => {

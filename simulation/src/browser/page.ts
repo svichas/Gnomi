@@ -271,8 +271,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     // Playwright still resolves refs the pruned snapshot left out, so a guessed one would tap something the persona never saw.
     if (!REF.test(ref) || !shown.includes(`[ref=${ref}]`)) throw new Error('ref_not_found');
     const locator = page.getByRef(ref);
-    if ((await locator.count().catch(() => 0)) === 0) throw new Error('ref_not_found');
-    return locator;
+    if ((await locator.count().catch(() => 0)) > 0) return locator;
+    // Re-rendered since the snapshot (a polled list, an htmx swap): the one element with the role and name the persona saw.
+    // shortcut: main-frame refs only, as getByRole does not reach into frames, upgrade if a target app re-renders inside one.
+    const { role, name } = targets.get(ref) ?? { role: '', name: '' };
+    const same = page.getByRole(role as Parameters<Page['getByRole']>[0], { name, exact: true });
+    if (name && !ref.startsWith('f') && (await same.count().catch(() => 0)) === 1) return same;
+    throw new Error('ref_not_found');
   }
 
   /** Types into a native date or time field key by key, as a person does: fill() only takes ISO and throws on "25/10/2026 09:00". */
