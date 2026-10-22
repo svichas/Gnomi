@@ -57,7 +57,7 @@ export const segmentColor = (segments: Segment[], id: string | null) => {
 
 function nodeAttributes(node: SwarmNode, segments: Segment[]) {
   return node.kind === 'poi'
-    ? { key: node.key, kind: 'poi', label: node.label, color: POI_COLOR, size: Math.min(15, 11 + Math.sqrt(node.friction_count) / 2) }
+    ? { key: node.key, kind: 'poi', poi_type: node.poi_type, label: node.label, color: POI_COLOR, size: Math.min(15, 11 + Math.sqrt(node.friction_count) / 2) }
     : { key: node.key, kind: 'persona', label: node.label, color: segmentColor(segments, node.segment_id), size: Math.min(10, 6 + Math.sqrt(node.step_count) * 0.5) };
 }
 
