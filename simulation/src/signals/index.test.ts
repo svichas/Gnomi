@@ -28,7 +28,8 @@ test('failed_action: not editable and timeout are failures; a model or containme
       payload: { step_no: 4, url: A, ref: 'e1', action: 'type', error },
     });
   }
-  for (const error of ['ref_not_found', 'invalid_output', 'password_field', 'host_not_allowed', 'option_not_found']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
+  // A tap that would land on a cookie bar, or on content no longer shown, is a step the persona retakes, not a product failure.
+  for (const error of ['ref_not_found', 'invalid_output', 'password_field', 'host_not_allowed', 'option_not_found', 'covered by region "Cookies"', 'not_visible']) assert.equal(failedAction(step(1, 'click', A, A, { result: { ok: false, error } })), null, error);
 });
 
 test('failed_action: a click with no URL or DOM change had no effect; one that changed the DOM or the URL did', () => {

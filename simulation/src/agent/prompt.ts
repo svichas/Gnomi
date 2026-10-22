@@ -213,6 +213,7 @@ ${actionTypes(persona)
 Write the thought, friction, opinion and a done or abandon text in ${ENGLISH}, whatever language the page or ${p} uses. What ${p} types or selects stays as ${p} would enter it.
 An action that failed with host_not_allowed tried to open a page outside ${site}: that page cannot be shown, it is not part of the product, and it is not a problem with the product.
 An action that failed with not_a_select used select on a custom list: ${p} opens it with a click and clicks the option, as on any website. Only the select action failed, so it is not a problem with the product.
+An action that failed with "covered by …" hit what lies on top of the element (a banner, an overlay, a dialog), and one that failed with not_visible was aimed at something no longer shown: as on any website, ${p} looks again, then closes what is in the way or scrolls to it.
 State markers such as [checked], [expanded], [pressed] and [selected] appear in the screen text only when true: a checkbox without [checked] is unchecked.
 Password values are masked in the screen text and screenshots. [password: empty] means no value is entered; [password: filled] means a value is present, even though its characters are hidden. [password: hidden] means the value's presence could not be checked. Password fields accept the type action like other editable fields. For account creation, choose a synthetic test password that meets the visible requirements and use the same value for confirmation; never guess an existing account's credentials.
 
@@ -256,7 +257,7 @@ function describeAction(a: Action, t: ActionTarget | null): string {
 }
 
 function describeResult(r: ActionResult, action: Action): string {
-  if (!r.ok) return `failed (${r.error ?? 'unknown error'})`;
+  if (!r.ok) return `failed (${inert(r.error ?? 'unknown error')})`; // "covered by" quotes the page
   if (r.url_after !== r.url_before) return `went to ${where(r.url_after)}`;
   if (action.type === 'type') return action.text === '' ? 'field cleared' : 'text entered';
   if (action.type === 'scroll') return r.dom_changed ? 'it moved' : 'it did not move';

@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
 import type { Action, ActionOutcome, Device } from '../types.ts';
-import { failedAction, validationError } from '../signals/index.ts';
+import { DEFAULT_SIGNALS, failedAction, smallTarget, validationError } from '../signals/index.ts';
 import { launchBrowserPool } from './pool.ts';
 import { listen } from './server.fixture.ts';
 
@@ -90,6 +90,37 @@ const pages: Record<string, string> = {
   root.innerHTML = '<button role="switch" aria-checked="false">Notify me</button>';
   root.firstChild.onclick = (e) => e.target.setAttribute('aria-checked', String(e.target.getAttribute('aria-checked') !== 'true'));
 } });</script></body></html>`,
+  // Controls a person's tap cannot reach: under a see-through 'Saving…' overlay, a chat bubble, a cookie bar at the bottom of a
+  // page that cannot scroll, a modal dialog; a link in a collapsed accordion; a menu item hidden since the snapshot. The title
+  // lists every click that landed.
+  '/covers': `<!doctype html><html><head>${head}<title>clicks:</title></head><body style="margin:0">
+<script>document.addEventListener('click', (e) => { document.title += ' ' + (e.target.closest('[data-n]') ?? e.target).dataset.n }, true)</script>
+<button data-n="publish" style="position:absolute;left:20px;top:20px">Publish</button>
+<div data-n="saving" style="position:fixed;left:0;top:0;width:200px;height:80px;background:rgba(255,255,255,.6)">Saving…</div>
+<button data-n="next" style="position:absolute;left:20px;top:120px;width:90px;height:50px">Next</button>
+<div data-n="chat" role="button" aria-label="Open chat" style="position:fixed;left:10px;top:110px;width:120px;height:70px;border-radius:35px;background:#36f"></div>
+<button data-n="save" style="position:absolute;left:20px;top:220px">Save draft</button>
+<button data-n="delete" style="position:absolute;left:20px;top:260px" onclick="document.querySelector('dialog').showModal()">Delete event</button>
+<dialog data-n="dialog"><p>Delete this event?</p></dialog>
+<section style="position:absolute;left:300px;top:20px"><button data-n="shipping">Shipping</button>
+<div style="max-height:0;overflow:hidden"><a data-n="privacy" href="#privacy">Privacy policy</a></div><button data-n="returns">Returns</button></section>
+<div style="position:absolute;left:600px;top:20px"><button data-n="account" onclick="setTimeout(() => { menu.style.display = 'none' }, 200)">Account</button>
+<ul id="menu"><li><a data-n="logout" href="#logout">Log out</a></li></ul></div>
+<button data-n="continue" style="position:absolute;left:20px;top:700px;width:300px;height:44px">Continue</button>
+<div data-n="cookies" role="region" aria-label="Cookies" style="position:fixed;left:0;right:0;bottom:0;height:140px;background:#eee">We use cookies. <button data-n="accept">Accept all</button></div>
+</body></html>`,
+  // Checkboxes and radios as skins build them: sr-only inside the label, sr-only beside a label[for] card, transparent under a ::before box.
+  '/skins': `<!doctype html><html><head>${head}<title>Skins</title><style>
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+label{display:block;position:relative;min-height:44px;padding:8px 8px 8px 40px;margin:8px;border:1px solid #888}
+.skin input{position:absolute;left:8px;top:12px;z-index:-1;width:16px;height:16px;margin:0;opacity:0}
+.skin span::before{content:"";position:absolute;left:8px;top:12px;width:16px;height:16px;border:1px solid #888;background:#fff}
+</style></head><body>
+<label><input type="checkbox" class="sr"> Email notifications</label>
+<input type="radio" name="size" id="small" class="sr"><label for="small">Small</label>
+<input type="radio" name="size" id="large" class="sr"><label for="large">Large</label>
+<label class="skin"><input type="checkbox"><span>I agree to the terms</span></label></body></html>`,
+  '/slow-form': `<!doctype html><html><head>${head}<title>Slow form</title></head><body><form method="post" action="/create"><button>Create event</button></form></body></html>`,
   '/errors': `<!doctype html><html><head>${head}<title>Errors</title></head><body>
 <button onclick="console.error('boom from the app'); console.error('boom from the app'); fetch('/status/500?token=secret'); fetch('http://blocked.test/beacon').catch(() => {}); setTimeout(() => { throw new Error('kaboom'); })">Break</button>
 <a href="/status/404">Broken link</a></body></html>`,
@@ -98,6 +129,7 @@ const pages: Record<string, string> = {
 let pool: BrowserPool;
 let server: http.Server;
 let origin: string;
+let posts = 0; // form POSTs /create received
 
 before(async () => {
   server = http.createServer((req, res) => {
@@ -109,6 +141,9 @@ before(async () => {
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
     } else if (url.pathname.startsWith('/delay/')) {
       setTimeout(() => res.end('ok'), Number(url.pathname.slice('/delay/'.length)));
+    } else if (url.pathname === '/create') {
+      posts++;
+      setTimeout(() => res.end('<title>Created</title><h1>Event created</h1>'), 6_000);
     } else if (url.pathname === '/file.csv') {
       res.setHeader('content-type', 'text/csv');
       res.setHeader('content-disposition', 'attachment; filename="attendees.csv"');
@@ -483,6 +518,56 @@ test('a click on a control that is covered or has no size lands where it shows, 
     assert.deepEqual([outcome.ok, outcome.error, outcome.dom_changed], [true, null, true], String(line));
     assert.match((await page.snapshot()).text, option);
   }
+});
+
+test('a click on a control under a banner, an overlay or a dialog, clipped or hidden since, says what is in the way and taps nothing', async (t) => {
+  // The control, what is clicked first, the error, and the clicks that landed.
+  const cases = [
+    [/button "Publish" \[ref=(\w+)\]/, null, 'covered by div "Saving…"', 'clicks:'],
+    [/button "Next" \[ref=(\w+)\]/, null, 'covered by button "Open chat"', 'clicks:'],
+    [/button "Continue" \[ref=(\w+)\]/, null, 'covered by region "Cookies"', 'clicks:'],
+    [/button "Save draft" \[ref=(\w+)\]/, /button "Delete event" \[ref=(\w+)\]/, 'covered by dialog "Delete this event?"', 'clicks: delete'],
+    [/link "Privacy policy" \[ref=(\w+)\]/, null, 'not_visible', 'clicks:'],
+    [/link "Log out" \[ref=(\w+)\]/, /button "Account" \[ref=(\w+)\]/, 'not_visible', 'clicks: account'], // the menu closes 200 ms after this click
+  ] as const;
+  // Each waits out Playwright's timeout first: side by side, on pages of their own.
+  await Promise.all(cases.map(async ([line, first, error, clicks]) => {
+    const page = await open(t, '/covers');
+    const { text } = await page.snapshot();
+    if (first) await act(page, 'click', refOf(text, first));
+    const action: Action = { type: 'click', ref: refOf(text, line), text: null };
+    const result = await page.act(action);
+    assert.deepEqual([result.ok, result.error], [false, error], String(line));
+    assert.equal((await page.snapshot()).title, clicks, `${line}: nothing in the way was clicked`);
+    assert.equal(failedAction({ step_no: 1, action, target: result.target, result, snapshot_hash: '' }), null, String(line));
+  }));
+});
+
+test('a checkbox or radio under a skin or beside its label ticks at once, and its label is the tap target measured', async (t) => {
+  for (const device of ['desktop', 'mobile'] as const) {
+    const page = await open(t, '/skins', device);
+    for (const control of ['checkbox "Email notifications"', 'radio "Large"', 'checkbox "I agree to the terms"']) {
+      const action: Action = { type: 'click', ref: refOf((await page.snapshot()).text, new RegExp(`${control} \\[ref=(\\w+)\\]`)), text: null };
+      const started = Date.now();
+      const result = await page.act(action);
+      assert.ok(Date.now() - started < 1_500, `${device} ${control}: ${Date.now() - started} ms`);
+      assert.deepEqual([result.ok, result.dom_changed], [true, true], `${device} ${control}`);
+      assert.match((await page.snapshot()).text, new RegExp(`${control} \\[checked\\]`), `${device} ${control}`);
+      assert.equal(smallTarget({ step_no: 1, action, target: result.target, result, snapshot_hash: '' }, device, DEFAULT_SIGNALS), null, `${device} ${control}: ${result.target?.box}`);
+    }
+  }
+});
+
+test('a page load slower than the action timeout is the click or the navigate going somewhere, not a timeout', async (t) => {
+  const started = Date.now();
+  const [click, navigate] = await Promise.all([
+    open(t, '/slow-form').then(async (page) => act(page, 'click', refOf((await page.snapshot()).text, /button "Create event" \[ref=(\w+)\]/))),
+    open(t).then((page) => act(page, 'navigate', null, '/delay/6000')),
+  ]);
+  assert.deepEqual([click.ok, click.error, click.url_after], [true, null, `${origin}/create`]);
+  assert.deepEqual([navigate.ok, navigate.error, navigate.url_after], [true, null, `${origin}/delay/6000`]);
+  assert.equal(posts, 1, 'the form was sent once');
+  assert.ok(Date.now() - started < 9_000, `${Date.now() - started} ms`);
 });
 
 test('type into a native date or time field goes in key by key, in the order the field shows', async (t) => {

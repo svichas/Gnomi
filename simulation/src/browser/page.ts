@@ -41,6 +41,50 @@ function passwordState(el: Element, selector: string): 'empty' | 'filled' | null
   return control?.matches(selector) ? ((control as HTMLInputElement).value ? 'filled' : 'empty') : null;
 }
 
+// Runs in the page: why a person's tap at the centre of `spot` (el, or the sized ancestor it shows in) would not reach el, or
+// null when it would: on el, in spot, or through see-through layers of el's own (a custom select's search box over its
+// placeholder). An ancestor that clips spot makes it not_visible; an overlay, a fixed bar or a modal on top covers it.
+// With no spot, el is a checkbox or radio that does not show where it sits (sr-only, transparent under a skin, under its
+// label): it is tapped through its largest label. 'plain' when el is anything else, or shows itself.
+// shortcut: light-DOM ancestors only, so a layer across a shadow boundary goes unseen, upgrade if a target app nests them.
+function reach(el: Element, spot: Element | null): string | null {
+  const root = el.getRootNode() as Document | ShadowRoot;
+  const centre = (e: Element) => {
+    (e as Element & { scrollIntoViewIfNeeded(): void }).scrollIntoViewIfNeeded(); // Chromium's own, as Playwright scrolls: only when out of view
+    const r = e.getBoundingClientRect();
+    return [r.x + r.width / 2, r.y + r.height / 2] as const;
+  };
+  if (!spot) {
+    if (!(el instanceof HTMLInputElement) || !/^(?:checkbox|radio)$/i.test(el.type) || el.disabled || root.elementFromPoint(...centre(el)) === el) return 'plain';
+    const area = (e: Element) => e.getBoundingClientRect().width * e.getBoundingClientRect().height;
+    spot = [el, ...(el.labels ?? [])].reduce((a, b) => (area(b) > area(a) ? b : a));
+  }
+  const [x, y] = centre(spot);
+  for (let a = spot.parentElement; a && a !== document.body; a = a.parentElement) {
+    const r = a.getBoundingClientRect();
+    if (/hidden|clip|auto|scroll/.test(getComputedStyle(a).overflow) && !(x > r.left && x < r.right && y > r.top && y < r.bottom)) return 'not_visible'; // a collapsed panel has no inside at all
+  }
+  const hit = root.elementFromPoint(x, y);
+  if (!hit) return 'not_visible';
+  if (spot.contains(hit) || el.contains(hit)) return null;
+  let over: Element | null = hit;
+  while (over && !over.matches(':modal') && !/fixed|sticky/.test(getComputedStyle(over).position)) over = over.parentElement;
+  if (over?.contains(el)) over = null; // el's own layer, such as a fixed sheet it sits in
+  for (let e: Element | null = hit; !over && e && !e.contains(el); e = e.parentElement) {
+    const style = getComputedStyle(e);
+    if (style.opacity !== '0' && (!/^transparent$|, 0\)$/.test(style.backgroundColor) || style.backgroundImage !== 'none')) over = e;
+  }
+  if (!over) return null;
+  const name = over.getAttribute('aria-label') ?? (over as HTMLElement).innerText?.trim().split('\n')[0] ?? '';
+  return `covered by ${over.getAttribute('role') ?? over.localName} "${name.slice(0, 40).replaceAll('"', "'")}"`;
+}
+
+// Runs in the page: the largest box of el and its labels, where a person taps a checkbox or radio.
+function labelBox(el: Element): [number, number, number, number] {
+  const r = [el, ...((el as HTMLInputElement).labels ?? [])].map((e) => e.getBoundingClientRect()).reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+  return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+}
+
 // Runs in the page: opacity 0 hides content from people but not from the accessibility tree (a closed custom drop-down
 // would read as open), so it is made visibility: hidden for the snapshot, which Playwright does honour, then put back.
 // A form field is left alone: a native checkbox or <select> under a custom skin is often transparent on purpose.
@@ -189,6 +233,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   });
 
   const hostOf = (url: string) => URL.parse(url)?.hostname ?? '';
+  // A page load slower than ACTION_MS is the action going somewhere, not a timeout: pending and the next snapshot tell where.
+  const loading = (from: string) => page.url() !== from || [...inflight].some((r) => r.isNavigationRequest() && r.frame() === page.mainFrame());
 
   // What went wrong in the page since errors() was last drained (tech.md §8.1), each distinct error once.
   // shortcut: at most MAX_ERRORS per step, so a page that throws on every frame cannot flood the log, upgrade to counts if a report needs them.
@@ -253,14 +299,27 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     switch (action.type) {
       case 'click': {
         const target = await locate(ref);
+        const from = page.url();
         formClick = await target.evaluate((el) => el.closest('form') !== null, null, { timeout }).catch(() => false);
+        // A skinned checkbox or radio is ticked through its label at once, as a person taps it, not after Playwright's timeout.
+        const label = await target.evaluate(reach, null, { timeout }).catch(() => 'plain');
+        if (label !== 'plain') {
+          if (label) throw new Error(label);
+          await target.evaluate((el) => (el as HTMLElement).click(), null, { timeout });
+          return null;
+        }
         await target.click({ timeout }).catch(async (e) => {
-          // A person taps where the control shows: through what covers it (a custom select's search box over its placeholder),
-          // or on its nearest sized ancestor when it has no size of its own (a custom select's 0×0 input). A disabled one stays a timeout.
+          if (e instanceof errors.TimeoutError && loading(from)) return;
+          // A person taps where the control shows: through a see-through layer of its own (a custom select's search box over its
+          // placeholder), or on its nearest sized ancestor when it has no size (a custom select's 0×0 input), never on what
+          // covers it or on what no longer shows. A disabled one stays a timeout.
           if (!(e instanceof errors.TimeoutError) || !(await target.isEnabled({ timeout }).catch(() => false))) throw e;
+          if (!(await target.evaluate((el) => el.checkVisibility(), null, { timeout }))) throw new Error('not_visible');
           let spot = target;
           for (let up = 0; up < 3 && !(await hasSize(spot)); up++) spot = spot.locator('xpath=..');
           if (!(await hasSize(spot))) throw e;
+          const covered = await target.evaluate(reach, await spot.elementHandle({ timeout }), { timeout });
+          if (covered) throw new Error(covered);
           await spot.click({ force: true, timeout });
         });
         return null;
@@ -319,9 +378,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         }
         return null;
       }
-      case 'back':
-        await page.goBack({ timeout, waitUntil: 'domcontentloaded' });
+      case 'back': {
+        const from = page.url();
+        await page.goBack({ timeout, waitUntil: 'domcontentloaded' }).catch((e) => {
+          if (!(e instanceof errors.TimeoutError && loading(from))) throw e;
+        });
         return null;
+      }
       case 'navigate': {
         if (!action.text) throw new Error('navigate needs a url');
         let url: URL;
@@ -331,7 +394,10 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
           throw new Error('invalid url');
         }
         if (!allows(url.hostname)) throw new Error('host_not_allowed');
-        await page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
+        const from = page.url();
+        await page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' }).catch((e) => {
+          if (!(e instanceof errors.TimeoutError && loading(from))) throw e;
+        });
         return null;
       }
       case 'read': {
@@ -396,6 +462,12 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       if (action.type === 'done' || action.type === 'abandon') throw new Error(`programming error: ${action.type} never reaches the page`);
       const ref = action.ref?.trim() || null;
       const url_before = page.url();
+      let target = (ref && targets.get(ref)) || null;
+      // A person taps a checkbox's label, not its 13 px box or the hidden input under a skin: that is what small_target measures.
+      if (target && action.type === 'click' && /^(?:checkbox|radio|switch)$/.test(target.role)) {
+        const box = await page.getByRef(ref!).evaluate(labelBox, null, { timeout: 1_000 }).catch(() => null);
+        if (box) target = { ...target, box };
+      }
       const before = await domVersion(page);
       const scrolled = action.type === 'scroll' ? await domVersion(page, 's') : '';
       let text: string | null = null;
@@ -450,7 +522,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       else if (observed) error = observed;
       // A scroll changes no node: whether the page or the list moved is what the persona needs to hear.
       const dom_changed = (await domVersion(page)) !== before || (action.type === 'scroll' && (await domVersion(page, 's')) !== scrolled);
-      return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, ...(pending && { pending }), target: (ref && targets.get(ref)) || null, text };
+      return { ok: error === null, url_before, url_after: page.url(), dom_changed, error, ...(pending && { pending }), target, text };
     },
 
     inspect: () => inspect(page),
