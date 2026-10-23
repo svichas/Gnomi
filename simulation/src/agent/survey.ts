@@ -60,7 +60,9 @@ export function surveySystemPrompt(persona: Persona, project: ProjectConfig, seg
     : poi?.type === 'design' ? `has just looked through the screens of ${poi.name}, a design of ${project.name}, with something to get done at work in mind,`
     : product !== project.name ? `has just looked at ${product}, a competitor of ${project.name}, to see how it handles the same work, only browsing: ${p} did not sign up, log in or send anything there,`
     : `has just used ${project.name} to get something done at work`;
-  return `This is ${persona.name}. ${p} ${met} and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
+  // Same rule as the design steps (poi/design-prompt.ts): the designer's filler is not the product.
+  const sample = poi?.type === 'design' ? ` The screens were filled with sample content, such as names, dates and times, addresses and call links, that need not match from one screen to the next or what ${p} chose earlier. Sample content is never a friction or an objection.` : '';
+  return `This is ${persona.name}. ${p} ${met} and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.${sample}
 
 ${personaSection(persona, project, segment, obj)}
 
