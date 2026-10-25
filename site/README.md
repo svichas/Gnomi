@@ -20,7 +20,7 @@ npm run preview
 
 Deploy the contents of `dist/` to any static host. The relative base supports hosting under a subdirectory.
 
-This site is published from the parent Gnomi repository to GitHub Pages via [`.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml), which builds `site/dist` and deploys it to <https://svichas.github.io/Gnomi/>. No separate hosting setup is required.
+This site is published from the parent Gnomi repository to GitHub Pages via [`.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml), which builds `site/dist` and force-pushes it to the `gh-pages` branch. GitHub Pages serves that branch at <https://svichas.github.io/Gnomi/>. No separate hosting setup is required.
 
 ## Content and assets
 
