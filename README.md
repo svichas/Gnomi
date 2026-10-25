@@ -23,7 +23,7 @@
 
 For product teams, designers, founders, and engineers who want to know where people might get stuck—and what to test next.
 
-[How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Development](#development) · [Documentation](#documentation) · [License](#license)
+[How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Command line](#command-line) · [Development](#development) · [Documentation](#documentation) · [License](#license)
 
 > Findings come from simulated users. Treat them as hypotheses, and validate important decisions with real people.
 
@@ -109,13 +109,45 @@ npm run gnomi -- run --url http://localhost:4317 --allow localhost \
   --audience ./gym-audience.json --fake-llm --project ./demo.gnomi
 ```
 
-`audience create` writes the audience and its personas to a file (`--propose` asks the model for segments instead of one "Everyone" segment). `run` reuses those personas while they are current for the product, name and goal, and writes any that are not again without saving them back. It prints the timeline as it goes and leaves the events, screenshots, `report.json` and `report.md` in the project folder (`./gnomi-runs/<time>` without `--project`). Without `--audience` it runs one built-in persona. Pass `--pois <file.json>` instead of `--url` for text, design or several inputs, and `--settings <file.json>` to change routing, rounds or budgets; `node engine/src/cli.ts` with no command lists every option.
-
-The CLI also has `estimate` (cost and time before a run), `personas` (list or show an audience file's personas), `audience update` (write personas again after editing the file's segments or count), `runs` and `report` (a past run's summary, Markdown or JSON), and `rejudge` (group and name an ended run's themes again with the current judge, without browsing). With `--json`, every command prints one JSON object per line and ends with its result. Coding agents such as Claude Code and Codex working in this repo can drive it: [the Gnomi skill](.claude/skills/gnomi/SKILL.md) explains the workflow, and [AGENTS.md](AGENTS.md) points Codex to it.
+`audience create` writes the audience and its personas to a file (`--propose` asks the model for segments instead of one "Everyone" segment). `run` reuses those personas while they are current for the product, name and goal, and writes any that are not again without saving them back. It prints the timeline as it goes and leaves the events, screenshots, `report.json` and `report.md` in the project folder (`./gnomi-runs/<time>` without `--project`). Without `--audience` it runs one built-in persona. Pass `--pois <file.json>` instead of `--url` for text, design or several inputs, and `--settings <file.json>` to change routing, rounds or budgets; see [Command line](#command-line) for the other commands.
 
 Scripted answers are fixtures for checking the workflow, not model-generated research findings. Login recording and HTML or PDF reports are available in the desktop app only. For a live CLI run, supply `ANTHROPIC_API_KEY` (or the key of the provider your routing uses) in your environment and omit `--fake-llm`.
 
 See the [Gym guide](demo/GymSite/README.md) for the design and text fixtures, or start the web control with `GYM_DEFECTS=none npm run gym`.
+
+## Command line
+
+Everything the desktop app runs is also available from the terminal, without opening the app. From the repository root:
+
+```sh
+npm run gnomi -- <command> [options]
+```
+
+Run `npm run gnomi` with no command to list every command and option.
+
+| Command | Purpose |
+| --- | --- |
+| `audience create` | Write an audience and its personas to a file. `--propose` asks the model for segments. |
+| `audience update` | Write personas again after editing the file's segments or count. |
+| `personas` | List an audience file's personas, or show one with `--id`. |
+| `estimate` | Estimate cost and time before a run. |
+| `run` | Run the audience against `--url` or a `--pois` file and write the report into `--project`. |
+| `runs` | List a project folder's runs. |
+| `report` | Rebuild a past run's report as a summary, Markdown or JSON. |
+| `rejudge` | Group and name an ended run's themes again with the current judge, without browsing. |
+
+Provider keys come from the environment (`ANTHROPIC_API_KEY` for the default routing, or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY` when `--settings` routes to them). `--fake-llm` uses scripted answers and calls no model. With `--json`, every command prints one JSON object per line and the last line is its result, which makes it easy to script.
+
+### With AI coding agents
+
+Coding agents can run Gnomi for you: build the audience, estimate the cost, run it against your staging app, copy or designs, and summarize the findings. Open an agent in this repository and ask in plain language, for example:
+
+> Test the pricing copy in `copy/pricing.md` with 20 simulated small-business owners and tell me the top frictions. Keep it under $3.
+
+- **Claude Code** loads [the Gnomi skill](.claude/skills/gnomi/SKILL.md) automatically when you ask it to test a product with simulated users, or invoke it with `/gnomi`.
+- **Codex, Cursor and other agents** that read [AGENTS.md](AGENTS.md) are pointed to the same skill. For any other tool, tell it to read `.claude/skills/gnomi/SKILL.md` first.
+
+The skill tells the agent to estimate before running, ask you before going over your budget, run long simulations in the background, and present findings as hypotheses rather than facts. Your provider key must be set in the shell the agent runs commands in.
 
 ## Local storage and model access
 
