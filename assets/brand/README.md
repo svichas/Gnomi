@@ -19,6 +19,7 @@ The design rules and rationale live in [docs/brand.md](../../docs/brand.md). Sta
 | [favicon.ico](favicon.ico) | ICO · 16, 32, 48 px | Olive mark, transparent; light browser contexts |
 | [brand-board.svg](brand-board.svg) | SVG · 1600 × 1300 | Self-contained visual brand board, outlined typography |
 | [brand-board.png](brand-board.png) | PNG · 1600 × 1300 | Shareable brand board preview |
+| [social-preview.png](social-preview.png) | PNG · 1280 × 640 | GitHub social preview; rendered from [social-preview.html](social-preview.html) |
 | [brand-tokens.css](brand-tokens.css) | CSS | Font declaration, light/dark color roles, typography and spacing references |
 | [fonts/InterVariable.woff2](fonts/InterVariable.woff2) | WOFF2 · Inter 4.001 | Local upright variable font, weights 100–900 |
 | [fonts/OFL.txt](fonts/OFL.txt) | Text | Inter’s SIL Open Font License 1.1 |

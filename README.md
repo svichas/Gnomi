@@ -23,9 +23,33 @@
 
 For product teams, designers, founders, and engineers who want to know where people might get stuck—and what to test next.
 
-[How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Command line](#command-line) · [Development](#development) · [Documentation](#documentation) · [License](#license)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Run locally](#run-locally) · [Try the demo](#try-the-demo) · [Command line](#command-line) · [Development](#development) · [Documentation](#documentation) · [License](#license)
 
 > Findings come from simulated users. Treat them as hypotheses, and validate important decisions with real people.
+
+## Quick start
+
+**Download the desktop app** for macOS, Windows, or Linux from the [latest release](https://github.com/svichas/Gnomi/releases/latest), then add a provider key in **Settings**.
+
+**Or see a run in two minutes, with no API key.** With Node.js 24.15 or newer, start the bundled Gym demo app:
+
+```sh
+git clone https://github.com/svichas/Gnomi.git
+cd Gnomi
+npm ci
+npx playwright-core install chromium
+npm run gym
+```
+
+Leave it running, and in a second terminal send six scripted personas through it:
+
+```sh
+npm run gnomi -- audience create --out ./gym-audience.json --name Gym --product "An applicant tracking system." \
+  --goal "Create a job post" --url http://localhost:4317 --count 6 --fake-llm
+npm run gnomi -- run --url http://localhost:4317 --allow localhost --audience ./gym-audience.json --fake-llm --project ./demo.gnomi
+```
+
+Open `demo.gnomi/runs/r-0001/report.md` to read the report. Scripted answers check the workflow; for real findings, see [Try the demo](#try-the-demo) and [Run locally](#run-locally).
 
 ## What you can share
 

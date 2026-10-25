@@ -1,6 +1,9 @@
 {
   "name": "@gnomi/app",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Social simulation and product research on your desktop.",
+  "author": "Stefanos Vichas",
+  "homepage": "https://github.com/svichas/Gnomi",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -24,7 +27,8 @@
     "smoke:audience": "electron-vite build && node audience.smoke.ts",
     "smoke:completion": "electron-vite build && node completion.smoke.ts",
     "smoke:comparison": "electron-vite build && node comparison.smoke.ts",
-    "smoke:background": "electron-vite build && node background.smoke.ts"
+    "smoke:background": "electron-vite build && node background.smoke.ts",
+    "dist": "electron-vite build && electron-builder --publish never"
   },
   "dependencies": {
     "@gnomi/engine": "0.0.0",
@@ -44,6 +48,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "44.7.2",
+    "electron-builder": "26.17.0",
     "electron-vite": "6.0.0",
     "graphology": "0.26.0",
     "graphology-layout-forceatlas2": "0.10.1",

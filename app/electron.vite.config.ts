@@ -9,7 +9,11 @@ export default defineConfig({
   main: {
     build: {
       // The engine and the simulation are bundled from their TypeScript source; only their npm dependencies stay external.
-      externalizeDeps: { include: [...Object.keys(engine.dependencies), ...Object.keys(simulation.dependencies)].filter((dep) => !dep.startsWith('@gnomi/')) },
+      // Node refuses to strip types under node_modules, which is where a packaged app keeps @gnomi/*.
+      externalizeDeps: {
+        exclude: ['@gnomi/engine', '@gnomi/simulation'],
+        include: [...Object.keys(engine.dependencies), ...Object.keys(simulation.dependencies)].filter((dep) => !dep.startsWith('@gnomi/')),
+      },
       rolldownOptions: {
         // host.js is the entry that utilityProcess.fork() starts, so it is built next to index.js.
         input: {
