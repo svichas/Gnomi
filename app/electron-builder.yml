@@ -1,5 +1,7 @@
 appId: io.github.svichas.gnomi
 productName: Gnomi
+# Without it Windows and Linux builds take the npm name "@gnomi/app", which is not a valid file name.
+executableName: Gnomi
 copyright: Copyright © Stefanos Vichas
 directories:
   output: dist
