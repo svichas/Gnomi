@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
-import { buildCandidates, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
 import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
@@ -255,15 +255,31 @@ test('structured survey answers group by the part of the product they name, and 
     ['g2', 'objection', 'pricing page', [['a1', 4]]],
     ['g3', 'objection', 'Security', [['a3', 3]]],
   ]);
-  // The judge tries to fold the pricing objection into the pricing friction: the objection stays its own theme.
-  const judged = applyJudge(groups, [{ title: 'Pricing is unclear', description: 'd', group_ids: ['g1', 'g2'] }]);
-  assert.deepEqual(judged.drafts.map((d) => [d.groups.map((g) => g.id), d.named_by]), [[['g1'], 'judge'], [['g2'], 'rules'], [['g3'], 'rules']]);
+  // The judge tries to fold the pricing objection into the pricing friction: the objection stays its own theme, under the judge's
+  // name, and a repeat of the same theme (models sometimes list them twice) adds nothing.
+  const twice = { title: 'Pricing is unclear', description: 'd', group_ids: ['g1', 'g2'] };
+  const judged = applyJudge(groups, [twice, twice]);
+  assert.deepEqual(judged.drafts.map((d) => [d.groups.map((g) => g.id), categoryOf(d.groups[0].kind), d.title, d.named_by]), [
+    [['g1'], 'friction', 'Pricing is unclear', 'judge'],
+    [['g2'], 'objection', 'Objection: Pricing is unclear', 'judge'],
+    [['g3'], 'objection', 'Nothing on where data is stored', 'rules'],
+  ]);
   const themes = analyseFrictions(events, ctx).themes;
   assert.deepEqual(themes.map((t) => [t.id, t.category, t.prevalence?.personas, t.prevalence?.exposed, t.prevalence?.level]), [
     ['g1', 'friction', 2, 3, 'some'], // two personas: better evidence than either single report
     ['g2', 'objection', 1, 3, 'single'], // severity 4
     ['g3', 'objection', 1, 3, 'single'],
   ]);
+});
+
+test('a survey group the judge did not name is titled by its first sentence, cut at a word', () => {
+  const long = `Reached Pricing after several pages of searching and found no numbers at all, just a form asking for my company size and email. Expected prices.`;
+  const [short, cut] = groupCandidates(buildCandidates(log(
+    ['persona.survey', 'a1', structured([item('objection', 'Security', 'Nothing on where data is stored. I would ask IT first.', 3)])],
+    ['persona.survey', 'a2', structured([item('friction', 'Pricing page', long, 3)])],
+  ), 'poi'));
+  assert.equal(rulesTitle(short), 'Nothing on where data is stored');
+  assert.equal(rulesTitle(cut), 'Reached Pricing after several pages of searching and found no numbers at all, just a form asking for my company size…');
 });
 
 test('buyer objections are a share of the buyers surveyed on the POI, not of everyone who used it', () => {

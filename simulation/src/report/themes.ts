@@ -180,9 +180,17 @@ const KIND_TITLE: Record<CandidateKind, string> = {
 
 const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
 
+/** A persona's words as a title: the first sentence, cut at a word when it is still too long. */
+function headline(text: string): string {
+  const first = text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/\.$/, '');
+  if (first.length <= TITLE_MAX) return first;
+  const cut = first.lastIndexOf(' ', TITLE_MAX - 1);
+  return `${first.slice(0, cut > 0 ? cut : TITLE_MAX - 1).replace(/[\s,;:]+$/, '')}…`;
+}
+
 /** A title for a group the judge did not name: what kind of trouble, at which element, on which page. */
 export function rulesTitle(group: Group): string {
-  if (group.kind === 'survey' || group.kind === 'objection') return clip(group.members[0].text, TITLE_MAX);
+  if (group.kind === 'survey' || group.kind === 'objection') return headline(group.members[0].text);
   const where = group.page ? ` on ${pathOf(group.page)}` : '';
   return group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
 }
@@ -207,23 +215,26 @@ export function applyJudge(groups: Group[], judged: JudgeTheme[] | null): { draf
   const drafts: Draft[] = [];
   for (const theme of Array.isArray(judged) ? judged : []) {
     const ids = Array.isArray(theme?.group_ids) ? theme.group_ids : [];
-    const members: Group[] = [];
-    let category: 'friction' | 'objection' | null = null;
+    // An objection and a friction are different findings: a theme that mixes them is split in two, the category of its first
+    // group first. Both keep the judge's name, so neither falls back to a quote; the second says which it is, so the two do not
+    // read as one theme listed twice.
+    const parts = new Map<'friction' | 'objection', Group[]>();
     for (const id of ids) {
       const group = byId.get(id);
       if (!group) unknown.add(String(id));
-      // An objection and a friction are different findings: a theme keeps the category of its first group, and a group of the
-      // other category stays unplaced, so it becomes its own theme.
-      else if (!placed.has(id) && (category ??= categoryOf(group.kind)) === categoryOf(group.kind)) {
+      else if (!placed.has(id)) {
         placed.add(id);
-        members.push(group);
+        const category = categoryOf(group.kind);
+        parts.set(category, [...(parts.get(category) ?? []), group]);
       }
     }
-    if (members.length === 0) continue;
-    members.sort((a, b) => groupNo(a.id) - groupNo(b.id));
-    const title = typeof theme.title === 'string' ? clip(theme.title, TITLE_MAX) : '';
-    const description = typeof theme.description === 'string' ? clip(theme.description, TEXT_MAX) : '';
-    drafts.push({ groups: members, title: title || rulesTitle(members[0]), description: description || topText(members), named_by: title ? 'judge' : 'rules' });
+    const title = typeof theme?.title === 'string' ? clip(theme.title, TITLE_MAX) : '';
+    const description = typeof theme?.description === 'string' ? clip(theme.description, TEXT_MAX) : '';
+    for (const [i, [category, members]] of [...parts].entries()) {
+      members.sort((a, b) => groupNo(a.id) - groupNo(b.id));
+      const named = title && i > 0 ? clip(`${category === 'objection' ? 'Objection' : 'Friction'}: ${title}`, TITLE_MAX) : title;
+      drafts.push({ groups: members, title: named || rulesTitle(members[0]), description: description || topText(members), named_by: title ? 'judge' : 'rules' });
+    }
   }
   for (const group of groups) {
     if (!placed.has(group.id)) drafts.push({ groups: [group], title: rulesTitle(group), description: topText([group]), named_by: 'rules' });
