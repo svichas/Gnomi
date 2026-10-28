@@ -422,7 +422,8 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   });
   context.on('console', (msg) => {
     // Chromium also logs every failed load as a console error: 4xx/5xx come from 'response' below, and containment's refusals are not the product's.
-    if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource:')) capture({ kind: 'console', status: null, message: msg.text() });
+    // A logged object with nothing to read ("Event", "[object Object]") says nothing a persona or the report could use.
+    if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource:') && !/^(?:\w*Event|\[object \w+\])$/.test(msg.text())) capture({ kind: 'console', status: null, message: msg.text() });
   });
   context.on('weberror', (error) => capture({ kind: 'exception', status: null, message: error.error().message }));
   context.on('response', (response) => {

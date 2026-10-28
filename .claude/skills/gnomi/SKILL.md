@@ -41,7 +41,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
 ]
 ```
 
-- **web**: a staging or local app only, never production. Personas click and type in a real browser, so they create real data there. Requests to hosts other than the start page's and `allowed_hosts` are blocked. Gnomi refuses only the hosts in `production_domains`, so list the product's production domain there (e.g. `["acme.com"]`). Add `"mode": "observe_only"` for a competitor's site, browsed without writes.
+- **web**: a staging or local app only, never production. Personas click and type in a real browser, so they create real data there. Requests to hosts other than the start page's and `allowed_hosts` are blocked. Gnomi refuses only the hosts in `production_domains`, so list the product's production domain there (e.g. `["acme.com"]`). Add `"mode": "observe_only"` for a competitor's site (or a production marketing site), browsed without writes; its pages may load assets and scripts from public third-party hosts, so list only the hosts personas should browse.
 - **text**: a `.md` or `.txt` file to read and react to (copy, pricing, an idea).
 - **design**: PNG, JPEG or WebP frames shown in order.
 

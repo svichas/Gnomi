@@ -69,6 +69,15 @@ before(async () => {
         <a href="/redirect?third=${q}">Via redirect</a>
         <a href="/https-redirect?third=${q}">Via secure redirect</a>
         <a href="${url.searchParams.get('dead') ?? ''}/">Dead host</a>`);
+    } else if (url.pathname === '/reads') {
+      res.end(`<!doctype html><title>Reads</title><h1>Reads</h1>
+        <img src="${other}/pixel.gif" alt="pixel">
+        <script src="${other}/lib.js"></script>
+        <a href="${other}/page">Leave</a>
+        <script>
+          fetch('${other}/api', { mode: 'no-cors' }).catch(() => {});
+          fetch('${other}/write', { method: 'POST', mode: 'no-cors', body: 'x' }).catch(() => {});
+        </script>`);
     } else if (url.pathname === '/ws') {
       res.end(`<!doctype html><title>WS</title><p id="events">events: </p><script>
         const events = [];
@@ -319,6 +328,55 @@ test('the proxy refuses and reports whatever reaches it, and forwards nothing', 
 
   assert.deepEqual(summary(blocked), ['CONNECT / navigation=false', 'CONNECT / navigation=false', 'GET /x navigation=true', 'POST /y navigation=false']);
   assert.ok(blocked.every((b) => !b.url.includes('?')));
+  assert.deepEqual(reached(), []);
+});
+
+test('observe-only: the proxy tunnels to a public host but never to the loopback, a blocked domain or without observe', async (t) => {
+  const blocked: Blocked[] = [];
+  const observe = { robots: () => true };
+  const target = new URL(thirdOrigin).host;
+  const tunnel = `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\nGET /through HTTP/1.1\r\nHost: ${target}\r\nConnection: close\r\n\r\n`;
+
+  // The real lookup: 127.0.0.1 is the user's own machine, so nothing goes through.
+  const real = await startContainment(['localhost'], [], (request) => blocked.push(request), observe);
+  t.after(() => real.close());
+  assert.match(await exchange(Number(new URL(real.proxy.server).port), tunnel), /^HTTP\/1\.1 403 /);
+
+  // A host that resolves to public addresses (stubbed onto the fixture) gets a tunnel, the bytes sent with the CONNECT included.
+  const stubbed = await startContainment(['localhost'], ['blocked.example'], (request) => blocked.push(request), observe, async () => '127.0.0.1');
+  t.after(() => stubbed.close());
+  const port = Number(new URL(stubbed.proxy.server).port);
+  const answer = await exchange(port, tunnel);
+  assert.match(answer, /^HTTP\/1\.1 200 Connection Established\r\n\r\nHTTP\/1\.1 200 OK/);
+  assert.match(answer, /Third party/);
+  assert.deepEqual(reached().filter((hit) => hit !== 'CONNECTION'), ['GET /through']);
+  assert.match(await exchange(port, `CONNECT cdn.blocked.example:443 HTTP/1.1\r\nHost: x\r\n\r\n`), /^HTTP\/1\.1 403 /);
+
+  // Without observe, the same stub changes nothing.
+  const full = await startContainment(['localhost'], [], (request) => blocked.push(request), undefined, async () => '127.0.0.1');
+  t.after(() => full.close());
+  assert.match(await exchange(Number(new URL(full.proxy.server).port), tunnel), /^HTTP\/1\.1 403 /);
+
+  assert.deepEqual(blocked.map((b) => `${b.method} ${b.host}`), ['CONNECT 127.0.0.1', 'CONNECT cdn.blocked.example', 'CONNECT 127.0.0.1']);
+  assert.deepEqual(reached().filter((hit) => hit !== 'CONNECTION'), ['GET /through']);
+});
+
+test('observe-only: a page\'s reads may leave the listed hosts, its writes and page loads may not, and the loopback stays shut', async (t) => {
+  const blocked: Blocked[] = [];
+  const page = await pool.newPage({
+    device: 'desktop', allowedHosts: ['localhost'], blockedDomains: [], storageState: null, observe: { robots: () => true },
+    onBlockedRequest: (request) => blocked.push(request),
+  });
+  t.after(() => page.close());
+  await page.goto(withThird('/reads'));
+  const leave = await page.act({ type: 'click', ref: refOf((await page.snapshot()).text, /link "Leave" \[ref=(\w+)\]/), text: null });
+  assert.equal(leave.error, 'host_not_allowed');
+  await eventually(async () => assert.equal(blocked.length, 5));
+  // The reads pass route() and are refused at the proxy (a plain-http loopback host); the write and the page load never leave.
+  assert.deepEqual(blocked.map((b) => `${b.method} ${new URL(b.url).pathname} ${b.reason} navigation=${b.navigation}`).sort(), [
+    'GET /api host navigation=false', 'GET /lib.js host navigation=false', 'GET /page host navigation=true', 'GET /pixel.gif host navigation=false',
+    'POST /write host navigation=false',
+  ]);
   assert.deepEqual(reached(), []);
 });
 
