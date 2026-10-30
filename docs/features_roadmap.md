@@ -48,12 +48,14 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 
 | Item | Status | Verified | Left to do |
 |---|---|---|---|
-| 0. Results scoreboard | Steps 1–4 built | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67 | Step 5, the live baseline, which needs a spending decision. Reviewer follow-ups in wave 2 |
-| 1. Noise cuts | Steps 1–3 built | Rebuilding the saved control report gives 4 themes, down from 6 | Step 4, the interference tag. Reviewer follow-ups in wave 2 |
+| 0. Results scoreboard | Steps 1–4 built, reviewer findings closed | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67. A person's corrections now change the numbers through `--rescore` | Step 5, the live baseline, which needs a spending decision |
+| 1. Noise cuts | Steps 1–3 built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6 | Step 4, the interference tag |
+| 2. Finding check | Built, off by default | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision. No settings control in the app yet |
+| 3. Repeat-run reliability | Steps 1–6 built | Scripted tests, including a stopped set and the CLI path. `--evaluate` now reports stability per arm | Step 7, the trait-free run. Whether real findings repeat is unmeasured |
 | Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build |
 | Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
 
-Everything else has not started. All 985 tests pass on the branch, with typecheck and lint clean. No live run has used these changes, and the Electron smoke tests have not run. GitHub CI is blocked by a billing problem, so these checks ran locally.
+Everything else has not started. All 1,048 tests pass on the branch, with typecheck and lint clean, and the Electron report, UI and main smoke tests pass, though they do not reach the repeat count or the set-aside section. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
 
 ## What "better results" means
 
@@ -192,6 +194,10 @@ Without an image-capable model, send text only and add a line to `limitations`.
 
 **Risk.** The check can reject a real defect, and it shares some model bias with the personas. That is why results stay visible and a different model family is preferred.
 
+**Built.** The check is off unless `finding_check` is set, so nothing changes for existing runs or their cost. `gnomi rejudge --check` runs it on a finished run whatever that run's setting was. A check that fails leaves the findings as they were and says how many themes it did not review, because a report of all `product` verdicts looks the same as one whose check never ran.
+
+The app has no control for it yet, so it can only be set through settings JSON. Repeat sets read only ranked themes, so a theme set aside in one run but kept in another counts as not seen in the first. This matters once the check is on by default.
+
 ### 3. Repeat-run reliability
 
 **Why.** One run gives one sample of a noisy model. Versive recommends repeat runs, and Ask Rally uses several base models to reduce bias. [interpreting-simulations.md](interpreting-simulations.md) warns that agents can share model bias, and a second model family is the direct test of that.
@@ -212,6 +218,10 @@ Without an image-capable model, send text only and add a line to `limitations`.
 
 **Risk.** Three repeats cost three times as much. Wording must follow [interpreting-simulations.md](interpreting-simulations.md): repeats test robustness inside the simulation, so never call this confidence.
 
+**Built.** Each run in a set gets an equal share of the budget, so the estimate shows the share and the highest cost of the dearest run, and a dearer `--also-model` can stop early. Only finished runs are compared, because a stopped run missing a theme says nothing about that theme. A text-only `--also-model` beside image-reading runs prints a note, since a problem visible only on screen would look like a split between model families.
+
+`--evaluate` reports stability, but the second half of the proof, precision by how often a theme repeated, needs mapped defects and is not measured. Pairs on one shared key can overstate how often a theme appeared. The report shows each run's title, so a reader can spot one.
+
 ### 4. Personas grounded in real data
 
 **Why.** This is the strongest evidence available. Interview-grounded agents reached 86% of people's own test–retest consistency against 74% for demographics-only personas ([tech.md §2.1](tech.md#21-llm-agent-social-simulation)). Grounding in real behaviour also beats hand-written directives ([tech.md §2.4](tech.md#24-known-weaknesses-of-llm-personas-and-what-the-evidence-says-works)). The prompt design in [tech.md §6.1](tech.md#61-one-persona-one-agent-one-prompt-layout) already promises real remarks per segment, but nothing implements that. Those studies did not test product use, so the gain for Gnomi is unproven ([new_simulation.md §9](new_simulation.md#9-scientific-evaluation-and-acceptance)).
@@ -230,6 +240,7 @@ Without an image-capable model, send text only and add a line to `limitations`.
 - Record which segments were grounded in `ReportMethods`, and update "Input data" in [odd.md](odd.md).
 - Personas stay fictional. Do not clone individuals as competitors do: [persona-generation.md](persona-generation.md) says Gnomi does not copy actual customers.
 - Real transcripts go to the LLM provider. Add a deterministic redaction pass for emails and phone numbers before any call, and warn the user.
+- Project copies include `assets/` ([projects.ts](../app/src/main/projects.ts)), so research files stored there travel with every copy, unredacted. Keep sources outside `assets/` or tell the user before a copy.
 - Data used to write personas cannot also validate them ([new_simulation.md §9](new_simulation.md#9-scientific-evaluation-and-acceptance)). Keep a held-out split for item 5.
 
 **Proof.** A `grounded` arm with a research pack written for the Gym can show that the pipeline works and that findings shift to the right segments. It cannot show greater realism, because the Gym has no real users. Only item 5 can.
