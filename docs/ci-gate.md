@@ -24,9 +24,9 @@ These do not fail, and are printed as warnings:
 - a new theme whose high-severity sightings tie to each other by one shared key at most, as personas meet unrelated problems at the same button
 - a high-severity theme tied to an earlier theme by one shared key, which may be a new problem
 
-A theme that reads `not_retested` does not fail or warn. An objection counts like any other theme, since a comparison does not tell them apart.
+A theme that reads `not_retested` does not fail or warn. A new high-severity objection warns and never fails, however often it comes back, because an objection is a reason not to adopt and not something to fix: `priorityOf` gives it no priority for the same reason.
 
-**A pass claims very little.** It prints "No new high-severity theme in these simulated runs. This does not show that people will not hit one." With warnings it prints "No new high-severity theme clearly came back in at least 2 of these simulated runs", then the same second sentence, as the warnings are high-severity themes from those same runs. The personas may not have tried the failing path, a theme below high severity passes silently, and a new theme that shares one key with a theme already on the earlier side can read as unchanged. A failure is a hypothesis to check, not evidence about real users ([interpreting-simulations.md](interpreting-simulations.md)).
+**A pass claims very little.** It prints "No new high-severity theme in these simulated runs. This does not show that people will not hit one." With warnings it prints "No new high-severity problem clearly came back in at least 2 of these simulated runs", then the same second sentence, as the warnings are high-severity themes from those same runs. The personas may not have tried the failing path, a theme below high severity passes silently, and a new theme that shares one key with a theme already on the earlier side can read as unchanged. A failure is a hypothesis to check, not evidence about real users ([interpreting-simulations.md](interpreting-simulations.md)).
 
 With `--json` the last line has `decision`, `base` and `run` (the run ids compared), `failing` and `warnings` (comparison rows, a new row with its `sightings`) and `reasons`. On `could_not_decide`, `failing` lists what would have failed, so a reader can still see it.
 

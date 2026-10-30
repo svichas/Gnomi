@@ -605,10 +605,10 @@ function listRuns(dir: string | undefined): void {
   }
 }
 
-/** --run, or the newest run. */
+/** --run, or the newest run that is not a set's trait-free control, which only a named run reaches: it is no report on the audience. */
 function pickRun(store: ProjectStore, v: Values, dir: string | undefined): RunRow {
   const runs = store.listRuns(); // newest first
-  const run = v.run ? runs.find((r) => r.run_id === v.run) : runs[0];
+  const run = v.run ? runs.find((r) => r.run_id === v.run) : (runs.find((r) => !isTraitFree(r.config)) ?? runs[0]);
   if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
   return run;
 }

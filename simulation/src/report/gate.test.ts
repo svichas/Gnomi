@@ -54,7 +54,7 @@ test('seen in one later run it warns and passes', () => {
 
 test('a pass with warnings does not deny the new high-severity theme it lists', () => {
   const text = gateToMarkdown(decide(base(), set('later', [OLD, NEW], [OLD], [OLD])));
-  assert.ok(text.includes('> No new high-severity theme clearly came back in at least 2 of these simulated runs. This does not show that people will not hit one.'));
+  assert.ok(text.includes('> No new high-severity problem clearly came back in at least 2 of these simulated runs. This does not show that people will not hit one.'));
   assert.ok(!text.includes('No new high-severity theme in these simulated runs'));
 });
 
@@ -99,6 +99,16 @@ test('the verdict does not depend on which later run came first', () => {
 
   const gate = decide(base(), set('later', [OLD, other], [OLD, real], [OLD, real]));
   assert.deepEqual(gate.failing[0].sightings, [{ run_id: 'later-1', severity: 3, weak: true }, { run_id: 'later-2', severity: 3 }, { run_id: 'later-3', severity: 3 }], 'the first run is the one that is weak');
+});
+
+test('a new high-severity objection warns however often it comes back, and a friction beside it still fails', () => {
+  const objection: ReportTheme = { ...theme('Too dear for a small team', ['price']), category: 'objection' };
+  const gate = decide(base(), set('later', [OLD, objection], [OLD, objection], [OLD, objection]));
+  assert.deepEqual([gate.decision, titles(gate.warnings)], ['passed', [objection.title]]);
+  assert.match(gateToMarkdown(gate), /No new high-severity problem clearly came back/);
+  assert.match(gateToMarkdown(gate), /This is an objection, a reason not to adopt, so it never fails a build\./);
+  const both = decide(base(), set('later', [OLD, objection, NEW], [OLD, objection, NEW], [OLD]));
+  assert.deepEqual([both.decision, titles(both.failing), titles(both.warnings)], ['failed', [NEW.title], [objection.title]]);
 });
 
 test('a theme that reads not retested does not fail', () => {

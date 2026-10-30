@@ -246,7 +246,7 @@ const GATE_HEADLINE: Record<GateResult, string> = {
 
 /** A pass with warnings lists new high-severity themes from these same runs, so it cannot say there were none. */
 const gateHeadline = ({ decision, warnings }: GateDecision) => (decision === 'passed' && warnings.length
-  ? `No new high-severity theme clearly came back in at least ${GATE_SIGHTINGS} of these simulated runs. This does not show that people will not hit one.`
+  ? `No new high-severity problem clearly came back in at least ${GATE_SIGHTINGS} of these simulated runs. This does not show that people will not hit one.`
   : GATE_HEADLINE[decision]);
 
 /** A gate's verdict, for `gnomi gate`. */
@@ -255,7 +255,8 @@ export function gateToMarkdown(gate: GateDecision): string {
     const sightings = theme.sightings ?? [];
     const severe = severeSightings(theme).length;
     const loose = sightings.some(({ weak }) => weak) ? ' Some of those runs only share one place on a page, so they may be different problems.' : '';
-    return `- **${line(diffTitle(theme))}**, ${sightings.length ? `high severity in ${severe} of ${count(theme.after.of, 'later run')}` : `severity ${theme.severity} of 4`}: ${line(diffText(theme))}${loose}`;
+    const attitude = theme.category === 'objection' ? ' This is an objection, a reason not to adopt, so it never fails a build.' : '';
+    return `- **${line(diffTitle(theme))}**, ${sightings.length ? `high severity in ${severe} of ${count(theme.after.of, 'later run')}` : `severity ${theme.severity} of 4`}: ${line(diffText(theme))}${loose}${attitude}`;
   });
   return [
     `# Gnomi gate: ${gate.decision.replaceAll('_', ' ')}`, '',
@@ -263,7 +264,7 @@ export function gateToMarkdown(gate: GateDecision): string {
     `> ${gateHeadline(gate)}`, '',
     ...(gate.reasons.length ? ['## Why it could not decide', '', ...gate.reasons.map((reason) => `- ${line(reason)}`), ''] : []),
     ...(gate.failing.length ? [`## ${gate.reasons.length ? 'Would have failed' : 'Failed on'} (${gate.failing.length})`, '', ...rows(gate.failing), ''] : []),
-    ...(gate.warnings.length ? [`## Warnings (${gate.warnings.length})`, '', 'High severity, but too thin to fail on.', '', ...rows(gate.warnings), ''] : []),
+    ...(gate.warnings.length ? [`## Warnings (${gate.warnings.length})`, '', 'High severity, but not enough to fail on.', '', ...rows(gate.warnings), ''] : []),
   ].join('\n');
 }
 

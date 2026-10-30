@@ -16,7 +16,7 @@ export interface GateDecision {
   base: string[]; // the runs compared on each side
   run: string[];
   failing: ThemeDiff[]; // new, and high severity in GATE_SIGHTINGS later runs tied to each other by more than one shared key; with `reasons`, what would have failed
-  warnings: ThemeDiff[]; // high severity, but too thin to fail: seen too rarely, or tied to an earlier theme by one shared key
+  warnings: ThemeDiff[]; // high severity, but no failure: seen too rarely, tied to an earlier theme by one shared key, or an objection, which priorityOf treats as an attitude and not a fix
   reasons: string[]; // why it could not decide
 }
 
@@ -26,7 +26,7 @@ export const severeSightings = ({ sightings = [] }: ThemeDiff) => sightings.filt
 export function gateDecision(diff: ReportDiff): GateDecision {
   const short = (runs: string[], side: string) => (runs.length < GATE_RUNS ? [`The ${side} side has ${runs.length} finished run${runs.length === 1 ? '' : 's'}, and the gate needs ${GATE_RUNS} from one repeat set.`] : []);
   const reasons = [...short(diff.before, 'earlier'), ...short(diff.after, 'later'), ...diff.gaps.map(({ text }) => text)];
-  const failing = diff.themes.filter((theme) => theme.status === 'new' && severeSightings(theme).filter(({ weak }) => !weak).length >= GATE_SIGHTINGS);
+  const failing = diff.themes.filter((theme) => theme.status === 'new' && theme.category !== 'objection' && severeSightings(theme).filter(({ weak }) => !weak).length >= GATE_SIGHTINGS);
   const warnings = diff.themes.filter((theme) => !failing.includes(theme) && (severeSightings(theme).length > 0 || (theme.weak && isSevere(theme.severity))));
   return { decision: reasons.length ? 'could_not_decide' : failing.length ? 'failed' : 'passed', base: diff.before, run: diff.after, failing, warnings, reasons };
 }

@@ -34,6 +34,7 @@ export interface ThemeDiff {
   before: Seen;
   after: Seen;
   severity: number; // the later side's when it has the theme
+  category?: ReportTheme['category'];
   pages: string[]; // without their host, which a new build may change
   reached: number | null; // the most personas who reached all its pages in one later run; null: no later report says
   weak?: true; // only one shared key holds the two sides together, so they may be different problems
@@ -265,6 +266,7 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
       before: { seen_in: a?.members.length ?? 0, of: before.length },
       after: { seen_in: b?.members.length ?? 0, of: after.length },
       severity: first.severity,
+      ...(first.category ? { category: first.category } : {}),
       pages,
       reached: reachOn(after, first.poi_id, pages),
       ...more,

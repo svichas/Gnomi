@@ -696,8 +696,8 @@ test('--also-trait-free adds one run to a set, in its snapshot alone, and only a
   assert.match(cli('report', project, '--repeat', done.group, '--format', 'md'), /One more run, of personas with no traits, is in no count here\./);
 
   const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
-  assert.match(refused('study', project).stderr, /r-0003 is a set's trait-free run/, 'the newest run is the control, so study does not plan from it unasked');
-  assert.match(cli('study', project, '--run', 'r-0001'), /r-0001 study plan: /);
+  assert.match(refused('study', project, '--run', 'r-0003').stderr, /r-0003 is a set's trait-free run/);
+  assert.match(cli('study', project), /r-0002 study plan: /, 'with no --run the control is passed over, though it is the newest');
 
   cli('rerun', project, '--base', 'r-0001', '--repeats', '2');
   const compared = lines('compare', project, '--base', 'r-0001', '--run', 'r-0004').at(-1);
