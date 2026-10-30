@@ -7,7 +7,7 @@ import { ENGLISH, english, isEnglish } from '../llm/english.ts';
 import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import { ACTION_TYPES, PRESS_KEYS } from '../types.ts';
-import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Persona, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Perception, Persona, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 
 /** Providers require nullable fields; locally, older scripted responses may omit opinion. */
@@ -70,6 +70,14 @@ export const ACCESSIBILITY: Record<Persona['accessibility_needs'], ((w: Words) =
   screen_reader: ({ p }) => `${p} uses a screen reader: pages arrive in reading order, and links and buttons only by their names`,
   motor: ({ p }) => `${p} has limited fine motor control and avoids small targets, which are hard to hit`,
 };
+
+// Needs that code can make real, beyond the words above. blurredVision on 14 px text cut the edge contrast of a screenshot 15-fold;
+// motor has no emulation.
+const PERCEPTION: Partial<Record<Persona['accessibility_needs'], Perception>> = { low_vision: 'blurredVision', colour_blind: 'deuteranopia', screen_reader: 'screen_reader' };
+
+/** What code limits about what this persona perceives on a web page: nothing unless the run has accessibility_checks and its prompt keeps the need. */
+export const perceptionOf = (project: ProjectConfig, persona: Persona): Perception | undefined =>
+  project.settings.accessibility_checks && isAttributeEnabled(project.persona_schema, 'accessibility_needs', 'prompt') ? PERCEPTION[persona.accessibility_needs] : undefined;
 
 const ACTION_HELP: Record<ActionType, string> = {
   click: 'click: ref = the element',

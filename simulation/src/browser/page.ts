@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
 import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page, Request } from 'playwright-core';
-import type { PageDriver, PageError, StorageState } from '../seams.ts';
-import { PRESS_KEYS, type Action, type ActionOutcome, type ActionTarget, type Device, type PageSnapshot, type Viewport } from '../types.ts';
+import type { PageDriver, PageError, PageOptions, StorageState } from '../seams.ts';
+import { PRESS_KEYS, type AccessibilityViolation, type Action, type ActionOutcome, type ActionTarget, type Device, type PageSnapshot, type Viewport } from '../types.ts';
 import type { ActionRefusal, Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { pickedValue } from './dates.ts';
@@ -24,6 +24,10 @@ process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = '1';
 const POLL_MS = 100; // how often that look checks for a change
 const WAIT_MS = 1_000;
 const READ_CHARS = 2_000;
+const AUDIT_MS = 10_000; // what a scan gets before the persona carries on without it
+const AUDIT_GRACE_MS = 1_000; // the page times itself first and cleans up; this is for a page too busy to run that timer
+const IMPACTS = ['critical', 'serious', 'moderate', 'minor'] as const;
+const SELECTOR_CHARS = 200;
 const MAX_ERRORS = 20;
 const ERROR_RESOURCES = new Set(['document', 'xhr', 'fetch']);
 // Remember recognised password inputs even after a reveal toggle changes their type.
@@ -253,6 +257,38 @@ function shownValue(el: Element): string | null {
   return blocks ? null : (el as HTMLElement).innerText.replace(/\s+/g, ' ').trim() || null;
 }
 
+// Runs in the page, `load` being axe's source: what axe finds in the main frame, leaving no trace. axe only reads, but its script
+// leaves two globals, a document method and a message listener, a page may have an axe of its own, and scroll and focus go back
+// in case a later release moves them. preload: false stops it fetching stylesheets, so it makes no request. An element's ancestry
+// is its tags and positions, where a selector can quote an attribute such as a password field's value: no page text leaves here.
+// shortcut: main frame only, and never a frame's own page, upgrade if a target app lives in an iframe.
+async function axeScan(load: () => void, ms: number) {
+  const left = [[window, 'axe'], [window, '__core-js_shared__'], [document, 'elementsFromPoint']] as const;
+  const kept = left.map(([on, key]) => Object.getOwnPropertyDescriptor(on, key));
+  const focused = document.activeElement as HTMLElement | null;
+  type Axe = typeof import('axe-core') & { utils: { getScrollState(): unknown[]; setScrollState(state: unknown[]): void } }; // in its script, not in its types
+  let axe: Axe | undefined;
+  let scrolled: unknown[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    load();
+    axe = (window as unknown as { axe: Axe }).axe;
+    scrolled = axe.utils.getScrollState();
+    const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`no result in ${ms} ms`)), ms); });
+    const { violations } = await Promise.race([axe.run(document, { preload: false, iframes: false, resultTypes: ['violations'], ancestry: true, selectors: false }), expired]);
+    return violations.map(({ id, impact, nodes }) => ({ rule: id, impact, elements: nodes.length, selectors: nodes.slice(0, 3).map((node) => String(node.ancestry).split(' > ').slice(-5).join(' > ')) }));
+  } finally {
+    clearTimeout(timer);
+    axe?.utils?.setScrollState(scrolled);
+    axe?.frameMessenger?.({ open: () => {}, post: () => false }); // closes the listener it opened
+    left.forEach(([on, key], i) => {
+      Reflect.deleteProperty(on, key);
+      if (kept[i]) Object.defineProperty(on, key, kept[i]);
+    });
+    if (document.activeElement !== focused) focused?.focus({ preventScroll: true });
+  }
+}
+
 // Runs in every frame before page scripts: counts DOM mutations (n) and scrolls (s) so act() can tell whether anything changed.
 // Playwright ships both this and passwordState to the page with toString(), so they must stay self-contained.
 // shortcut: every mutation and input event counts, so a page that animates or fires synthetic input events on a timer always reads as changed (masking a dead click), upgrade by ignoring style-only churn if real apps do this.
@@ -362,8 +398,13 @@ export async function settle(page: Page, started: ReadonlySet<Request> = new Set
 }
 
 /** `refusals` drains containment's observe-only refusals (contain.ts), so an action that ran into one fails with it. */
-export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => [], device: Device = 'desktop'): Promise<PageDriver> {
+export async function newPageDriver(context: BrowserContext, allows: HostRule, refusals: () => ActionRefusal[] = () => [], device: Device = 'desktop', vision?: PageOptions['vision']): Promise<PageDriver> {
   let page = await openPage(context); // the tab the persona is on: the first one, or a tab it followed
+  // The session stays open with the tab: Chromium drops an emulation with the session that set it.
+  const emulate = async (tab: Page) => {
+    if (vision) await (await context.newCDPSession(tab)).send('Emulation.setEmulatedVisionDeficiency', { type: vision });
+  };
+  await emulate(page);
   // A phone is tapped: touch handlers (a menu on touchend) never hear a mouse click.
   const tap = (locator: Locator, options: { force?: boolean; timeout: number }) => (device === 'mobile' ? locator.tap(options) : locator.click(options));
   let targets = new Map<string, ActionTarget>();
@@ -862,6 +903,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         await opened.waitForLoadState('domcontentloaded', { timeout: ACTION_MS }).catch(() => {});
         if (!opened.isClosed()) {
           page = opened;
+          await emulate(page).catch(() => {}); // a tab that closed itself meanwhile
           await settle(page, started);
         }
       }
@@ -894,6 +936,32 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     },
 
     storageState: () => context.storageState({ indexedDB: true }), // as a recorded login: some apps keep their tokens there
+
+    async audit(ms = AUDIT_MS) {
+      const { default: axe } = await import('axe-core'); // here, so 1.4 MB of script is parsed only by a run that scans
+      let timer: NodeJS.Timeout | undefined;
+      const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`no result in ${ms} ms`)), ms + AUDIT_GRACE_MS); });
+      try {
+        const found = await Promise.race([page.evaluate<Awaited<ReturnType<typeof axeScan>>>(`(${axeScan})(() => { ${axe.source} }, ${ms})`), late]);
+        // That ran in the page's own world, where a script can forge its answer, so what a model will read comes from axe's copy here.
+        const rules = new Map(axe.getRules().map((rule) => [rule.ruleId, rule]));
+        return found.flatMap(({ rule, impact, elements, selectors }): AccessibilityViolation[] => {
+          const known = rules.get(rule);
+          if (!known) return [];
+          return [{
+            rule,
+            impact: IMPACTS.find((level) => level === impact) ?? 'minor',
+            category: known.tags.find((tag) => tag.startsWith('cat.'))?.slice(4) ?? '',
+            help: known.help,
+            elements: Number(elements) || 0,
+            selectors: selectors.slice(0, 3).map((selector) => String(selector).slice(-SELECTOR_CHARS)),
+          }];
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
     close: () => context.close(),
   };
 }

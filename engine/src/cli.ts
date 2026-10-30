@@ -244,7 +244,8 @@ function summarize(report: Report) {
       id: poi.id,
       name: poi.name,
       themes: (report.themes ?? []).filter((t) => t.poi_id === poi.id).sort((a, b) => a.rank - b.rank).slice(0, 5)
-        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.prevalence?.personas ?? null, share: t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust })),
+        // A scan-only theme's prevalence of 0 is not a count of those who met it, so it gives none.
+        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }) })),
     })),
     sentiment: (report.sentiment ?? []).map(({ name, surveyed, sentiment, would_continue }) => ({ segment: name, surveyed, sentiment, would_continue })),
     cost_usd: report.cost_usd,

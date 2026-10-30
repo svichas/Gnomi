@@ -1,5 +1,6 @@
 import type { ZodType } from 'zod';
 import type {
+  AccessibilityViolation,
   Action,
   ActionOutcome,
   Device,
@@ -15,6 +16,7 @@ import type {
   RunConfig,
   RunRow,
   RunStatus,
+  Perception,
   Persona,
   SessionInfo,
   SetupCall,
@@ -94,6 +96,7 @@ export interface PageOptions {
   locale?: string; // browser locale; falls back to en-US outside a persona run
   timezone?: string; // IANA timezone; UTC when unspecified
   languages?: string[]; // ordered browser and Accept-Language preferences
+  vision?: Exclude<Perception, 'screen_reader'>; // Chromium's emulation of it, so screenshots show the page as this persona sees it
   /** Hostnames that requests and `navigate` may reach, start_url's host first; every other request is aborted. */
   allowedHosts: string[];
   /** Never reachable, subdomains included, even when listed in allowedHosts. */
@@ -150,6 +153,8 @@ export interface PageDriver {
   errors(): PageError[];
   /** The cookies and local storage the page holds now, so a page reopened later carries on as the same visitor. */
   storageState?(): Promise<StorageState>;
+  /** What axe-core finds on the current page, within `ms`. The page is left as it was, no request is made, and a failure rejects. */
+  audit?(ms?: number): Promise<AccessibilityViolation[]>;
   close(): Promise<void>;
 }
 

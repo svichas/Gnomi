@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
-import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
+import { FEELINGS, personaProgress, shotLabels, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import type { PersonaState } from './activity.ts';
 import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
@@ -38,6 +38,7 @@ export function Inspector(props: {
   }
 
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
+  const shotLabel = shotLabels(events);
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
@@ -96,6 +97,7 @@ export function Inspector(props: {
                 {row.screenshot && (
                   <div className="mt-2">
                     <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} />
+                    {shotLabel(row) && <p className="mt-1 text-xs text-stone-500">{shotLabel(row)}</p>}
                   </div>
                 )}
               </li>

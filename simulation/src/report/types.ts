@@ -1,6 +1,6 @@
 // The report: a projection of the event log (tech.md §5.1), rebuilt by report/build.ts.
 import type { InfluenceEdge } from '../social/influence.ts';
-import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, LlmRole, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence } from '../types.ts';
+import type { AccessibilityViolation, AttributeValue, BuyerAnswers, CheckVerdict, Device, LlmRole, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence } from '../types.ts';
 
 /** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
 export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
@@ -90,6 +90,7 @@ export type ReportEvidence = {
   screenshot: string | null;
   box?: ReportBox; // only when the evidence is about that element and it shows on the screenshot; absent in older logs
   signals: SignalKind[];
+  scan?: AccessibilityViolation; // what the page scan found; never sent to a report model, which reads `what`
 } & StepEvidence;
 
 /** Frictions grouped into one problem, ranked by severity tier, then the low end of the first-hand share × trust (tech.md §8.2). */
@@ -105,6 +106,7 @@ export interface ReportTheme {
   prevalence?: Prevalence; // first-hand personas only (new_simulation.md §4); absent in reports written before it
   heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
   first_hand?: string[]; // the persona ids counted in prevalence; absent before it was stored
+  scan_only?: true; // found by the page scan alone: its prevalence of 0 says no persona reported it, not that none met it
   trust: Trust; // the highest among member frictions
   trust_counts?: Record<Trust, number>; // member frictions per trust; absent in older reports
   severity: number; // median over personas of each persona's highest member severity, 1–4
@@ -238,6 +240,7 @@ export interface ReportMethods {
   concurrency_changes: { concurrency: number; reason: string }[];
   signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
   undersized_targets?: { page: string; element: string | null; width: number; height: number; personas: number }[]; // an audit, not findings: the team's product's small_target signals, so only elements a mobile persona tapped, by page, element and size, most personas first; only in runs with one
+  accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }

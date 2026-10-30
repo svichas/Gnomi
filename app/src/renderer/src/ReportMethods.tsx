@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ReportHomogeneity, ReportMethods, ReportPersona } from '@gnomi/simulation/types.ts';
-import { BLOCK_REASON_TEXT } from '@gnomi/simulation/report/markdown.ts';
+import { BLOCK_REASON_TEXT, scanText } from '@gnomi/simulation/report/markdown.ts';
 import { resetOutcome } from './activity.ts';
 import { usd } from './ui.tsx';
 import { count } from './reportParts.tsx';
@@ -98,6 +98,12 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
       <div className="space-y-1">
         <p>An audit, not findings: elements a mobile persona tapped on your product that were below the signal threshold. Elements no mobile persona tapped were not measured.</p>
         <ul>{methods.undersized_targets.map((target) => <li key={`${target.page}${target.element}${target.width}${target.height}`}>{target.page}: {target.element ?? 'unnamed element'}, {target.width}×{target.height} px, {count(target.personas, 'persona')}</li>)}</ul>
+      </div>
+    )] as [string, ReactNode]] : []),
+    ...(methods.accessibility_audit ? [['Accessibility audit', (
+      <div className="space-y-1">
+        <p>An audit, not findings: the moderate and minor rules the page scan flagged on your product, not ranked.</p>
+        <ul className="space-y-1">{methods.accessibility_audit.map((row) => <li key={row.page + row.rule} className="break-all">{row.page}: {row.help} ({scanText(row)})</li>)}</ul>
       </div>
     )] as [string, ReactNode]] : []),
     ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),

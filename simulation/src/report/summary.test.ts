@@ -186,3 +186,9 @@ test('it never claims more than a simulation can, and never repeats a theme\'s d
     assert.ok(!text.includes(theme().description), text);
   }
 });
+
+test('a scan\'s finding says it says nothing about how many personas met it', () => {
+  const text = writtenSummary(report({ themes: [theme({ title: 'Buttons must have discernible text', scan_only: true, personas: 0, first_hand: [], prevalence: prevalence(0, 12), trust: 'observed', affected: [] })] }));
+  assert.match(text!, /“Buttons must have discernible text”, found by the accessibility scan, which says nothing about how many personas met it\./);
+  assert.doesNotMatch(text!, /feed|0 of 12/);
+});

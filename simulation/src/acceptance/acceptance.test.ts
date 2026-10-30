@@ -320,7 +320,7 @@ test('a mapper names a provider and a model, runs with --evaluate only, and come
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 10);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 11);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,finding_check']).arms, ['baseline', 'finding_check']);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,text_only,fewer_rounds']).arms, ['baseline', 'text_only', 'fewer_rounds']);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
@@ -411,6 +411,22 @@ test('the finding_check arm runs the check on its own runs only', async (t) => {
   assert.equal(result.error, null);
   const checks = (run: string) => (JSON.parse(readFileSync(join(out, run, 'events.json'), 'utf8')) as { type: string }[]).filter((e) => e.type === 'report.checks').length;
   assert.deepEqual([checks('r1-baseline'), checks('r1-finding_check') > 0], [0, true]);
+});
+
+test('the accessibility arm scans the real Gym on its own runs only, and nothing on the control build', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline,accessibility', '--personas', '4', '--out', out]));
+  assert.equal(result.error, null);
+  const events = (run: string) => JSON.parse(readFileSync(join(out, run, 'events.json'), 'utf8')) as { type: string; payload: { error?: string | null; rule?: string } }[];
+  const scans = (run: string) => events(run).filter((e) => e.type === 'accessibility.scanned');
+  assert.equal(scans('r1-baseline').length, 0);
+  assert.ok(scans('r1-accessibility').length > 0);
+  assert.ok(scans('r1-accessibility').every((e) => e.payload.error === null), 'every scan of the Gym went through');
+  assert.equal(scans('r1-baseline-control').length, 0);
+  assert.ok(scans('r1-accessibility-control').length > 0);
+  assert.deepEqual(events('r1-accessibility-control').filter((e) => e.type === 'signal.accessibility'), [], 'the control build is clean');
 });
 
 test('with a mapper, a scripted evaluation writes the model mapping, a short sample sheet and per-run scores', async (t) => {

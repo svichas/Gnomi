@@ -5,7 +5,7 @@ import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildGraph } from '@gnomi/engine/graph/index.ts';
 import type { PersonaNode } from '@gnomi/engine/graph/index.ts';
-import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
+import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, shotLabels, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -13,6 +13,21 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 const blockedRequest = (seq: number, host: string, path: string) => event(seq, 'containment.blocked_request', { host, url: `http://${host}${path}`, method: 'GET' });
 const blocked = (seq: number, reason: 'captcha' | 'session_expired' = 'captcha', who = 'p-001') => event(seq, 'persona.blocked', { step_no: 2, reason, detail: 'recaptcha' }, who);
 const resumed = (seq: number, who = 'p-001') => event(seq, 'persona.resumed', { step_no: 2 }, who);
+
+test('a screenshot says how the persona saw it only on the POI her perception applied to, not on a design\'s frame', () => {
+  const started = (seq: number, poi_id: string, perception?: 'deuteranopia' | 'screen_reader') => ({ ...event(seq, 'persona.episode_started', { poi_id, device: 'desktop', start_url: 'x', ...(perception && { perception }) }), poi_id }) as GnomiEvent;
+  const shot = (seq: number, poi_id: string) => ({ ...event(seq, 'persona.step', {
+    step_no: seq, action: { type: 'read', ref: null, text: null }, target: null, result: { ok: true, url_before: 'x', url_after: 'x', dom_changed: false, error: null },
+    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: `${poi_id}.jpg`, duration_ms: 1, heard_post_ids: [],
+  }), poi_id }) as GnomiEvent;
+  const labelled = (perception: 'deuteranopia' | 'screen_reader') => {
+    const events = [started(1, 'site', perception), shot(2, 'site'), started(3, 'design'), shot(4, 'design')];
+    const label = shotLabels(events);
+    return toRows(events).filter((row) => row.screenshot).reverse().map((row) => [row.screenshot, label(row)]);
+  };
+  assert.deepEqual(labelled('deuteranopia'), [['site.jpg', 'Simulated red–green colour blindness: the colours here are not the page’s own.'], ['design.jpg', undefined]]);
+  assert.deepEqual(labelled('screen_reader'), [['site.jpg', 'Not shown to this persona, who got the page as text.'], ['design.jpg', undefined]]);
+});
 
 test('a repeated model failure reads as no valid answer and leaves the persona unfinished, not gave up', () => {
   const failed = event(1, 'signal.repeated_failure', { step_no: 3, action: 'wait', error: 'invalid_output' });
@@ -223,6 +238,7 @@ test('detected signals read as sentences and have their own category', () => {
     event(5, 'signal.error', { ...base, kind: 'http', status: 404, message: 'GET http://gym.test/job' }),
     event(6, 'signal.validation_error', { ...base, message: 'Enter a job title' }),
     event(7, 'signal.small_target', { ...base, box: [0, 0, 35.4, 23] }),
+    event(8, 'signal.accessibility', { ...base, ref: null, rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 2, selectors: ['main > p'] }),
   ];
   assert.deepEqual(
     toRows(signals).reverse().map((row) => [row.label, row.title, row.detail]),
@@ -234,9 +250,10 @@ test('detected signals read as sentences and have their own category', () => {
       ['Step 3', 'Detected: the site answered HTTP 404', 'GET http://gym.test/job'],
       ['Step 3', 'Detected: an error message appeared after submitting', 'Enter a job title'],
       ['Step 3', 'Detected: tapped a small target, 35×23 px', base.url],
+      ['Step 3', 'Page scan: Elements must meet minimum color contrast ratio thresholds', base.url],
     ],
   );
-  assert.equal(filterEvents([...signals, blocked(8)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
+  assert.equal(filterEvents([...signals, blocked(9)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
 });
 
 test('a step error reads in words, and what covered the target as something in the way', () => {

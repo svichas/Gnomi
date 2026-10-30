@@ -12,8 +12,15 @@ import { assertFits, collectErrors, deadline, launchApp, scratch, seedFinishedRu
 
 const dir = scratch('report');
 const projectDir = join(dir, 'report.gnomi');
-const { config: synthetic, events } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
+const { config: synthetic, events: plainEvents } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
 synthetic.project.name = 'Hiring app';
+synthetic.project.settings = { ...synthetic.project.settings, accessibility_checks: true }; // the rerun below scans in the built host
+// Every persona browsed with simulated vision, so the inspector labels what its screenshots show.
+const events = plainEvents.map((event) => (
+  event.type === 'persona.step' ? { ...event, payload: { ...event.payload, screenshot: 'runs/r-0001/shots/wide.jpg' } }
+    : event.type === 'persona.episode_started' ? { ...event, payload: { ...event.payload, perception: 'deuteranopia' as const } }
+    : event
+));
 const config = seedFinishedRun(projectDir, synthetic, events);
 // The later build: the same personas on the same pages, with nobody meeting the frictions of the first.
 seedFinishedRun(projectDir, synthetic, events.filter((event) => event.type !== 'persona.friction_reported'));
@@ -35,6 +42,14 @@ const theme = (title: string, i: number): ReportTheme => ({
 report.themes = titles.map(theme);
 report.themes.push({ ...theme('One user wanted a keyboard shortcut', 6), personas: 1, prevalence: { personas: 1, exposed: 6, share: 1 / 6, low: 0.03, high: 0.56, level: 'single' } });
 report.themes.push({ ...theme('Users hesitated at the subscription price', 7), category: 'objection' });
+// What the page scan found alone: as long as real paths get, so the check at 320 px proves they wrap.
+const contrast = { rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 12, selectors: Array.from({ length: 3 }, (_, i) => `main:nth-child(2) > div:nth-child(3) > section:nth-child(1) > form:nth-child(3) > button:nth-child(${i + 1})`) } as const;
+report.themes.push({
+  ...theme('Elements must meet minimum color contrast ratio thresholds on /jobs/new', 8), scan_only: true, trust: 'observed', personas: 0, first_hand: [], suggestion: null,
+  prevalence: { personas: 0, exposed: 6, share: 0, low: 0, high: 0.39, level: 'none' }, affected: [{ segment_id: report.segments[0].id, name: report.segments[0].name, affected: 0, reached: 6, rate: 0 }],
+  evidence: [{ ...friction, step_seq: null, trust: 'observed', what: `Accessibility scan: ${contrast.help} (color-contrast, serious, 12 elements)`, quote: '', screenshot: null, signals: ['accessibility'], scan: { ...contrast, selectors: [...contrast.selectors] } }],
+});
+report.methods.accessibility_audit = [{ page: 'app.example.com/dashboard', rule: 'heading-order', impact: 'moderate', help: 'Heading levels should only increase by one', elements: 2, selectors: ['main:nth-child(2) > div:nth-child(3) > section:nth-child(1) > h4:nth-child(1)'] }];
 report.went_well = [{ text: 'The job preview was easy to scan', personas: 4, count: 4, seqs: [] }];
 // A wide and a tall screenshot with a frame on each, a plain one, and one with no file: nothing to mark.
 const shotPath = (name: string) => `runs/${config.run_id}/shots/${name}.jpg`;
@@ -120,6 +135,7 @@ try {
   assert.ok(await first.getByText('Behind this finding', { exact: true }).isVisible());
   await first.getByRole('button', { name: friction.persona_name, exact: true }).first().click();
   await page.getByRole('dialog').waitFor();
+  await page.getByRole('dialog').getByText('Simulated red–green colour blindness: the colours here are not the page’s own.').first().waitFor();
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   const images = first.locator('.report-shot img');
@@ -153,7 +169,14 @@ try {
   const hesitations = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Reasons for hesitation' }) });
   assert.deepEqual(await hesitations.locator('.report-finding-summary .tone-chip').allInnerTexts(), ['Moderate'], 'an objection has a severity and no priority');
   const singles = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Individual observations' }) });
-  assert.equal(await singles.locator('.report-finding-summary').getByText('Later', { exact: true }).count(), 1, 'one self-report waits');
+  assert.equal(await singles.locator('.report-finding-summary').getByText('Later', { exact: true }).count(), 2, 'one self-report and the scan\'s finding wait');
+  const scanned = singles.locator('.report-finding').filter({ hasText: 'color contrast' });
+  assert.ok(await scanned.locator('summary').getByText('Found by the accessibility scan', { exact: true }).isVisible());
+  await scanned.locator('summary').click();
+  assert.ok(await scanned.getByText('It sits on the step of whichever persona reached that page first', { exact: false }).isVisible());
+  assert.ok(await scanned.getByText('color-contrast, serious, 12 elements: main:nth-child(2)', { exact: false }).isVisible());
+  assert.equal(await scanned.getByText(/\d+ of \d+ persona|simulated users? experienced|Met it first-hand|None first-hand/).count(), 0, 'nothing reads as how many personas met it');
+  assert.ok(await root.getByText('An audit, not findings: the moderate and minor rules the page scan flagged', { exact: false }).isVisible());
   assert.ok(await root.getByText('Recorded cost', { exact: true }).isVisible());
   const graph = root.getByRole('img', { name: /^Moves of 6 personas between 8 pages/ });
   assert.ok(await graph.isVisible());
@@ -163,6 +186,9 @@ try {
   assert.ok(await root.getByRole('cell', { name: '3: 2 reached the goal, 1 got stuck' }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'all details fit a narrow viewport');
+  await scanned.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-scan-320.png') });
+  assert.ok(await scanned.evaluate((finding) => finding.scrollWidth <= finding.clientWidth), 'a long element path wraps at 320 px');
   await graph.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-flow-320.png') });
   const overrun = await graph.evaluate((svg) => {
@@ -252,6 +278,10 @@ try {
   await page.locator('.run-history-context code').getByText('r-0003', { exact: true }).waitFor();
   await page.setViewportSize({ width: 1100, height: 1000 });
   await page.getByRole('button', { name: 'Run again', exact: true }).waitFor({ timeout: 30_000 });
+  const rerun = openProject(projectDir);
+  const scans = rerun.events('r-0003', { types: ['accessibility.scanned'] });
+  rerun.close();
+  assert.ok(scans.length > 0 && scans.every((scan) => scan.type === 'accessibility.scanned' && scan.payload.error === null), `axe-core loads and runs in the built host: ${JSON.stringify(scans[0]?.payload)}`);
   assert.deepEqual(errors, []);
   console.log('ok    collapsed findings, written summary, priority labels, keyboard toggles, evidence inspector, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
   passed = true;

@@ -1,4 +1,4 @@
-import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Perception, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
 import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
@@ -228,6 +228,8 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
       const [, , width, height] = event.payload.box;
       return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: place(event.payload.url) };
     }
+    case 'signal.accessibility':
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Page scan: ${event.payload.help}`, detail: place(event.payload.url) };
     case 'llm.call':
       return event.payload.status === 'ok'
         ? null
@@ -293,6 +295,23 @@ export function foldRows(fold: RowFold, events: GnomiEvent[]): { added: Row[]; r
 }
 
 /** The activity feed, newest first. */
+// A stored screenshot is what a vision persona saw, not the page as designed, and a screen-reader persona was never shown it.
+const SHOT_LABEL: Record<Perception, string> = {
+  deuteranopia: 'Simulated red–green colour blindness: the colours here are not the page’s own.',
+  blurredVision: 'Simulated low vision: the blur here is not on the page.',
+  screen_reader: 'Not shown to this persona, who got the page as text.',
+};
+
+/** The note under a step's screenshot, from one persona's events. Perception is per POI: a design's frame is as designed, whoever looks. */
+export function shotLabels(events: GnomiEvent[]): (row: Row) => string | undefined {
+  const perceptions = new Map<string | null | undefined, Perception>();
+  for (const event of events) if (event.type === 'persona.episode_started' && event.payload.perception) perceptions.set(event.payload.poi_id, event.payload.perception);
+  return (row) => {
+    const perception = perceptions.get(row.source?.poi_id);
+    return perception && SHOT_LABEL[perception];
+  };
+}
+
 export function toRows(events: GnomiEvent[]): Row[] {
   const fold = emptyRows();
   foldRows(fold, events);
@@ -403,6 +422,7 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'signal.error': 'signals',
   'signal.validation_error': 'signals',
   'signal.small_target': 'signals',
+  'signal.accessibility': 'signals',
   'persona.opinion_changed': 'opinions',
   'persona.survey': 'opinions',
   'social.feed_viewed': 'social',

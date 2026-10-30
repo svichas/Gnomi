@@ -35,6 +35,12 @@ export const PRIORITY_NOTE = 'Fix now, Next and Later suggest where to look firs
 /** A finding's label; a competitor's has none, because its problems are not the team's to fix. */
 export const themePriority = (theme: ReportTheme, pois: Report['pois']) => (pois.find(({ id }) => id === theme.poi_id)?.competitor ? null : priorityOf(theme));
 
+/** Said wherever a finding of the page scan alone is shown, so its place on a persona's step does not read as that persona meeting it. */
+export const SCAN_TEXT = 'Found by the accessibility scan of the page, not by a persona. It sits on the step of whichever persona reached that page first, so it says nothing about how many personas met it.';
+
+/** What a reader acts on: the rule, how bad it is, and where. */
+export const scanText = ({ rule, impact, elements, selectors }: Pick<NonNullable<ReportEvidence['scan']>, 'rule' | 'impact' | 'elements' | 'selectors'>) => `${rule}, ${impact}, ${count(elements, 'element')}: ${selectors.join('; ')}${elements > selectors.length ? ' and more' : ''}`;
+
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
@@ -380,12 +386,12 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     ...(priority ? [`Suggested priority in this run: **${PRIORITY_TEXT[priority]}**`, ''] : []),
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
-    ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
+    ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     ...(repeats ? [`- Repeats: ${line(repeats.appeared)}${repeats.one_family ? `. ${line(repeats.one_family)}` : ''}`] : []),
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
-    `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
-    `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
+    `- Severity ${t.severity} of 4, ${t.scan_only ? '' : `score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, `}${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
+    ...(t.scan_only ? [] : [`- Affected first-hand by segment: ${affected.join('; ') || 'none'}`]),
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
     ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),
     `- Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`,
@@ -408,6 +414,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
   return [
     `${i + 1}. ${line(e.persona_name)} (${at}, severity ${e.severity}, ${e.trust}${signals}): ${line(e.what)}`,
     ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
+    ...(e.scan ? [`   - Accessibility scan: ${line(scanText(e.scan))}${e.trust === 'observed' ? `. ${SCAN_TEXT}` : ''}`] : []),
     ...(e.url ? [`   - Page: ${pageUrl(e.url)}`] : []),
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
     ...passageLine(e),
@@ -576,6 +583,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
     ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
+    ...(m.accessibility_audit ? [`- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): ${m.accessibility_audit.map((a) => `${line(a.page)}, ${line(a.help)} (${line(scanText(a))})`).join('; ')}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

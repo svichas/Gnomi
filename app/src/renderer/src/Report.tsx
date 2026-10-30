@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
@@ -182,7 +182,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
     ...(evidence.frame !== undefined ? [`frame ${evidence.frame + 1}`] : []),
     ...(evidence.passage ? [`characters ${evidence.passage.start}–${evidence.passage.end}`] : []),
   ].join(', ');
-  const shot = evidence.screenshot && renderScreenshot(evidence.screenshot, `The page at ${at}, as ${evidence.persona_name} saw it`);
+  const shot = evidence.screenshot && renderScreenshot(evidence.screenshot, `The page at ${at} of ${evidence.persona_name}`); // a persona may not have seen it: a screen reader's, a scan's
   return (
     <li className={`grid gap-3 border-t border-stone-100 pt-3 ${shot ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
       {shot && <div className="report-shot">{shot}{evidence.box && <Marked box={evidence.box} />}</div>}
@@ -195,6 +195,8 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
           {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
         </p>
         <p className="text-sm text-stone-900">{evidence.what}</p>
+        {evidence.scan && <p className="break-all text-xs text-stone-600">{scanText(evidence.scan)}</p>}
+        {evidence.scan && evidence.trust === 'observed' && <p className="text-xs text-stone-500">{SCAN_TEXT}</p>}
         <Passage passage={evidence.passage} />
         {evidence.quote && <blockquote className="border-l-4 border-stone-300 pl-3 text-sm italic text-stone-700">&ldquo;{evidence.quote}&rdquo;</blockquote>}
         {evidence.url && <p className="break-all text-xs text-stone-500">{evidence.url}</p>}
@@ -219,7 +221,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <span className="report-finding-number" aria-hidden="true">{number.toString().padStart(2, '0')}</span>
           <div className="report-finding-copy">
             <h4>{theme.title}</h4>
-            <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}</span></p>
+            <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}</span></p>
           </div>
           {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
@@ -232,9 +234,11 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
             <div><h5>Suggested change</h5><p>{theme.suggestion.change}</p><p className="report-suggestion-how">{theme.suggestion.solution}</p><small>Generated suggestion. Validate with real people.</small></div>
           </div>}
           <div className="report-evidence-heading"><Icon name="activity" size={16} /><h5>Behind this finding</h5></div>
-          <div className="flex flex-wrap items-center gap-2"><EvidenceChip finding={theme} /><TrustBadge trust={theme.trust} counts={theme.trust_counts} /></div>
-          <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}</p>
-          <Affected theme={theme} />
+          <div className="flex flex-wrap items-center gap-2">{!theme.scan_only && <EvidenceChip finding={theme} />}<TrustBadge trust={theme.trust} counts={theme.trust_counts} /></div>
+          {!theme.scan_only && <>
+            <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}</p>
+            <Affected theme={theme} />
+          </>}
           <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
             {theme.evidence.map((evidence, i) => <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />)}
           </ul>
@@ -294,7 +298,7 @@ function Priorities({ themes, setAside, pois, onInspect, renderScreenshot }: { t
         <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
-      {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, or heard from others; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
+      {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
       {setAside.length > 0 && <Fold id="set-aside-title" title={`Set aside by the evidence check (${setAside.length})`} hint="A model's review points away from the product; each reason is here" icon="report"><SetAside themes={setAside} pois={pois} /></Fold>}
       {competitors.length > 0 && <Fold id="competitor-findings-title" title={`Competitor findings (${competitors.length})`} hint="Friction on the other products in this run" icon="globe"><Findings themes={competitors} empty="" {...props} /></Fold>}
     </div>
@@ -493,7 +497,7 @@ function Comparison({ comparison, pois }: { comparison: ReportComparison; pois: 
 
 function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportFriction; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
-  const shot = friction.screenshot && renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no}, as ${friction.persona_name} saw it`);
+  const shot = friction.screenshot && renderScreenshot(friction.screenshot, friction.frame !== undefined ? `Frame ${friction.frame + 1}, as ${friction.persona_name} saw it` : `The page at step ${friction.step_no} of ${friction.persona_name}`);
   return (
     <li data-tone={SEVERITY[level(friction.severity)].tone} className={`tone-edge grid gap-3 rounded-lg border border-stone-200 bg-white p-3 ${shot ? 'sm:grid-cols-[minmax(0,1fr)_16rem]' : ''}`}>
       <div className="min-w-0 space-y-2">

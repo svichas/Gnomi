@@ -2,13 +2,13 @@ import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
 import { boxIn } from '../browser/prune.ts';
-import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
+import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type PageAudit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
-import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
+import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, PageSnapshot, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { readsImages } from '../settings.ts';
-import { stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
+import { perceptionOf, stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
 
 // model_failed: the model gave no valid answer three steps running; the engine ends it, and it says nothing about the product.
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'model_failed' | 'blocked' | 'stopped';
@@ -69,6 +69,8 @@ export interface EpisodeDeps {
    * there (`heard`, for the next step's prompt), or null when the run ended in between. Absent: one straight run.
    */
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
+  /** The run's page scans (signals/index.ts); absent unless it has accessibility_checks. */
+  audit?: (page: PageDriver, snapshot: PageSnapshot) => Promise<PageAudit | null>;
 }
 
 /** What every POI runner records the same way, each event stamped with the run, round, persona and this POI. */
@@ -125,8 +127,9 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   let failStreak = 0;
   let invalidStreak = 0;
   const reported = new Set<string>(); // page and normalised text of each friction already recorded this episode
+  const perception = perceptionOf(config.project, persona);
   // The gateway strips images for DeepSeek (llm/gateway.ts), so the prompt must not say there is a screenshot.
-  const sendShots = settings.screenshots && readsImages(settings.routing.navigator);
+  const sendShots = settings.screenshots && readsImages(settings.routing.navigator) && perception !== 'screen_reader';
 
   // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
@@ -183,24 +186,25 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     await blobs.put(screenshot, shot);
     // By the hash the step records, so the report models can find it and identical pages share one file.
     await blobs.put(`runs/${run_id}/snapshots/${snapshot.hash}.txt`, new TextEncoder().encode(snapshot.text));
+    const scan = poi.mode === 'full' ? await deps.audit?.(page, snapshot) : null; // not a competitor's site: its problems are not the team's to fix
     const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
     heard = [];
     if (signal.aborted) return null;
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'step', poi_id, system, user, schema, signal });
-      return { snapshot, screenshot, output: object as StepOutput | null };
+      return { snapshot, screenshot, scan, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;
       // A second invalid output or a timed-out call is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
       if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError')) throw err;
-      return { snapshot, screenshot, output: null };
+      return { snapshot, screenshot, scan, output: null };
     }
   };
 
   try {
     if (signal.aborted) return 'stopped';
     await page.goto(startUrl);
-    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona) });
+    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona), ...(perception && { perception }) });
     const first = await inspect(stepsBefore, startUrl);
     if (first !== 'go') return first;
 
@@ -230,7 +234,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       }
       // A provider may return successfully after cancellation. Its usage stays logged, but the answer must not act.
       if (!looked || signal.aborted) return 'stopped';
-      const { snapshot, screenshot, output } = looked;
+      const { snapshot, screenshot, scan, output } = looked;
 
       const action: Action = output?.action ?? { type: 'wait', ref: null, text: null };
       const stay = { url_before: snapshot.url, url_after: snapshot.url, dom_changed: false, target: null, text: null };
@@ -245,7 +249,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       // Objective signals right after their step (tech.md §8.1); a submit needs one more look to see what it made appear.
       const step: Step = { step_no, action, target, result, snapshot_hash: snapshot.hash };
       const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
-      for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds })) emit(s.type, s.payload);
+      if (scan) emit('accessibility.scanned', { step_no, url: snapshot.url, snapshot_hash: snapshot.hash, audit: scan.audit, error: scan.error });
+      for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds, violations: scan?.signals })) emit(s.type, s.payload);
       history.push(step);
       opinion = log.opinion(opinion, output?.opinion, recordedStep.seq);
       const friction = output?.friction ?? null;

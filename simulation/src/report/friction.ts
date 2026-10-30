@@ -1,16 +1,27 @@
 import { assetPlaces, placeName, runPois } from '../poi/pois.ts';
-import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, ReportBox, SignalKind, StepEvidence, Trust, Viewport } from '../types.ts';
+import type { AccessibilityViolation, ActionTarget, EventOf, EventPayloads, GnomiEvent, ReportBox, SignalKind, StepEvidence, Trust, Viewport } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
 
 export const TRUST_WEIGHT: Record<Trust, number> = { confirmed: 1, observed: 0.7, reported: 0.5 };
 /** A self-report and a signal this many steps apart or fewer, on the same page, are one friction (tech.md §8.1). */
 export const MERGE_STEPS = 3;
-export const SIGNAL_KINDS: SignalKind[] = ['failed_action', 'loop', 'backtrack', 'error', 'validation_error', 'small_target'];
+export const SIGNAL_KINDS: SignalKind[] = ['failed_action', 'loop', 'backtrack', 'error', 'validation_error', 'small_target', 'accessibility'];
 /** Severity (1–4) of a signal nobody reported; a backtrack is often just a persona reading again. */
-export const SIGNAL_SEVERITY: Record<SignalKind, number> = { failed_action: 2, loop: 2, backtrack: 1, error: 2, validation_error: 2, small_target: 2 };
+export const SIGNAL_SEVERITY: Record<SignalKind, number> = { failed_action: 2, loop: 2, backtrack: 1, error: 2, validation_error: 2, small_target: 2, accessibility: 2 };
 // Only a product failure corroborates a self-report: a loop, backtrack or small target is often the persona, a console line the page's noise.
-const CORROBORATES = new Set<SignalKind>(['failed_action', 'validation_error', 'error']);
+const CORROBORATES = new Set<SignalKind>(['failed_action', 'validation_error', 'error', 'accessibility']);
+// What a complaint must say to back a scan's finding, by axe's category: a scan's step is only where a persona happened to be, so
+// near in steps means nothing, and on any page with a violation an unrelated complaint would read as confirmed. Any other category backs nothing.
+const UNNAMED = /unlabel|\b(?:no|without)(?: \w+)? (?:label|name|text)\b|accessible name|alt text|\bicons?\b|screen reader/i;
+const SCAN_WORDS: Record<string, RegExp> = {
+  color: /contrast|faint|pale|washed|light gr[ae]y|hard to (?:read|see)|barely (?:read|see|visible)|legib/i,
+  aria: UNNAMED,
+  forms: UNNAMED,
+  'name-role-value': UNNAMED,
+  'text-alternatives': UNNAMED,
+  keyboard: /keyboard|\btab(?:bing)?\b|focus/i,
+};
 // Often the persona rather than the product, so alone they start no theme (tech.md §8.1); the log keeps them.
 const WEAK = new Set<CandidateKind>(['small_target', 'backtrack']);
 const ABANDON_SEVERITY = 3; // the persona gave up
@@ -47,6 +58,7 @@ export type Candidate = StepEvidence & {
   box?: ReportBox; // what it is about on that screenshot
   seqs: number[]; // the self-report first, then its signals
   signals: SignalKind[];
+  scan?: AccessibilityViolation; // what the page scan found, alone or backing a complaint
 };
 
 export interface Group {
@@ -188,14 +200,21 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       const signal: Candidate = { ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind] };
       // A console line or exception is about the page, not the element clicked, so it groups by its text (groupKey).
       if (pageNoise) signal.element = null;
+      // A scan is about the page: the element and thought of the step it sits on are that persona's own business.
+      if (e.type === 'signal.accessibility') {
+        const { step_no: _, url: __, ref: ___, ...scan } = e.payload;
+        Object.assign(signal, { element: null, quote: '', scan });
+      }
       (CORROBORATES.has(kind) && !pageNoise ? signals : unmatched).push(signal);
     }
   }
 
-  // Each corroborating signal joins the nearest self-report of the same persona on the same page within MERGE_STEPS; ties go to the earlier one.
+  // Each corroborating signal joins the nearest self-report of the same persona on the same page within MERGE_STEPS; ties go to the
+  // earlier one. A scan joins a complaint on its page that says the same thing, whoever made it.
   for (const signal of signals) {
     const distance = (r: Candidate) => Math.abs((r.step_no ?? Infinity) - (signal.step_no ?? Infinity));
-    const near = reports.filter((r) => r.persona_id === signal.persona_id && r.poi_id === signal.poi_id && r.page === signal.page && distance(r) <= MERGE_STEPS);
+    const fits = (r: Candidate) => (signal.scan ? SCAN_WORDS[signal.scan.category]?.test(r.text) : r.persona_id === signal.persona_id && distance(r) <= MERGE_STEPS);
+    const near = reports.filter((r) => r.poi_id === signal.poi_id && r.page === signal.page && fits(r));
     const best = near.sort((a, b) => distance(a) - distance(b) || a.seqs[0] - b.seqs[0])[0];
     if (!best) {
       unmatched.push(signal);
@@ -205,6 +224,7 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
     best.seqs.push(...signal.seqs);
     if (!best.signals.includes(signal.kind as SignalKind)) best.signals.push(signal.kind as SignalKind);
     best.element ??= signal.element;
+    best.scan ??= signal.scan;
   }
   return [...reports, ...unmatched, ...surveys].sort((a, b) => a.seqs[0] - b.seqs[0]);
 }
@@ -225,6 +245,8 @@ function signalText(e: SignalEvent): string {
       return `Validation message: ${e.payload.message}`;
     case 'signal.small_target':
       return `Tapped a ${Math.round(e.payload.box[2])}×${Math.round(e.payload.box[3])} px target`;
+    case 'signal.accessibility': // axe's own wording, so nothing here is page text for a model to read
+      return `Accessibility scan: ${e.payload.help} (${e.payload.rule}, ${e.payload.impact}, ${e.payload.elements} element${e.payload.elements === 1 ? '' : 's'})`;
   }
 }
 
@@ -236,6 +258,7 @@ export function groupKey(c: Candidate): string {
   if (c.kind === 'survey' || c.kind === 'objection') {
     return JSON.stringify([c.poi_id, null, c.kind, c.element ? `where ${normaliseText(c.element)}` : normaliseText(c.text)]);
   }
+  if (c.kind === 'accessibility') return JSON.stringify([c.poi_id, c.page, 'accessibility', c.scan?.rule]);
   if (c.element) return JSON.stringify([c.poi_id, c.page, 'element', c.element.toLowerCase()]);
   // An HTTP error's path carries record ids, so it keeps grouping by kind; a console line or exception by its words.
   return c.kind === 'error' && !c.text.startsWith('HTTP ') ? JSON.stringify([c.poi_id, c.page, 'error', normaliseText(c.text)]) : JSON.stringify([c.poi_id, c.page, 'kind', c.kind]);

@@ -232,3 +232,62 @@ test('an old log has no viewport, so it shows the plain screenshot, though its t
   assert.deepEqual(boxOf(['persona.step', 'p1', old], ['signal.failed_action', 'p1', failed(5)]), [undefined]);
   assert.deepEqual(boxOf(['persona.step', 'p1', old], ['persona.friction_reported', 'p1', { ...friction(5, 'Save is hidden'), about: save }]), [undefined]);
 });
+
+const scan = (step_no: number, rule = 'color-contrast', category = 'color', url = JOBS): EventPayloads['signal.accessibility'] => ({ step_no, url, ref: null, rule, impact: 'serious', category, help: 'Elements must meet minimum color contrast ratio thresholds', elements: 3, selectors: ['main > p'] });
+
+test('a lone scan finding is observed, and takes neither the element nor the thought of the step it sits on', () => {
+  const [candidate] = buildCandidates(log(
+    ['persona.step', 'p1', step(4, JOBS, { role: 'button', name: 'Save' })],
+    ['signal.accessibility', 'p1', scan(4)],
+  ), 'poi');
+  assert.deepEqual([candidate.kind, candidate.trust, candidate.element, candidate.quote, candidate.severity], ['accessibility', 'observed', null, '', 2]);
+  assert.equal(candidate.text, 'Accessibility scan: Elements must meet minimum color contrast ratio thresholds (color-contrast, serious, 3 elements)');
+  assert.deepEqual(candidate.scan, { rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 3, selectors: ['main > p'] });
+  assert.equal(candidate.screenshot, 'shots/4.jpg', 'it keeps the page as evidence');
+});
+
+test('scan findings group by rule and page, whatever the step was doing', () => {
+  const groups = groupCandidates(buildCandidates(log(
+    ['persona.step', 'p1', step(1, JOBS, { role: 'button', name: 'Save' })],
+    ['signal.accessibility', 'p1', scan(1)],
+    ['signal.accessibility', 'p1', scan(1, 'link-name', 'name-role-value')],
+    ['persona.step', 'p2', step(1, OTHER)],
+    ['signal.accessibility', 'p2', scan(1, 'color-contrast', 'color', OTHER)],
+  ), 'poi'));
+  assert.deepEqual(groups.map((g) => [g.page, g.members.length]), [['gym.test/jobs/new', 1], ['gym.test/jobs/new', 1], ['gym.test/settings', 1]]);
+});
+
+test('a complaint that says the same thing confirms a scan\'s finding, whichever persona made it, however far from its step', () => {
+  const candidates = buildCandidates(log(
+    ['persona.step', 'p1', step(1)],
+    ['signal.accessibility', 'p1', scan(1)],
+    ['persona.step', 'p2', step(9)],
+    ['persona.friction_reported', 'p2', friction(9, 'The hint under the field is too faint to read')],
+  ), 'poi');
+  assert.deepEqual(candidates.map((c) => [c.persona_id, c.kind, c.trust, c.signals]), [['p2', 'friction', 'confirmed', ['accessibility']]]);
+  assert.equal(candidates[0].scan?.rule, 'color-contrast');
+});
+
+test('a complaint about something else on that page confirms nothing, even from the scan\'s persona a step away', () => {
+  const candidates = buildCandidates(log(
+    ['persona.step', 'p1', step(1)],
+    ['signal.accessibility', 'p1', scan(1)],
+    ['persona.friction_reported', 'p1', friction(2, 'Save does nothing')],
+  ), 'poi');
+  assert.deepEqual(candidates.map((c) => [c.kind, c.trust]).sort(), [['accessibility', 'observed'], ['friction', 'reported']], 'the control build\'s measure is confirmed themes');
+});
+
+test('words only back a scan\'s finding of their own kind, and on its own page', () => {
+  const confirmed = (rule: string, category: string, what: string, url = JOBS) => buildCandidates(log(
+    ['persona.step', 'p1', step(1)],
+    ['signal.accessibility', 'p1', scan(1, rule, category)],
+    ['persona.friction_reported', 'p1', friction(1, what, 2, url)],
+  ), 'poi').some((c) => c.trust === 'confirmed');
+  assert.equal(confirmed('button-name', 'name-role-value', 'The two buttons are icons with no label'), true);
+  assert.equal(confirmed('label', 'forms', 'My screen reader gave this field no name'), true);
+  assert.equal(confirmed('button-name', 'name-role-value', 'The hint is too faint'), false);
+  assert.equal(confirmed('color-contrast', 'color', 'The buttons have no label'), false);
+  assert.equal(confirmed('document-title', 'text-alternatives', 'The label Approvals is confusing'), false);
+  assert.equal(confirmed('color-contrast', 'color', 'Too faint', OTHER), false, 'another page');
+  assert.equal(confirmed('landmark-one-main', 'semantics', 'Hard to read'), false, 'a category with no words backs nothing');
+});

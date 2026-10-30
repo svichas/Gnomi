@@ -527,3 +527,84 @@ test('priorityOf follows the evidence and the rounded severity, and suggests a l
   ];
   for (const [input, expected] of cases) assert.equal(label(...input), expected, JSON.stringify(input));
 });
+
+const scanned = (step_no: number, url = JOBS): EventPayloads['signal.accessibility'] => ({ step_no, url, ref: null, rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 3, selectors: ['main > p'] });
+
+test('a lone scan finding is an observed theme that no persona met: its step is only where one happened to be', () => {
+  const { themes } = analyseFrictions(log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.step', 'a3', step(1)],
+    ['persona.step', 'b1', step(1)],
+    ['persona.friction_reported', 'b1', friction(1, 2, 'Save does nothing')],
+  ), ctx);
+  const theme = themes.find((t) => t.scan_only)!;
+  assert.equal(theme.title, 'Elements must meet minimum color contrast ratio thresholds on /jobs/new');
+  assert.deepEqual([theme.trust, theme.personas, theme.first_hand, theme.heard_first], ['observed', 0, [], 0]);
+  assert.deepEqual([theme.prevalence?.personas, theme.prevalence?.exposed, theme.prevalence?.level], [0, 4, 'none']);
+  assert.ok(theme.affected.every((a) => a.affected === 0), 'no segment is said to have met it');
+  assert.equal(priorityOf(theme), 'later');
+  assert.equal(themes.at(-1), theme, 'below what a persona met');
+  assert.deepEqual(theme.evidence[0].scan?.selectors, ['main > p']);
+  assert.equal(theme.evidence[0].quote, '');
+});
+
+test('the judge is told no persona met a scan\'s group, and sees axe\'s words only', () => {
+  const groups = frictionGroups(log(['persona.step', 'a1', step(1)], ['signal.accessibility', 'a1', scanned(1)]), 'poi');
+  const [summary] = judgeGroups(groups);
+  assert.deepEqual([summary.kind, summary.personas, summary.trust.observed], ['accessibility', 0, 1]);
+  assert.deepEqual(summary.texts, ['Accessibility scan: Elements must meet minimum color contrast ratio thresholds (color-contrast, serious, 3 elements)']);
+  assert.ok(!JSON.stringify(summary).includes('main > p'), 'selectors stay out of what a model reads');
+  const { themes } = analyseFrictions(log(['persona.step', 'a1', step(1)], ['signal.accessibility', 'a1', scanned(1)]), ctx);
+  assert.ok(!JSON.stringify(authorThemes(themes)).includes('main > p'), 'the author and the evidence check read the same brief');
+});
+
+test('a matching complaint makes a confirmed theme of the persona who made it', () => {
+  const { themes } = analyseFrictions(log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(7)],
+    ['persona.friction_reported', 'a2', friction(7, 2, 'The hints are too faint to read')],
+  ), ctx);
+  assert.equal(themes.length, 1);
+  const [theme] = themes;
+  assert.deepEqual([theme.trust, theme.scan_only, theme.first_hand, theme.personas], ['confirmed', undefined, ['a2'], 1]);
+  assert.deepEqual(theme.evidence[0].signals, ['accessibility']);
+  assert.equal(theme.evidence[0].scan?.rule, 'color-contrast');
+});
+
+test('a theme the judge merged from a scan and a complaint counts the persona, not the scan\'s step', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.friction_reported', 'a2', friction(1, 4, 'I could not make out the words')],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Pale text', description: 'Words are pale.', group_ids: ['g1', 'g2'] }] }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.deepEqual([theme.id, theme.trust, theme.personas, theme.first_hand, theme.scan_only], ['g1+g2', 'observed', 1, ['a2'], undefined]);
+  assert.equal(theme.severity, 4, 'the one persona who met it, not the median with the scan\'s step');
+  assert.equal(theme.score, theme.prevalence!.low * 0.5, 'her reported trust alone');
+  assert.deepEqual(theme.trust_counts, { confirmed: 0, observed: 1, reported: 1 }, 'the scan still shows in the evidence');
+});
+
+test('a complaint only a scan confirmed can still repeat a post: the scan\'s step says nothing about what she read', () => {
+  const heardThenSaid = (...own: Parameters<typeof log>) => log(
+    ['persona.step', 'a3', step(1)],
+    ['persona.friction_reported', 'a3', friction(1, 2, 'Too faint to read')],
+    ['social.post', 'a3', { post_id: 'p1', parent_id: null, text: 'Too faint to read', about_poi_id: 'poi' }],
+    ['persona.step', 'a1', step(5)],
+    ['signal.accessibility', 'a1', scanned(5)],
+    ['persona.step', 'a2', { ...step(5), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(5, 2, 'The hints are too faint to read'), heard_post_ids: ['p1'] }],
+    ...own,
+  );
+  const [theme] = analyseFrictions(heardThenSaid(), ctx).themes;
+  assert.equal(theme.evidence.find((e) => e.persona_id === 'a2')?.trust, 'confirmed');
+  assert.deepEqual([theme.first_hand, theme.heard_first, theme.personas, theme.prevalence?.personas], [['a3'], 1, 2, 1]);
+
+  const failed = { step_no: 5, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const [own] = analyseFrictions(heardThenSaid(['signal.failed_action', 'a2', failed]), ctx).themes;
+  assert.deepEqual([own.first_hand, own.heard_first], [['a3', 'a2'], 0], 'a signal on her own step is hers, whatever else backs it');
+});
