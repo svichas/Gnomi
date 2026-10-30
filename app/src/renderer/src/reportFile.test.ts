@@ -7,6 +7,7 @@ import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
 import { comparisonFixture } from './comparisonReport.fixture.ts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { PRIORITY_NOTE } from '@gnomi/simulation/report/markdown.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -152,7 +153,8 @@ test('a problem one persona met is a single report, below and apart from one sev
     prevalence: { personas, exposed, share: personas / exposed, low: 0.1, high: 0.6, level: personas === 1 ? 'single' as const : 'strong' as const },
   });
   report.themes = [theme('lone', 4, 1, 10), theme('shared', 2, 4, 10), theme('doubt', 3, 3, 10, 'objection')];
-  const html = await reportFile(report, 'html', thumbnails());
+  const whole = await reportFile(report, 'html', thumbnails());
+  const html = whole.slice(whole.indexOf('At a glance')); // the summary above it names the top two as well
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Theme lone'), 'the main list leads with the problem several met');
   assert.ok(html.includes('4 of 10 personas affected (40%, likely 10%–60%)'), 'the share and its range are spelled out');
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Reasons for hesitation (1)') && html.indexOf('Reasons for hesitation (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
@@ -259,6 +261,19 @@ test('themes the evidence check set aside fold into their own section, each with
   assert.doesNotMatch(html, /disprov/i);
   assert.ok(!html.includes('1 report ·'), 'one POI needs no naming');
   assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Set aside by the evidence check'));
+});
+
+test('the HTML export opens with the written summary and labels each finding, but no objection or competitor finding', async () => {
+  const report = fixture(2, 1);
+  report.pois.push({ id: 'poi-rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  const prevalence = { personas: 2, exposed: 2, share: 1, low: 0.3, high: 1, level: 'strong' as const };
+  const finding = { id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge' as const, trust: 'reported' as const, severity: 3, score: 0, personas: 2, frictions: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, prevalence };
+  report.themes = [finding, { ...finding, id: 'g2', rank: 2, title: 'Too dear', category: 'objection' }, { ...finding, id: 'g3', poi_id: 'poi-rival', title: 'Rival breaks' }];
+  const html = await reportFile(report, 'html', thumbnails());
+  const summary = html.indexOf('The biggest problem in this run is “Save does nothing”, met by 2 of 2 personas who tried it.');
+  assert.ok(summary > 0 && summary < html.indexOf('aria-label="At a glance"'), 'the summary sits above the glance');
+  assert.equal(html.split('>Fix now</span>').length - 1, 1, 'one label: the objection and the competitor have none');
+  assert.ok(html.includes(PRIORITY_NOTE), 'the methods say what the labels mean');
 });
 
 test('the app comparison exposes transcript inspection while keeping the same decision and matrix as export', async () => {

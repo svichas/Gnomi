@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
+import type { EventPayloads, EventType, EvidenceLevel, GnomiEvent, JudgeTheme, ReportTheme, Trust } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, AUTHOR_TOKEN_CAP, authorThemes, frictionGroups, judgeGroups, judgeInput, PAGE_TEXT_MAX, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, AUTHOR_TOKEN_CAP, authorThemes, frictionGroups, judgeGroups, judgeInput, PAGE_TEXT_MAX, pickEvidence, prevalence, priorityOf, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -501,4 +501,29 @@ test('what went well: likes grouped by where, merged and named by the judge, wit
     ['The form is short', null, ['Job form', 'job form'], 2, 3, 'some'],
   ]);
   assert.deepEqual(likes[0].quotes, [{ persona_id: 'a1', persona_name: 'Ana', what: 'Seeing the ad before posting' }, { persona_id: 'b1', persona_name: 'Bo', what: 'Preview matches the board' }]);
+});
+
+test('priorityOf follows the evidence and the rounded severity, and suggests a look at a recorded failure one persona met', () => {
+  const shares = { strong: prevalence(3, 12), some: prevalence(2, 12), single: prevalence(1, 12), none: prevalence(0, 12) } satisfies Record<EvidenceLevel, unknown>;
+  const label = (level: EvidenceLevel | null, severity: number, trust: Trust = 'reported', category?: ReportTheme['category']) =>
+    priorityOf({ severity, trust, category, prevalence: level ? shares[level] : undefined } as ReportTheme);
+  const cases: [Parameters<typeof label>, ReturnType<typeof priorityOf>][] = [
+    [['strong', 4], 'fix_now'],
+    [['strong', 3], 'fix_now'],
+    [['strong', 2.5], 'fix_now'], // rounds up, as the ranking's severity tier does
+    [['strong', 2.4], 'next'],
+    [['strong', 1], 'next'],
+    [['some', 4], 'next'],
+    [['some', 3], 'next'],
+    [['some', 2], 'later'],
+    [['single', 3, 'confirmed'], 'next'],
+    [['single', 4, 'observed'], 'next'],
+    [['single', 3, 'reported'], 'later'],
+    [['single', 2, 'confirmed'], 'later'],
+    [['none', 4, 'confirmed'], 'later'],
+    [[null, 4, 'confirmed'], 'later'], // a report from before prevalence
+    [['strong', 4, 'confirmed', 'objection'], null],
+    [[null, 1, 'reported', 'objection'], null],
+  ];
+  for (const [input, expected] of cases) assert.equal(label(...input), expected, JSON.stringify(input));
 });

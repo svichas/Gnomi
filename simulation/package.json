@@ -36,6 +36,7 @@
     "./report/models.ts": "./src/report/models.ts",
     "./report/repeats.ts": "./src/report/repeats.ts",
     "./report/similarity.ts": "./src/report/similarity.ts",
+    "./report/summary.ts": "./src/report/summary.ts",
     "./run.ts": "./src/run.ts",
     "./safety.ts": "./src/safety.ts",
     "./seams.ts": "./src/seams.ts",

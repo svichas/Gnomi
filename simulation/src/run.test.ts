@@ -708,6 +708,14 @@ test('a rate limit halves the concurrency once per burst and records it', async 
   assert.equal(of(r.events, 'persona.goal_done').length, 8);
 });
 
+test('a split budget is rounded in the stop reason, and only there', async () => {
+  const budget = 5 / 3; // a third of a $5 budget, as a repeat set shares it
+  const r = begin(forever, { settings: { cost_budget_usd: budget }, cost: 2 });
+  const report = await r.run.done;
+  assert.equal(report.stop_reason, 'cost_budget: the $1.67 recorded-cost budget was reached');
+  assert.equal(report.methods.budgets.cost_usd, budget);
+});
+
 test('without social rounds no step is refused by projection: the recorded cap stops the run and admitted work settles', async () => {
   const personas = Array.from({ length: 6 }, (_, i) => persona(`p-${i}`, { patience: 5 }));
   const r = begin(forever, { personas, settings: { concurrency: 3, cost_budget_usd: 1 }, cost: 0.1, delayMs: 2 });
@@ -715,7 +723,7 @@ test('without social rounds no step is refused by projection: the recorded cap s
   const spent = r.finished[0].cost_usd;
   assert.deepEqual(
     of(r.events, 'run.stopped').map((e) => e.payload),
-    [{ reason: 'cost_budget', detail: 'the $1 recorded-cost budget was reached' }],
+    [{ reason: 'cost_budget', detail: 'the $1.00 recorded-cost budget was reached' }],
   );
   assert.ok(spent >= 1 - 1e-9 && spent <= 1 + 3 * 0.1 + 1e-9, `spent ${spent}`); // the cap plus at most the three calls in flight
   assert.ok(r.files.has('runs/r-0001/report.json'));
@@ -1352,7 +1360,7 @@ test('a usage slice is admitted whole: when its steps would reach the budget, no
   // Round 1: sixteen $0.01 steps and four socialiser calls; round 2's sixteen steps would reach $0.30, so the run stops before them.
   const r = begin(swarmAnswers(), { personas: swarm(4), project: SWARM, settings: { ...rounds(3), cost_budget_usd: 0.3 }, cost: 0.01 });
   await r.run.done;
-  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload.detail), ['the usage slice of round 2 was projected to reach the $0.3 budget']);
+  assert.deepEqual(of(r.events, 'run.stopped').map((e) => e.payload.detail), ['the usage slice of round 2 was projected to reach the $0.30 budget']);
   assert.deepEqual([of(r.events, 'run.round_started').map((e) => e.round), of(r.events, 'persona.step').length], [[1], 16]);
   assert.ok(r.pages.every((p) => p.closed));
 });

@@ -585,7 +585,7 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     const spent = (from: GnomiEvent[]) => from.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
     // What is left of the run's cost budget, unless --budget says what this rejudge may spend.
     const budget = v.budget === undefined ? settings.cost_budget_usd - spent(log) : Number(v.budget);
-    if (!(budget > 0)) throw new Error(v.budget === undefined ? `${run_id} has spent its $${settings.cost_budget_usd} budget; pass --budget <usd> to let rejudge spend more.` : '--budget must be a positive amount in dollars.');
+    if (!(budget > 0)) throw new Error(v.budget === undefined ? `${run_id} has spent its $${settings.cost_budget_usd.toFixed(2)} budget; pass --budget <usd> to let rejudge spend more.` : '--budget must be a positive amount in dollars.');
     const record = timeline(store);
     const stop = new AbortController();
     process.once('SIGINT', () => {

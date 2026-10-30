@@ -152,6 +152,9 @@ test('rejudge spends within what is left of the run budget unless --budget allow
     const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'rejudge', project, '--fake-llm'], { encoding: 'utf8' });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--budget/);
+    db.exec(`UPDATE run SET snapshot_json = json_set(snapshot_json, '$.project.settings.cost_budget_usd', ${5 / 3})`);
+    const split = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'rejudge', project, '--fake-llm'], { encoding: 'utf8' });
+    assert.match(split.stderr, /has spent its \$1\.67 budget/);
     assert.match(cli('rejudge', project, '--budget', '0.5'), /judged again/);
   } finally {
     db.close();

@@ -109,4 +109,4 @@ npm run -s gnomi -- compare runs/acme --base r-0001 --run r-0002 --json
 
 ## Reporting back
 
-Findings come from simulated users. Present them as hypotheses to check with real people, with how many personas met each one (`personas`, `share`, `evidence`), not as facts about users. Keep the report's banner in mind and say what the run did not cover (inputs, segments, logged-out only).
+Findings come from simulated users. Present them as hypotheses to check with real people, with how many personas met each one (`personas`, `share`, `evidence`), not as facts about users. Keep the report's banner in mind and say what the run did not cover (inputs, segments, logged-out only). `report_md` opens with a short template summary, and its Fix now, Next and Later labels suggest where to look first within that run: pass one on as that, never as how much a problem matters to real users.

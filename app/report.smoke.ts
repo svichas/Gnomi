@@ -74,6 +74,11 @@ try {
   assert.equal(await root.locator('.report-finding-summary:visible').count(), 5, 'five readable issues lead the report');
   assert.equal(await root.getByText('Suggested change', { exact: true }).first().isVisible(), false);
   assert.equal(await root.getByText('Recorded cost', { exact: true }).isVisible(), false);
+  const summary = root.getByRole('region', { name: 'Summary' });
+  assert.match(await summary.innerText(), /^The biggest problem in this run is “Users could not tell whether their job was published”, met by 4 of 6 personas who tried it\./);
+  assert.ok((await summary.boundingBox())!.y < (await root.getByRole('region', { name: 'At a glance' }).boundingBox())!.y, 'the summary sits above the glance');
+  assert.equal(await first.locator('summary').getByText('Fix now', { exact: true }).count(), 1, 'the top finding carries its label');
+  assert.match((await first.locator('summary').getByText('Fix now', { exact: true }).getAttribute('title'))!, /where to look first within this run/);
   await page.setViewportSize({ width: 1100, height: 1000 });
   await root.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-overview.png'), fullPage: true });
@@ -104,6 +109,10 @@ try {
     await fold.locator(':scope > summary').click();
     assert.ok(await fold.locator(':scope > .report-fold-body').isVisible(), title);
   }
+  const hesitations = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Reasons for hesitation' }) });
+  assert.deepEqual(await hesitations.locator('.report-finding-summary .tone-chip').allInnerTexts(), ['Moderate'], 'an objection has a severity and no priority');
+  const singles = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Individual observations' }) });
+  assert.equal(await singles.locator('.report-finding-summary').getByText('Later', { exact: true }).count(), 1, 'one self-report waits');
   assert.ok(await root.getByText('Recorded cost', { exact: true }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'all details fit a narrow viewport');
@@ -112,6 +121,7 @@ try {
     await page.reload();
     await openReport();
     assert.ok(await root.getByText(variant === 'empty' ? 'No shared issues were reported in this run.' : friction.what, { exact: true }).first().isVisible());
+    assert.equal(await root.getByRole('region', { name: 'Summary' }).count(), variant === 'empty' ? 1 : 0, 'a report without themes has nothing to summarise');
     await assertFits(page, `${variant} report fits a narrow viewport`);
   }
   // Compare, reached from the run history: the real engine call, on the real reports of the two seeded runs.
@@ -176,7 +186,7 @@ try {
   await page.setViewportSize({ width: 1100, height: 1000 });
   await page.getByRole('button', { name: 'Run again', exact: true }).waitFor({ timeout: 30_000 });
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, keyboard toggles, evidence inspector, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, keyboard toggles, evidence inspector, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

@@ -52,7 +52,7 @@ export function cappedGateway(llm: LlmGateway, cap: number, signal: AbortSignal)
         signal: req.signal ? AbortSignal.any([req.signal, stop]) : stop,
         onAttempt(attempt) {
           spent += attempt.payload.cost_usd;
-          if (spent >= cap) reached.abort(new Error(`The $${cap} budget was reached`));
+          if (spent >= cap) reached.abort(new Error(`The $${cap.toFixed(2)} budget was reached`));
           req.onAttempt?.(attempt);
         },
       });

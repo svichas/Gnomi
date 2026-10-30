@@ -3,6 +3,8 @@ import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods,
 import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
 import { formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
+import { writtenSummary } from './summary.ts';
+import { priorityOf } from './themes.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
 // so HTML and the characters that start a link, image or code span are escaped: a page cannot make the export load an image
@@ -24,6 +26,14 @@ export const themePoi = ({ poi_id }: ReportTheme, pois: Report['pois']) => {
   const poi = pois.find(({ id }) => id === poi_id);
   return pois.length > 1 && poi ? poiName(poi) : undefined;
 };
+
+export const PRIORITY_TEXT = { fix_now: 'Fix now', next: 'Next', later: 'Later' } as const;
+
+/** Said wherever the labels are explained: they are a suggestion within one run, not a finding about real users. */
+export const PRIORITY_NOTE = 'Fix now, Next and Later suggest where to look first within this run, from its evidence and severity. They do not change the ranking, so a Next can sit below a Later, and they say nothing about real users.';
+
+/** A finding's label; a competitor's has none, because its problems are not the team's to fix. */
+export const themePriority = (theme: ReportTheme, pois: Report['pois']) => (pois.find(({ id }) => id === theme.poi_id)?.competitor ? null : priorityOf(theme));
 
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
@@ -141,11 +151,13 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
   const missingUsage = missingUsageText(report.unreported_usage_calls);
+  const summary = writtenSummary(report);
   return [
     `# Gnomi report: ${report.goal}`,
     '',
     `> ${report.banner}`,
     '',
+    ...(summary ? [line(summary), ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
@@ -301,13 +313,14 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
+    '', PRIORITY_NOTE,
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t))) : ['', noThemes(report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
-      : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme)))),
+      : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme), report.pois))),
   ];
 }
 
@@ -325,10 +338,12 @@ function setAsideLines(report: Report): string[] {
   ];
 }
 
-function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<typeof repeatNote>): string[] {
+function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<typeof repeatNote>, pois: Report['pois']): string[] {
   const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
+  const priority = themePriority(t, pois);
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
+    ...(priority ? [`Suggested priority in this run: **${PRIORITY_TEXT[priority]}**`, ''] : []),
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
     ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),

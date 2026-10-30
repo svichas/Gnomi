@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
+import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
@@ -52,6 +53,12 @@ const level = (severity: number) => Math.min(4, Math.max(1, Math.round(severity)
 export function SeverityChip({ severity }: { severity: number }) {
   const { text, plain, tone } = SEVERITY[level(severity)];
   return <span data-tone={tone} title={`Severity ${severity} of 4: ${plain}`} className="tone-chip">{text}</span>;
+}
+
+const PRIORITY_TONE = { fix_now: 'bad', next: 'warn', later: 'neutral' } as const satisfies Record<keyof typeof PRIORITY_TEXT, Tone>;
+
+function PriorityChip({ priority }: { priority: keyof typeof PRIORITY_TEXT }) {
+  return <span data-tone={PRIORITY_TONE[priority]} title={PRIORITY_NOTE} className="tone-chip">{PRIORITY_TEXT[priority]}</span>;
 }
 
 function SeverityLegend() {
@@ -204,7 +211,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
 const Repeats = createContext<{ set?: RepeatSet; run_id: string }>({ run_id: '' });
 
 /** Keep the finding readable in one line; the recommendation and evidence open together. */
-function Priority({ theme, number, poi, onInspect, renderScreenshot }: { theme: ReportTheme; number: number; poi?: string; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }: { theme: ReportTheme; number: number; poi?: string; priority: ReturnType<typeof themePriority>; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
   const { set, run_id } = useContext(Repeats);
   const repeats = repeatNote(set, run_id, theme);
@@ -218,6 +225,7 @@ function Priority({ theme, number, poi, onInspect, renderScreenshot }: { theme: 
             <h4>{theme.title}</h4>
             <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}</span></p>
           </div>
+          {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
           <Icon name="chevron" size={16} />
         </summary>
@@ -246,7 +254,7 @@ const TOP = 5;
 
 function Findings({ themes, pois, empty, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; empty: string; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
-  const items = (shown: ReportTheme[], offset = 0) => shown.map((theme, i) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} number={offset + i + 1} poi={themePoi(theme, pois)} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
+  const items = (shown: ReportTheme[], offset = 0) => shown.map((theme, i) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} number={offset + i + 1} poi={themePoi(theme, pois)} priority={themePriority(theme, pois)} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
   if (themes.length === 0) return <div className="report-empty"><Icon name="check" size={20} /><p>{empty}</p></div>;
   return <div className="report-findings">
     <ol className="report-finding-list">{items(themes.slice(0, TOP))}</ol>
@@ -286,7 +294,7 @@ function Priorities({ themes, setAside, pois, onInspect, renderScreenshot }: { t
   return (
     <div className="report-priorities">
       <section aria-labelledby="themes-title">
-        <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Open an issue for the suggested change and evidence." />
+        <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Fix now, Next and Later suggest where to look first in this run. Open an issue for the suggested change and evidence." />
         <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
@@ -625,6 +633,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
   const dimension = report.dimensions?.find((candidate) => candidate.id === filter.dimension) ?? report.dimensions?.[0];
   // The engine's rank: evidence, then severity, then the low end of the share × trust (simulation/src/report/themes.ts).
   const themes = [...(report.themes ?? [])].sort((a, b) => a.rank - b.rank);
+  const summary = writtenSummary(report);
   const facts = [
     ['Personas', String(report.personas.length)],
     ['Steps', String(report.steps)],
@@ -648,6 +657,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}
       </header>
       {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
+        {summary && <section aria-label="Summary" className="report-goal">{summary}</section>}
         <Glance report={report} themes={themes} />
         {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
       </>}
@@ -675,7 +685,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
                 return n > 0 ? <li key={outcome} className="flex items-center gap-1.5"><span data-tone={OUTCOMES[outcome].tone} className="tone-dot" />{n} {OUTCOMES[outcome].text.toLowerCase()}</li> : null;
               })}</ul>
               <SeverityLegend />
-              <p className="text-xs text-stone-500">The judge model is asked to group what one concrete product change would fix. Findings are ordered by evidence strength, then severity and affected share. {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}. Ranges describe uncertainty within this simulation.</p>
+              <p className="text-xs text-stone-500">The judge model is asked to group what one concrete product change would fix. Findings are ordered by evidence strength, then severity and affected share. {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}. Ranges describe uncertainty within this simulation. {PRIORITY_NOTE}</p>
               <p className="text-xs text-stone-500">Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.</p>
             </>}
             <Methods methods={report.methods} personas={report.personas} />

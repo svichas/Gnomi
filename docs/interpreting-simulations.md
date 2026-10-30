@@ -1,6 +1,6 @@
 # Interpreting simulations
 
-Updated 2026-10-18. Applies to product descriptions, pitches, videos and report interpretation. This document clarifies terminology; it does not change the app's stored fields or current trust-label names.
+Updated 2026-10-30. Applies to product descriptions, pitches, videos and report interpretation. This document clarifies terminology; it does not change the app's stored fields or current trust-label names.
 
 **Simulated findings are hypotheses, not evidence about real users.** Gnomi helps teams choose what to investigate. It does not establish user needs, validate a design, or predict adoption, conversion, sentiment or the prevalence of a problem in a real population.
 
@@ -23,7 +23,7 @@ Existing report fields named `evidence` contain **simulation records**. They mak
 - **Observed:** an instrumented signal was recorded. It can still be benign or caused by the agent.
 - **Reported:** a persona generated a complaint without a matching instrumented signal.
 
-Likewise, `strong`, `some` and `single` describe the report's internal support counts. Scores and intervals used for ranking do not supply calibrated confidence about real users. Repeating a result with another seed or model can check robustness within the simulation; it does not turn the result into human evidence.
+Likewise, `strong`, `some` and `single` describe the report's internal support counts. Scores and intervals used for ranking do not supply calibrated confidence about real users. Repeating a result with another seed or model can check robustness within the simulation; it does not turn the result into human evidence. `Fix now`, `Next` and `Later` suggest where to look first within one run, from its severity and support counts; they do not measure impact on real people.
 
 ## From a hypothesis to a study
 
