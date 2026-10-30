@@ -77,6 +77,26 @@ test('an unknown country is skipped and never guessed, and a row that cannot be 
   assert.deepEqual(skipped, ['Skipped country "Deutschland": 10 users.', 'Skipped country "UK": 5 users.', 'Skipped users "many".']);
 });
 
+test('counts are whole numbers, so a dotted value is reported and never read as a fraction', () => {
+  const { audience: after, skipped } = applyAnalytics('Country,Users\nGermany,1.234\nGreece,567\n', audience, { segment: 'seg-1' });
+  assert.deepEqual(after.segments[0].countries, { GR: 100 });
+  assert.deepEqual(skipped, ['Skipped users "1.234".']);
+});
+
+test('a mix whose counts are all zero is left alone and reported, so it cannot break the audience', () => {
+  for (const csv of ['Country,Users\nGermany,0\n', 'Country,Users\nGermany,0\nAtlantis,5\n', 'Language,Users\nGerman,0\n']) {
+    const { audience: after, changes, skipped } = applyAnalytics(csv, audience, { segment: 'seg-1', source });
+    assert.deepEqual(after, audience, csv);
+    assert.deepEqual(changes, [], csv);
+    assert.match(skipped.at(-1)!, /Recruiters: every (country|language) row counts 0 users, so its (country|language) mix stays as it was\./, csv);
+  }
+  const { audience: after, skipped } = applyAnalytics('Segment,Country,Users\nRecruiters,Germany,0\nAdmins,Greece,5\n', audience);
+  assert.equal(after.segments[0].countries, undefined);
+  assert.deepEqual(after.segments[2].countries, { GR: 100 });
+  assert.ok(skipped.includes('Recruiters: every country row counts 0 users, so its country mix stays as it was.'));
+  checkSavedAudience(after, getPersonaSchema(), 'no segments');
+});
+
 test('shares that need rounding still sum to 100, each named segment keeps at least 1, and an unknown segment is reported', () => {
   const csv = 'Segment,Users\nRecruiters,1\nHiring managers,1\nAdmins,1\nEveryone else,9\n';
   const { audience: after, skipped } = applyAnalytics(csv, audience);
@@ -112,6 +132,9 @@ test('analytics on an old audience, with no countries or digest, passes the audi
   const people = Array.from({ length: 40 }, (_, seed) => sampleTraits(after.segments[0], after, seed));
   assert.ok(people.every((p) => ['DE', 'GR'].includes(p.country!)), 'sampling stays in code and reads the segment');
   assert.ok(Array.from({ length: 40 }, (_, seed) => sampleTraits(audience.segments[0], audience, seed)).every((p) => p.country === undefined), 'a segment without a mix samples as before');
+  const withMix = (countries: Record<string, number>) => ({ ...after, segments: [{ ...after.segments[0], countries }, ...after.segments.slice(1)] });
+  assert.throws(() => checkSavedAudience(withMix({}), getPersonaSchema(), 'no segments'), /Recruiters: At least one country must have a positive share/);
+  assert.throws(() => checkSavedAudience(withMix({ ZZ: 1 }), getPersonaSchema(), 'no segments'), /Recruiters: Unsupported country code: ZZ/);
 });
 
 test('importing the same file again changes nothing and records its source once', () => {

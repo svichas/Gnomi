@@ -1,7 +1,7 @@
 import { defaultAudience } from '@gnomi/engine/audience/defaults.ts';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Audience, Persona, ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
-import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { validateAudienceCountries } from '@gnomi/simulation/audience/locations.ts';
 import { apportion as splitByShare } from '@gnomi/simulation/audience/sample.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 
@@ -128,7 +128,7 @@ const whole = (n: number) => Number.isInteger(n);
 
 /** What is wrong with the audience, as a sentence, or null. */
 export function audienceProblem(audience: Audience): string | null {
-  try { validateCountries(audience.countries); } catch (error) {
+  try { validateAudienceCountries(audience); } catch (error) {
     return `Audience: ${error instanceof Error ? error.message : String(error)}`;
   }
   if (audience.segments.length === 0) return 'Audience: add at least one segment.';
@@ -168,6 +168,12 @@ export function addedByHand(persona: Persona, audienceSeed: number | null): bool
   if (persona.segment_id === null || audienceSeed === null) return false;
   const slot = Number(persona.id.slice(persona.id.lastIndexOf('-') + 1)) - 1;
   return persona.seed % 2 ** 32 === fnv1a(`${audienceSeed}/${persona.segment_id}/${slot}/added`);
+}
+
+/** A country or language mix in percents of its sum: countries are stored as percents, languages as fractions. */
+export function mixText(mix: Record<string, number>): string {
+  const sum = Object.values(mix).reduce((total, share) => total + share, 0);
+  return Object.entries(mix).map(([key, share]) => `${key} ${Math.round((share / sum) * 100)}%`).join(', ');
 }
 
 /** A segment's colour by its place in the audience: the brand has five (assets/brand/brand-tokens.css), used in turn. */

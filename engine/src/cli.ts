@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
+import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, proposeAudience, syncPersonas } from './audience/index.ts';
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
@@ -350,7 +350,7 @@ async function updateAudienceFile(v: Values, path: string | undefined): Promise<
   });
 }
 
-const staleIn = (file: AudienceFile) => file.personas.filter((p) => !personaProfileIsCurrent(p, fileProject(file))).length;
+const staleIn = (file: AudienceFile) => personasToWrite(fileProject(file), file.personas);
 
 function audienceAnalytics(v: Values, path: string | undefined): void {
   if (!path || v.file?.length !== 1) throw new Error(`audience analytics needs the audience file and one --file.\n\n${USAGE}`);
@@ -360,8 +360,8 @@ function audienceAnalytics(v: Values, path: string | undefined): void {
   const dry_run = v['dry-run'];
   const updated = { ...file, audience };
   for (const text of [...changes, ...skipped]) note(text);
-  if (!dry_run && changes.length) writeAudienceFile(path, updated);
   const stale = staleIn(updated);
+  if (!dry_run && changes.length) writeAudienceFile(path, updated);
   out(
     `${changes.length} ${changes.length === 1 ? 'change' : 'changes'}${dry_run ? ', not saved (dry run)' : ` saved to ${path}`}. ${stale} personas would be written again by "audience update".`,
     { kind: 'analytics', file: resolve(path), dry_run, changes, skipped, stale },

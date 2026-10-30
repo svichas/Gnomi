@@ -4,7 +4,7 @@ import { defaultAudience } from './defaults.ts';
 import { PROPOSE_SYSTEM, proposalSchema, proposeUser, toSegments, type Proposal } from './propose.ts';
 import { addedSeed, apportion, GENERATION, personaId, sameTraits, sampleTraits, slotIndex, slotSeed } from '@gnomi/simulation/audience/sample.ts';
 import { nameKey, writePersonas } from './write.ts';
-import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { validateAudienceCountries } from '@gnomi/simulation/audience/locations.ts';
 import { sampleProfile } from '@gnomi/simulation/profile/sample.ts';
 import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 
@@ -67,7 +67,7 @@ interface Slot {
 
 /** Split persona_count by share, lowering the per-segment minimum for small runs; hand-added personas remain extra. */
 function layout(audience: Audience, population: Persona[]): { segment: Segment; slots: Slot[] }[] {
-  validateCountries(audience.countries);
+  validateAudienceCountries(audience);
   const count = audience.persona_count;
   if (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS) throw new Error(`persona_count must be a whole number from 1 to ${MAX_PERSONAS}`);
   const shares = audience.segments.map((s) => s.share);
@@ -105,6 +105,18 @@ function segmentOf(audience: Audience, segmentId: string | null): Segment {
   return segment;
 }
 
+/** Every slot the audience has, with what it holds now and what it should hold. */
+const plannedSlots = (project: ProjectConfig & { audience: Audience }, existing: Persona[]) =>
+  layout(project.audience, existing).flatMap(({ segment, slots }) =>
+    slots.map((slot) => ({ ...slot, segment, traits: traitsAt(project, project.audience, segment, slot.seed), signature: profileSignature(project, segment, slot.seed) })),
+  );
+
+// Presentation/report flags and private values do not change prose, so a matching signature keeps the persona.
+const keeps = (slot: ReturnType<typeof plannedSlots>[number]) => slot.old?.profile_signature === slot.signature;
+
+/** How many personas syncPersonas would write now, with no model call. A changed share counts, through the slots it adds. */
+export const personasToWrite = (project: ProjectConfig & { audience: Audience }, existing: Persona[]) => plannedSlots(project, existing).filter((slot) => !keeps(slot)).length;
+
 /**
  * Brings the stored population in line with the audience. A slot whose seed and sampled traits are unchanged keeps its
  * persona with no model call, so the same audience always yields the same personas; new or changed slots are sampled
@@ -116,13 +128,10 @@ export async function syncPersonas(
   deps: AudienceDeps,
 ): Promise<{ personas: Persona[]; cost_usd: number }> {
   const project = { ...deps.project, audience };
-  const slots = layout(audience, existing).flatMap(({ segment, slots }) =>
-    slots.map((slot) => ({ ...slot, segment, traits: traitsAt(project, audience, segment, slot.seed), signature: profileSignature(project, segment, slot.seed) })),
-  );
-  // Presentation/report flags and private values do not change prose. Keep it and refresh the sampled stored values.
-  const keep = (s: (typeof slots)[number]) => s.old?.profile_signature === s.signature;
-  const kept = slots.filter(keep).map((s) => sameTraits(s.old!, s.traits) ? s.old! : { ...s.old!, ...s.traits });
-  const written = await writePersonas(slots.filter((s) => !keep(s)), takenNames(kept), { ...deps, project });
+  const slots = plannedSlots(project, existing);
+  // Kept prose gets the sampled stored values refreshed.
+  const kept = slots.filter(keeps).map((s) => sameTraits(s.old!, s.traits) ? s.old! : { ...s.old!, ...s.traits });
+  const written = await writePersonas(slots.filter((s) => !keeps(s)), takenNames(kept), { ...deps, project });
   const byId = new Map([...kept, ...written.personas].map((p) => [p.id, p]));
   return { personas: slots.map((s) => byId.get(s.id)!), cost_usd: written.cost_usd };
 }

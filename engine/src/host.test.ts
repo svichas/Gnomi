@@ -59,6 +59,11 @@ const audience = (segments: Segment[], persona_count: number): Audience => ({
   accessibility: { none: 1, low_vision: 0, colour_blind: 0, screen_reader: 0, motor: 0 },
 });
 
+test('save_project refuses a segment country mix that sampling could not read', async () => {
+  await call('open_project', { dir });
+  await assert.rejects(call('save_project', { project: project({}, { audience: audience([segment('seg-1', { share: 100, countries: {} })], 3) }) }), /Segment seg-1: At least one country must have a positive share/);
+});
+
 test('start_run refuses a listed production domain, a reset with no hook and an audience with no personas', async () => {
   await call('open_project', { dir });
   await call('save_project', { project: project({ start_url: 'https://app.acme.com/' }) });

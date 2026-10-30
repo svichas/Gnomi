@@ -203,6 +203,25 @@ test('audience analytics reports the changes, keeps the file on a dry run, and s
   assert.ok(JSON.parse(readFileSync(file, 'utf8')).personas.every((p: { country: string }) => ['DE', 'GR'].includes(p.country)));
 });
 
+test('audience analytics counts the personas a share change would write, and audience update writes them', () => {
+  const file = join(dir, 'shares.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '12');
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  const [first] = saved.audience.segments;
+  saved.audience.segments = [{ ...first, share: 50 }, { ...first, id: 'seg-2', name: 'Admins', share: 50 }];
+  writeFileSync(file, JSON.stringify(saved));
+  cli('audience', 'update', file);
+  const csv = join(dir, 'shares.csv');
+  writeFileSync(csv, 'Segment,Users\nEveryone,90\nAdmins,10\n');
+  const last = (text: string) => JSON.parse(text.trim().split('\n').at(-1)!);
+  const dry = last(cli('audience', 'analytics', file, '--file', csv, '--dry-run', '--json'));
+  assert.deepEqual(dry.changes, ['Everyone: share 50% → 90%', 'Admins: share 50% → 10%']);
+  assert.equal(dry.stale, 3, 'nine and three instead of six and six');
+  assert.equal(last(cli('audience', 'analytics', file, '--file', csv, '--json')).stale, 3);
+  assert.equal(last(cli('audience', 'update', file, '--json')).written, 3);
+  assert.equal(last(cli('audience', 'analytics', file, '--file', csv, '--dry-run', '--json')).stale, 0, 'nothing is left to write');
+});
+
 test('audience sources warns first, keeps a digest and no source text, and a refusal leaves the file as it was', () => {
   const file = join(dir, 'sources.json');
   cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');

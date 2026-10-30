@@ -1,8 +1,9 @@
 import { useId, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { isNotesFile, withoutDigest } from '@gnomi/engine/audience/defaults.ts';
 import type { Api } from '@gnomi/engine/protocol.ts';
 import type { Audience, Segment, SessionInfo, UsageFrequency } from '@gnomi/simulation/types.ts';
-import { segmentVar } from './audience.ts';
+import { mixText, segmentVar } from './audience.ts';
 import { call } from './engine.ts';
 import { Icon } from './Icon.tsx';
 import { count } from './reportParts.tsx';
@@ -44,8 +45,6 @@ function Range(props: { label: string; value: [number, number]; onChange(value: 
     </div>
   );
 }
-
-const mixText = (mix: Record<string, number>) => Object.entries(mix).map(([key, share]) => `${key} ${share <= 1 ? Math.round(share * 100) : share}%`).join(', ');
 
 /** Real data behind one segment. The engine reads each file once; only what comes out of it stays with the segment. */
 function RealData({ audience, segment, onAudience, onChange }: { audience: Audience; segment: Segment; onAudience(audience: Audience): void; onChange(segment: Segment): void }) {
@@ -90,20 +89,20 @@ function RealData({ audience, segment, onAudience, onChange }: { audience: Audie
         )}
         <p>Set shares, phone use, countries and languages from an analytics export. You see the changes first, and no model is called.</p>
         <input ref={analyticsPicker} type="file" accept=".csv" hidden aria-label={`Analytics export for ${segment.name}`} onChange={(e) => void readAnalytics(e.target.files?.[0])} />
-        <Button small loading={action.busy} onClick={() => analyticsPicker.current?.click()}>Import analytics</Button>
+        <Button small loading={action.busy} aria-label={`Import analytics for ${segment.name}`} onClick={() => analyticsPicker.current?.click()}>Import analytics</Button>
         {(facts.length > 0 || remarks.length > 0) && (
           <div className="space-y-2">
-            <p className="break-words">The persona writer reads this digest of {sources.map((source) => source.name).join(', ')}. Personas stay fictional.</p>
+            <p className="break-words">The persona writer reads this digest of {sources.filter(isNotesFile).map((source) => source.name).join(', ')}. Personas stay fictional.</p>
             <ul aria-label={`Research digest for ${segment.name}`} className="list-disc space-y-1 pl-4 break-words">
               {facts.map((fact) => <li key={fact}>{fact}</li>)}
               {remarks.map((remark) => <li key={remark}>“{remark}”</li>)}
             </ul>
-            <Button small variant="quiet" aria-label={`Remove the research digest for ${segment.name}`} onClick={() => onChange({ ...segment, grounding: undefined })}>Remove digest</Button>
+            <Button small variant="quiet" aria-label={`Remove the research digest for ${segment.name}`} onClick={() => onChange({ ...segment, grounding: segment.grounding && withoutDigest(segment.grounding) })}>Remove digest</Button>
           </div>
         )}
         <p>Add interview notes or support tickets as .md or .txt. The persona writer reads a digest of them, and each persona carries a few real remarks. You see the most it can cost first.</p>
         <input ref={sourcesPicker} type="file" accept=".md,.txt" multiple hidden aria-label={`Research notes for ${segment.name}`} onChange={(e) => void readSources([...(e.target.files ?? [])])} />
-        <Button small loading={action.busy} onClick={() => sourcesPicker.current?.click()}>Add research notes</Button>
+        <Button small loading={action.busy} aria-label={`Add research notes for ${segment.name}`} onClick={() => sourcesPicker.current?.click()}>Add research notes</Button>
         <OutcomeNote outcome={action.outcome} />
       </div>
       {preview && (

@@ -4,7 +4,7 @@
 import { addPersona, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
 import { applyAnalytics } from './audience/analytics.ts';
 import { digestCost, groundSegment, readSources, sourceOf, sourcesNotice } from './audience/ground.ts';
-import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { validateAudienceCountries } from '@gnomi/simulation/audience/locations.ts';
 import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -318,7 +318,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   get_project: () => info(),
   save_project({ project }) {
     noSetup('saving project changes');
-    validateCountries(project.audience?.countries);
+    if (project.audience) validateAudienceCountries(project.audience);
     if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
     checkComparison(project);
     current().store.saveProject(project);

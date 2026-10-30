@@ -12,7 +12,7 @@ export interface AnalyticsResult {
 
 const COUNT_COLUMNS = ['users', 'total users', 'active users', 'sessions']; // the first the file has is the one read
 const DEVICE: Record<string, 'mobile' | 'desktop'> = { mobile: 'mobile', phone: 'mobile', desktop: 'desktop', computer: 'desktop' }; // a tablet is neither: mobile_share is the share on a phone
-const COUNT = /^\d{1,3}(?:,\d{3})+$|^\d+(?:\.\d+)?$/; // GA4 quotes "1,234" when it groups thousands
+const COUNT = /^\d{1,3}(?:,\d{3})+$|^\d+$/; // GA4 quotes "1,234" when it groups thousands; 1.234 could be a European thousand, so it is not read
 const LANGUAGE_TAG = /^([a-z]{2,3})(?:[-_][a-z0-9]{2,8})*$/i;
 const LANGUAGE_NAMES = new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' });
 
@@ -63,6 +63,7 @@ function percents(counts: Map<string, number>): Record<string, number> {
   return Object.fromEntries(entries.flatMap(([key], i) => (shares[i] > 0 ? [[key, shares[i]]] : [])));
 }
 
+const hasUsers = (mix: Map<string, number>) => [...mix.values()].some((users) => users > 0);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const mixText = (mix: Record<string, number>) => Object.entries(mix).map(([key, share]) => `${key} ${share}%`).join(', ');
 
@@ -149,16 +150,17 @@ export function applyAnalytics(csv: string, audience: Audience, options: { segme
       next.mobile_share = Math.round((tally.mobile / (tally.mobile + tally.desktop)) * 100) / 100;
       if (next.mobile_share !== segment.mobile_share) note(`on a phone ${Math.round(segment.mobile_share * 100)}% → ${Math.round(next.mobile_share * 100)}%`);
     }
-    if (tally.countries.size) {
+    const onlyZeros = (what: string) => skipped.push(`${segment.name}: every ${what} row counts 0 ${counted}, so its ${what} mix stays as it was.`);
+    if (hasUsers(tally.countries)) {
       next.countries = percents(tally.countries);
       if (!same(next.countries, segment.countries)) note(`countries ${mixText(next.countries)}`);
-    }
-    if (tally.languages.size) {
+    } else if (tally.countries.size) onlyZeros('country');
+    if (hasUsers(tally.languages)) {
       const mix = percents(tally.languages);
       next.languages = Object.fromEntries(Object.entries(mix).map(([code, share]) => [code, share / 100]));
       if (!same(next.languages, segment.languages)) note(`languages ${mixText(mix)}`);
       if (next.countries ?? audience.countries) skipped.push(`${segment.name}: the languages are kept but do nothing while a country mix applies, because each country brings its own languages.`);
-    }
+    } else if (tally.languages.size) onlyZeros('language');
     return next;
   });
 

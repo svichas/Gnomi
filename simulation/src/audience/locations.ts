@@ -1,4 +1,4 @@
-import type { Persona } from '../types.ts';
+import type { Audience, Persona } from '../types.ts';
 
 export interface CountryProfile {
   code: string;
@@ -38,6 +38,16 @@ export function validateCountries(countries?: Record<string, number>): void {
     if (!Number.isFinite(weight) || weight < 0) throw new Error(`The country share for ${code} must be a finite, non-negative number.`);
   }
   if (!Object.values(countries).some((weight) => weight > 0)) throw new Error('At least one country must have a positive share.');
+}
+
+/** Every country mix sampling can read: the audience's and each segment's, which replaces it. */
+export function validateAudienceCountries({ countries, segments }: Pick<Audience, 'countries' | 'segments'>): void {
+  validateCountries(countries);
+  for (const segment of segments) {
+    try { validateCountries(segment.countries); } catch (error) {
+      throw new Error(`${segment.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 export interface LocaleEnvironment {
