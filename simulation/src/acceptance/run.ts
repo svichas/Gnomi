@@ -5,6 +5,7 @@ import { arch, cpus, platform } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { mean } from 'simple-statistics';
+import { z } from 'zod';
 import { gymAssets } from '../../../demo/GymSite/assets.ts';
 import { DEFECT_IDS, GYM_V1_DEFECT_IDS, startGym } from '../../../demo/GymSite/server.ts';
 import { importLocalFile } from '../assets.ts';
@@ -22,8 +23,8 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Respon
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
-import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, observeAttempt, pairedDifference, TOP, validateOptions, type Arm, type Criterion, type Facts, type Options, type Status } from './checks.ts';
-import { complaint, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
+import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, TOP, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Options, type Status } from './checks.ts';
+import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
@@ -366,24 +367,70 @@ export async function runM4Acceptance(options: Options, env: Record<string, stri
 
 const M3_SCOPE = 'Friction pipeline: the frozen population on Gym v2 (all 25 defects) over three run seeds, then the same population on the no-defect control build. Themes are mapped to catalogued defects by a reviewer.';
 
-/** Each run's top themes with an empty `defect` for a reviewer to map to the catalogue (or leave null for a false positive). */
+/** Each run's themes down to rank `top`, with an empty `defect` to map to the catalogue (null stays a false positive). */
+const themeItems = (runs: { name: string; report?: Report }[], top = TOP) => runs.flatMap(({ name, report }) => (report?.themes ?? []).filter((theme) => theme.rank <= top).map((theme) => ({
+  run: name, rank: theme.rank, theme_id: theme.id, title: theme.title, description: theme.description, trust: theme.trust, severity: theme.severity,
+  personas: theme.personas, pages: theme.pages, elements: theme.elements, seqs: theme.seqs.length,
+  evidence: theme.evidence.map((e) => ({ seq: e.seq, persona: e.persona_name, step_no: e.step_no, url: e.url, what: e.what, quote: e.quote })),
+  defect: null as string | null, notes: '',
+})));
+type ThemeItem = ReturnType<typeof themeItems>[number];
+
+const themeLines = (item: ThemeItem) => [
+  `## ${item.run}, rank ${item.rank}: ${item.title}`, '',
+  `Trust ${item.trust}, severity ${item.severity}, ${item.personas} personas, pages ${item.pages.join(', ') || 'none'}. ${item.description}`, '',
+  ...item.evidence.map((e) => `- Event ${e.seq} (${e.persona}, step ${e.step_no ?? 'survey'}, ${e.url ?? 'no url'}): ${e.what}. "${e.quote.replaceAll('\n', ' ')}"`), '',
+];
+
+/** The top themes for a reviewer to map by hand. */
 function themeSheet(out: string, runs: { name: string; report?: Report }[], live: boolean) {
-  const items = runs.flatMap(({ name, report }) => (report?.themes ?? []).filter((theme) => theme.rank <= TOP).map((theme) => ({
-    run: name, rank: theme.rank, theme_id: theme.id, title: theme.title, description: theme.description, trust: theme.trust, severity: theme.severity,
-    personas: theme.personas, pages: theme.pages, elements: theme.elements, seqs: theme.seqs.length,
-    evidence: theme.evidence.map((e) => ({ seq: e.seq, persona: e.persona_name, step_no: e.step_no, url: e.url, what: e.what, quote: e.quote })),
-    defect: null as string | null, notes: '',
-  })));
+  const items = themeItems(runs);
   json(join(out, 'theme-mapping.json'), { status: live ? 'REVIEW_NEEDED' : 'NOT_RUN', catalogue: 'defects.yaml', items });
   const lines = [
     '# Theme mapping', '',
     live ? 'Review required. Map each theme to the catalogued defect it describes, or leave `defect` null when it describes none.' : 'Scripted rehearsal. This checks evidence delivery only; scripted frictions do not come from the defects.', '',
     'A theme is a true positive when it maps to a catalogued defect that is switched on (all 25 on Gym v2, none on the control build). A defect is found when a theme with trust confirmed or observed maps to it. Record the mapping in [theme-mapping.json](theme-mapping.json) against [the catalogue](defects.yaml).', '',
-    ...items.flatMap((item) => [
-      `## ${item.run}, rank ${item.rank}: ${item.title}`, '',
-      `Trust ${item.trust}, severity ${item.severity}, ${item.personas} personas, pages ${item.pages.join(', ') || 'none'}. ${item.description}`, '',
-      ...item.evidence.map((e) => `- Event ${e.seq} (${e.persona}, step ${e.step_no ?? 'survey'}, ${e.url ?? 'no url'}): ${e.what}. "${e.quote.replaceAll('\n', ' ')}"`), '',
-    ]),
+    ...items.flatMap(themeLines),
+  ];
+  writeFileSync(join(out, 'theme-mapping.md'), `${lines.join('\n')}\n`);
+}
+
+const MAPPING_SAMPLE = 20; // themes a person checks of a model's mapping
+const mappingSchema = z.object({ mappings: z.array(z.object({ theme_id: z.string(), defect: z.string().nullable(), reason: z.string() })) });
+const MAPPER_SYSTEM = 'You compare usability themes from a simulated test of a web app with a catalogue of known defects in that app. For each theme, give the id of the one defect it describes, or null when it describes none of them. A shared page is not enough: the theme must describe the same problem. Use only ids from the catalogue, answer for every theme, and give the reason in one short sentence.';
+
+/** One call per run to a judge from another model family; a model's answer is a proposal, so a defect the catalogue does not have stays null. Every theme is mapped, because recall counts them all. */
+async function mapThemes(runs: { name: string; report?: Report }[], catalogue: string, mapper: Mapper, options: Options, allowance: Allowance, env: Record<string, string | undefined>) {
+  const defects = webDefects(catalogue, DEFECT_IDS).map(({ id, title, pages }) => ({ id, title, pages }));
+  // run_id null keeps these calls out of the runs' logs, which end with their reports; attempts.jsonl keeps the evidence and the allowance the cost.
+  const llm = guardedGateway({ ...options, provider: mapper.provider }, allowance, env, options.out, () => { throw new Error('The mapping judge logs no run events.'); }, { judge: DEMO_JUDGE }, () => {});
+  const items = themeItems(runs, Infinity);
+  for (const { name } of runs) {
+    const themes = items.filter((item) => item.run === name);
+    if (!themes.length) continue;
+    const { object } = await llm.call({
+      role: 'judge', model: mapper, run_id: null, persona_id: null, round: 0, purpose: 'map_themes', timeout_ms: 180_000, system: MAPPER_SYSTEM, schema: mappingSchema,
+      user: [{ type: 'text', text: JSON.stringify({ defects, themes: themes.map(({ theme_id, title, description, pages, elements, evidence }) => ({ id: theme_id, title, description, pages, elements, evidence: evidence.map(({ what, quote }) => ({ what, quote })) })) }) }],
+    });
+    for (const answer of object.mappings) {
+      const item = themes.find((theme) => theme.theme_id === answer.theme_id);
+      if (!item) continue;
+      item.defect = defects.some((defect) => defect.id === answer.defect) ? answer.defect : null;
+      item.notes = answer.reason;
+    }
+  }
+  return items;
+}
+
+/** The model's mapping and a seeded sample of it for a person to check. */
+function mappedSheet(out: string, items: ThemeItem[], mapper: Mapper, live: boolean) {
+  json(join(out, 'theme-mapping.json'), { status: 'MAPPED_BY_MODEL', catalogue: 'defects.yaml', mapper, items });
+  const sample = items.map((item) => ({ item, key: fnv1a(`${item.run}/${item.theme_id}`) })).sort((a, b) => a.key - b.key).slice(0, MAPPING_SAMPLE).map((entry) => entry.item);
+  const lines = [
+    '# Theme mapping sample', '',
+    live ? `Check required. ${mapper.provider}:${mapper.model} mapped these themes, not a person; a fixed hash picked ${sample.length} of ${items.length}.` : 'Scripted rehearsal. This checks evidence delivery only; no model mapped these themes.', '',
+    'For each, say whether the defect is right. A theme is a true positive when it maps to a catalogued defect that is switched on. Correct [theme-mapping.json](theme-mapping.json) against [the catalogue](defects.yaml).', '',
+    ...sample.flatMap((item) => [...themeLines(item), `Mapped to ${item.defect ?? 'no defect'}. ${item.notes}`, '']),
   ];
   writeFileSync(join(out, 'theme-mapping.md'), `${lines.join('\n')}\n`);
 }
@@ -404,7 +451,7 @@ export async function runM3Acceptance(options: Options, env: Record<string, stri
     gyms.push(defects, control);
     const base = prepare(fixture(defects.url), options);
     gym(base).name = 'Gym v2';
-    const controlBase = { ...base, project: { ...base.project, pois: [{ ...gym(base), name: 'Gym control', start_url: `${control.url}/` }] } };
+    const controlBase = controlBuild(base, control.url);
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'm3', mode: options.mode, scope: M3_SCOPE, seeds, control_seed: SEED, provider: options.provider, personas: base.personas.length, fixture_version: FIXTURE_VERSION,
@@ -571,11 +618,11 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
   return result;
 }
 
-const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed. Arm order is shuffled per replicate with a seed, and the Gym store is reset before each run. Outcomes are run-level; whole replicates are the unit of analysis. Defect recall and precision are NOT_RUN until reviewed theme mappings exist; each run keeps a one-to-one page-overlap proxy.';
+const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed, then the same arm and seed on the no-defect control build. Arm order is shuffled per replicate with a seed, and the Gym store is reset before each run. Outcomes are run-level; whole replicates are the unit of analysis. recall_high and precision are hint-based estimates, not reviewed mappings; control_themes counts the control build\'s confirmed and observed themes.';
 // The predeclared benchmark fields (new_simulation.md §9); none is filled yet, so validity and efficiency cannot be claimed.
 // primary_metrics stays null until a pilot sets it; until then every interval is exploratory.
 const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: null, efficiency_margin: null, confirmatory_repeats: null, primary_metrics: null as string[] | null };
-const METRICS = ['completion_rate', 'abandonment_rate', 'themes', 'first_hand', 'heard_first', 'cost_usd', 'llm_calls', 'segment_modularity', 'mean_in_degree', 'top_decile_in_share'] as const;
+const METRICS = ['completion_rate', 'abandonment_rate', 'themes', 'first_hand', 'heard_first', 'recall_high', 'precision', 'control_themes', 'cost_usd', 'llm_calls', 'segment_modularity', 'mean_in_degree', 'top_decile_in_share'] as const;
 type Outcomes = ReturnType<typeof outcomesOf>;
 
 /** One finished run's outcomes, with segment numerators and denominators; the graph is the one the run logged on persona.created, absent without social rounds. */
@@ -586,11 +633,13 @@ function outcomesOf(report: Report, data: Fixture, events: GnomiEvent[], catalog
   const settings = data.project.settings;
   const follows = new Map(events.flatMap((event) => event.type === 'persona.created' && event.payload.follows ? [[event.payload.persona.id, event.payload.follows] as const] : []));
   const graph = settings.social ? graphMetrics(follows, data.personas) : null;
+  const defect_proxy = defectScores(themes, catalogue, DEFECT_IDS); // a hint-based estimate, not a reviewed mapping: its recall_high and precision are compared as estimates
   return {
     personas: n, completed: count('done'), abandoned: count('abandoned'),
     completion_rate: n ? count('done') / n : null, abandonment_rate: n ? count('abandoned') / n : null,
     segments: report.segments.map((s) => ({ segment_id: s.id, personas: s.personas, completed: s.outcomes.done, abandoned: s.outcomes.abandoned })),
-    defect_proxy: defectScores(themes, catalogue, DEFECT_IDS), // one-to-one page overlap, not reviewed: never a compared metric
+    defect_proxy, recall_high: defect_proxy.recall_high, precision: defect_proxy.precision,
+    control_themes: null as number | null, // set from the arm's control run
     themes: themes.length, first_hand: themes.reduce((sum, t) => sum + (t.prevalence?.personas ?? 0), 0), heard_first: themes.reduce((sum, t) => sum + (t.heard_first ?? 0), 0),
     cost_usd: report.cost_usd, llm_calls: report.llm_calls,
     segment_modularity: graph?.segment_modularity ?? null, mean_in_degree: graph?.mean_in_degree ?? null, top_decile_in_share: graph?.top_decile_in_share ?? null,
@@ -609,48 +658,66 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const seeds = Array.from({ length: options.repeats ?? 5 }, (_, r) => SEED + r);
   // A seeded arm order per replicate, so an arm's effect is not its position after the others.
   const order = (seed: number) => { const next = mulberry32(fnv1a(`arms/${seed}`)); return arms.map((arm) => ({ arm, key: next() })).sort((a, b) => a.key - b.key).map((e) => e.arm); };
-  const replicates = seeds.map((seed, r) => ({ replicate: r + 1, seed, order: order(seed), arms: {} as Partial<Record<Arm, { run_status: string | null; evidence: string; duration_ms: number; outcomes: Outcomes | null }>> }));
+  const replicates = seeds.map((seed, r) => ({ replicate: r + 1, seed, order: order(seed), arms: {} as Partial<Record<Arm, { run_status: string | null; evidence: string; duration_ms: number; outcomes: Outcomes | null; control: { run_status: string | null; evidence: string } | null }>> }));
+  const finished: { name: string; report?: Report }[] = [];
+  let mapping: ThemeItem[] | null = null;
   let error: string | null = null;
   let pool: BrowserPool | undefined;
-  let server: Awaited<ReturnType<typeof startGym>> | undefined;
+  const gyms: Awaited<ReturnType<typeof startGym>>[] = [];
   const started = Date.now();
   try {
-    server = await startGym({ port: 0, defects: 'all' });
+    const [server, control] = [await startGym({ port: 0, defects: 'all' }), await startGym({ port: 0, defects: 'none' })];
+    gyms.push(server, control);
     const base = prepare(fixture(server.url), options);
     const plain = generic(base);
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'evaluate', mode: options.mode, scope: EVALUATE_SCOPE, repeats: seeds.length, seeds, arms: Object.fromEntries(arms.map((arm) => [arm, ARMS[arm]])),
-      provider: options.provider, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
+      provider: options.provider, mapper: options.mapper ?? null, personas: base.personas.length, injected_post: complaint(base), fixture_version: FIXTURE_VERSION,
       fixture_sha256: fixtureSha(base),
       routing: base.project.settings.routing, settings: base.project.settings, setup_cost_usd: 0, benchmark: BENCHMARK,
       recorded_spend_allowance_usd: options.allowance_usd ?? null, billing_caveat: BILLING_CAVEAT,
-      gym: { defects: DEFECT_IDS, catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
+      gym: { defects: DEFECT_IDS, control: [], catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
     });
     pool = await launchBrowserPool();
+    const measure = async (target: typeof server, name: string, seed: number, data: Fixture) => {
+      const reset = await fetch(`${target.url}/__reset`, { method: 'POST' }); // jobs and users an earlier run created must not leak into this one
+      if (!reset.ok) throw new Error(`The Gym reset failed with HTTP ${reset.status}.`);
+      return runSeed(name, seed, data, options, pool!, allowance, env, data.project.settings.social !== false);
+    };
     for (const entry of replicates) {
       for (const arm of entry.order) {
         if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
-        const reset = await fetch(`${server.url}/__reset`, { method: 'POST' }); // jobs and users an earlier run created must not leak into this one
-        if (!reset.ok) throw new Error(`The Gym reset failed with HTTP ${reset.status}.`);
         const spec: { settings?: Partial<RunSettings>; generic?: true } = ARMS[arm];
         const from = spec.generic ? plain : base;
         const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
         const name = `r${entry.replicate}-${arm}`;
         const runStarted = performance.now();
-        const run = await runSeed(name, entry.seed, data, options, pool, allowance, env, data.project.settings.social !== false);
-        entry.arms[arm] = { run_status: run.run_status, evidence: name, duration_ms: Math.round(performance.now() - runStarted), outcomes: run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null };
+        const run = await measure(server, name, entry.seed, data);
+        const outcomes = run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null;
+        const result = { run_status: run.run_status, evidence: name, duration_ms: Math.round(performance.now() - runStarted), outcomes, control: null as { run_status: string | null; evidence: string } | null };
+        entry.arms[arm] = result;
+        if (!outcomes) continue;
+        finished.push({ name, report: run.report });
+        if (allowance.signal.aborted) continue;
+        const off = await measure(control, `${name}-control`, entry.seed, controlBuild(data, control.url));
+        result.control = { run_status: off.run_status, evidence: `${name}-control` };
+        if (off.report?.status === 'finished') outcomes.control_themes = (off.report.themes ?? []).filter((theme) => theme.trust !== 'reported').length;
       }
+    }
+    if (options.mapper && !allowance.signal.aborted) {
+      mapping = await mapThemes(finished, catalogue, options.mapper, options, allowance, env);
+      mappedSheet(options.out, mapping, options.mapper, options.mode === 'live');
     }
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   } finally {
     await pool?.close().catch(() => {});
-    await server?.close();
+    for (const gym of gyms) await gym.close();
   }
   const series = (arm: Arm, metric: typeof METRICS[number]) => replicates.map((entry) => entry.arms[arm]?.outcomes?.[metric] ?? null);
-  // Means over the same replicates in every arm, so a stopped run cannot make the arms average different seeds.
-  const complete = replicates.filter((entry) => arms.every((arm) => entry.arms[arm]?.outcomes));
+  // Means over the same replicates in every arm, so a stopped run cannot make the arms average different seeds. A replicate counts once its control runs have finished too.
+  const complete = replicates.filter((entry) => arms.every((arm) => typeof entry.arms[arm]?.outcomes?.control_themes === 'number'));
   const means = Object.fromEntries(arms.map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => {
     const values = complete.map((entry) => entry.arms[arm]!.outcomes![metric]).filter((x) => x !== null);
     return [metric, { n: values.length, mean: values.length ? mean(values) : null }];
@@ -661,9 +728,12 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const labels = scripted ? { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' } as const : { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
   const status: Status | 'INCOMPLETE' = error ? 'FAIL' : complete.length < seeds.length ? 'INCOMPLETE' : scripted ? 'NOT_RUN' : 'REVIEW_NEEDED';
   const primary = BENCHMARK.primary_metrics ?? [];
-  const defect_metrics = { recall: null, precision: null, status: 'NOT_RUN', detail: 'Needs reviewed theme-to-defect mappings. Each run\'s outcomes.defect_proxy is a one-to-one page-overlap proxy, not a compared metric.' } as const;
+  const estimate = 'Each run\'s outcomes.defect_proxy, which recall_high and precision come from, is a hint-based estimate, not a reviewed mapping.';
+  const defect_metrics = mapping
+    ? { runs: mappingScores(mapping, catalogue, DEFECT_IDS), status: 'MAPPED_BY_MODEL', detail: `By run, from theme-mapping.json. A model mapped the themes, not a person: check the sample in theme-mapping.md first. ${estimate}` } as const
+    : { runs: null, status: 'NOT_RUN', detail: `Needs theme-to-defect mappings from --mapper or a reviewer. ${estimate}` } as const;
   const result = {
-    status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete.length, arms,
+    status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete.length, arms, mapper: options.mapper ?? null,
     method: 'Per arm, the mean over the replicates complete in every arm; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished, given only for three or more pairs that vary. Personas are never the unit. No multiplicity correction is applied.',
     intervals: primary.length ? `confirmatory for ${primary.join(', ')}; exploratory otherwise` : 'exploratory: no primary metric is declared', defect_metrics,
     replicates, means, differences,
@@ -675,9 +745,14 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const lines = [
     '# Evaluation results', '',
     `Behavioural validity: ${labels.behavioural_validity}. Efficiency: ${labels.efficiency}. Missing predeclared benchmark fields: ${missing.join(', ')}.`, '',
-    `Defect recall: n/a (${defect_metrics.status}). Defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '',
+    ...(defect_metrics.runs ? [
+      `Defect recall and precision (${defect_metrics.status}): ${defect_metrics.detail}`, '', '| Run | High-severity recall | Precision |', '| --- | --- | --- |',
+      ...Object.entries(defect_metrics.runs).map(([run, scores]) => `| ${run} | ${fmt(scores.recall_high)} | ${fmt(scores.precision)} |`), '',
+    ] : [`Mapped defect recall: n/a (${defect_metrics.status}). Mapped defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '']),
     `Intervals: ${result.intervals}.`, '',
     `${scripted ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${complete.length} of ${seeds.length} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${error ? ` Error: ${error}` : ''}`, '',
+    '## Scoreboard', '', 'Means per arm. recall_high and precision are hint-based estimates, not reviewed mappings.', '', '| Arm | recall_high | precision | control_themes |', '| --- | --- | --- | --- |',
+    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} |`), '',
     ...Object.entries(differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
       ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? `n/a (${d.note})` : `${fmt(d.lower)} to ${fmt(d.upper)}${primary.includes(metric) ? '' : ' (exploratory)'}`} | ${d.n} |`), '',

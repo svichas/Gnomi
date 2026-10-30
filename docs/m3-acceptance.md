@@ -32,3 +32,23 @@ Start with `acceptance.json` and `manifest.json`. Each run has a folder (`seed-<
 | Export size (`export_size`) | Always `NOT_RUN` here; the HTML export is rendered by the app. |
 
 Statuses mean what they mean in M2. The mapping is a reviewer's judgment, so the overall status of a live run is `REVIEW_NEEDED` until it is recorded with its artifact paths in the roadmap.
+
+## Compare arms on defects
+
+`--evaluate` runs each arm in `ARMS` on Gym v2 and then, with the same arm and seed, on the control build (folders `r<n>-<arm>/` and `r<n>-<arm>-control/`). A scripted rehearsal needs no key:
+
+```sh
+npm run acceptance -w @gnomi/simulation -- --evaluate --repeats 1 --arms baseline --personas 4 --out /tmp/gnomi-evaluate-scripted
+```
+
+`results.md` and `results.json` compare three defect metrics per replicate:
+
+| Metric | How it is measured |
+|---|---|
+| `recall_high` | A hint-based estimate, not a reviewed mapping. `defectScores` pairs a theme with a defect only when they share a catalogue page and one of the defect's `hints` in `defects.yaml` appears in the theme's title, description, elements or evidence. Pairs are one-to-one. |
+| `precision` | The same estimate, over the report's top 20 themes. |
+| `control_themes` | Themes on the control build with trust confirmed or observed: the false-positive definition in [the evaluation plan](roadmap.md#evaluation-plan). |
+
+Add `--mapper provider:model` to have a judge map every theme of the Gym v2 runs after they finish. The mapper must come from a different provider than the navigator, because the evaluation plan asks for another model family, and live it needs that provider's key and a priced model. It shares `--allowance-usd` and writes `theme-mapping.json` with status `MAPPED_BY_MODEL`, plus `theme-mapping.md`, a sample of 20 themes picked by a fixed hash for a person to check. `results.md` then lists high-severity recall and top-20 precision per run, from `mappingScores` in [checks.ts](../simulation/src/acceptance/checks.ts). That function reads any `theme-mapping.json` items, so a reviewed mapping can replace the estimate.
+
+A model's mapping is not a reviewed one. The plan's other judge rules (both orders, calibration against a labelled set) are not built.

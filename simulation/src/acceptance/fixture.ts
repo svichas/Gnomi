@@ -4,7 +4,7 @@ import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, InjectedPost, Persona, PersonaSchema, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
-export const FIXTURE_VERSION = 1;
+export const FIXTURE_VERSION = 2; // 2: the coordination goal no longer needs a candidate list the Gym does not have
 export const SEED = 20261015;
 export const M4_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // run seeds: the population stays frozen, the follow graph varies
 export const M3_SEEDS = [SEED, SEED + 1, SEED + 2]; // the roadmap's three seeds for theme stability
@@ -12,6 +12,8 @@ export const M5_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // the r
 export interface Fixture { project: ProjectConfig; personas: Persona[] }
 /** The fixture's one POI, the Gym as a web app. */
 export const gym = (base: Fixture) => base.project.pois[0] as WebPoi;
+/** The same project pointed at the Gym's no-defect control build. */
+export const controlBuild = (base: Fixture, url: string): Fixture => ({ ...base, project: { ...base.project, pois: [{ ...gym(base), name: 'Gym control', start_url: `${url}/` }] } });
 const FIRST = ['Alex', 'Robin', 'Sam', 'Jordan', 'Kai', 'Noor', 'Rowan', 'Ari', 'Quinn', 'Sasha'];
 const LAST = ['Meyer', 'Wilson', 'Fischer', 'Reed', 'Schneider', 'Okafor', 'Lindgren', 'Haddad', 'Costa', 'Novak']; // the first five name the fifty; M5's buyers take the rest
 
@@ -44,7 +46,7 @@ export function fixture(url: string): Fixture {
       segmentOf('seg-1', 'Recruiting', 40, 'Post a job for a backend engineer in Engineering, with a detailed description and a hiring manager.'),
       segmentOf('seg-2', 'Hiring management', 30, 'Review a candidate and leave a hiring decision and feedback.'),
       segmentOf('seg-3', 'Workspace administration', 20, 'Invite a hiring manager and check how job approvals are configured.'),
-      segmentOf('seg-4', 'Department coordination', 10, 'Find the open jobs and review the candidate list.'),
+      segmentOf('seg-4', 'Department coordination', 10, 'Find the open jobs and check which candidates are waiting for a review.'),
     ],
   };
   const schema = getPersonaSchema();

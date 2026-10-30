@@ -15,7 +15,10 @@ describe("Gym v3 catalogue", () => {
     const yaml = await readFile(new URL("./defects.yaml", import.meta.url), "utf8");
     const entries = yaml.split(/^(?=- id: )/m).filter(Boolean);
     const field = (entry: string, name: string) => entry.match(new RegExp(`^ {2}${name}: (.*?)(?: +#.*)?$`, "m"))?.[1] ?? "";
-    for (const entry of entries) assert.match(field(entry, "poi"), /^(web|text|design)$/, entry.slice(0, 12));
+    for (const entry of entries) {
+      assert.match(field(entry, "poi"), /^(web|text|design)$/, entry.slice(0, 12));
+      assert.match(field(entry, "hints"), /^\[[^"\]]+\]$/, entry.slice(0, 12)); // a plain list: the harness reads it with a regular expression
+    }
     const v3 = entries.filter((entry) => field(entry, "poi") !== "web");
     assert.deepEqual(v3.map((entry) => field(entry, "toggle")), GYM_V3_DEFECT_IDS);
     for (const entry of v3) {

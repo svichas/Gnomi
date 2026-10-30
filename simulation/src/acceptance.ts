@@ -4,9 +4,9 @@ import { runAcceptance, runEvaluation, runM3Acceptance, runM4Acceptance, runM5Ac
 try {
   const options = parseOptions(process.argv.slice(2));
   if (options.evaluate) {
-    console.log(options.mode === 'live' ? `Live evaluation on ${options.provider}: ${options.repeats} replicates of ${options.arms!.join(', ')}, ${options.personas} personas. ${BILLING_CAVEAT}` : 'Scripted evaluation rehearsal: no provider calls.');
+    console.log(options.mode === 'live' ? `Live evaluation on ${options.provider}: ${options.repeats} replicates of ${options.arms!.join(', ')}, each on the defect and control builds, ${options.personas} personas. ${BILLING_CAVEAT}` : 'Scripted evaluation rehearsal: no provider calls.');
     const result = await runEvaluation(options);
-    console.log(`${result.status}: ${options.out}/results.md. Recorded cost: $${result.recorded_cost_usd.toFixed(6)}.`);
+    console.log(`${result.status}: ${options.out}/results.md. Recorded cost: $${result.recorded_cost_usd.toFixed(6)}.${options.mapper ? ` Theme mapping sample: ${options.out}/theme-mapping.md.` : ''}`);
     if (result.error) console.error(result.error);
     if (result.status === 'FAIL') process.exitCode = 1;
   } else {

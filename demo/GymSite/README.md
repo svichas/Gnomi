@@ -1,6 +1,6 @@
 # Gym
 
-A deliberately flawed demo ATS (`server.ts`) plus, for Gnomi's M5 text and static-design POIs, design frames and copy (`assets/`). The defect catalogue is `defects.yaml`: each entry has a `poi` (`web`, `text` or `design`) and a `toggle`, and `none` is the defect-free control.
+A deliberately flawed demo ATS (`server.ts`) plus, for Gnomi's M5 text and static-design POIs, design frames and copy (`assets/`). The defect catalogue is `defects.yaml`: each entry has a `poi` (`web`, `text` or `design`), a `toggle` and `hints`, the words that identify its element or symptom, and `none` is the defect-free control.
 
 ## Design frames and copy (Gym v3)
 
