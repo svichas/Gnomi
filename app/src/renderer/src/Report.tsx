@@ -1,9 +1,10 @@
-import { useContext } from 'react';
+import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, SET_ASIDE_TEXT, setAsideCause, themePoi, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, missingUsageText, poiName, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
@@ -199,9 +200,14 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
   );
 }
 
+/** The repeat set of the report's run, so each finding can say how it did across the set. */
+const Repeats = createContext<{ set?: RepeatSet; run_id: string }>({ run_id: '' });
+
 /** Keep the finding readable in one line; the recommendation and evidence open together. */
 function Priority({ theme, number, poi, onInspect, renderScreenshot }: { theme: ReportTheme; number: number; poi?: string; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
+  const { set, run_id } = useContext(Repeats);
+  const repeats = repeatNote(set, run_id, theme);
   const affected = theme.prevalence?.personas ?? theme.personas;
   return (
     <li className="report-finding" data-tone={SEVERITY[level(theme.severity)].tone}>
@@ -210,7 +216,7 @@ function Priority({ theme, number, poi, onInspect, renderScreenshot }: { theme: 
           <span className="report-finding-number" aria-hidden="true">{number.toString().padStart(2, '0')}</span>
           <div className="report-finding-copy">
             <h4>{theme.title}</h4>
-            <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}</span></p>
+            <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}</span></p>
           </div>
           <SeverityChip severity={theme.severity} />
           <Icon name="chevron" size={16} />
@@ -229,6 +235,7 @@ function Priority({ theme, number, poi, onInspect, renderScreenshot }: { theme: 
             {theme.evidence.map((evidence, i) => <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />)}
           </ul>
           {theme.named_by === 'rules' && <p className="text-xs text-stone-500">Title generated from the page and element.</p>}
+          {repeats && repeats.other_titles.length > 0 && <p className="text-xs text-stone-500">Named in other runs: {repeats.other_titles.join('; ')}</p>}
         </div>
       </details>
     </li>
@@ -609,7 +616,7 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
 
 const noScreenshot: RenderScreenshot = () => null;
 
-export function Report({ report, filter = {}, onInspect, renderScreenshot = noScreenshot, actions, audienceFilters }: { report: ReportData; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot; actions?: ReactNode; audienceFilters?: ReactNode }) {
+export function Report({ report, repeats, filter = {}, onInspect, renderScreenshot = noScreenshot, actions, audienceFilters }: { report: ReportData; repeats?: RepeatSet; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot; actions?: ReactNode; audienceFilters?: ReactNode }) {
   const inFile = useContext(InFile);
   const selectedPersonas = report.personas.filter((persona) => matchesProfileValues(persona.attributes, filter));
   const ids = new Set(selectedPersonas.map((persona) => persona.id));
@@ -626,6 +633,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
     ['Model calls', `${report.llm_calls} (${(report.input_tokens + report.output_tokens).toLocaleString()} tokens)`],
   ];
   return (
+    <Repeats value={{ set: repeats, run_id: report.run_id }}>
     <section aria-labelledby="report-title" className="report-page">
       <header className="report-header">
         <div className="report-header-top">
@@ -634,6 +642,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         </div>
         <p className="report-goal">{report.goal}</p>
         <p className="report-context"><Icon name="people" size={14} />{count(report.personas.length, 'simulated user')}<span aria-hidden="true">·</span>Findings to validate with real people</p>
+        {report.repeat && <p className="text-sm text-stone-600">Run {report.repeat.index} of {report.repeat.of} in a repeat set.{repeats && ` ${setNote(repeats)}`}</p>}
         {report.status === 'stopped' && report.stop_reason && (report.stop_reason.startsWith('error: ') ? <Note tone="error">{stopText(report.stop_reason)}</Note> : <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>)}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}
@@ -674,5 +683,6 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
         </Fold>
       </div>
     </section>
+    </Repeats>
   );
 }

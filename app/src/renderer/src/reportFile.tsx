@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Report as ReportData } from '@gnomi/simulation/types.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import type { ReportFormat } from '../../reports.ts';
 import { Report } from './Report.tsx';
 import { InFile } from './reportParts.tsx';
@@ -34,7 +35,7 @@ const PRINT = `@media print {
 
 const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function Page({ report, screenshot }: { report: ReportData; screenshot: (path: string, alt: string) => ReactNode }) {
+function Page({ report, repeats, screenshot }: { report: ReportData; repeats?: RepeatSet; screenshot: (path: string, alt: string) => ReactNode }) {
   return (
     <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
       <header>
@@ -44,13 +45,13 @@ function Page({ report, screenshot }: { report: ReportData; screenshot: (path: s
           Run {report.run_id} on {report.pois.map((poi) => poi.start_url ?? poi.name).join(', ')}, started {when(report.started_at)}
         </p>
       </header>
-      <Report report={report} onInspect={() => {}} renderScreenshot={screenshot} />
+      <Report report={report} repeats={repeats} onInspect={() => {}} renderScreenshot={screenshot} />
     </main>
   );
 }
 
 /** One HTML file drawn by the report component itself: styles inline, evidence screenshots as small data URLs, no scripts, nothing fetched. */
-export async function reportHtml(report: ReportData, thumbnails: (paths: string[]) => Promise<Record<string, string>>): Promise<string> {
+export async function reportHtml(report: ReportData, thumbnails: (paths: string[]) => Promise<Record<string, string>>, repeats?: RepeatSet): Promise<string> {
   const images = new Map<string, string>();
   const shown: string[] = [];
   const screenshot = (path: string, alt: string) => {
@@ -61,7 +62,7 @@ export async function reportHtml(report: ReportData, thumbnails: (paths: string[
   const draw = () =>
     renderToStaticMarkup(
       <InFile value>
-        <Page report={report} screenshot={screenshot} />
+        <Page report={report} repeats={repeats} screenshot={screenshot} />
       </InFile>,
     );
   draw(); // the first pass only learns which screenshots the report shows, in order
@@ -93,8 +94,8 @@ ${PRINT}</style>
 }
 
 /** What goes in the exported file; for PDF that is the HTML main prints. */
-export async function reportFile(report: ReportData, format: ReportFormat, thumbnails: (paths: string[]) => Promise<Record<string, string>>): Promise<string> {
+export async function reportFile(report: ReportData, format: ReportFormat, thumbnails: (paths: string[]) => Promise<Record<string, string>>, repeats?: RepeatSet): Promise<string> {
   if (format === 'json') return JSON.stringify(report, null, 2);
-  if (format === 'md') return reportToMarkdown(report);
-  return reportHtml(report, thumbnails);
+  if (format === 'md') return reportToMarkdown(report, repeats);
+  return reportHtml(report, thumbnails, repeats);
 }

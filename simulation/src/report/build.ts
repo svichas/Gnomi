@@ -287,6 +287,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   return {
     ...(comparison ? { comparison } : {}),
     run_id: started.run_id,
+    ...(config.repeat ? { repeat: config.repeat } : {}),
     status,
     stop_reason,
     goal: config.project.goal,

@@ -1,5 +1,6 @@
 import type { AssetInfo } from '@gnomi/simulation/assets.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
@@ -81,14 +82,22 @@ export interface Api {
   remove_persona: { params: { id: string }; result: null };
   /** Saves hand edits to a persona's written fields; sampled traits stay as they were. */
   edit_persona: { params: { persona: Persona }; result: null };
-  estimate_run: { params: Record<string, never>; result: RunEstimate };
-  /** Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use. */
-  start_run: { params: { reset: boolean }; result: { run_id: string } };
+  /** With `repeats`, the whole set: the estimate of every run together. */
+  estimate_run: { params: { repeats?: number }; result: RunEstimate };
+  /**
+   * Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use.
+   * With `repeats` it answers with the first run; the rest of the set follow one after another, each with its logins checked again and
+   * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'.
+   */
+  start_run: { params: { reset: boolean; repeats?: number }; result: { run_id: string } };
+  /** Also ends the project's repeat set, even when the run has already logged its end and so stays finished. */
   stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */
   resume_personas: { params: { run_id: string; persona_ids: string[] }; result: null };
   get_events: { params: { run_id: string; after_seq: number | null; persona_id: string | null }; result: GnomiEvent[] };
   get_report: { params: { run_id: string }; result: Report };
+  /** What a repeat set's runs have in common, computed when read. Each run keeps its own report. */
+  get_repeats: { params: { group: string }; result: RepeatSet };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }
@@ -104,6 +113,7 @@ export type EngineToClient =
   | { kind: 'response'; id: number; ok: false; error: string }
   | { kind: 'event'; event: GnomiEvent; project_dir?: string }
   | { kind: 'session_run'; run: SessionRun }
+  | { kind: 'repeat_failed'; error: string }
   | ({ kind: 'progress'; task: 'generate_personas' } & PersonaProgress);
 
 export interface Transport {

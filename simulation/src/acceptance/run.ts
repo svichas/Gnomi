@@ -23,7 +23,7 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Respon
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
-import { applyMapping, ARMS, assess, BILLING_CAVEAT, controlThemes, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, TOP, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Mode, type Options, type Status } from './checks.ts';
+import { applyMapping, ARMS, assess, BILLING_CAVEAT, controlThemes, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, STABILITY_TOP, TOP, topOverlap, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Mode, type Options, type Status } from './checks.ts';
 import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
@@ -666,7 +666,7 @@ function outcomesOf(report: Report, data: Fixture, events: GnomiEvent[], catalog
 const fmt = (x: number | null) => x === null ? 'n/a' : Number(x.toFixed(4)).toString();
 
 /** Each arm's means and its paired differences from baseline. */
-function tally(replicates: { arms: Partial<Record<Arm, { outcomes: Outcomes | null }>> }[], arms: Arm[]) {
+function tally(replicates: { replicate: number; arms: Partial<Record<Arm, { outcomes: Outcomes | null }>> }[], arms: Arm[]) {
   const series = (arm: Arm, metric: typeof METRICS[number]) => replicates.map((entry) => entry.arms[arm]?.outcomes?.[metric] ?? null);
   // Means over the same replicates in every arm, so a stopped run cannot make the arms average different seeds. A replicate counts once its control runs have finished too.
   const complete = replicates.filter((entry) => arms.every((arm) => typeof entry.arms[arm]?.outcomes?.control_themes === 'number'));
@@ -688,7 +688,7 @@ const evaluationStatus = (error: string | null, complete: number, repeats: numbe
 interface Scoreboard {
   status: string; mode: Mode; labels: { behavioural_validity: string; efficiency: string }; missing_benchmark: string[]; error: string | null; allowance_stop_reason: string | null; repeats: number; complete_replicates: number; arms: Arm[];
   method: string; intervals: string; rescored_at?: string; defect_metrics: { runs: ReturnType<typeof mappingScores> | null; status: string; detail: string };
-  means: Record<string, Record<string, { n: number; mean: number | null }>>; differences: Record<string, Record<string, ReturnType<typeof pairedDifference>>>;
+  means: Record<string, Record<string, { n: number; mean: number | null }>>; differences: Record<string, Record<string, ReturnType<typeof pairedDifference>>>; stability: Record<string, number | null>;
 }
 
 function resultsMarkdown(result: Scoreboard) {
@@ -703,8 +703,8 @@ function resultsMarkdown(result: Scoreboard) {
     ] : [`Mapped defect recall: n/a (${defect_metrics.status}). Mapped defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '']),
     `Intervals: ${result.intervals}.`, '',
     `${result.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${result.status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${result.complete_replicates} of ${result.repeats} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${result.allowance_stop_reason ? ` Stopped early: ${result.allowance_stop_reason}` : ''}${result.error ? ` Error: ${result.error}` : ''}`, '',
-    '## Scoreboard', '', `Means per arm. ${result.rescored_at ? `recall_high and precision come from theme-mapping.json, rescored ${result.rescored_at}, over the ${means[arms[0]].recall_high.n} of ${result.complete_replicates} complete replicates mapped in every arm; a run it does not cover has neither.` : 'recall_high and precision are hint-based estimates, not reviewed mappings.'}`, '', '| Arm | recall_high | precision | control_themes |', '| --- | --- | --- | --- |',
-    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} |`), '',
+    '## Scoreboard', '', `Means per arm. ${result.rescored_at ? `recall_high and precision come from theme-mapping.json, rescored ${result.rescored_at}, over the ${means[arms[0]].recall_high.n} of ${result.complete_replicates} complete replicates mapped in every arm; a run it does not cover has neither.` : 'recall_high and precision are hint-based estimates, not reviewed mappings.'} stability is the mean overlap of the top ${STABILITY_TOP} themes across every pair of complete replicates, matched by matchThemes; n/a with fewer than two.`, '', '| Arm | recall_high | precision | control_themes | stability |', '| --- | --- | --- | --- | --- |',
+    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} | ${fmt(result.stability[arm])} |`), '',
     ...Object.entries(result.differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
       ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? `n/a (${d.note})` : `${fmt(d.lower)} to ${fmt(d.upper)}${primary.includes(metric) ? '' : ' (exploratory)'}`} | ${d.n} |`), '',
@@ -785,6 +785,8 @@ export async function runEvaluation(options: Options, env: Record<string, string
     for (const gym of gyms) await gym.close();
   }
   const { complete, means, differences } = tally(replicates, arms);
+  // Across replicates, so one number per arm rather than one per run; over the same replicates as the means.
+  const stability = Object.fromEntries(arms.map((arm) => [arm, topOverlap(complete.map((entry) => finished.find((run) => run.name === `r${entry.replicate}-${arm}`)?.report?.themes ?? []))]));
   const missing = Object.entries(BENCHMARK).filter(([, value]) => value === null).map(([key]) => key);
   const scripted = options.mode === 'scripted';
   const labels = scripted ? { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' } as const : { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
@@ -799,7 +801,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
     status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete.length, arms, mapper: options.mapper ?? null,
     method: 'Per arm, the mean over the replicates complete in every arm; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished, given only for three or more pairs that vary. Personas are never the unit. No multiplicity correction is applied.',
     intervals: primary.length ? `confirmatory for ${primary.join(', ')}; exploratory otherwise` : 'exploratory: no primary metric is declared', defect_metrics,
-    replicates, means, differences,
+    replicates, means, differences, stability,
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
     allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,

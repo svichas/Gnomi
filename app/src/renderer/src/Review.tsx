@@ -13,7 +13,7 @@ import { call, errorText } from './engine.ts';
 import { problemFor, ROLE_TEXT, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
 import { RecordingPanel, useRecorder } from './Recorder.tsx';
-import { ActionBar, Button, Check, Note, OutcomeNote, usd, useAction } from './ui.tsx';
+import { ActionBar, Button, Check, Note, NumberInput, OutcomeNote, usd, useAction } from './ui.tsx';
 import './results.css';
 
 type Login = 'checking' | { ok: boolean; reason: string | null };
@@ -56,6 +56,7 @@ export function Review(props: {
   const sources = saved ? effectiveComparisonPois(saved) : [];
   const roles = saved ? rolesInUse(saved) : [];
   const [reset, setReset] = useState(false);
+  const [repeats, setRepeats] = useState(1);
   const [logins, setLogins] = useState<Record<string, Login>>(() => Object.fromEntries(roles.map((role) => [role, 'checking' as const])));
   const [estimate, setEstimate] = useState<RunEstimate | { error: string } | null>(null);
   const { busy, outcome, run } = useAction();
@@ -82,18 +83,26 @@ export function Review(props: {
         (err) => current && setLogins((was) => ({ ...was, [role]: { ok: false, reason: errorText(err) } })),
       );
     }
-    call('estimate_run', {}).then(
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!saved) return;
+    let current = true;
+    call('estimate_run', { repeats }).then(
       (result) => current && setEstimate(result),
       (err) => current && setEstimate({ error: errorText(err) }),
     );
     return () => {
       current = false;
     };
-  }, []);
+  }, [saved, repeats]);
 
   const start = () =>
     run(async () => {
-      const { run_id } = await call('start_run', { reset });
+      const { run_id } = await call('start_run', { reset, repeats });
       onStarted(run_id);
       return null;
     });
@@ -229,6 +238,10 @@ export function Review(props: {
             <Fact label="Time limit">{saved.settings.wall_clock_budget_min} minutes</Fact>
             <Fact label="Browsers at once">{saved.settings.concurrency}</Fact>
           </div>
+          {!saved.comparison && <>
+            <Fact label="Repeat runs"><NumberInput label="Repeat runs" value={repeats} onChange={setRepeats} min={1} max={10} step={1} /></Fact>
+            {repeats > 1 && <p className="review-note">{repeats} runs of this audience, one after another, each with its own report and {usd(saved.settings.cost_budget_usd / repeats)} of the cost limit. Each finding then shows how many runs it appeared in. A run that stops ends the set. Repeats test robustness inside the simulation; they say nothing about real people.</p>}
+          </>}
           <p className="review-note">At the cost limit, new work stops and outstanding model requests are canceled. Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed the limit. Persona generation is charged separately.</p>
           {saved.comparison && <p className="review-note">The estimate includes evidence assessment and verification for each tool/task. {Math.round(saved.comparison.execution.analysis_reserve_fraction * 100)}% of the allowance is reserved for analysis; incomplete coverage is reported if the run stops early.</p>}
         </Section>
@@ -260,7 +273,7 @@ export function Review(props: {
           {webPois(sources).some((poi) => poi.reset_hook_url !== null) && (
             <div className="space-y-1">
               <Check checked={reset} onChange={setReset}>
-                Reset staging before the run
+                Reset staging before {repeats > 1 ? 'each run' : 'the run'}
               </Check>
               {webPois(sources).flatMap((poi) => (poi.reset_hook_url === null ? [] : [<p key={poi.id} className="break-all pl-6 text-xs text-stone-500">Gnomi sends a POST to {poi.reset_hook_url} first.</p>]))}
             </div>

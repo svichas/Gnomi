@@ -8,6 +8,7 @@ let nextId = 1;
 const pending = new Map<number, { resolve(result: unknown): void; reject(error: Error): void }>();
 const listeners = new Set<{ listener: (event: GnomiEvent) => void; projectDir: string | undefined }>();
 const sessionListeners = new Set<(run: SessionRun) => void>();
+const repeatFailedListeners = new Set<(error: string) => void>();
 let eventProject: string | undefined;
 export function setEventProject(dir: string) { eventProject = dir; }
 const progressListeners = new Set<(progress: PersonaProgress) => void>();
@@ -38,6 +39,10 @@ export const connected = new Promise<Startup>((resolve) => {
       }
       if (data.kind === 'session_run') {
         sessionListeners.forEach((listener) => listener(data.run));
+        return;
+      }
+      if (data.kind === 'repeat_failed') {
+        repeatFailedListeners.forEach((listener) => listener(data.error));
         return;
       }
       if (data.kind === 'progress') {
@@ -73,6 +78,12 @@ export function onEvent(listener: (event: GnomiEvent) => void, projectDir = even
 export function onSessionRun(listener: (run: SessionRun) => void): () => void {
   sessionListeners.add(listener);
   return () => sessionListeners.delete(listener);
+}
+
+/** Why a repeat set ended before its next run could start; returns the unsubscribe function. */
+export function onRepeatFailed(listener: (error: string) => void): () => void {
+  repeatFailedListeners.add(listener);
+  return () => repeatFailedListeners.delete(listener);
 }
 
 /** Progress of a long request (writing personas), from now on; returns the unsubscribe function. */

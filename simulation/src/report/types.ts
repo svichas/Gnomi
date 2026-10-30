@@ -1,6 +1,6 @@
 // The report: a projection of the event log (tech.md §5.1), rebuilt by report/build.ts.
 import type { InfluenceEdge } from '../social/influence.ts';
-import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, SignalKind, StepEvidence } from '../types.ts';
+import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence } from '../types.ts';
 
 /** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
 export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
@@ -155,6 +155,7 @@ export interface ReportBuyers {
 export interface Report {
   comparison?: import('../comparison/types.ts').ComparisonReport;
   run_id: string;
+  repeat?: RunConfig['repeat']; // the repeat set this run is one of; absent on a lone run
   status: 'running' | 'finished' | 'stopped';
   stop_reason: string | null;
   goal: string;

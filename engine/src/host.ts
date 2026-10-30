@@ -17,8 +17,9 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, credential, estimateFor, launchRun, population, projectGateway } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, credential, estimateFor, launchRun, population, projectGateway, repeatReports, repeatRuns, runSet } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { combineReports } from '@gnomi/simulation/report/repeats.ts';
 import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
@@ -44,7 +45,10 @@ const figma = () => figmaClient({ token: secrets.get('figma_token') ?? null, fet
 const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
+const sets = new Map<string, LiveSet>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
+let closing = false; // no repeat starts once shutdown has begun
 type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
+type LiveSet = { group: string; stopped: boolean; done?: Promise<unknown> };
 // Only a selected project or one with a live run keeps its database open.
 const projects = new Map<string, OpenProject>();
 const sessionRuns = new SessionRuns((run) => broadcast({ kind: 'session_run', run }));
@@ -78,9 +82,9 @@ function project(): ProjectConfig {
   return config;
 }
 
-function unlockedSessions(): SessionStore {
-  if (!sessions) throw new Error('Recorded logins are locked: the app has not sent the session key yet. Restart Gnomi.');
-  return sessions;
+function unlockedSessions(held = sessions): SessionStore {
+  if (!held) throw new Error('Recorded logins are locked: the app has not sent the session key yet. Restart Gnomi.');
+  return held;
 }
 
 function refreshSessions() {
@@ -122,9 +126,12 @@ function recordingPoi(config: ProjectConfig) {
   return poi;
 }
 
+/** What a run needs of its project. A repeat set keeps it, as the app may have moved to another project by the next repeat. */
+const here = () => ({ ...current(), sessions });
+
 /** Loads the role's start page with its session under containment (tech.md §9.1) and marks it verified when it held. */
-async function verify(config: ProjectConfig, role: string) {
-  const store = unlockedSessions();
+async function verify(config: ProjectConfig, role: string, place = here()) {
+  const store = unlockedSessions(place.sessions);
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
   // The login POI's hosts first; the session's cookies go to every web POI in full mode, so any of their hosts may be reached.
@@ -140,7 +147,7 @@ async function verify(config: ProjectConfig, role: string) {
   const now = Date.now();
   if (result.ok) store.markVerified(role, now);
   const info = result.ok ? { ...saved.info, verified_at: now } : config.comparison ? { ...saved.info, verified_at: null } : saved.info;
-  if (!result.ok && config.comparison) current().store.putSession(info);
+  if (!result.ok && config.comparison) place.store.putSession(info);
   return { result, info };
 }
 
@@ -165,10 +172,11 @@ const info = () => readInfo(current().store, sessions !== null);
 
 /** Lets the process exit: runs stop, the recorder and the browsers close, the project closes. Main sends it before quitting. */
 async function shutdown() {
+  closing = true;
   setupTask?.stop.abort(new Error('App is closing. Completed drafts are saved.'));
   await setupTask?.done.catch(() => {});
   for (const run of runs.values()) run.stop();
-  await Promise.allSettled([...runs.values()].map((run) => run.done));
+  await Promise.allSettled([...[...runs.values()].map((run) => run.done), ...[...sets.values()].map((set) => set.done)]);
   const pending = recording;
   recording = null;
   await pending?.rec.then((rec) => rec.cancel()).catch(() => {});
@@ -191,7 +199,7 @@ function canSwitchProject() {
 }
 
 function hasRun(dir: string) {
-  return [...runs.keys()].some((key) => JSON.parse(key)[0] === dir);
+  return sets.has(dir) || [...runs.keys()].some((key) => JSON.parse(key)[0] === dir);
 }
 
 function releaseProject(project: OpenProject | null) {
@@ -306,47 +314,76 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     current().store.putPersona({ ...old, name, job_title, background, context_of_use, goal_interpretation, voice });
     return null;
   },
-  estimate_run() {
+  estimate_run({ repeats }) {
     const config = project();
-    return estimateFor(config, population(current().store, config));
+    return estimateFor(config, population(current().store, config), repeats);
   },
-  async start_run({ reset }) {
+  async start_run({ reset, repeats }) {
     noSetup('starting a run');
-    const { store, blobs, record } = current();
-    const config = project();
+    const place = here();
+    const { store, blobs, record, sessions: held } = place;
+    const planned = repeatRuns(project(), repeats); // frozen, as personas are, against edits made while a set runs
+    const { config } = planned[0];
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
     const personas = checkRun(store, config, { reset, fake: FAKE_LLM, secrets: secret });
-    // Never with a login that no longer works (tech.md §9.1).
-    const verified: SessionInfo[] = [];
-    if (config.comparison) {
-      const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
-      // Missing or expired test access limits only the affected comparison episodes.
-      for (const session of (sessions?.list() ?? []).filter((session) => roles.has(session.role))) {
-        try { verified.push((await verify(config, session.role)).info); }
-        catch { verified.push({ ...session, verified_at: null }); }
+    const prepare = async () => {
+      // Never with a login that no longer works (tech.md §9.1).
+      const verified: SessionInfo[] = [];
+      if (config.comparison) {
+        const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
+        // Missing or expired test access limits only the affected comparison episodes.
+        for (const session of (held?.list() ?? []).filter((session) => roles.has(session.role))) {
+          try { verified.push((await verify(config, session.role, place)).info); }
+          catch { verified.push({ ...session, verified_at: null }); }
+        }
+      } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
+        const checked = await verify(config, role, place);
+        if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
+        verified.push(checked.info);
       }
-    } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
-      const checked = await verify(config, role);
-      if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
-      verified.push(checked.info);
-    }
-    // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
-    const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
-      ? await pool()
-      : { newPage: async (opts) => (await pool()).newPage(opts) };
+      // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
+      const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
+        ? await pool()
+        : { newPage: async (opts) => (await pool()).newPage(opts) };
+      return { verified, browserPool };
+    };
+    const launch = (run: typeof planned[number], { verified, browserPool }: Awaited<ReturnType<typeof prepare>>) => {
+      const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
+      const key = runKey(store.dir, started.run_id);
+      runs.set(key, started);
+      started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
+        runs.delete(key);
+        if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
+      });
+      return started;
+    };
+    const ready = await prepare();
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
     noSetup('starting a run');
-    const started = launchRun(store, config, { personas, sessions: verified, reset }, { blobs, record, browsers: browserPool, sessions, fake: FAKE_LLM, secrets: secret });
-    const key = runKey(store.dir, started.run_id);
-    runs.set(key, started);
-    started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
-      runs.delete(key);
-      if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
-    });
+    const started = launch(planned[0], ready);
+    if (planned.length > 1) {
+      const set: LiveSet = { group: planned[0].repeat!.group, stopped: false };
+      const over = () => closing || set.stopped;
+      sets.set(store.dir, set);
+      set.done = runSet(planned, async (run, index) => {
+        if (index === 0) return started.done;
+        const next = await prepare();
+        if (over()) throw new Error('The repeat set is over.'); // a stop can land while the next run prepares
+        return launch(run, next).done;
+      }, over).catch((err) => {
+        if (!over()) broadcast({ kind: 'repeat_failed', error: err instanceof Error ? err.message : String(err) });
+      }).finally(() => {
+        sets.delete(store.dir);
+        if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
+      });
+    }
     return { run_id: started.run_id };
   },
   stop_run({ run_id, project_dir }) {
-    runs.get(runKey(project_dir ? resolve(project_dir) : current().store.dir, run_id))?.stop();
+    const dir = project_dir ? resolve(project_dir) : current().store.dir;
+    runs.get(runKey(dir, run_id))?.stop();
+    const set = sets.get(dir); // a run that has logged its end cannot stop any more, but its set still can
+    if (set) set.stopped = true;
     return null;
   },
   async record_session({ role, target_id }) {
@@ -400,6 +437,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       ...(persona_id === null ? {} : { personaId: persona_id }),
     }),
   get_report: ({ run_id }) => buildReport(current().store.events(run_id)),
+  get_repeats({ group }) {
+    const { store } = current();
+    const set = sets.get(store.dir);
+    return combineReports(repeatReports(store, group), set?.group === group && !set.stopped);
+  },
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
     // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.
