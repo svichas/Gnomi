@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, missingUsageText, poiName, SET_ASIDE_TEXT, setAsideCause, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
@@ -253,7 +253,21 @@ function Findings({ themes, pois, empty, onInspect, renderScreenshot }: { themes
   </div>;
 }
 
-function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+/** Themes the evidence check took out of the ranking, each with the model's reason; nothing here is lost, only moved. */
+function SetAside({ themes }: { themes: ReportTheme[] }) {
+  return <div className="space-y-3">
+    <p className="text-sm text-stone-600">{SET_ASIDE_TEXT}</p>
+    <ul className="space-y-3">
+      {themes.map((theme) => <li key={`${theme.poi_id}/${theme.id}`}>
+        <p className="text-sm font-medium text-stone-900">{theme.title}</p>
+        <p className="text-sm text-stone-700">The model&rsquo;s review points to {setAsideCause(theme)}: {theme.check?.reason}</p>
+        <p className="text-xs text-stone-500">{count(theme.personas, 'persona')}, {count(theme.frictions, 'report')}</p>
+      </li>)}
+    </ul>
+  </div>;
+}
+
+function Priorities({ themes, setAside, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; setAside: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const own = themes.filter((theme) => !pois.find((poi) => poi.id === theme.poi_id)?.competitor);
   const shared = own.filter((t) => !isSingle(t));
   const problems = shared.filter((t) => t.category !== 'objection');
@@ -265,10 +279,11 @@ function Priorities({ themes, pois, onInspect, renderScreenshot }: { themes: Rep
     <div className="report-priorities">
       <section aria-labelledby="themes-title">
         <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Open an issue for the suggested change and evidence." />
-        <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : 'No shared issues were reported in this run.'} {...props} />
+        <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : setAside.length ? 'No shared issues are left. What the evidence check set aside is below.' : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
       {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, or heard from others; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
+      {setAside.length > 0 && <Fold id="set-aside-title" title={`Set aside by the evidence check (${setAside.length})`} hint="A model's review points away from the product; each reason is here" icon="report"><SetAside themes={setAside} /></Fold>}
       {competitors.length > 0 && <Fold id="competitor-findings-title" title={`Competitor findings (${competitors.length})`} hint="Friction on the other products in this run" icon="globe"><Findings themes={competitors} empty="" {...props} /></Fold>}
     </div>
   );
@@ -624,7 +639,7 @@ export function Report({ report, filter = {}, onInspect, renderScreenshot = noSc
       </header>
       {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
         <Glance report={report} themes={themes} />
-        {report.themes ? <Priorities themes={themes} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
+        {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
       </>}
       <div className="report-details">
         <SectionHeading title="Explore the details" hint="A closer look, whenever you need it." />

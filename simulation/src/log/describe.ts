@@ -78,6 +78,8 @@ export function describe(e: GnomiEvent): string {
       return e.payload.pois.length ? `naming themes and writing suggestions for ${e.payload.pois.join(', ')}` : 'no frictions to name themes for';
     case 'report.themes':
       return `${e.payload.poi_id}: ${e.payload.themes.length} themes named by the judge`;
+    case 'report.checks':
+      return `${e.payload.poi_id}: ${e.payload.checks.length} themes reviewed by the evidence check`;
     case 'report.suggestions':
       return `${e.payload.poi_id}: ${e.payload.suggestions.length} suggested changes from the author`;
     case 'report.generated':

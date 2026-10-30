@@ -224,6 +224,18 @@ test('comparison text and evidence stay escaped, including target names, sources
   assert.doesNotMatch(html, /<[^>]+\b(?:src|href)="(?!data:|#)/);
 });
 
+test('themes the evidence check set aside fold into their own section, each with its reason, as a model\'s review', async () => {
+  const report = fixture(2, 1);
+  report.themes = [];
+  report.set_aside = [{ id: 'g1', poi_id: 'poi-gym', rank: 0, title: 'The <hiring manager> field', description: 'Rejected.', named_by: 'judge', trust: 'reported', severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'agent_mistake', reason: 'She typed her own name.' } }];
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Set aside by the evidence check (1)', 'The &lt;hiring manager&gt; field', 'The model’s review points to a persona&#x27;s mistake: She typed her own name.', 'A model reviewed the evidence behind these themes', 'No shared issues are left.']) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.doesNotMatch(html, /disprov/i);
+  assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Set aside by the evidence check'));
+});
+
 test('the app comparison exposes transcript inspection while keeping the same decision and matrix as export', async () => {
   const report = fixture(1, 0);
   report.comparison = comparisonFixture();

@@ -290,6 +290,31 @@ test('themes carry rank, trust, affected share, evidence with event links and la
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
 });
 
+test('set-aside themes fold apart with each reason, called a model\'s review, and an empty ranking does not read as no frictions', () => {
+  const aside = (verdict: 'agent_mistake' | 'environment', reason: string): ReportTheme => ({ ...theme, rank: 0, title: `Theme\n${verdict}`, check: { verdict, reason } });
+  const md = reportToMarkdown({ ...report, themes: [{ ...theme, id: 'g2', title: 'Kept', check: { verdict: 'unclear', reason: 'Not decided.' } }], set_aside: [aside('agent_mistake', 'She typed <her own> name.'), aside('environment', 'The goal cannot be done.')] });
+  const section = md.slice(md.indexOf('## Set aside by the evidence check'));
+  assert.ok(md.indexOf('## Themes') < md.indexOf('## Set aside by the evidence check'));
+  for (const expected of [
+    '<details>\n<summary>2 themes set aside</summary>',
+    "A model reviewed the evidence behind these themes",
+    "This is a model's review",
+    "- **Theme agent_mistake** (the model's review points to a persona's mistake): She typed &lt;her own&gt; name. Events: #4, #5, #20",
+    "- **Theme environment** (the model's review points to the test setup): The goal cannot be done. Events: #4, #5, #20",
+    '</details>',
+  ]) {
+    assert.ok(section.includes(expected), expected);
+  }
+  assert.doesNotMatch(section, /disprov|false positive|not real/i);
+  assert.ok(!reportToMarkdown({ ...report, themes: [theme] }).includes('Set aside'));
+  const empty = reportToMarkdown({ ...report, themes: [], set_aside: [aside('environment', 'The goal cannot be done.')] });
+  assert.ok(empty.includes('The evidence check set aside every theme here.'));
+  assert.ok(!empty.includes('No frictions to group into themes.'));
+  const pois = [...report.pois, { ...report.pois[0], id: 'poi-b', name: 'Other' }];
+  const split = reportToMarkdown({ ...report, pois, themes: [theme], set_aside: [{ ...aside('environment', 'Blocked.'), poi_id: 'poi-b' }] });
+  assert.ok(split.includes('### Other\n\nThe evidence check set aside every theme here.'));
+});
+
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
   const md = reportToMarkdown({
     ...report,

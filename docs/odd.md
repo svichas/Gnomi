@@ -93,6 +93,8 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Theme trust, ranking and prevalence (`report/themes.ts`).** A theme made only of weak signals (`small_target`, `backtrack`) is left out of the report: it is not ranked and does not count towards the friction rate. The log and the group ids are unchanged, and undersized targets go to the methods appendix as an audit. A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
 
+**Evidence check (`report/models.ts`, `report/themes.ts`).** Off unless `finding_check` is set or `gnomi rejudge --check` asks for it. A model reads each top friction theme's evidence and answers `product`, `agent_mistake`, `environment` or `unclear`. A theme with `agent_mistake` or `environment` leaves the ranking and the friction rate and the ranks close up; `product` and `unclear` change nothing but the theme's `check` field. Prevalence and scores do not change, and the persona's posts about it still count as first-hand in the spread. The check can reject a real defect and can share bias with the personas, which is why results stay visible and `check_model` can name another family. Its effect has not been measured.
+
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
 
 **Model sampling (`llm/gateway.ts`).** Per-role temperature is requested unless the route has reasoning on, in which case none is sent. A provider seed is passed to Google, DeepSeek and OpenAI-compatible routes only, derived from run, persona, round and purpose (31 bits). The temperature and seed sent, less any the provider reports it ignored, and the model the provider reports, are recorded on each `llm.call`.
@@ -169,6 +171,8 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | --- | --- | --- | --- | --- | --- |
 | `small_target_px` | CSS pixels | 24 | A mobile tap under this in either direction is a `small_target` signal. Frozen per run, so older runs keep 40. Unlike WCAG, it does not exempt links inside a sentence. | `signals/index.ts`; the WCAG level AA minimum | assumed |
 | weak signals | signal kinds | `small_target`, `backtrack` | Often the persona rather than the product, so a theme made only of them is left out of the report. | `report/friction.ts`, `report/themes.ts`; the 16 October Gym run, a tiny sample | assumed |
+| `finding_check` | boolean | absent, which is off | Stays off until its `--evaluate` arm shows it helps. | `report/models.ts`, `acceptance/checks.ts` | assumed |
+| evidence check input | themes per POI, per call; steps after each piece of evidence | 15, 3, 2 | Bounds the calls and what each one reads. | `report/models.ts`, `report/themes.ts` | assumed |
 
 ### Rounds
 

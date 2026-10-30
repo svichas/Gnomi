@@ -23,7 +23,7 @@ import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, GnomiEvent, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -36,9 +36,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
   runs <project dir>
   report <project dir> [--run <run id>] [--format summary|md|json]
-  rejudge <project dir> [--run <run id>] [--budget <usd>] [--fake-llm]
+  rejudge <project dir> [--run <run id>] [--budget <usd>] [--check] [--fake-llm]
       groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
-      It spends at most what is left of the run's cost budget, or --budget instead.
+      It spends at most what is left of the run's cost budget, or --budget instead. --check also reviews the friction themes
+      against their evidence, whatever the run's finding_check setting.
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -62,6 +63,7 @@ const OPTIONS = {
   id: { type: 'string' },
   run: { type: 'string' },
   budget: { type: 'string' },
+  check: { type: 'boolean', default: false },
   format: { type: 'string', default: 'summary' },
   json: { type: 'boolean', default: false },
   'fake-llm': { type: 'boolean', default: false },
@@ -100,15 +102,16 @@ function settingsFrom(v: Values): RunSettings {
   if (!over || typeof over !== 'object' || Array.isArray(over)) throw new Error(`Settings file ${v.settings} must hold a JSON object.`);
   // A routing that names some roles keeps the default model for the rest.
   const settings = { ...DEFAULT_SETTINGS, ...over, routing: { ...DEFAULT_SETTINGS.routing, ...over.routing } };
-  for (const [role, choice] of Object.entries(settings.routing)) {
-    if (!Object.hasOwn(PROVIDER_DEFAULTS, choice?.provider) || typeof choice.model !== 'string') throw new Error(`Settings file ${v.settings}: "routing.${role}" must be { "provider": "${Object.keys(PROVIDER_DEFAULTS).join('" | "')}", "model": "<model id>" }.`);
-  }
+  const validate = (where: string, choice: ModelChoice) => {
+    if (!Object.hasOwn(PROVIDER_DEFAULTS, choice?.provider) || typeof choice.model !== 'string') throw new Error(`Settings file ${v.settings}: "${where}" must be { "provider": "${Object.keys(PROVIDER_DEFAULTS).join('" | "')}", "model": "<model id>" }.`);
+  };
+  for (const [role, choice] of Object.entries(settings.routing)) validate(`routing.${role}`, choice);
+  if (settings.check_model) validate('check_model', settings.check_model);
   return settings;
 }
 
-/** Fails early with the variable to set, rather than on the first model call. */
-function requireKey(settings: RunSettings, role: keyof RunSettings['routing'], fake: boolean) {
-  const { provider } = settings.routing[role];
+/** Fails early with the variable to set, rather than on the first model call. `choice` is for a call on the role's behalf that names its own model. */
+function requireKey(settings: RunSettings, role: keyof RunSettings['routing'], fake: boolean, { provider } = settings.routing[role]) {
   if (fake || credential(provider, settings.local_base_url, envSecrets)) return;
   throw new Error(provider === 'openai_compatible'
     ? 'Set "local_base_url" in --settings for the local model the routing names.'
@@ -200,6 +203,7 @@ function summarize(report: Report) {
     completion: report.weighted.completion,
     with_friction: report.weighted.with_friction,
     frictions: report.frictions.length,
+    set_aside: report.set_aside?.length ?? 0,
     pois: report.pois.map((poi) => ({
       id: poi.id,
       name: poi.name,
@@ -346,6 +350,7 @@ async function runSimulation(v: Values): Promise<void> {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
     // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
     for (const role of runRoles(config)) requireKey(settings, role, fake);
+    if (settings.finding_check) requireKey(settings, 'judge', fake, settings.check_model);
     store.saveProject(config);
     note(`Project folder: ${dir}`);
     const record = timeline(store);
@@ -424,7 +429,7 @@ function showReport(v: Values, dir: string | undefined): void {
   }
 }
 
-/** Runs an ended run's judge and author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
+/** Runs an ended run's judge, its evidence check when on or asked for, and its author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
 async function rejudge(v: Values, dir: string | undefined): Promise<void> {
   // Writes the judge's new events, beside a run the app may have live.
   const store = existingProject(dir, { recover: false });
@@ -439,6 +444,8 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     if (fake && store.events(run_id, { types: ['llm.call'] }).some((e) => e.type === 'llm.call' && e.payload.provider !== 'scripted')) throw new Error(`${run_id} was analysed by real models; --fake-llm would replace their answers with scripted ones.`);
     requireKey(settings, 'judge', fake);
     requireKey(settings, 'author', fake);
+    const checking = v.check || settings.finding_check;
+    if (checking) requireKey(settings, 'judge', fake, settings.check_model);
     const events = () => store.events(run_id);
     const log = events();
     const [before, round] = [log.length, log.at(-1)?.round ?? 1];
@@ -457,7 +464,7 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     const blobs = createFsBlobStore(dir!);
     let report: Report;
     try {
-      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), blobs, record, events });
+      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), blobs, record, events, check: v.check });
     } finally {
       // Written even when the judge failed or was stopped: the author's new suggestions are in the log, and the files are snapshots of it.
       report = buildReport(events());
@@ -470,11 +477,13 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     const added = events().slice(before);
     const cost_usd = spent(added);
     if (cost_usd >= budget) note(`This rejudge reached its $${budget.toFixed(2)} budget, so it made no more model calls.`);
-    const pois = (type: 'report.themes' | 'report.suggestions') => new Set(added.flatMap((e) => (e.type === type ? [e.payload.poi_id] : [])));
+    const pois = (type: 'report.themes' | 'report.checks' | 'report.suggestions') => new Set(added.flatMap((e) => (e.type === type ? [e.payload.poi_id] : [])));
     const asked = added.flatMap((e) => (e.type === 'report.started' ? e.payload.pois : []));
-    const [answered, suggested] = [pois('report.themes'), pois('report.suggestions')];
+    const [answered, checked, suggested] = [pois('report.themes'), pois('report.checks'), pois('report.suggestions')];
     const missing = asked.filter((poi) => !answered.has(poi));
     if (missing.length > 0 && missing.length < asked.length) note(`The judge gave no valid answer for ${missing.join(', ')}, which keeps its earlier themes.`);
+    const unchecked = asked.filter((poi) => !checked.has(poi) && report.themes?.some((t) => t.poi_id === poi && t.category !== 'objection'));
+    if (checking && unchecked.length > 0) note(`The evidence check gave no verdict for ${unchecked.join(', ')}, so its themes stay as they were judged.`);
     const unsuggested = [...answered].filter((poi) => !suggested.has(poi));
     if (unsuggested.length > 0) note(`The author gave no suggested changes for ${unsuggested.join(', ')}, so its new themes have none.`);
     const themes = report.themes?.length ?? 0;

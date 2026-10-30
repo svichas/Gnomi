@@ -96,6 +96,17 @@ test('the report adds one judge and one author call, priced on their own routing
   assert.deepEqual([odd.cost_usd, odd.unpriced], [[0, 0], ['gpt-9-mystery']]);
 });
 
+test('the finding check adds its calls when on, priced on check_model when one is set', () => {
+  const on = { ...DEFAULT_SETTINGS, finding_check: true };
+  const report = estimateReport({ personas: [persona(3)], settings: on, pois: 2 });
+  assert.equal(report.calls, 2 * (REPORT.calls + 3));
+  assert.ok(report.cost_usd[0] > 2 * REPORT.cost[0] && report.cost_usd[1] > 2 * REPORT.cost[1]);
+  assert.deepEqual(estimateReport({ personas: [persona(3)], settings: { ...DEFAULT_SETTINGS, finding_check: false } }).calls, REPORT.calls);
+  const odd = estimateReport({ personas: [persona(3)], settings: { ...on, check_model: { provider: 'openai', model: 'gpt-9-mystery' } } });
+  assert.deepEqual(odd.unpriced, ['gpt-9-mystery']);
+  close(odd.cost_usd[1], REPORT.cost[1]);
+});
+
 test('no personas, no estimate', () => {
   assert.deepEqual(estimateRun({ personas: [], settings: DEFAULT_SETTINGS }), { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] });
 });

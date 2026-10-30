@@ -39,6 +39,7 @@ export function reportToMarkdown(report: Report): string {
     ...segmentLines(report),
     ...dimensionLines(report),
     ...themeLines(report),
+    ...setAsideLines(report),
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
@@ -167,9 +168,17 @@ export const TRUST_TEXT = {
   reported: 'a self-report only',
 } as const;
 
+/** Said wherever a set-aside theme is shown: the verdict is one model's reading, and the reader decides. */
+export const SET_ASIDE_TEXT = "A model reviewed the evidence behind these themes and judged that it points to a persona's mistake or the test setup rather than the product. This is a model's review, not a test of the product, so a real problem can be among them: read each reason. They are left out of the ranking and the friction rate, and their events stay in the log.";
+
+/** What a set-aside theme's verdict points to, in words. */
+export const setAsideCause = ({ check }: ReportTheme) => (check?.verdict === 'environment' ? 'the test setup' : "a persona's mistake");
+
+const noThemes = (aside: ReportTheme[] = []) => (aside.length ? 'The evidence check set aside every theme here.' : 'No frictions to group into themes.');
+
 function themeLines(report: Report): string[] {
   if (!report.themes) return [];
-  if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
+  if (report.themes.length === 0) return ['', '## Themes', '', noThemes(report.set_aside)];
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
@@ -177,9 +186,20 @@ function themeLines(report: Report): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', noThemes(report.set_aside?.filter((t) => t.poi_id === poi.id))])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme))),
+  ];
+}
+
+function setAsideLines(report: Report): string[] {
+  if (!report.set_aside?.length) return [];
+  return [
+    '', '## Set aside by the evidence check', '',
+    '<details>', `<summary>${count(report.set_aside.length, 'theme')} set aside</summary>`, '',
+    SET_ASIDE_TEXT, '',
+    ...report.set_aside.map((t) => `- **${line(t.title)}** (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`),
+    '', '</details>',
   ];
 }
 

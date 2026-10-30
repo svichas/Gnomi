@@ -24,6 +24,10 @@ const REPORT_CALLS: { role: 'judge' | 'author'; input: [number, number]; output:
   { role: 'author', input: [2_000, 20_000], output: [2_000, 8_000] },
 ];
 const REPORT_MINUTES = [0.2, 1] as const;
+// The finding check (report/models.ts), when on: one to five calls per POI, each up to three themes with page text and nine screenshots.
+const CHECK_CALLS = [1, 5] as const;
+const CHECK_INPUT = [1_500, 16_000] as const;
+const CHECK_OUTPUT = [500, 2_000] as const;
 
 /** One uncached call at `at`'s prices; nothing for a model with no known price, which the estimate lists as unpriced. */
 const price = (model: ModelChoice, input: number, output: number, at: Date) =>
@@ -103,7 +107,7 @@ function estimateComparison({ personas, settings, pois, study, at }: { personas:
   };
 }
 
-/** The judge and author calls after the episodes, uncached: one each per POI, none without personas. */
+/** The judge and author calls after the episodes, uncached: one each per POI, plus the finding check's when on; none without personas. */
 export function estimateReport({ personas, settings, pois = 1, at = new Date() }: { personas: Persona[]; settings: RunSettings; pois?: number; at?: Date }): RunEstimate {
   if (personas.length === 0 || pois === 0) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
   const cost: [number, number] = [0, 0];
@@ -111,6 +115,13 @@ export function estimateReport({ personas, settings, pois = 1, at = new Date() }
     cost[0] += pois * price(settings.routing[role], input[0], output[0], at);
     cost[1] += pois * price(settings.routing[role], input[1], output[1], at);
   }
-  const unpriced = REPORT_CALLS.map(({ role }) => settings.routing[role]).filter((m) => !isPriced(m)).map((m) => m.model);
-  return { calls: pois * REPORT_CALLS.length, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
+  const checker = settings.finding_check ? (settings.check_model ?? settings.routing.judge) : null;
+  if (checker) {
+    cost[0] += pois * CHECK_CALLS[0] * price(checker, CHECK_INPUT[0], CHECK_OUTPUT[0], at);
+    cost[1] += pois * CHECK_CALLS[1] * price(checker, CHECK_INPUT[1], CHECK_OUTPUT[1], at);
+  }
+  const models = [...REPORT_CALLS.map(({ role }) => settings.routing[role]), ...(checker ? [checker] : [])];
+  const unpriced = models.filter((m) => !isPriced(m)).map((m) => m.model);
+  const calls = pois * (REPORT_CALLS.length + (checker ? Math.round((CHECK_CALLS[0] + CHECK_CALLS[1]) / 2) : 0));
+  return { calls, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
 }

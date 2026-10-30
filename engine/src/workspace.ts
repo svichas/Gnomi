@@ -122,8 +122,9 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
     !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
   )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
   // A missing key for any role the run calls would fail mid-run or quietly drop the report's analysis.
-  for (const role of runRoles(config)) {
-    const provider = config.settings.routing[role].provider;
+  const { routing, finding_check, check_model } = config.settings;
+  const checker = finding_check && !config.comparison ? check_model : undefined; // its calls are the judge's, on a model of its own
+  for (const [role, { provider }] of [...runRoles(config).map((role) => [role, routing[role]] as const), ...(checker ? [['judge', checker] as const] : [])]) {
     if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
   }
   return personas;
