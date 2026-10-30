@@ -23,17 +23,21 @@ function hintOf(curve: number[] | undefined, last: { personas: number; themes: n
 
 /**
  * Per POI of the team's: friction themes each persona met first-hand before any earlier persona, in the order they began, which is
- * the order `reach` lists them. Objections are attitudes, not problems found. A persona the run never started or the model never
- * answered tried nothing, so it is left out, as in every rate. A text is one place, so only web pages and design screens can be thin.
+ * the order `reach` lists them. Objections are attitudes, not problems found. A persona the run never started or the model stopped
+ * answering is left out, as in every rate, unless it met a problem first: what it found was found. A text is one place, so only web
+ * pages and design screens can be thin.
  */
 export function buildCoverage(pois: Pick<Poi, 'id' | 'type'>[], personas: ReportPersona[], themes: ReportTheme[], reach: ReportReach[], status: Report['status']): ReportCoverage[] {
   return pois.flatMap((poi) => {
     const spot = reach.find(({ poi_id }) => poi_id === poi.id);
     if (!spot) return [];
-    const rated = new Set(personas.filter((persona) => !isUnrated(persona.pois?.[poi.id] ?? persona.outcome)).map((persona) => persona.id));
     const problems = themes.filter((theme) => theme.poi_id === poi.id && theme.category !== 'objection');
+    const counted = new Set([
+      ...personas.filter((persona) => !isUnrated(persona.pois?.[poi.id] ?? persona.outcome)).map((persona) => persona.id),
+      ...problems.flatMap((theme) => theme.first_hand ?? []),
+    ]);
     const met = new Set<ReportTheme>();
-    const added = spot.started.filter((id) => rated.has(id)).map((id) => {
+    const added = spot.started.filter((id) => counted.has(id)).map((id) => {
       const first = problems.filter((theme) => !met.has(theme) && theme.first_hand?.includes(id));
       for (const theme of first) met.add(theme);
       return first.length;
@@ -43,7 +47,7 @@ export function buildCoverage(pois: Pick<Poi, 'id' | 'type'>[], personas: Report
     const last_fifth = { personas: tail, themes: added.slice(added.length - tail).reduce((sum, n) => sum + n, 0) };
     const left_out = problems.length - met.size;
     const thin_pages = poi.type === 'text' ? [] : Object.entries(spot.pages)
-      .map(([page, ids]) => ({ page, personas: ids.filter((id) => rated.has(id)).length }))
+      .map(([page, ids]) => ({ page, personas: ids.filter((id) => counted.has(id)).length }))
       .filter(({ personas: reached }) => reached < RETEST_REACH)
       .sort((a, b) => a.personas - b.personas || (a.page < b.page ? -1 : 1));
     return [{

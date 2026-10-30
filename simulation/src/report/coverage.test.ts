@@ -108,13 +108,29 @@ test('a stopped run keeps what it found, leaves out who never began, and claims 
   assert.match(only(run(visiting(9, { 0: ['save'] }), { stopped }).report.coverage).hint, /too short to read/);
 });
 
-test('a persona the model never answered tried nothing, so it adds no flat tail and counts towards no page', () => {
+test('a persona the model stopped answering that met no problem adds no flat tail and counts towards no page', () => {
   const visits: Visit[] = [...visiting(10, { 9: ['save'] }), { persona: 'p-11', failed: true }, { persona: 'p-12', failed: true }, { persona: 'p-13', failed: true }];
   const { curve, last_fifth } = only(run(visits).report.coverage);
   assert.equal(curve?.length, 10);
   assert.deepEqual(last_fifth, { personas: 2, themes: 1 });
   const reached = (ids: string[], failed: string[]) => run([...ids.map((persona) => ({ persona, pages: ['/rare'] })), ...failed.map((persona): Visit => ({ persona, pages: ['/rare'], failed: true }))]);
   assert.deepEqual(only(reached(['a', 'b'], ['c']).report.coverage).thin_pages, [{ page: 'app.test/rare', personas: 2 }]);
+});
+
+test('a problem reported before the model stopped answering counts for the persona who met it', () => {
+  const { curve, last_fifth, left_out, hint, thin_pages } = only(run([...visiting(11, { 0: ['save'] }), { persona: 'p-12', problems: ['export'], failed: true }]).report.coverage);
+  assert.deepEqual(curve, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+  assert.deepEqual(last_fifth, { personas: 3, themes: 1 });
+  assert.equal(left_out, undefined, 'it has a first-hand persona on record');
+  assert.equal(hint, 'The last 3 personas still found 1 new problem in this simulated run, so a larger run may find more.');
+  assert.deepEqual(thin_pages, [{ page: 'app.test/export', personas: 1 }, { page: 'app.test/save', personas: 1 }]);
+
+  const alone = only(run([{ persona: 'a', problems: ['export'], failed: true }]).report.coverage);
+  assert.deepEqual([alone.curve, alone.left_out], [[1], undefined]);
+  assert.equal(alone.hint, 'With 1 persona the curve is too short to read.');
+
+  const later = run([{ persona: 'a', problems: ['save'] }, { persona: 'b', problems: ['save'], failed: true }, { persona: 'c', failed: true }]);
+  assert.deepEqual(only(later.report.coverage).curve, [1, 0], 'the same problem again adds nothing, and whoever met none is not on the curve');
 });
 
 const theme = (id: string, over: Partial<ReportTheme>) => ({ id, poi_id: 'app', pages: [], first_hand: [], ...over }) as unknown as ReportTheme;

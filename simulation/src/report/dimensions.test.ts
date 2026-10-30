@@ -122,17 +122,19 @@ const PROBLEM = 'The Save button loses the draft';
 const page = 'http://localhost/jobs/new';
 
 /** Personas who reached one page, of whom those with `met` reported one problem there; with `survey`, a survey asks them instead and those with `asked: false` are not asked. */
-function driverRun(people: { attributes: Record<string, AttributeValue>; met?: boolean; asked?: boolean; failed?: boolean }[], { survey = false, pois, onPoi = 'poi' }: { survey?: boolean; pois?: ProjectConfig['pois']; onPoi?: string } = {}) {
+function driverRun(people: { attributes: Record<string, AttributeValue>; met?: boolean; asked?: boolean; failed?: boolean }[], { survey = false, pois, onPoi = 'poi', alsoOn }: { survey?: boolean; pois?: ProjectConfig['pois']; onPoi?: string; alsoOn?: string } = {}) {
   const base = fixture().config;
   const personas = people.map(({ attributes }, i): Persona => ({ ...BUILTIN_PERSONA, id: `p${i + 1}`, name: `p${i + 1}`, attributes }));
   const config: RunConfig = { ...base, personas, project: { ...base.project, ...(pois ? { pois } : {}) } };
   const events: GnomiEvent[] = [];
-  const add = (event: Pick<NewEvent, 'type' | 'payload'>, persona_id: string | null = null) => events.push({ ...event, seq: events.length + 1, ts: events.length * 100, run_id: 'r1', round: 1, poi_id: onPoi, persona_id } as GnomiEvent);
+  const add = (event: Pick<NewEvent, 'type' | 'payload'>, persona_id: string | null = null, poi_id = onPoi) => events.push({ ...event, seq: events.length + 1, ts: events.length * 100, run_id: 'r1', round: 1, poi_id, persona_id } as GnomiEvent);
   add({ type: 'run.started', payload: { config } });
   for (const persona of personas) add({ type: 'persona.created', payload: { persona } }, persona.id);
   people.forEach(({ met, asked = true, failed }, i) => {
     const id = `p${i + 1}`;
-    add({ type: 'persona.step', payload: { step_no: 1, thought: '', feeling: 0, action: { type: 'click', ref: null, text: null }, target: null, result: { ok: true, error: null, url_before: page, url_after: page, dom_changed: false }, screenshot: null, snapshot_hash: 'hash', duration_ms: 1, heard_post_ids: [] } }, id);
+    const step = (poi_id: string) => add({ type: 'persona.step', payload: { step_no: 1, thought: '', feeling: 0, action: { type: 'click', ref: null, text: null }, target: null, result: { ok: true, error: null, url_before: page, url_after: page, dom_changed: false }, screenshot: null, snapshot_hash: 'hash', duration_ms: 1, heard_post_ids: [] } }, id, poi_id);
+    if (alsoOn) step(alsoOn);
+    step(onPoi);
     if (met && !survey) add({ type: 'persona.friction_reported', payload: { step_no: 1, severity: 2, what: PROBLEM, expected: 'It works', where: { url: page, ref: null }, heard_post_ids: [] } }, id);
     if (survey && asked) add({ type: 'persona.survey', payload: { poi_id: onPoi, sentiment: 0, confidence: 1, likes: [], frictions: met ? [PROBLEM] : [], would_continue: true, reason: 'Asked.' } }, id);
     if (failed) add({ type: 'signal.repeated_failure', payload: { step_no: 1, action: 'click', error: 'invalid_output' } }, id);
@@ -211,7 +213,8 @@ test('a competitor gets no drivers, and neither does an objection, which only bu
     { id: 'poi', type: 'web', name: 'Gym', start_url: 'http://localhost', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null },
     { id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'observe_only', segments: null },
   ];
-  const { report } = driverRun([...group(6, 4, { region: 'EMEA' }), ...group(9, 1, { region: 'Americas' })], { pois, onPoi: 'rival' });
+  const { report } = driverRun([...group(6, 4, { region: 'EMEA' }), ...group(9, 1, { region: 'Americas' })], { pois, onPoi: 'rival', alsoOn: 'poi' });
+  assert.ok(report.personas.every(({ outcome }) => outcome === 'incomplete'), 'rated on the team\'s POI, so nothing but the competitor rule keeps drivers off');
   assert.equal(report.themes?.[0].poi_id, 'rival');
   assert.equal(report.themes?.[0].drivers, undefined);
   const mine = driverRun([...group(6, 4, { region: 'EMEA' }), ...group(9, 1, { region: 'Americas' })]).report;
