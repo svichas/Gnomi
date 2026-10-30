@@ -17,7 +17,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, credential, estimateFor, launchRun, population, projectGateway, repeatReports, repeatRuns, runSet } from './workspace.ts';
+import { audienceDeps, checkComparison, checkRun, compareRuns, credential, estimateFor, finishedRun, launchRun, population, projectGateway, repeatReports, repeatRuns, rerunProject, runSet } from './workspace.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
 import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
@@ -25,7 +25,7 @@ import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore, ROLE } from './sessions.ts';
 import type { Api, ClientToEngine, EngineToClient, Method, ProjectInfo, Transport } from './protocol.ts';
 import type { BlobStore, BrowserPool, LoginRecording, ProjectStore, Recorder, SecretName, SessionStore } from '@gnomi/simulation/seams.ts';
-import type { Audience, Persona, PersonaProgress, ProjectConfig, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { Audience, Persona, PersonaProgress, ProjectConfig, RunConfig, SessionInfo } from '@gnomi/simulation/types.ts';
 
 interface PortLike {
   on(event: 'message', listener: (e: { data: unknown; ports: PortLike[] }) => void): void;
@@ -130,7 +130,7 @@ function recordingPoi(config: ProjectConfig) {
 const here = () => ({ ...current(), sessions });
 
 /** Loads the role's start page with its session under containment (tech.md §9.1) and marks it verified when it held. */
-async function verify(config: ProjectConfig, role: string, place = here()) {
+async function verify(config: ProjectConfig, role: string, place = here(), startAt = (url: string) => url) {
   const store = unlockedSessions(place.sessions);
   const saved = await store.load(role);
   if (!saved) throw new Error(`No login is recorded for "${role}" yet. Record it first.`);
@@ -138,15 +138,16 @@ async function verify(config: ProjectConfig, role: string, place = here()) {
   const pois = config.comparison
     ? comparisonSessionPois(config, comparisonSessionTarget(config, saved.info), role)
     : [recordingPoi(config), ...webPois(config.pois).filter((poi) => poi.mode === 'full')];
+  const startUrl = startAt(saved.info.start_url);
   const result = await (await pool()).checkSession({
     storageState: saved.state,
-    startUrl: saved.info.start_url,
+    startUrl,
     allowedHosts: [...new Set(pois.flatMap(allowedHosts))],
     blockedDomains: [...new Set(pois.flatMap((poi) => poi.production_domains))],
   });
   const now = Date.now();
   if (result.ok) store.markVerified(role, now);
-  const info = result.ok ? { ...saved.info, verified_at: now } : config.comparison ? { ...saved.info, verified_at: null } : saved.info;
+  const info = result.ok ? { ...saved.info, start_url: startUrl, verified_at: now } : config.comparison ? { ...saved.info, verified_at: null } : saved.info;
   if (!result.ok && config.comparison) place.store.putSession(info);
   return { result, info };
 }
@@ -206,6 +207,65 @@ function releaseProject(project: OpenProject | null) {
   if (!project || hasRun(project.store.dir)) return;
   project.store.close();
   projects.delete(project.store.dir);
+}
+
+/** The start path of a new run and of a rerun: checks each role's login, launches the first run, and lets the rest of a set follow. */
+async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Persona[], reset: boolean, rerun?: { from: RunConfig; loginUrl(url: string): string }) {
+  const place = here();
+  const { store, blobs, record, sessions: held } = place;
+  const { config } = planned[0];
+  const prepare = async () => {
+    // Never with a login that no longer works (tech.md §9.1).
+    const verified: SessionInfo[] = [];
+    if (config.comparison) {
+      const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
+      // Missing or expired test access limits only the affected comparison episodes.
+      for (const session of (held?.list() ?? []).filter((session) => roles.has(session.role))) {
+        try { verified.push((await verify(config, session.role, place)).info); }
+        catch { verified.push({ ...session, verified_at: null }); }
+      }
+    } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
+      const checked = await verify(config, role, place, rerun?.loginUrl);
+      if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
+      verified.push(checked.info);
+    }
+    // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
+    const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
+      ? await pool()
+      : { newPage: async (opts) => (await pool()).newPage(opts) };
+    return { verified, browserPool };
+  };
+  const launch = (run: typeof planned[number], { verified, browserPool }: Awaited<ReturnType<typeof prepare>>) => {
+    const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat, from: rerun?.from }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
+    const key = runKey(store.dir, started.run_id);
+    runs.set(key, started);
+    started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
+      runs.delete(key);
+      if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
+    });
+    return started;
+  };
+  const ready = await prepare();
+  if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
+  noSetup('starting a run');
+  const started = launch(planned[0], ready);
+  if (planned.length > 1) {
+    const set: LiveSet = { group: planned[0].repeat!.group, stopped: false };
+    const over = () => closing || set.stopped;
+    sets.set(store.dir, set);
+    set.done = runSet(planned, async (run, index) => {
+      if (index === 0) return started.done;
+      const next = await prepare();
+      if (over()) throw new Error('The repeat set is over.'); // a stop can land while the next run prepares
+      return launch(run, next).done;
+    }, over).catch((err) => {
+      if (!over()) broadcast({ kind: 'repeat_failed', error: err instanceof Error ? err.message : String(err) });
+    }).finally(() => {
+      sets.delete(store.dir);
+      if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
+    });
+  }
+  return { run_id: started.run_id };
 }
 
 const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] | Promise<Api[M]['result']> } = {
@@ -314,70 +374,29 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     current().store.putPersona({ ...old, name, job_title, background, context_of_use, goal_interpretation, voice });
     return null;
   },
-  estimate_run({ repeats }) {
+  estimate_run({ repeats, run_id }) {
+    if (run_id !== undefined) {
+      const from = finishedRun(current().store, run_id);
+      return estimateFor(rerunProject(from).config, from.personas, repeats);
+    }
     const config = project();
     return estimateFor(config, population(current().store, config), repeats);
   },
   async start_run({ reset, repeats }) {
     noSetup('starting a run');
-    const place = here();
-    const { store, blobs, record, sessions: held } = place;
+    const { store } = current();
     const planned = repeatRuns(project(), repeats); // frozen, as personas are, against edits made while a set runs
-    const { config } = planned[0];
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
-    const personas = checkRun(store, config, { reset, fake: FAKE_LLM, secrets: secret });
-    const prepare = async () => {
-      // Never with a login that no longer works (tech.md §9.1).
-      const verified: SessionInfo[] = [];
-      if (config.comparison) {
-        const roles = new Set(config.comparison.targets.flatMap((target) => target.session_role ? [target.session_role] : []));
-        // Missing or expired test access limits only the affected comparison episodes.
-        for (const session of (held?.list() ?? []).filter((session) => roles.has(session.role))) {
-          try { verified.push((await verify(config, session.role, place)).info); }
-          catch { verified.push({ ...session, verified_at: null }); }
-        }
-      } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
-        const checked = await verify(config, role, place);
-        if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
-        verified.push(checked.info);
-      }
-      // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
-      const browserPool: Pick<BrowserPool, 'newPage'> = personas.some((p) => browses(config.pois, segmentOf(p, config)))
-        ? await pool()
-        : { newPage: async (opts) => (await pool()).newPage(opts) };
-      return { verified, browserPool };
-    };
-    const launch = (run: typeof planned[number], { verified, browserPool }: Awaited<ReturnType<typeof prepare>>) => {
-      const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
-      const key = runKey(store.dir, started.run_id);
-      runs.set(key, started);
-      started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
-        runs.delete(key);
-        if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
-      });
-      return started;
-    };
-    const ready = await prepare();
-    if (hasRun(store.dir)) throw new Error('A run is already in progress in this project'); // recheck after preflight
+    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret }), reset);
+  },
+  async duplicate_run({ run_id, reset, repeats, urls }) {
     noSetup('starting a run');
-    const started = launch(planned[0], ready);
-    if (planned.length > 1) {
-      const set: LiveSet = { group: planned[0].repeat!.group, stopped: false };
-      const over = () => closing || set.stopped;
-      sets.set(store.dir, set);
-      set.done = runSet(planned, async (run, index) => {
-        if (index === 0) return started.done;
-        const next = await prepare();
-        if (over()) throw new Error('The repeat set is over.'); // a stop can land while the next run prepares
-        return launch(run, next).done;
-      }, over).catch((err) => {
-        if (!over()) broadcast({ kind: 'repeat_failed', error: err instanceof Error ? err.message : String(err) });
-      }).finally(() => {
-        sets.delete(store.dir);
-        if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
-      });
-    }
-    return { run_id: started.run_id };
+    const { store } = current();
+    const from = finishedRun(store, run_id);
+    const { config, loginUrl } = rerunProject(from, urls);
+    const planned = repeatRuns(config, repeats);
+    if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
+    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret, personas: from.personas }), reset, { from, loginUrl });
   },
   stop_run({ run_id, project_dir }) {
     const dir = project_dir ? resolve(project_dir) : current().store.dir;
@@ -442,6 +461,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     const set = sets.get(store.dir);
     return combineReports(repeatReports(store, group), set?.group === group && !set.stopped);
   },
+  compare_runs: ({ base, run }) => compareRuns(current().store, base, run),
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
     // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.

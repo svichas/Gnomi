@@ -1,4 +1,4 @@
-import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
+import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportReach, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
@@ -271,34 +271,43 @@ export function pickEvidence(members: Candidate[], n = EVIDENCE): Candidate[] {
 
 interface Reach {
   pages: Map<string, Set<string>>; // persona → page patterns it reached
+  poiPages: Map<string, Map<string, Set<string>>>; // poi → page pattern → personas who reached it
+  surveyed: Map<string, Set<string>>; // poi → personas who answered a survey on it
   poi: Map<string, Set<string>>; // poi → personas that reached it at all
   buyers: Map<string, Set<string>>; // poi → personas who answered a buyer survey on it
   buyerSeqs: Set<number>; // the buyer surveys' events
 }
 
-function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
+export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
   const places = placesOf(events);
   const pages = new Map<string, Set<string>>();
+  const poiPages = new Map<string, Map<string, Set<string>>>();
   const poi = exposureOf(events, defaultPoi);
+  const surveyed = new Map<string, Set<string>>();
   const buyers = new Map<string, Set<string>>();
   const buyerSeqs = new Set<number>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
+  const reached = (poi_id: string, page: string, persona_id: string) => {
+    add(pages, persona_id, page);
+    add(poiPages.get(poi_id) ?? poiPages.set(poi_id, new Map()).get(poi_id)!, page, persona_id);
+  };
   for (const e of events) {
     if (!e.persona_id) continue;
+    if (e.type === 'persona.survey') add(surveyed, e.payload.poi_id, e.persona_id);
     if (e.type === 'persona.survey' && e.payload.buyer) {
       add(buyers, e.payload.poi_id, e.persona_id);
       buyerSeqs.add(e.seq);
     }
     if (e.type === 'persona.step') {
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_before, places));
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_after, places));
+      reached(e.poi_id ?? defaultPoi, pagePattern(e.payload.result.url_before, places), e.persona_id);
+      reached(e.poi_id ?? defaultPoi, pagePattern(e.payload.result.url_after, places), e.persona_id);
     }
   }
   for (const c of candidates) {
-    if (c.page) add(pages, c.persona_id, c.page);
+    if (c.page) reached(c.poi_id, c.page, c.persona_id);
     add(poi, c.poi_id, c.persona_id);
   }
-  return { pages, poi, buyers, buyerSeqs };
+  return { pages, poiPages, surveyed, poi, buyers, buyerSeqs };
 }
 
 /**
@@ -590,6 +599,7 @@ export function wentWell(events: GnomiEvent[], ctx?: Context, groups = likeGroup
 export interface Analysis {
   themes: ReportTheme[];
   set_aside?: ReportTheme[]; // left out of themes by the evidence check; absent when it set none aside
+  reach: ReportReach[];
   tagged?: Map<string, string[]>; // post id → the ids of the themes the judge tagged it with; absent when it tagged none
   sentiment: ReportSentiment[];
   went_well: ReportLike[];
@@ -742,5 +752,13 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {
     limitations.push('No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".');
   }
-  return { themes, ...(set_aside.length > 0 ? { set_aside } : {}), ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events, ctx, likes), limitations };
+  return {
+    themes,
+    ...(set_aside.length > 0 ? { set_aside } : {}),
+    reach: [...reach.poi].map(([poi_id, started]) => ({ poi_id, started: [...started], surveyed: [...(reach.surveyed.get(poi_id) ?? [])], pages: Object.fromEntries([...(reach.poiPages.get(poi_id) ?? [])].map(([page, ids]) => [page, [...ids]])) })),
+    ...(tagged.size > 0 ? { tagged } : {}),
+    sentiment,
+    went_well: wentWell(events, ctx, likes),
+    limitations,
+  };
 }

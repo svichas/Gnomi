@@ -49,7 +49,7 @@ const LEVELS = [4, 3, 2, 1] as const;
 /** A theme's severity is a median, so it can fall between two levels: it rounds to the worse one. */
 const level = (severity: number) => Math.min(4, Math.max(1, Math.round(severity))) as keyof typeof SEVERITY;
 
-function SeverityChip({ severity }: { severity: number }) {
+export function SeverityChip({ severity }: { severity: number }) {
   const { text, plain, tone } = SEVERITY[level(severity)];
   return <span data-tone={tone} title={`Severity ${severity} of 4: ${plain}`} className="tone-chip">{text}</span>;
 }

@@ -1,6 +1,6 @@
 // The report: a projection of the event log (tech.md §5.1), rebuilt by report/build.ts.
 import type { InfluenceEdge } from '../social/influence.ts';
-import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence } from '../types.ts';
+import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, LlmRole, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence } from '../types.ts';
 
 /** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
 export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
@@ -110,6 +110,14 @@ export interface ReportTheme {
   check?: { verdict: CheckVerdict; reason: string }; // a model's review of the evidence; absent when the check did not cover the theme
 }
 
+/** Who got where on one POI in one run, so a later comparison can tell a problem that went away from one nobody tried (report/diff.ts). */
+export interface ReportReach {
+  poi_id: string;
+  started: string[]; // personas who used the POI at all
+  surveyed: string[]; // personas who answered a survey on it, without which a survey's theme was not asked about again
+  pages: Record<string, string[]>; // page pattern → personas who reached it
+}
+
 /** End-of-episode survey answers per segment (tech.md §8.2 step 8). */
 export interface ReportSentiment {
   segment_id: string | null;
@@ -169,6 +177,7 @@ export interface Report {
   // M3 friction pipeline; absent in reports written before it. Themes are ranked within each POI.
   themes?: ReportTheme[];
   set_aside?: ReportTheme[]; // themes the evidence check put down to a persona's mistake or the test setup: rank 0, outside the friction rate; only when there are some
+  reach?: ReportReach[]; // absent only in a report file saved before it: a report built from the log always has it
   sentiment?: ReportSentiment[];
   went_well?: ReportLike[];
   comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
@@ -192,6 +201,7 @@ export interface ReportMethods {
   roles: string[]; // the logins personas used
   models: Partial<Routing>; // the roles this run called, with their models
   check_model?: ModelChoice; // the model the evidence check called, which the judge role in models does not show; only in runs with a check call
+  response_models?: Partial<Record<LlmRole, string[]>>; // the model ids providers reported, per role: an alias can move while `models` stays the same; only when a provider reported one
   budgets: { cost_usd: number; wall_clock_min: number; concurrency: number };
   allowed_hosts: string[]; // start_url's host first, then the POI's allowed hosts
   blocked_requests: { host: string; count: number; reason?: 'observe_only' | 'robots' }[]; // distinct blocked requests per host and reason, most first

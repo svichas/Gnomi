@@ -39,7 +39,7 @@ Total: about 27 weeks of calendar time with two engineers, roughly seven months 
 
 ## Implementation status — 16 October 2026
 
-M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3, M4 and M5 are built. **M2–M5 each still need full-scale live acceptance;** M6 and M7 have not started.
+M0/M1 and the core M2 audience, concurrency, routing and segment-report flows are implemented, and the first batches of M3, M4 and M5 are built. **M2–M5 each still need full-scale live acceptance.** M6's rerun and comparison are built ([features_roadmap.md](features_roadmap.md) item 10); the rest of M6 and M7 have not started.
 
 The first M2 gap-closure batch adds:
 

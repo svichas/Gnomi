@@ -9,7 +9,7 @@ import type { ReportTheme } from './types.ts';
  * personas meet unrelated problems at one button, so it only counts after titles: in the M3 seed reports a false pair shares 0.11
  * and two true pairs 0.09 to 0.11.
  * shortcut: one shared key still pairs themes with no better partner (D12 with a theme of the control build, on a link both used),
- * weigh keys by their frictions if themes ever keep them.
+ * weigh keys by their frictions if themes ever keep them. Such a pair says `by: 'shared_key'`, so a reader of the match can hold it apart.
  */
 export const KEY_MATCH = 0.3;
 
@@ -22,7 +22,7 @@ export const TITLE_MATCH = 0.2;
 export interface ThemeMatch {
   a: ReportTheme;
   b: ReportTheme;
-  by: 'keys' | 'title';
+  by: 'keys' | 'title' | 'shared_key';
 }
 
 export interface ThemeMatches {
@@ -57,9 +57,9 @@ const categoryOf = (theme: ReportTheme) => theme.category ?? 'friction'; // abse
 
 /**
  * One-to-one pairs within each POI and category, closest first, a tie going to the higher-ranked themes: by a strong key overlap,
- * then by title, then by any shared key. Pure.
+ * then by title, then by any shared key. Pure. `byTitle: false` leaves titles out: TITLE_MATCH only holds for one-to-one matching.
  */
-export function matchThemes(a: ReportTheme[], b: ReportTheme[]): ThemeMatches {
+export function matchThemes(a: ReportTheme[], b: ReportTheme[], byTitle = true): ThemeMatches {
   const only_a = new Set(a);
   const only_b = new Set(b);
   const pairs: ThemeMatch[] = [];
@@ -76,7 +76,7 @@ export function matchThemes(a: ReportTheme[], b: ReportTheme[]): ThemeMatches {
     }
   };
   claim('keys', keyOverlap, KEY_MATCH);
-  claim('title', titleOverlap, TITLE_MATCH);
-  claim('keys', keyOverlap, 0);
+  if (byTitle) claim('title', titleOverlap, TITLE_MATCH);
+  claim('shared_key', keyOverlap, 0);
   return { pairs, only_a: [...only_a], only_b: [...only_b] };
 }

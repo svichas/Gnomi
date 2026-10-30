@@ -5,13 +5,14 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, estimateFor, repeatRuns, runSet } from './workspace.ts';
+import { cappedGateway, checkRun, credential, estimateFor, repeatRuns, rerunProject, runSet } from './workspace.ts';
 import { createScriptedGateway } from '@gnomi/simulation/llm/scripted.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, ModelChoice, ProjectConfig, Report, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Poi, ProjectConfig, Report, RunConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
 
 test('a provider needs its key, and the local one its endpoint', () => {
   const secrets = (name: string) => (name === 'openai_api_key' ? 'sk-test' : null);
@@ -122,4 +123,47 @@ test('the runs of a set go one at a time, and a run that stops ends it', async (
   started.length = 0;
   assert.deepEqual((await runSet(['a', 'b', 'c'], run(['finished', 'finished', 'finished']), () => started.length === 1)).map((r) => r.status), ['finished']);
   assert.deepEqual(started, [0], 'the set ended there');
+});
+
+const frozen = (over: Partial<RunConfig> = {}): RunConfig => ({ run_id: 'r-0001', seed: 7, project: gym, personas: [BUILTIN_PERSONA], sessions: [], reset: false, pause_timeout_ms: 1000, app_version: '0', ...over });
+
+test('a rerun keeps its POIs unless a new address is given, whose host joins the allowed hosts and takes the reset hook with it', () => {
+  assert.deepEqual(rerunProject(frozen()).config, gym);
+  const hooked = { ...gym, pois: [{ ...poi, allowed_hosts: ['cdn.acme.io'], reset_hook_url: 'http://localhost:3001/__reset?all=1' }, { ...poi, id: 'poi-2', reset_hook_url: 'https://other.acme.io/reset' }] };
+  const { config, loginUrl } = rerunProject(frozen({ project: hooked }), { 'poi-1': 'https://pr-12.acme.io/app', 'poi-2': 'https://other.acme.io/next' });
+  const [first, second] = config.pois as WebPoi[];
+  assert.deepEqual([first.start_url, first.allowed_hosts, first.reset_hook_url], ['https://pr-12.acme.io/app', ['cdn.acme.io', 'pr-12.acme.io'], 'https://pr-12.acme.io/__reset?all=1']);
+  assert.equal(second.reset_hook_url, 'https://other.acme.io/reset', 'a hook on another host stays');
+  assert.equal(loginUrl('http://localhost:3001/home?x=1'), 'https://pr-12.acme.io/home?x=1', 'a login on the old address follows it, or personas go back to the old build');
+  assert.equal(loginUrl('https://sso.acme.io/home'), 'https://sso.acme.io/home');
+  assert.equal(rerunProject(frozen()).loginUrl('http://localhost:3001/home'), 'http://localhost:3001/home');
+});
+
+test('a rerun refuses a POI it does not have, and a run from before per-run settings; a bad address meets the usual preflight', () => {
+  assert.throws(() => rerunProject(frozen(), { 'poi-9': 'https://a.acme.io' }), /no web point of interest "poi-9"; it has "poi-1"/);
+  const text: Poi = { id: 'copy', type: 'text', name: 'Copy', asset: 'a.md', segments: null };
+  assert.throws(() => rerunProject(frozen({ project: { ...gym, pois: [poi, text] } }), { copy: 'https://a.acme.io' }), /no web point of interest "copy"/);
+  assert.throws(() => rerunProject(frozen({ project: { ...gym, settings: undefined as unknown as RunSettings } })), /predates per-run model settings/);
+  const store = openProject(mkdtempSync(join(tmpdir(), 'gnomi-rerun-')));
+  const bad = rerunProject(frozen(), { 'poi-1': 'not a url' }).config;
+  assert.throws(() => checkRun(store, bad, { reset: false, fake: true, secrets: () => null, personas: [BUILTIN_PERSONA] }), /not a web address/);
+  const production = rerunProject(frozen({ project: { ...gym, pois: [{ ...poi, production_domains: ['acme.com'] }] } }), { 'poi-1': 'https://app.acme.com/' }).config;
+  assert.throws(() => checkRun(store, production, { reset: false, fake: true, secrets: () => null, personas: [BUILTIN_PERSONA] }), /lists as production/);
+  store.close();
+});
+
+test('a run of a set goes back to the whole budget, so a rerun shares it out as the set did, whatever it is repeated as', () => {
+  const share = { ...gym, settings: { ...gym.settings, cost_budget_usd: 2 } };
+  const { config } = rerunProject(frozen({ project: share, repeat: { group: 'g', index: 2, of: 3 } }));
+  assert.equal(config.settings.cost_budget_usd, 6);
+  assert.deepEqual(repeatRuns(config, 3).map((run) => run.config.settings.cost_budget_usd), [2, 2, 2]);
+});
+
+test("a rerun's frozen personas are not held to the project's current audience, and the keys are still checked", (t) => {
+  const store = openProject(mkdtempSync(join(tmpdir(), 'gnomi-rerun-')));
+  t.after(() => store.close());
+  const schema = { ...gym, persona_schema: getPersonaSchema() }; // newRunConfig freezes one even with no audience
+  assert.throws(() => checkRun(store, schema, { reset: false, fake: true, secrets: () => null }), /Create an audience/);
+  assert.deepEqual(checkRun(store, schema, { reset: false, fake: true, secrets: () => null, personas: [BUILTIN_PERSONA] }), [BUILTIN_PERSONA]);
+  assert.throws(() => checkRun(store, schema, { reset: false, fake: false, secrets: () => null, personas: [BUILTIN_PERSONA] }), /Add an Anthropic key/);
 });

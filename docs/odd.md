@@ -165,6 +165,12 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `formed` rule | no prior opinion | first opinion cites a post | Shown separately, not counted as influence. | `social/influence.ts` | assumed |
 | echo discount | `reported` frictions only | heard first leaves k | Browser signals cannot echo a post. | `report/themes.ts` | assumed |
 
+### Comparing runs
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. | `report/diff.ts` | assumed |
+
 ### Friction signals
 
 | Name | Unit or range | Value | Rationale | Provenance | Status |

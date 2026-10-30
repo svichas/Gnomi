@@ -57,8 +57,14 @@ test('one key shared among many does not beat a title: the M3 seeds paired D04 w
   const links = theme('g2', "Selecting a candidate opens a different candidate's profile", ['review', 'd', 'e', 'f', 'g', 'h']);
   const reviews = theme('g5', 'Candidate links open wrong review page', ['button', 'review', 'i', 'j', 'k', 'l']);
   const matched = matchThemes([field, links], [theme('g4', SAME[1], ['m', 'n']), reviews]);
-  assert.deepEqual(paired(matched), [['g1', 'g4', 'title'], ['g2', 'g5', 'keys']], 'the true pair still meets on its one key, after titles');
+  assert.deepEqual(paired(matched), [['g1', 'g4', 'title'], ['g2', 'g5', 'shared_key']], 'the true pair still meets on its one key, after titles');
   assert.deepEqual([matched.only_a, matched.only_b], [[], []]);
+});
+
+test('a pair that rests on one shared key says so, as it is often chance: D12 and a backtracking theme only share the Settings link', () => {
+  const approvals = theme('g1', 'Approval checkbox reads as a double negative', ['settings', 'a', 'b', 'c']);
+  const backtrack = theme('g2', 'Personas went back and forth between settings pages', ['settings', 'd', 'e', 'f']);
+  assert.deepEqual(paired(matchThemes([approvals], [backtrack])), [['g1', 'g2', 'shared_key']]);
 });
 
 test('a page is the same page on another host: the Gym takes a new port on every start', () => {

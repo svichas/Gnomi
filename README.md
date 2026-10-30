@@ -159,6 +159,8 @@ Run `npm run gnomi` with no command to list every command and option.
 | `runs` | List a project folder's runs. |
 | `report` | Rebuild a past run's report as a summary, Markdown or JSON. |
 | `rejudge` | Group and name an ended run's themes again with the current judge, without browsing. |
+| `rerun` | Run a finished run again on its frozen settings and personas, optionally at a new address. |
+| `compare` | Show what changed between two runs or repeat sets. No model calls. |
 
 Provider keys come from the environment (`ANTHROPIC_API_KEY` for the default routing, or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY` when `--settings` routes to them). `--fake-llm` uses scripted answers and calls no model. With `--json`, every command prints one JSON object per line and the last line is its result, which makes it easy to script.
 

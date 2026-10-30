@@ -1,5 +1,6 @@
 import type { AssetInfo } from '@gnomi/simulation/assets.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
+import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
@@ -82,14 +83,19 @@ export interface Api {
   remove_persona: { params: { id: string }; result: null };
   /** Saves hand edits to a persona's written fields; sampled traits stay as they were. */
   edit_persona: { params: { persona: Persona }; result: null };
-  /** With `repeats`, the whole set: the estimate of every run together. */
-  estimate_run: { params: { repeats?: number }; result: RunEstimate };
+  /** With `repeats`, the whole set: the estimate of every run together. With `run_id`, of running that finished run again. */
+  estimate_run: { params: { repeats?: number; run_id?: string }; result: RunEstimate };
   /**
    * Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use.
    * With `repeats` it answers with the first run; the rest of the set follow one after another, each with its logins checked again and
    * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'.
    */
   start_run: { params: { reset: boolean; repeats?: number }; result: { run_id: string } };
+  /**
+   * Runs a finished run again with its frozen config and personas and a new run id, through start_run's path and refusals. `urls` moves
+   * web POIs to a new address by POI id, and each new host joins that POI's allowed hosts. Refuses a run that did not finish.
+   */
+  duplicate_run: { params: { run_id: string; reset: boolean; repeats?: number; urls?: Record<string, string> }; result: { run_id: string } };
   /** Also ends the project's repeat set, even when the run has already logged its end and so stays finished. */
   stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */
@@ -98,6 +104,8 @@ export interface Api {
   get_report: { params: { run_id: string }; result: Report };
   /** What a repeat set's runs have in common, computed when read. Each run keeps its own report. */
   get_repeats: { params: { group: string }; result: RepeatSet };
+  /** What changed from `base` to `run`, computed when read. A run of a repeat set stands for that set's finished runs. */
+  compare_runs: { params: { base: string; run: string }; result: ReportDiff };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }

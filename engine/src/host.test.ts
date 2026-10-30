@@ -531,3 +531,97 @@ test('each repeat resets staging and checks its logins again, and a repeat that 
   await assert.rejects(call('start_run', { reset: false }), /No login is recorded/, 'the set is over, so the project can start again');
   await call('open_project', { dir });
 });
+
+test('duplicate_run reruns a finished run on its frozen config and personas, and compare_runs reads the two', async (t) => {
+  await call('open_project', { dir: join(dir, 'rerun') });
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'pricing.md' });
+  const text = { id: 'poi-text', type: 'text' as const, name: 'Pricing', asset: id, segments: null };
+  await call('save_project', { project: project({}, { pois: [text], settings: { ...DEFAULT_SETTINGS, cost_budget_usd: 3 } }) });
+  const ended = async (run_id: string) => until(async () => (await call('get_session_runs', {})).some((run) => run.run_id === run_id && run.project_dir === join(dir, 'rerun') && run.status === 'finished'));
+
+  await assert.rejects(call('duplicate_run', { run_id: 'r-9999', reset: false }), /There is no run r-9999/);
+  const { run_id: first } = await call('start_run', { reset: false });
+  await assert.rejects(call('duplicate_run', { run_id: first, reset: false }), /is running, and only a finished run/, 'a run in progress is not finished');
+  await ended(first);
+  const original = (await call('get_project', {})).runs.find((run) => run.run_id === first)!;
+
+  // Edits since then are for the next start: the rerun keeps what the run froze.
+  await call('save_project', { project: project({}, { goal: 'Changed since', pois: [text] }) });
+  assert.equal((await call('estimate_run', { run_id: first, repeats: 2 })).calls, (await call('estimate_run', { run_id: first })).calls * 2);
+  const { run_id: second } = await call('duplicate_run', { run_id: first, reset: false });
+  assert.notEqual(second, first);
+  await assert.rejects(call('duplicate_run', { run_id: first, reset: false }), /already in progress/);
+  await ended(second);
+  const again = (await call('get_project', {})).runs.find((run) => run.run_id === second)!;
+  assert.deepEqual([again.config.project.goal, again.config.seed, again.config.signals, again.config.personas], [original.config.project.goal, original.config.seed, original.config.signals, original.config.personas]);
+  assert.equal(again.config.project.settings.cost_budget_usd, 3);
+
+  const diff = await call('compare_runs', { base: first, run: second });
+  assert.deepEqual([diff.before, diff.after], [[first], [second]]);
+  assert.ok(diff.themes.length > 0 && diff.themes.every((theme) => theme.status === 'unchanged'), JSON.stringify(diff.themes));
+  await assert.rejects(call('compare_runs', { base: first, run: first }), /one run or one repeat set/);
+  await assert.rejects(call('compare_runs', { base: first, run: 'r-9999' }), /There is no run r-9999/);
+
+  // A set rerun as a set, and the set against one run: the comparison uses the set's finished runs.
+  const { run_id: third } = await call('duplicate_run', { run_id: first, reset: false, repeats: 2 });
+  const group = (await call('get_project', {})).runs.find((run) => run.run_id === third)!.config.repeat!.group;
+  await until(async () => (await inSet(group)).filter((run) => run.status === 'finished').length === 2);
+  await until(async () => (await call('get_session_runs', {})).filter((run) => run.project_dir === join(dir, 'rerun') && run.status === 'finished').length === 4);
+  const runs = await inSet(group);
+  assert.deepEqual(runs.map((run) => run.config.project.settings.cost_budget_usd), [1.5, 1.5]);
+  const set = await call('compare_runs', { base: first, run: third });
+  assert.deepEqual(set.after, runs.map((run) => run.run_id));
+  assert.ok(set.themes.every((theme) => theme.after.of === 2 && theme.after.seen_in === 2 && theme.status === 'unchanged'));
+  await assert.rejects(call('compare_runs', { base: runs[0].run_id, run: runs[1].run_id }), /one run or one repeat set/);
+  t.diagnostic(`compared ${set.themes.length} themes`);
+});
+
+test('duplicate_run refuses a stopped run, unknown POI and a production address, and moves a web POI to its new address', async (t) => {
+  await call('open_project', { dir: join(dir, 'rerun-web') });
+  const [old, next] = [await startGym({ port: 0, defects: 'none' }), await startGym({ port: 0, defects: 'none' })];
+  t.after(() => Promise.allSettled([old.close(), next.close()]));
+  await call('save_project', { project: project({ start_url: `${old.url}/`, production_domains: ['acme.com'], reset_hook_url: `${old.url}/__reset` }) });
+  const { run_id } = await call('start_run', { reset: true });
+  await until(async () => (await call('get_session_runs', {})).some((run) => run.run_id === run_id && run.project_dir === join(dir, 'rerun-web') && run.status === 'finished'));
+
+  await assert.rejects(call('duplicate_run', { run_id, reset: false, urls: { 'poi-9': next.url } }), /no web point of interest "poi-9"/);
+  await assert.rejects(call('duplicate_run', { run_id, reset: false, urls: { 'poi-1': 'https://app.acme.com/' } }), /lists as production/);
+  await old.close(); // a restarted Gym: its old address is gone, so a hook left there would fail the run
+  const { run_id: moved } = await call('duplicate_run', { run_id, reset: true, urls: { 'poi-1': `${next.url}/` } });
+  await until(async () => (await call('get_session_runs', {})).some((run) => run.run_id === moved && run.project_dir === join(dir, 'rerun-web') && run.status !== 'running'));
+  const report = await call('get_report', { run_id: moved });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.equal(report.pois[0].start_url, `${next.url}/`);
+  assert.equal(report.methods.reset?.url, `${next.url}/__reset`);
+  assert.ok((await call('get_events', { run_id: moved, after_seq: null, persona_id: null })).some((e) => e.type === 'persona.step' && e.payload.result.url_before.startsWith(next.url)));
+  assert.equal(((await call('get_project', {})).project!.pois[0] as WebPoi).start_url, `${old.url}/`, 'the project itself stays as it was');
+
+  const store = openProject(join(dir, 'rerun-web'));
+  store.finishRun(moved, 'stopped', 'user', 0);
+  store.close();
+  await assert.rejects(call('duplicate_run', { run_id: moved, reset: false }), /is stopped, and only a finished run/);
+});
+
+test('a rerun at a new address takes a recorded login with it: with the old build still up, logged-in personas would open it', async (t) => {
+  const [old, next] = [await startGym({ port: 0, defects: 'none' }), await startGym({ port: 0, defects: 'none' })];
+  t.after(() => Promise.allSettled([old.close(), next.close()]));
+  const folder = join(dir, 'rerun-login');
+  await call('open_project', { dir: folder });
+  await call('set_secret', { name: 'session_key', value: key });
+  await call('save_project', { project: project({ start_url: `${old.url}/` }, { role: 'recruiter' }) });
+  const login = openProject(folder);
+  await createSessionStore(login, createFsBlobStore(folder), key).save({ role: 'recruiter', start_url: `${old.url}/jobs`, hosts: [new URL(old.url).host], recorded_at: 1, verified_at: 1, expires_at: null }, { cookies: [] });
+  login.close();
+  const ended = (run_id: string) => until(async () => (await call('get_session_runs', {})).some((run) => run.run_id === run_id && run.project_dir === folder && run.status !== 'running'));
+  const { run_id } = await call('start_run', { reset: false });
+  await ended(run_id);
+  const { run_id: moved } = await call('duplicate_run', { run_id, reset: false, urls: { 'poi-1': `${next.url}/` } });
+  await ended(moved);
+
+  const info = await call('get_project', {});
+  assert.equal(info.runs.find((run) => run.run_id === moved)?.config.sessions[0].start_url, `${next.url}/jobs`);
+  assert.equal(info.sessions[0].start_url, `${old.url}/jobs`, 'the recorded login itself stays as it was');
+  const pages = (await call('get_events', { run_id: moved, after_seq: null, persona_id: null })).flatMap((e) => (e.type === 'persona.step' ? [e.payload.result.url_before] : []));
+  assert.ok(pages.length > 0 && pages.every((url) => url.startsWith(next.url)), pages.join(' '));
+  await call('open_project', { dir });
+});

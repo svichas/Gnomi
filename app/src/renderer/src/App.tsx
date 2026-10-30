@@ -14,6 +14,7 @@ import { Projects } from './Projects.tsx';
 import { Review } from './Review.tsx';
 import type { ReviewScreen } from './Review.tsx';
 import { Run } from './Run.tsx';
+import { RunCompare } from './RunCompare.tsx';
 import { Settings } from './Settings.tsx';
 import { Button, Dialog, Note, OpenSettings } from './ui.tsx';
 import type { SettingsSection } from './credentials.ts';
@@ -54,6 +55,7 @@ export function App() {
   const [problem, setProblem] = useState<string | null>(null);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [comparing, setComparing] = useState<{ base: string; run: string } | null>(null);
   const [sessionsPersist, setSessionsPersist] = useState(true);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
@@ -95,6 +97,7 @@ export function App() {
     setCatalog(projects);
     setRunId(liveRun(project)?.run_id ?? project.runs[0]?.run_id ?? null);
     setReview(null);
+    setComparing(null);
     setRevision((was) => was + 1);
   }
 
@@ -234,6 +237,12 @@ export function App() {
     setTab('run');
     requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true }));
   }
+  const started = (id: string) => {
+    setProblem(null);
+    setRunId(id);
+    setTab('run');
+    void refresh();
+  };
   async function openSessionRun(run: Pick<SessionRun, 'project_id' | 'run_id'>): Promise<boolean> {
     if (!run.project_id || !catalog?.projects.some((project) => project.id === run.project_id)) throw new Error('This project is no longer in your workspace.');
     if (catalog.currentId !== run.project_id) {
@@ -304,7 +313,12 @@ export function App() {
               </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
-              <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={(run) => showRun(run.run_id)} />
+              {comparing
+                ? <RunCompare key={`${comparing.base}/${comparing.run}`} {...comparing} onBack={() => {
+                    setComparing(null);
+                    requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('.project-history-compare button')?.focus());
+                  }} />
+                : <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={(run) => showRun(run.run_id)} onCompare={(base, run) => setComparing({ base, run })} />}
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>
               <Project
@@ -338,17 +352,12 @@ export function App() {
                     void openReview(settings);
                   }}
                   onChecked={refresh}
-                  onStarted={(id) => {
-                    setProblem(null);
-                    setRunId(id);
-                    setTab('run');
-                    void refresh();
-                  }}
+                  onStarted={started}
                 />
               ) : <p className="text-sm text-stone-500">Saving your project and checking the run…</p>}
             </div>
             <div role="region" id="panel-run" aria-labelledby="tab-run" hidden={tab !== 'run'}>
-              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSetup={() => go('project')} />
+              <Run active={!home && tab === 'run'} runId={runId} runs={info?.runs ?? []} onSetup={() => go('project')} onStarted={started} />
             </div>
             </div>
           </div>

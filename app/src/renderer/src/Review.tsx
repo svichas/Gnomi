@@ -8,7 +8,7 @@ import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { PROVIDER_LABELS } from '../../providers.ts';
 import { generatedCount, segmentVar, staleProfiles } from './audience.ts';
 import { AudienceSteps } from './Audience.tsx';
-import { estimateText } from './cost.ts';
+import { estimateText, unpricedText } from './cost.ts';
 import { call, errorText } from './engine.ts';
 import { problemFor, ROLE_TEXT, rolesInUse, startHost } from './form.ts';
 import { Icon } from './Icon.tsx';
@@ -129,7 +129,7 @@ export function Review(props: {
     });
   }
   if (estimate && 'error' in estimate) issues.push({ text: `No estimate: ${estimate.error}`, blocking: true, action: null });
-  else if (estimate && estimate.unpriced.length > 0) issues.push({ text: `No price is known for ${estimate.unpriced.join(', ')}. Choose a model with a known price before starting.`, blocking: true, action: fix('settings', 'Choose models') });
+  else if (estimate && estimate.unpriced.length > 0) issues.push({ text: `${unpricedText(estimate)} Choose a model with a known price before starting.`, blocking: true, action: fix('settings', 'Choose models') });
   else if (saved && estimate && estimate.cost_usd[1] > saved.settings.cost_budget_usd) issues.push({ text: 'The estimate may be more than your budget, so the run could stop early.', blocking: false, action: fix('settings', 'Adjust budget') });
   const blocking = issues.filter((issue) => issue.blocking).length;
   const checkingLogins = roles.some((role) => logins[role] === 'checking' || logins[role] === undefined);

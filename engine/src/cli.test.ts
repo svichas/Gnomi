@@ -327,3 +327,82 @@ test('--repeat, --repeats and --also-model refuse what cannot work, before anyth
   const project = join(dir, 'lone');
   assert.match(fails('report', project, '--repeat', 'no-such-set'), /There is no repeat set no-such-set/);
 });
+
+test('rerun runs a finished run again on what it froze, and compare reads the two with no model calls', () => {
+  const project = join(dir, 'rerun');
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+  const rerun = lines('rerun', project, '--base', 'r-0001');
+  assert.deepEqual([rerun.at(-1).kind, rerun.at(-1).run_id, rerun.at(-1).status], ['run', 'r-0002', 'finished']);
+  assert.ok(rerun.some((line) => line.kind === 'note' && /^Estimate for 1 personas: about \d+ model calls/.test(line.text)), 'it says what it may spend, as run does');
+  assert.ok(existsSync(join(project, 'runs/r-0002/report.md')));
+  const goals = lines('report', project, '--run', 'r-0002', '--format', 'json').at(-1).report;
+  assert.equal(goals.goal, 'Pick a plan');
+
+  const compared = lines('compare', project, '--base', 'r-0001', '--run', 'r-0002').at(-1);
+  assert.deepEqual([compared.kind, compared.before, compared.after], ['compare', ['r-0001'], ['r-0002']]);
+  assert.ok(compared.themes.length > 0 && compared.themes.every((theme: { status: string }) => theme.status === 'unchanged'));
+  assert.match(cli('compare', project, '--base', 'r-0001', '--run', 'r-0002'), /^# Gnomi comparison: r-0001 to r-0002\n\n> "Not seen again" means/);
+
+  const set = lines('rerun', project, '--base', 'r-0001', '--repeats', '2');
+  assert.deepEqual([set.at(-1).kind, set.at(-1).compared, set.at(-1).run_ids], ['repeats', 2, ['r-0003', 'r-0004']]);
+  const against = lines('compare', project, '--base', 'r-0002', '--run', 'r-0004').at(-1);
+  assert.deepEqual(against.after, ['r-0003', 'r-0004']);
+  assert.ok(against.themes.every((theme: { after: { of: number } }) => theme.after.of === 2));
+});
+
+test('estimate --base prices a rerun on what the run froze, not on the defaults, in a project with no pois file', () => {
+  const project = join(dir, 'rerun-estimate');
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  const settings = join(dir, 'frozen.json');
+  writeFileSync(settings, JSON.stringify({ rounds: 1, cost_budget_usd: 2, routing: { navigator: { provider: 'openai', model: 'gpt-6-astra' } } }));
+  const fresh = ['--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan'];
+  cli('run', ...fresh, '--settings', settings, '--project', project);
+
+  const rerun = lines('estimate', project, '--base', 'r-0001', '--repeats', '2').at(-1);
+  const frozen = lines('estimate', ...fresh, '--settings', settings, '--repeats', '2').at(-1);
+  assert.deepEqual([rerun.kind, rerun.runs, rerun.calls, rerun.cost_usd, rerun.run_budget_usd, rerun.budget_usd], ['estimate', 2, frozen.calls, frozen.cost_usd, 1, 2]);
+  assert.notDeepEqual(rerun.cost_usd, lines('estimate', ...fresh, '--repeats', '2').at(-1).cost_usd, 'the defaults would mislead here');
+  assert.match(cli('estimate', project, '--base', 'r-0001'), /^1 personas: about \d+ model calls.*budget \$2/);
+
+  const fails = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8' }).stderr;
+  assert.match(fails('estimate', project, '--base', 'r-0009'), /There is no run r-0009/);
+  assert.match(fails('estimate', '--base', 'r-0001'), /Name the project folder/);
+});
+
+test('rerun and compare refuse what cannot work, before anything runs', () => {
+  const project = join(dir, 'rerun-refused');
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+  const fails = (...args: string[]) => {
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8', env: { ...process.env, ANTHROPIC_API_KEY: '' } });
+    assert.notEqual(result.status, 0, args.join(' '));
+    return result.stderr;
+  };
+  assert.match(fails('rerun', project, '--fake-llm'), /rerun needs --base/);
+  assert.match(fails('compare', project, '--base', 'r-0001'), /compare needs --base and --run/);
+  assert.match(fails('rerun', project, '--base', 'r-0009', '--fake-llm'), /There is no run r-0009/);
+  assert.match(fails('rerun', project, '--base', 'r-0001', '--url', 'poi-1', '--fake-llm'), /--url must be <poi id>=<url>/);
+  assert.match(fails('rerun', project, '--base', 'r-0001', '--url', 'poi-9=http://a.test', '--fake-llm'), /no web point of interest "poi-9"; it has none/);
+  assert.match(fails('rerun', project, '--base', 'r-0001', '--repeats', '0', '--fake-llm'), /whole number/);
+  assert.match(fails('rerun', project, '--base', 'r-0001'), /ANTHROPIC_API_KEY/);
+  assert.match(fails('compare', project, '--base', 'r-0001', '--run', 'r-0001'), /one run or one repeat set/);
+  assert.match(fails('compare', project, '--base', 'r-0001', '--run', 'r-0009'), /There is no run r-0009/);
+
+  // The app, mid-run: rerun leaves its run running and refuses to start a second.
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec(`INSERT INTO run (id, created_at, status, seed, snapshot_json, cost_usd, started_at) SELECT 'r-0002', created_at, 'running', seed, snapshot_json, 0, started_at FROM run`);
+    assert.match(fails('rerun', project, '--base', 'r-0001', '--fake-llm'), /r-0002 is still running/);
+    assert.match(fails('compare', project, '--base', 'r-0001', '--run', 'r-0002'), /r-0002 is still running/);
+    assert.equal(db.prepare("SELECT status FROM run WHERE id = 'r-0002'").get()?.status, 'running');
+    db.exec("UPDATE run SET status = 'stopped' WHERE id = 'r-0002'");
+    assert.match(fails('rerun', project, '--base', 'r-0002', '--fake-llm'), /r-0002 is stopped, and only a finished run/);
+  } finally {
+    db.close();
+  }
+});
+
+test('--url still names the one web app of a run, the last one given', () => {
+  const out = cli('estimate', '--url', 'http://localhost:1', '--url', 'http://localhost:2', '--goal', 'Look around', '--json');
+  assert.equal(JSON.parse(out.trim().split('\n').at(-1)!).kind, 'estimate');
+});

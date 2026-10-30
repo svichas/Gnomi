@@ -8,6 +8,9 @@ export function estimateText(estimate: RunEstimate): string {
   return `About ${range(estimate.cost_usd[0], estimate.cost_usd[1], (n) => `$${n.toFixed(2)}`)} and ${minutes} ${minutes === '1' ? 'minute' : 'minutes'}`;
 }
 
+/** Why a run must not start: the gateway refuses a cloud model with no price, after the browsing is paid for. Null when every model has one. */
+export const unpricedText = ({ unpriced }: RunEstimate) => (unpriced.length > 0 ? `No price is known for ${unpriced.join(', ')}.` : null);
+
 /** The meter uses recorded charges, including retries; absent legacy metadata proves neither complete nor missing usage. */
 export function recordedCost(events: GnomiEvent[]): { cost_usd: number; unreported_usage_calls: number } {
   let cost_usd = 0;
