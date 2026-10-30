@@ -153,6 +153,14 @@ test('objections are attitudes, not problems found, so they stay off the curve a
   assert.deepEqual([curve, left_out], [[1, 0], undefined]);
 });
 
+test('what the page scan found alone is no persona\'s to find, so it stays off the curve and the note', () => {
+  const { curve, left_out, hint } = direct([theme('g1', { first_hand: ['a'] }), theme('g2', { scan_only: true })]);
+  assert.deepEqual([curve, left_out], [[1, 0], undefined]);
+  assert.doesNotMatch(hint, /left out/);
+  const alone = direct([theme('g1', { scan_only: true })]);
+  assert.deepEqual([alone.curve, alone.left_out], [undefined, undefined]);
+});
+
 test(`pages under ${RETEST_REACH} personas are listed fewest first, and only where a page means something`, () => {
   const { report } = run(['a', 'b', 'c'].map((persona, i) => ({ persona, pages: ['/', ...(i ? ['/rare'] : []), ...(i === 2 ? ['/lone'] : [])] })));
   const { thin_pages } = only(report.coverage);
