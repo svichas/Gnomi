@@ -290,6 +290,16 @@ test('themes carry rank, trust, affected share, evidence with event links and la
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
 });
 
+test("a competitor's section with no themes does not point at the undersized-target audit, which covers only the team's product", () => {
+  const pois = [...report.pois, { id: 'poi-new', type: 'web', name: 'New site', start_url: null }, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: null, competitor: true }] as Report['pois'];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme] });
+  const section = (from: string, to: string) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
+  assert.ok(section('### New site', '### Rival').includes('any undersized targets on your product are listed under Methods.'));
+  const rival = section('### Rival (competitor, observed only)', '\n## ');
+  assert.ok(rival.includes('No themes. Small-target and backtrack signals do not make one alone.'));
+  assert.ok(!rival.includes('Methods'));
+});
+
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
   const md = reportToMarkdown({
     ...report,

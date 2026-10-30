@@ -96,7 +96,7 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
     )] as [string, ReactNode]]),
     ...(methods.undersized_targets ? [['Undersized tap targets', (
       <div className="space-y-1">
-        <p>An audit, not findings: elements a mobile persona tapped that were below the signal threshold. Elements no mobile persona tapped were not measured.</p>
+        <p>An audit, not findings: elements a mobile persona tapped on your product that were below the signal threshold. Elements no mobile persona tapped were not measured.</p>
         <ul>{methods.undersized_targets.map((target) => <li key={`${target.page}${target.element}${target.width}${target.height}`}>{target.page}: {target.element ?? 'unnamed element'}, {target.width}×{target.height} px, {count(target.personas, 'persona')}</li>)}</ul>
       </div>
     )] as [string, ReactNode]] : []),

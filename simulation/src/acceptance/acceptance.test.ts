@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
+import { createGateway } from '../llm/gateway.ts';
 import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
 import { applyMapping, assess, controlThemes, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, validateOptions, webDefects } from './checks.ts';
 import { mapThemes, rescoreEvaluation, runEvaluation, unmappedRuns } from './run.ts';
@@ -148,8 +149,8 @@ test('defect scores need a hint in the title, description, elements or evidence 
   assert.equal(defectScores([themeOf(1, 'observed', ['h/settings'], 'save draft')], catalogue, ['D01']).found, 0, 'a hint on another page pairs nothing');
 });
 
-test('defect hints match whole words, not parts of them', () => {
-  const catalogue = '- id: D25\n  poi: web\n  pages: [settings]\n  hints: [covered, re-enter, 404]\n';
+test('defect hints match whole words with a regular ending, not parts of words', () => {
+  const catalogue = '- id: D25\n  poi: web\n  pages: [settings]\n  hints: [covered, re-enter, 404, broken link, retype]\n';
   const found = (title: string) => defectScores([themeOf(1, 'observed', ['h/settings'], title)], catalogue, ['D25']).found;
   assert.equal(found('I discovered the Save button'), 0);
   assert.equal(found('Error 4040'), 0);
@@ -157,6 +158,23 @@ test('defect hints match whole words, not parts of them', () => {
   assert.equal(found('Save (covered) did nothing'), 1);
   assert.equal(found('Had to re-enter it'), 1);
   assert.equal(found('A 404, twice'), 1);
+  assert.equal(found('Broken links in the sidebar'), 1);
+  assert.equal(found('Two 404s'), 1);
+  assert.equal(found('She retyped it'), 1, 'a hint ending in e takes d');
+  assert.equal(found('Re-entering it'), 1);
+  assert.equal(found('Broken linkage'), 0);
+});
+
+test('the Gym hints catch ordinary wording of its defects', () => {
+  const catalogue = readFileSync(new URL('../../../demo/GymSite/defects.yaml', import.meta.url), 'utf8');
+  for (const [id, title] of [
+    ['D03', 'Broken links in the sidebar'], ['D02', 'Required fields are not flagged'], ['D02', 'No errors shown on save'],
+    ['D11', 'Page redirects to the dashboard'], ['D11', 'Could not log into the review'], ['D09', 'Candidates list is slower than expected'],
+    ['D09', 'Long delays on the list'], ['D15', 'The review page is slower'], ['D21', 'Only hovering shows it'], ['D25', 'The callout overlaps Save'],
+  ]) {
+    const [defect] = webDefects(catalogue, [id]);
+    assert.equal(defectScores([themeOf(1, 'observed', [`h/${defect.pages[0]}`], title)], catalogue, [id]).found, 1, `${id}: ${title}`);
+  }
 });
 
 test('control themes count confirmed and observed themes, not reported ones', () => {
@@ -227,8 +245,8 @@ test('the mapping stops at the allowance and keeps what it paid for, so a run it
   const stopped = await mapThemes(runs, catalogue, mapper, gateway(async () => { calls++; reached.observe(attempt(1)); return answer; }), reached);
   assert.equal(calls, 1, 'the second call is never made');
   assert.equal(stopped.failure, null, 'a stop, not a failure');
-  assert.deepEqual(stopped.items.map((item) => [item.run, item.defect]), [['a', 'D03']]);
-  assert.deepEqual(Object.keys(mappingScores(stopped.items, catalogue, DEFECT_IDS)), ['a'], 'b and c are not scored as false positives');
+  assert.deepEqual(stopped.items!.map((item) => [item.run, item.defect]), [['a', 'D03']]);
+  assert.deepEqual(Object.keys(mappingScores(stopped.items!, catalogue, DEFECT_IDS)), ['a'], 'b and c are not scored as false positives');
   assert.deepEqual(unmappedRuns(runs, stopped.items), ['b', 'c']);
   assert.deepEqual(unmappedRuns(runs, null), ['a', 'b', 'c']);
   assert.deepEqual(unmappedRuns([...runs, { name: 'quiet', report: { themes: [] } as Partial<Report> as Report }], stopped.items), ['b', 'c'], 'a run with no themes has nothing to map');
@@ -240,10 +258,41 @@ test('the mapping stops at the allowance and keeps what it paid for, so a run it
     retried.observe(attempt(1));
     retried.check();
   }), retried);
-  assert.deepEqual([midCall.items.map((item) => item.run), midCall.failure], [['a'], null]);
+  assert.deepEqual([midCall.items!.map((item) => item.run), midCall.failure], [['a'], null]);
 
-  const broken = await mapThemes(runs, catalogue, mapper, gateway(async () => { if (++turn === 4) throw new Error('DeepSeek answered 500'); return answer; }), createAllowance(1));
-  assert.deepEqual([broken.items.map((item) => item.run), broken.failure], [['a'], 'DeepSeek answered 500'], 'a real failure is reported and still keeps the paid mappings');
+  let silent = 0;
+  const partly = await mapThemes(runs, catalogue, mapper, gateway(async () => (silent++ ? answer : { object: { mappings: [] } })), createAllowance(1));
+  assert.deepEqual(unmappedRuns(runs, partly.items), ['a'], 'a run with no answers is unmapped, as a rescore calls it');
+  assert.deepEqual(Object.keys(mappingScores(partly.items!, catalogue, DEFECT_IDS)), ['b', 'c']);
+
+  const unanswered = await mapThemes(runs, catalogue, mapper, gateway(async () => ({ object: { mappings: [] } })), createAllowance(1));
+  assert.equal(unanswered.items, null, 'no answer at all is no mapping');
+  assert.deepEqual(unmappedRuns(runs, unanswered.items), ['a', 'b', 'c']);
+});
+
+test('a provider failure in the mapping is a failure with its own message, not a budget stop, and keeps the paid mappings', async (t) => {
+  const catalogue = readFileSync(new URL('../../../demo/GymSite/defects.yaml', import.meta.url), 'utf8');
+  const mapper = { provider: 'deepseek', model: 'deepseek-v4-pro' } as const;
+  const runs = ['a', 'b'].map((name) => ({ name, report: { themes: [{ ...themeOf(1, 'observed', ['h/jobs']), id: 't1', seqs: [1] }] } as Report }));
+  const refused = (status: number) => () => Response.json({ error: { message: `Refused with ${status}` } }, { status });
+  const paid = () => Response.json({
+    id: 'c', object: 'chat.completion', created: 1, model: mapper.model, usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+    choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({ mappings: [{ theme_id: 't1', defect: 'D03', reason: 'The same link.' }] }) }, finish_reason: 'stop' }],
+  });
+  // The real gateway against a stubbed fetch, wrapped as guardedGateway wraps it live: a failed attempt reports no usage, so the allowance aborts it.
+  const queue: (() => Response)[] = [];
+  t.mock.method(globalThis, 'fetch', async () => queue.shift()!());
+  const mapped = async (...answers: (() => Response)[]) => {
+    queue.push(...answers);
+    const allowance = createAllowance(1);
+    const real = createGateway({ secrets: { get: () => 'fixture-key' }, localBaseUrl: null, record: () => { throw new Error('The mapping judge logs no run events.'); } });
+    const llm: LlmGateway = { call: (req) => real.call({ ...req, signal: allowance.signal, onAttempt: (value) => observeAttempt(value, req.onAttempt, allowance, () => {}) }) };
+    const { items, failure } = await mapThemes(runs, catalogue, mapper, llm, allowance);
+    return { runs: items?.map((item) => item.run) ?? null, failure, aborted: allowance.signal.aborted, missing: allowance.unknown() };
+  };
+  assert.deepEqual(await mapped(refused(401)), { runs: null, failure: 'Refused with 401', aborted: true, missing: 1 }, 'nothing mapped, so no mapping to claim');
+  assert.deepEqual(await mapped(refused(500)), { runs: null, failure: 'Refused with 500', aborted: true, missing: 1 });
+  assert.deepEqual(await mapped(paid, refused(500)), { runs: ['a'], failure: 'Refused with 500', aborted: true, missing: 1 });
 });
 
 test('--rescore takes the evaluation folder and nothing that would run', () => {
@@ -380,9 +429,50 @@ test('with a mapper, a scripted evaluation writes the model mapping, a short sam
   const empty = rescoreEvaluation(out);
   assert.deepEqual([empty.defect_metrics.runs, empty.means.baseline.recall_high.mean, empty.replicates[0].arms.baseline!.outcomes!.precision], [{}, null, null], 'a run the mapping does not cover has no score, not an estimate');
   assert.match(empty.defect_metrics.detail, /Not mapped, so not scored: r1-baseline/);
+  assert.equal(empty.status, 'INCOMPLETE', 'as a run gives for the same coverage');
+  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /INCOMPLETE: 1 of 1 replicates/);
+  correct((list) => list);
+  assert.equal(rescoreEvaluation(out).status, 'NOT_RUN', 'a rehearsal with every run scored');
+  const resave = (change: object) => writeFileSync(join(out, 'results.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')), ...change }));
+  resave({ mode: 'live', status: 'INCOMPLETE', allowance_stop_reason: 'The acceptance recorded-spend allowance was reached.' });
+  assert.equal(rescoreEvaluation(out).status, 'REVIEW_NEEDED', 'a person mapped the runs the allowance stopped');
+  const finished = readFileSync(join(out, 'results.md'), 'utf8');
+  assert.doesNotMatch(finished, /INCOMPLETE:/);
+  assert.match(finished, /Stopped early: The acceptance recorded-spend allowance was reached\./);
+  resave({ repeats: 2 });
+  assert.equal(rescoreEvaluation(out).status, 'INCOMPLETE', 'an unfinished replicate');
+  resave({ repeats: 1, status: 'REVIEW_NEEDED' });
+  correct(() => []);
+  assert.equal(rescoreEvaluation(out).status, 'INCOMPLETE');
+  resave({ status: 'FAIL', error: 'DeepSeek answered 401' });
+  assert.equal(rescoreEvaluation(out).status, 'FAIL', 'a failed evaluation stays failed');
   correct(([first, ...rest]) => [{ ...first, defect: 'D3' }, ...rest]);
   const before = readFileSync(join(out, 'results.json'), 'utf8');
   assert.throws(() => rescoreEvaluation(out), /D3/, 'a mistyped id would score as a false positive');
   assert.equal(readFileSync(join(out, 'results.json'), 'utf8'), before);
   assert.throws(() => rescoreEvaluation(dir), /evaluation folder with results\.json/);
+});
+
+test('after a partial mapping the scoreboard means take the replicates mapped in every arm, so the arms average the same seeds', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  await runEvaluation(parseOptions(['--evaluate', '--repeats', '2', '--arms', 'baseline,social_off', '--personas', '4', '--mapper', 'deepseek:deepseek-v4-pro', '--out', out]));
+  const sheet = JSON.parse(readFileSync(join(out, 'theme-mapping.json'), 'utf8'));
+  // r2-social_off lost its mapping, and r2-baseline scores well: alone it would be the whole gap between the arms.
+  const items = sheet.items.filter((item: { run: string }) => item.run !== 'r2-social_off').map((item: { run: string }) => (item.run === 'r2-baseline' ? { ...item, defect: 'D03', trust: 'confirmed' } : item));
+  writeFileSync(join(out, 'theme-mapping.json'), JSON.stringify({ ...sheet, items }));
+  const { means, differences, status } = rescoreEvaluation(out);
+  assert.deepEqual([means.baseline.recall_high, means.social_off.recall_high], [{ n: 1, mean: 0 }, { n: 1, mean: 0 }]);
+  assert.deepEqual([means.baseline.precision.n, means.social_off.precision.n], [1, 1]);
+  assert.equal(means.baseline.completion_rate.n, 2, 'a metric with no mapping keeps every complete replicate');
+  assert.equal(differences.social_off.recall_high.n, 1);
+  assert.equal(status, 'INCOMPLETE');
+  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /over the 1 of 2 complete replicates mapped in every arm/);
+
+  const saved = JSON.parse(readFileSync(join(out, 'results.json'), 'utf8'));
+  saved.replicates[1].arms.social_off.outcomes.themes = 0;
+  writeFileSync(join(out, 'results.json'), JSON.stringify(saved));
+  const quiet = rescoreEvaluation(out);
+  assert.deepEqual([quiet.means.baseline.recall_high.n, quiet.means.social_off.recall_high.n, quiet.status], [2, 2, 'NOT_RUN'], 'a run with no themes has nothing to map, so its replicate stays in');
 });

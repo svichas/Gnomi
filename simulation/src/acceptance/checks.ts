@@ -155,15 +155,15 @@ export const webDefects = (catalogue: string, on: string[]) => catalogue.split(/
 
 /**
  * A hint-based estimate of Gym defect recall and precision against the catalogue's enabled web defects, not a reviewed mapping: a
- * theme pairs with a defect only when they share a catalogue page and one of the defect's hints appears, as whole words, in the theme's
- * title, description, elements or evidence. Pairs are assigned one-to-one, so a theme credits at most one defect and a defect at most one
- * theme. A defect is found by a confirmed or observed theme; precision counts the top themes. shortcut: a hint can appear in a theme
- * about another problem; use mappingScores once a theme-mapping.json is recorded.
+ * theme pairs with a defect only when they share a catalogue page and one of the defect's hints appears, as whole words with a regular
+ * ending, in the theme's title, description, elements or evidence. Pairs are assigned one-to-one, so a theme credits at most one defect
+ * and a defect at most one theme. A defect is found by a confirmed or observed theme; precision counts the top themes. shortcut: a hint
+ * can appear in a theme about another problem; use mappingScores once a theme-mapping.json is recorded.
  */
 export function defectScores(themes: ReportTheme[], catalogue: string, on: string[]) {
   const defects = webDefects(catalogue, on);
   const words = (theme: ReportTheme) => [theme.title, theme.description, ...theme.elements, ...theme.evidence.flatMap((e) => [e.what, e.quote])].join('\n');
-  const hasHint = (text: string, hint: string) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(hint)}(?![\\p{L}\\p{N}])`, 'iu').test(text); // whole words, so "covered" misses "discovered"
+  const hasHint = (text: string, hint: string) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(hint)}(?:s|es|d|ed|ing)?(?![\\p{L}\\p{N}])`, 'iu').test(text); // "broken link" catches "broken links", but "covered" misses "discovered"
   const pairs = (theme: ReportTheme, defect: typeof defects[number]) => theme.pages.some((page) => defect.pages.includes(page.split('/').slice(1).join('/') || 'dashboard')) // patterns lead with the host; the Gym's root is its dashboard
     && defect.hints.some((hint) => hasHint(words(theme), hint));
   // The largest one-to-one assignment by augmenting paths, so a greedy first pick cannot block a later theme.

@@ -167,12 +167,12 @@ export const TRUST_TEXT = {
   reported: 'a self-report only',
 } as const;
 
-// Weak signals alone make no theme, so an empty section cannot say that nothing went wrong.
-const NO_THEMES = 'No themes. Small-target and backtrack signals do not make one alone; any undersized targets are listed under Methods.';
+// Weak signals alone make no theme, so an empty section cannot say that nothing went wrong. The undersized-target audit leaves competitors out.
+const noThemes = (competitor?: true) => `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`;
 
 function themeLines(report: Report): string[] {
   if (!report.themes) return [];
-  if (report.themes.length === 0) return ['', '## Themes', '', NO_THEMES];
+  if (report.themes.length === 0) return ['', '## Themes', '', noThemes()];
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
@@ -180,7 +180,7 @@ function themeLines(report: Report): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', NO_THEMES])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', noThemes(poi.competitor)])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme))),
   ];
@@ -384,7 +384,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
-    ...(m.undersized_targets ? [`- Undersized tap targets (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
+    ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

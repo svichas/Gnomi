@@ -24,7 +24,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [dashboard, job, jobs, jobs/new, "jobs/:id", candidates, settings]
-  hints: [404, 404s, page not found, jobs link, jobs navigation, broken link]
+  hints: [404, page not found, jobs link, jobs navigation, broken link]
   affects: [recruiter]
   visual_only: false
   toggle: D03
@@ -34,7 +34,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new, settings/users]
-  hints: [hiring manager field, hiring manager fields, no user found, invite user, loses draft, lost draft, lost the draft, lost my draft]
+  hints: [hiring manager field, no user found, invite user, loses draft, lost draft, lost the draft, lost my draft]
   affects: [recruiter, admin]
   visual_only: false
   toggle: D04
@@ -84,7 +84,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [candidates]
-  hints: [slow, slowly, loading, seconds, delay, delayed, long time]
+  hints: [slow, slowly, slower, loading, seconds, delay, long time]
   affects: [recruiter, hiring_manager]
   visual_only: false
   toggle: D09
@@ -104,7 +104,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [login, "reviews/:id"]
-  hints: [sign-in, sign in, signed in, log in, logged in, redirect, redirected]
+  hints: [sign-in, sign in, sign into, signed in, log in, log into, logged in, redirect]
   affects: [hiring_manager]
   visual_only: false
   toggle: D11
@@ -144,7 +144,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
-  hints: [slow, slowly, no progress, no spinner, delay, delayed, seconds, loading]
+  hints: [slow, slowly, slower, no progress, no spinner, delay, seconds, loading]
   affects: [hiring_manager]
   visual_only: false
   toggle: D15
@@ -204,7 +204,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs]
-  hints: [plus icon, plus button, plus sign, hover, hovering, create job button, no create]
+  hints: [plus icon, plus button, plus sign, hover, create job button, no create]
   affects: [recruiter]
   visual_only: true
   toggle: D21
@@ -244,7 +244,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/approvals]
-  hints: [callout, covers the save, covered, overlap, overlaps, overlapping, obscured, hidden behind]
+  hints: [callout, covers the save, covered, overlap, overlapping, obscured, hidden behind]
   affects: [admin]
   visual_only: true
   toggle: D25
@@ -266,7 +266,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   frames: [invite/2]
-  hints: [invite teammate, icon-only, icon only, abstract glyph, no label, no labels, no tooltip]
+  hints: [invite teammate, icon-only, icon only, abstract glyph, no label, no tooltip]
   affects: [team_admin]
   visual_only: true
   toggle: D27

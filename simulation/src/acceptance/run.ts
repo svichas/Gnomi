@@ -408,26 +408,30 @@ export async function mapThemes(runs: { name: string; report?: Report }[], catal
   const items = themeItems(runs, Infinity);
   const mapped: ThemeItem[] = [];
   let failure: string | null = null;
+  let attemptError: string | null = null;
   for (const { name } of runs) {
     const themes = items.filter((item) => item.run === name);
     if (!themes.length) continue;
     if (allowance.signal.aborted) break;
     try {
       const { object } = await llm.call({
-        role: 'judge', model: mapper, run_id: null, persona_id: null, round: 0, purpose: 'map_themes', timeout_ms: 180_000, system: MAPPER_SYSTEM, schema: mappingSchema,
+        role: 'judge', model: mapper, run_id: null, persona_id: null, round: 0, purpose: 'map_themes', timeout_ms: 180_000, system: MAPPER_SYSTEM, schema: mappingSchema, onAttempt: ({ payload }) => { attemptError = payload.error; },
         user: [{ type: 'text', text: JSON.stringify({ defects, themes: themes.map(({ theme_id, title, description, pages, elements, evidence }) => ({ id: theme_id, title, description, pages, elements, evidence: evidence.map(({ what, quote }) => ({ what, quote })) })) }) }],
       });
       mapped.push(...applyMapping(themes, object.mappings, defects.map((defect) => defect.id)));
     } catch (err) {
-      if (!allowance.signal.aborted) failure = err instanceof Error ? err.message : String(err); // a paid retry that reached the allowance is a stop, not a failure
+      const message = err instanceof Error ? err.message : String(err);
+      // A paid retry that reached the allowance is a stop. Missing usage aborts as well, but only a failed attempt raises it here, and the abort hides the provider's own error.
+      if (allowance.unknown() > 0) failure = attemptError ?? message;
+      else if (!allowance.signal.aborted) failure = message;
       break;
     }
   }
-  return { items: mapped, failure };
+  return { items: mapped.some((item) => item.defect !== undefined) ? mapped : null, failure }; // with no answer there is no mapping to claim or to sample
 }
 
-/** The runs with themes that the mapping did not reach. */
-export const unmappedRuns = (runs: { name: string; report?: Report }[], mapped: { run: string }[] | null) => runs.filter(({ name, report }) => report?.themes?.length && !mapped?.some((item) => item.run === name)).map(({ name }) => name);
+/** The runs with themes that have no answer from the mapping, so no score. */
+export const unmappedRuns = (runs: { name: string; report?: Report }[], mapped: { run: string; defect?: string | null }[] | null) => runs.filter(({ name, report }) => report?.themes?.length && !mapped?.some((item) => item.run === name && item.defect !== undefined)).map(({ name }) => name);
 
 /** What a mapping's scores leave out, said beside them. */
 function mappingGaps(items: { defect?: string | null }[], unmapped: string[]) {
@@ -666,17 +670,23 @@ function tally(replicates: { arms: Partial<Record<Arm, { outcomes: Outcomes | nu
   const series = (arm: Arm, metric: typeof METRICS[number]) => replicates.map((entry) => entry.arms[arm]?.outcomes?.[metric] ?? null);
   // Means over the same replicates in every arm, so a stopped run cannot make the arms average different seeds. A replicate counts once its control runs have finished too.
   const complete = replicates.filter((entry) => arms.every((arm) => typeof entry.arms[arm]?.outcomes?.control_themes === 'number'));
+  // After --rescore an unmapped run has no recall_high, so a mapped metric needs the same rule. A run with no themes keeps its estimate, so it stays in.
+  const mapped = complete.filter((entry) => arms.every((arm) => entry.arms[arm]!.outcomes!.recall_high !== null));
   const means = Object.fromEntries(arms.map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => {
-    const values = complete.map((entry) => entry.arms[arm]!.outcomes![metric]).filter((x) => x !== null);
+    const values = (metric === 'recall_high' || metric === 'precision' ? mapped : complete).map((entry) => entry.arms[arm]!.outcomes![metric]).filter((x) => x !== null);
     return [metric, { n: values.length, mean: values.length ? mean(values) : null }];
   }))]));
   const differences = Object.fromEntries(arms.filter((arm) => arm !== 'baseline').map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => [metric, pairedDifference(series(arm, metric), series('baseline', metric))]))]));
   return { complete, means, differences };
 }
 
+/** An evaluation's status, from a run or a rescore: unfinished replicates or a run with no score make it incomplete. */
+const evaluationStatus = (error: string | null, complete: number, repeats: number, unmapped: string[], mode: Mode): Status | 'INCOMPLETE' =>
+  error ? 'FAIL' : complete < repeats || unmapped.length ? 'INCOMPLETE' : mode === 'scripted' ? 'NOT_RUN' : 'REVIEW_NEEDED';
+
 /** What results.md prints, from a run or a rescore. */
 interface Scoreboard {
-  status: string; mode: Mode; labels: { behavioural_validity: string; efficiency: string }; missing_benchmark: string[]; error: string | null; repeats: number; complete_replicates: number; arms: Arm[];
+  status: string; mode: Mode; labels: { behavioural_validity: string; efficiency: string }; missing_benchmark: string[]; error: string | null; allowance_stop_reason: string | null; repeats: number; complete_replicates: number; arms: Arm[];
   method: string; intervals: string; rescored_at?: string; defect_metrics: { runs: ReturnType<typeof mappingScores> | null; status: string; detail: string };
   means: Record<string, Record<string, { n: number; mean: number | null }>>; differences: Record<string, Record<string, ReturnType<typeof pairedDifference>>>;
 }
@@ -692,8 +702,8 @@ function resultsMarkdown(result: Scoreboard) {
       ...Object.entries(defect_metrics.runs).map(([run, scores]) => `| ${run} | ${fmt(scores.recall_high)} | ${fmt(scores.precision)} |`), '',
     ] : [`Mapped defect recall: n/a (${defect_metrics.status}). Mapped defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '']),
     `Intervals: ${result.intervals}.`, '',
-    `${result.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${result.status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${result.complete_replicates} of ${result.repeats} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${result.error ? ` Error: ${result.error}` : ''}`, '',
-    '## Scoreboard', '', `Means per arm. ${result.rescored_at ? `recall_high and precision come from theme-mapping.json, rescored ${result.rescored_at}; a run it does not cover has neither.` : 'recall_high and precision are hint-based estimates, not reviewed mappings.'}`, '', '| Arm | recall_high | precision | control_themes |', '| --- | --- | --- | --- |',
+    `${result.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${result.status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${result.complete_replicates} of ${result.repeats} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${result.allowance_stop_reason ? ` Stopped early: ${result.allowance_stop_reason}` : ''}${result.error ? ` Error: ${result.error}` : ''}`, '',
+    '## Scoreboard', '', `Means per arm. ${result.rescored_at ? `recall_high and precision come from theme-mapping.json, rescored ${result.rescored_at}, over the ${means[arms[0]].recall_high.n} of ${result.complete_replicates} complete replicates mapped in every arm; a run it does not cover has neither.` : 'recall_high and precision are hint-based estimates, not reviewed mappings.'}`, '', '| Arm | recall_high | precision | control_themes |', '| --- | --- | --- | --- |',
     ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} |`), '',
     ...Object.entries(result.differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
@@ -766,7 +776,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
       const { items, failure } = await mapThemes(finished, catalogue, options.mapper, llm, allowance);
       mapping = items;
       error = failure;
-      mappedSheet(options.out, mapping, options.mapper, options.mode === 'live');
+      if (mapping) mappedSheet(options.out, mapping, options.mapper, options.mode === 'live');
     }
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
@@ -779,7 +789,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
   const scripted = options.mode === 'scripted';
   const labels = scripted ? { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' } as const : { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
   const unmapped = options.mapper ? unmappedRuns(finished, mapping) : [];
-  const status: Status | 'INCOMPLETE' = error ? 'FAIL' : complete.length < seeds.length || unmapped.length ? 'INCOMPLETE' : scripted ? 'NOT_RUN' : 'REVIEW_NEEDED';
+  const status = evaluationStatus(error, complete.length, seeds.length, unmapped, options.mode);
   const primary = BENCHMARK.primary_metrics ?? [];
   const estimate = 'Each run\'s outcomes.defect_proxy, which recall_high and precision come from, is a hint-based estimate, not a reviewed mapping.';
   const defect_metrics = mapping
@@ -804,7 +814,8 @@ const correctedSheet = z.object({ items: z.array(z.object({ run: z.string(), ran
 /**
  * `--rescore`: scores a finished evaluation again from its theme-mapping.json as a person left it, with no browser and no model call.
  * recall_high and precision then come from the mapping in the scoreboard and the arm differences too; each run's defect_proxy keeps the
- * hint-based estimate. A run the mapping does not cover has neither, so an estimate never mixes into a mapped mean.
+ * hint-based estimate. A run the mapping does not cover has neither, so an estimate never mixes into a mapped mean, and the means take only
+ * the replicates mapped in every arm. The status is worked out again, because the mapping's coverage set it.
  */
 export function rescoreEvaluation(out: string) {
   const load = (file: string) => {
@@ -831,9 +842,9 @@ export function rescoreEvaluation(out: string) {
       run.outcomes.precision = scores?.precision ?? null;
     }
   }
-  const { means, differences } = tally(saved.replicates, saved.arms);
+  const { complete, means, differences } = tally(saved.replicates, saved.arms);
   const result = {
-    ...saved, scope: `${EVALUATE_SCOPE} Rescored: recall_high and precision come from theme-mapping.json, not hints.`, rescored_at: new Date().toISOString(), means, differences,
+    ...saved, status: evaluationStatus(saved.error, complete.length, saved.repeats, unmapped, saved.mode), scope: `${EVALUATE_SCOPE} Rescored: recall_high and precision come from theme-mapping.json, not hints.`, rescored_at: new Date().toISOString(), means, differences,
     defect_metrics: { runs, status: saved.mode === 'live' ? 'RESCORED' : 'NOT_RUN', detail: `By run, and in the scoreboard below, from theme-mapping.json with any corrections a person made. ${mappingGaps(items, unmapped)}Each run's outcomes.defect_proxy keeps the hint-based estimate.` },
   };
   json(join(out, 'results.json'), result);

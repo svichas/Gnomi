@@ -408,9 +408,9 @@ test('undersized targets are an audit in the methods, not findings: no theme and
   assert.deepEqual(report.themes, []);
   assert.equal(report.weighted.with_friction, 0, 'nobody ran into friction');
   const md = reportToMarkdown(report);
-  assert.ok(md.includes('- Undersized tap targets (an audit, not findings; only elements a mobile persona tapped): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
+  assert.ok(md.includes('- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
   assert.ok(!md.includes('s3cret') && !md.includes('Small tap targets'));
-  assert.ok(md.includes('No themes. Small-target and backtrack signals do not make one alone; any undersized targets are listed under Methods.'));
+  assert.ok(md.includes('No themes. Small-target and backtrack signals do not make one alone; any undersized targets on your product are listed under Methods.'));
   assert.ok(!md.includes('No frictions to group into themes'), 'signals did fire');
 });
 
