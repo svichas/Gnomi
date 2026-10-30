@@ -593,6 +593,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
+          keys: draft.groups.map((g) => groupKey(g.members[0])),
           poi_id,
           rank: 0,
           title: draft.title,

@@ -211,6 +211,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     themes: [
       {
         id: 'g1',
+        keys: [JSON.stringify(['poi-gym', 'localhost:3001/jobs/new', 'kind', 'friction'])],
         poi_id: 'poi-gym',
         rank: 1,
         title: 'Reported friction on /jobs/new',

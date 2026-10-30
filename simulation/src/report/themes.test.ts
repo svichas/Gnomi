@@ -80,6 +80,18 @@ test('a survey answer merged into a page theme leaves "reached" at that page; a 
   assert.deepEqual(surveyOnly?.affected.map((a) => [a.affected, a.reached]), [[0, 3], [1, 2]]);
 });
 
+test('a merged theme carries the key of each of its groups', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 2)],
+    ['persona.friction_reported', 'a1', { ...friction(4, 2, 'Home is empty'), where: { url: HOME, ref: null } }],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Both', description: 'Both.', group_ids: ['g1', 'g2'] }] }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.equal(theme.id, 'g1+g2');
+  assert.deepEqual(theme.keys, [JSON.stringify(['poi', 'gym.test/jobs/new', 'element', 'button "save"']), JSON.stringify(['poi', 'gym.test/', 'kind', 'friction'])]);
+});
+
 test('themes rank by score within the POI', () => {
   const events = log(
     ['persona.step', 'a1', step(1)],
