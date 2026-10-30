@@ -111,6 +111,7 @@ The team fixes what it chooses, deploys to staging, duplicates the run (same per
 
 - The complete profile and biography (identity with country and languages, work, capability, context, psychology, intent, voice), segment, device, seed, all editable; "regenerate from these traits" rewrites the biography without changing the sampled fields.
 - Timeline of actions with the page or frame, the persona's think-aloud note, and the screenshot at each step; failed steps and loops are highlighted.
+- Replay: a flipbook of those step screenshots, with the step's action and page beside each, moved by buttons or the arrow keys. A step with no screenshot says so and keeps its place. Only the step on show and its neighbours load.
 - Opinion panel: per POI, a sentiment score from −2 to +2, confidence, top likes and top frictions, and how the opinion changed over rounds, with the posts that changed it.
 - Social panel: who it follows, what it posted, what it read.
 - "Rerun this persona" to replay a single persona with a different seed or model.

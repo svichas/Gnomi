@@ -3,11 +3,48 @@ import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnom
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
-import type { PersonaState } from './activity.ts';
+import type { PersonaState, Row } from './activity.ts';
 import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
 import './results.css';
+
+/**
+ * A persona's steps as a flipbook, oldest first, so a live run's new steps never move the one on show. Only that step and its two
+ * neighbours are in the page, and each loads its own image, so a long episode costs three images however far it is flipped.
+ */
+function Replay({ steps, name }: { steps: Row[]; name: string }) {
+  const [index, setIndex] = useState(0);
+  const go = (to: number) => setIndex(Math.max(0, Math.min(to, steps.length - 1)));
+  const step = steps[index];
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: the flipbook takes focus so its arrow keys work without tabbing to a button
+    <div role="region" id="inspector-replay" aria-label="Replay" aria-keyshortcuts="ArrowLeft ArrowRight" tabIndex={0} className="inspector-replay" onKeyDown={(event) => {
+      if (event.key === 'ArrowLeft') go(index - 1);
+      if (event.key === 'ArrowRight') go(index + 1);
+    }}>
+      <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Replay</h3><span>Left and right arrow keys</span></div>
+      <div className="inspector-replay-frame">
+        <div className="inspector-replay-stage">
+          {/* Neighbours sit behind the step on show, so moving to one shows an image that has already loaded. */}
+          {steps.slice(Math.max(0, index - 1), index + 2).map((row) => <div key={row.seq} data-current={row === step || undefined}>
+            {row.screenshot ? <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} /> : <p className="text-sm text-stone-500">No screenshot for this step.</p>}
+          </div>)}
+        </div>
+        <div className="inspector-replay-caption" aria-live="polite">
+          <p className="font-medium text-stone-900">Step {index + 1} of {steps.length}</p>
+          <p>{step.title}</p>
+          {step.page && <p className="break-all text-xs text-stone-500">{step.page}</p>}
+        </div>
+      </div>
+      <div className="inspector-replay-controls">
+        {/* aria-disabled, because a button that disables itself under the keyboard drops focus out of the flipbook. */}
+        <Button small aria-disabled={index === 0} onClick={() => go(index - 1)}><Icon name="back" size={15} />Previous</Button>
+        <Button small aria-disabled={index === steps.length - 1} onClick={() => go(index + 1)}>Next<Icon name="arrow" size={15} /></Button>
+      </div>
+    </div>
+  );
+}
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
@@ -38,6 +75,8 @@ export function Inspector(props: {
   }
 
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
+  const steps = rows.filter((row) => row.source?.type === 'persona.step').toReversed();
+  const replayable = steps.some((row) => row.screenshot); // a text's steps have none, so there is nothing to flip through
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
@@ -60,6 +99,7 @@ export function Inspector(props: {
         </Button>
       </div>
       <nav className="inspector-jump-links" aria-label="Persona sections">
+        {replayable && <button type="button" onClick={() => jumpTo('inspector-replay')}><Icon name="play" size={15} />Replay</button>}
         <button type="button" onClick={() => jumpTo('inspector-timeline')}><Icon name="activity" size={15} />Journey<span>{rows.length}</span></button>
         <button type="button" onClick={() => jumpTo('inspector-opinions')}><Icon name="message" size={15} />Opinions</button>
         <button type="button" onClick={() => jumpTo('inspector-profile')}><Icon name="people" size={15} />Profile</button>
@@ -73,6 +113,8 @@ export function Inspector(props: {
             {feeling !== null ? `Feeling ${FEELINGS[feeling] ?? feeling} (${feeling > 0 ? '+' : ''}${feeling}).` : 'No steps yet.'}
           </p>
         </section>
+
+        {replayable && <Replay steps={steps} name={name} />}
 
         <section aria-label="Timeline" id="inspector-timeline" tabIndex={-1}>
           <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Step by step</h3><span>Newest first</span></div>

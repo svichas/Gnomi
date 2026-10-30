@@ -190,6 +190,11 @@ test('the swarm graph and the grid read one status: a budget or failure stop is 
   assert.deepEqual(graphStates(compared), personaStates(compared, people));
 });
 
+test('a step row names the page its screenshot shows, not the one the step led to', () => {
+  const [row] = toRows([event(1, 'persona.step', { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: 'https://app.test/jobs', url_after: 'https://app.test/jobs/1', dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] })]);
+  assert.equal(row.page, 'https://app.test/jobs');
+});
+
 test('the activity filters keep one persona, one segment or one kind of event', () => {
   const people = new Map([person('a1', 'seg-1'), person('a2', 'seg-1'), person('b1', 'seg-2')].map((p) => [p.id, p]));
   const step = (seq: number, who: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] }, who);

@@ -32,6 +32,7 @@ export interface Row {
   detail?: string;
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
+  page?: string; // the page a step's screenshot shows, as a reader names it
   source?: { type: GnomiEvent['type']; round: number | null; poi_id: string | null; step?: number };
 }
 
@@ -142,6 +143,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
         badge: action.type === 'done' || action.type === 'abandon' ? undefined : result.ok ? { ok: true, text: 'ok' } : { ok: false, text: `error: ${error || 'failed'}` },
         quote: thought,
         screenshot: event.payload.screenshot,
+        page: place(result.url_before),
       };
     }
     case 'persona.friction_reported': {

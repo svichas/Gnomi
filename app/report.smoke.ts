@@ -14,6 +14,11 @@ const dir = scratch('report');
 const projectDir = join(dir, 'report.gnomi');
 const { config: synthetic, events } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
 synthetic.project.name = 'Hiring app';
+const shotPath = (name: string) => `runs/r-0001/shots/${name}.jpg`;
+// One persona's four steps for the replay: a wide and a tall screenshot, a step with none, and one whose file is gone.
+const replayed = events.find((event) => event.type === 'persona.friction_reported')!.persona_id;
+const replayShots = [shotPath('wide'), shotPath('tall'), null, shotPath('gone')];
+for (const event of events) if (event.type === 'persona.step' && event.persona_id === replayed) event.payload.screenshot = replayShots.shift()!;
 const config = seedFinishedRun(projectDir, synthetic, events);
 // The later build: the same personas on the same pages, with nobody meeting the frictions of the first.
 seedFinishedRun(projectDir, synthetic, events.filter((event) => event.type !== 'persona.friction_reported'));
@@ -35,12 +40,13 @@ const theme = (title: string, i: number): ReportTheme => ({
 report.themes = titles.map(theme);
 report.themes.push({ ...theme('One user wanted a keyboard shortcut', 6), personas: 1, prevalence: { personas: 1, exposed: 6, share: 1 / 6, low: 0.03, high: 0.56, level: 'single' } });
 report.themes.push({ ...theme('Users hesitated at the subscription price', 7), category: 'objection' });
+report.set_aside = [{ ...theme('A persona typed its own name as the hiring manager', 8), check: { verdict: 'agent_mistake', reason: 'The persona entered its own name, so the form was right to refuse it.' } }];
 report.went_well = [{ text: 'The job preview was easy to scan', personas: 4, count: 4, seqs: [] }];
 // A wide and a tall screenshot with a frame on each, a plain one, and one with no file: nothing to mark.
-const shotPath = (name: string) => `runs/${config.run_id}/shots/${name}.jpg`;
 const box = { left: 25, top: 50, width: 20, height: 10, element: 'button "Publish"' };
 const [evidence] = report.themes[0].evidence;
-report.themes[0].evidence = [{ ...evidence, screenshot: shotPath('wide'), box }, { ...evidence, screenshot: shotPath('tall'), box }, { ...evidence, screenshot: shotPath('wide') }, { ...evidence, screenshot: shotPath('gone'), box }];
+report.themes[0].evidence = [{ ...evidence, screenshot: shotPath('wide'), box, interference: true }, { ...evidence, screenshot: shotPath('tall'), box }, { ...evidence, screenshot: shotPath('wide') }, { ...evidence, screenshot: shotPath('gone'), box }];
+report.themes[0].interference = 1;
 const pageName = (i: number) => `app.example.com/dashboard/campaigns/new-campaign/summary-${i}`; // as wide as real names get, so the check at 320 px proves the graph's limit
 const flow: ReportFlow = {
   poi_id: report.pois[0].id, personas: 6, left_out: { pages: 3, ended: 1 },
@@ -61,7 +67,7 @@ async function assertMarks(page: Page, when: string) {
 }
 
 const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
-deadline('Report smoke timed out.', 90_000);
+deadline('Report smoke timed out.', 240_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
@@ -83,12 +89,13 @@ try {
         queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
         return;
       }
-      if (message?.kind !== 'request' || message.method !== 'get_report') {
+      // A run started here keeps its real report.
+      if (message?.kind !== 'request' || message.method !== 'get_report' || !['r-0001', 'r-0002'].includes(message.params.run_id)) {
         post.call(this, message, Array.isArray(options) ? { transfer: options } : options);
         return;
       }
       const variant = sessionStorage.getItem('report-variant');
-      const result = variant === 'empty' ? { ...report, themes: [], frictions: [] } : variant === 'legacy' ? { ...report, themes: undefined } : report;
+      const result = variant === 'empty' ? { ...report, themes: [], frictions: [], set_aside: undefined } : variant === 'all-aside' ? { ...report, themes: [], frictions: [] } : variant === 'legacy' ? { ...report, themes: undefined } : report;
       queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
     };
   }, report);
@@ -118,8 +125,66 @@ try {
   await page.keyboard.press('Enter');
   assert.ok(await first.getByText('Suggested change', { exact: true }).isVisible());
   assert.ok(await first.getByText('Behind this finding', { exact: true }).isVisible());
+  assert.ok(await first.locator('summary').getByText('possibly interference between personas', { exact: false }).isVisible(), 'the tag shows on the closed finding');
+  assert.ok(await first.getByText('1 of 4 reports tagged possibly interference between personas: another persona changed', { exact: false }).isVisible(), 'and says why');
+  assert.equal(await first.getByText(/^Tagged possibly interference between personas/).count(), 1, 'on the tagged evidence only');
   await first.getByRole('button', { name: friction.persona_name, exact: true }).first().click();
   await page.getByRole('dialog').waitFor();
+  // The replay: real steps from the log, through the buttons, the keyboard, a step with no screenshot and a phone's width.
+  const replay = page.getByRole('dialog').getByRole('region', { name: 'Replay' });
+  const caption = replay.locator('.inspector-replay-caption');
+  const stage = replay.locator('.inspector-replay-stage');
+  const previous = replay.getByRole('button', { name: 'Previous' });
+  const next = replay.getByRole('button', { name: 'Next' });
+  // Opened from evidence, the inspector shows that step of the timeline, so the link is the way up to the replay.
+  await page.getByRole('navigation', { name: 'Persona sections' }).getByRole('button', { name: 'Replay' }).click();
+  assert.equal(await replay.evaluate((section) => section === document.activeElement), true, 'the link hands the arrow keys to the replay');
+  const atStep = async (n: number, mounted: number) => {
+    await caption.getByText(`Step ${n} of 4`, { exact: true }).waitFor();
+    assert.equal(await stage.locator(':scope > *').count(), mounted, `only step ${n} and its neighbours are in the page`);
+  };
+  await atStep(1, 2);
+  assert.ok(await caption.getByText('Clicked button "Next"', { exact: true }).isVisible(), 'the action');
+  assert.ok(await caption.getByText('http://gym.test/poi-gym', { exact: true }).isVisible(), 'the page');
+  const shown = stage.locator('img:visible');
+  await shown.waitFor();
+  await page.waitForFunction((image) => (image as HTMLImageElement).naturalWidth > 0, await shown.elementHandle());
+  const [image, words] = [(await shown.boundingBox())!, (await caption.boundingBox())!];
+  assert.ok(words.x >= image.x + image.width, 'the words sit beside the image');
+  await page.screenshot({ path: join(shots, 'replay.png') });
+  assert.equal(await previous.getAttribute('aria-disabled'), 'true');
+  await previous.click({ force: true });
+  await atStep(1, 2);
+  await next.click();
+  await atStep(2, 3);
+  await replay.focus();
+  await page.keyboard.press('ArrowRight');
+  await atStep(3, 3);
+  assert.ok(await stage.getByText('No screenshot for this step.').isVisible(), 'a step with no screenshot says so');
+  assert.equal(await stage.locator('img:visible').count(), 0, 'and shows no neighbour');
+  await page.keyboard.press('ArrowRight');
+  await atStep(4, 2);
+  await stage.getByText('The screenshot could not be loaded.').waitFor();
+  await page.keyboard.press('ArrowRight');
+  await atStep(4, 2);
+  await page.keyboard.press('ArrowLeft');
+  await atStep(3, 3);
+  await page.keyboard.press('ArrowLeft');
+  await atStep(2, 3);
+  await previous.focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await atStep(1, 2);
+  assert.equal(await previous.evaluate((button) => button === document.activeElement), true, 'reaching the first step leaves focus on the button');
+  await page.keyboard.press('ArrowRight');
+  await atStep(2, 3);
+  await page.setViewportSize({ width: 320, height: 800 });
+  await assertFits(page, 'the replay fits a narrow viewport');
+  assert.ok(await replay.evaluate((section) => section.scrollWidth <= section.clientWidth), 'nothing in the replay runs wide at 320 px');
+  assert.ok(await page.locator('.inspector-jump-links').evaluate((links) => links.scrollWidth <= links.clientWidth), 'the section links still fit at 320 px');
+  await replay.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'replay-320.png') });
+  await page.setViewportSize({ width: 1100, height: 1000 });
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   const images = first.locator('.report-shot img');
@@ -145,11 +210,14 @@ try {
   const sixth = root.locator('.report-overflow .report-finding').first();
   assert.ok(await sixth.isVisible());
   assert.equal(await sixth.locator('.report-finding-number').innerText(), '06', 'numbering continues past the fold');
-  for (const title of ['Individual observations', 'Reasons for hesitation', 'Where personas went', 'Audience breakdown', 'User journeys', 'Run details & methodology']) {
+  for (const title of ['Individual observations', 'Reasons for hesitation', 'Set aside by the evidence check', 'Where personas went', 'Audience breakdown', 'User journeys', 'Run details & methodology']) {
     const fold = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: title }) });
     await fold.locator(':scope > summary').click();
     assert.ok(await fold.locator(':scope > .report-fold-body').isVisible(), title);
   }
+  const aside = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Set aside by the evidence check (1)' }) });
+  assert.ok(await aside.getByText("points to a persona's mistake: The persona entered its own name, so the form was right to refuse it.").isVisible(), 'each theme keeps its reason');
+  assert.equal(await root.locator('.report-finding').getByText('A persona typed its own name').count(), 0, 'a set-aside theme is not ranked');
   const hesitations = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Reasons for hesitation' }) });
   assert.deepEqual(await hesitations.locator('.report-finding-summary .tone-chip').allInnerTexts(), ['Moderate'], 'an objection has a severity and no priority');
   const singles = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Individual observations' }) });
@@ -181,14 +249,15 @@ try {
   await file.emulateMedia({ media: 'print' });
   await assertMarks(file, 'in the exported file, printed');
   assert.equal(await file.locator('.report-flow').count(), 1);
+  assert.ok(await file.getByText('A persona typed its own name as the hiring manager').isVisible(), 'the export keeps what was set aside');
   await file.close();
   await page.setViewportSize({ width: 320, height: 1000 });
-  for (const variant of ['empty', 'legacy']) {
+  for (const [variant, message] of [['empty', 'No shared issues were reported in this run.'], ['all-aside', 'No shared issues are left. What the evidence check set aside is below.'], ['legacy', friction.what]]) {
     await page.evaluate((value) => sessionStorage.setItem('report-variant', value), variant);
     await page.reload();
     await openReport();
-    assert.ok(await root.getByText(variant === 'empty' ? 'No shared issues were reported in this run.' : friction.what, { exact: true }).first().isVisible());
-    assert.equal(await root.getByRole('region', { name: 'Summary' }).count(), variant === 'empty' ? 1 : 0, 'a report without themes has nothing to summarise');
+    assert.ok(await root.getByText(message, { exact: true }).first().isVisible());
+    assert.equal(await root.getByRole('region', { name: 'Summary' }).count(), variant === 'legacy' ? 0 : 1, 'a report without themes has nothing to summarise');
     await assertFits(page, `${variant} report fits a narrow viewport`);
   }
   // Compare, reached from the run history: the real engine call, on the real reports of the two seeded runs.
@@ -196,6 +265,23 @@ try {
   await page.reload();
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   await page.setViewportSize({ width: 1100, height: 1000 });
+
+  // The pre-run summary's repeat count, against the real estimate.
+  await page.locator('#tab-review').click();
+  const review = page.locator('#panel-review');
+  const repeatCount = review.getByLabel('Repeat runs');
+  await repeatCount.waitFor();
+  assert.equal(await repeatCount.inputValue(), '1');
+  assert.equal(await review.getByText('runs of this audience', { exact: false }).count(), 0, 'one run has nothing to explain');
+  await repeatCount.fill('3');
+  await review.getByText('3 runs of this audience, one after another, each with its own report and $1.67 of the cost limit.', { exact: false }).waitFor();
+  assert.ok(await review.getByText('Each finding then shows how many runs it appeared in.', { exact: false }).isVisible());
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the repeat count fits a narrow viewport');
+  await repeatCount.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'review-repeats-320.png') });
+  await page.setViewportSize({ width: 1100, height: 1000 });
+
   await page.locator('#tab-runs').click();
   const history = page.locator('#panel-runs');
   assert.equal(await history.getByLabel('Earlier run').inputValue(), config.run_id, 'the two newest runs to begin with');
@@ -247,13 +333,22 @@ try {
   await dialog.getByRole('button', { name: 'Start run' }).click();
   await dialog.getByText('is not a web address Gnomi can open', { exact: false }).waitFor();
   await address.fill(`${gym.url}/`);
+  await dialog.getByLabel('Repeat runs').fill('2');
+  await dialog.getByText('shared across 2 runs', { exact: false }).waitFor();
   await dialog.getByRole('button', { name: 'Start run' }).click();
   await dialog.waitFor({ state: 'detached' });
   await page.locator('.run-history-context code').getByText('r-0003', { exact: true }).waitFor();
   await page.setViewportSize({ width: 1100, height: 1000 });
-  await page.getByRole('button', { name: 'Run again', exact: true }).waitFor({ timeout: 30_000 });
+  // The set's real reports, compared by the engine: both runs finish and each finding says how it did across them.
+  await root.getByText('Run 1 of 2 in a repeat set. 2 runs compared.', { exact: false }).waitFor({ timeout: 120_000 });
+  const repeatsLine = root.locator('.report-finding-summary').getByText('Appeared in 2 of 2 runs', { exact: false }).first();
+  await repeatsLine.waitFor();
+  await repeatsLine.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'repeat-set.png') });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the repeat line fits a narrow viewport');
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, keyboard toggles, evidence inspector, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });
