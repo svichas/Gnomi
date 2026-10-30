@@ -103,7 +103,7 @@ test('a stopped run keeps what it found, leaves out who never began, and claims 
   const stopped = { reason: 'cost_budget', detail: null } as const;
   const flat = only(run(visiting(10, { 0: ['save'] }), { stopped, unstarted: ['p-11', 'p-12'] }).report.coverage);
   assert.equal(flat.curve?.length, 10);
-  assert.equal(flat.hint, 'The last 2 personas found nothing new, but the run stopped early, so they may not have got far.');
+  assert.equal(flat.hint, 'The last 2 personas found nothing new, but the run did not finish, so they may not have got far.');
   assert.match(only(run(visiting(10, { 9: ['save'] }), { stopped }).report.coverage).hint, /^The last 2 personas still found 1 new problem in this simulated run/);
   assert.match(only(run(visiting(9, { 0: ['save'] }), { stopped }).report.coverage).hint, /too short to read/);
 });

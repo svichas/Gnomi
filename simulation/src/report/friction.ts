@@ -1,5 +1,5 @@
 import { assetPlaces, placeName, runPois } from '../poi/pois.ts';
-import { possibleInterference } from '../signals/index.ts';
+import { pagePattern, possibleInterference } from '../signals/index.ts';
 import type { AccessibilityViolation, ActionTarget, EventOf, EventPayloads, GnomiEvent, ReportBox, SignalKind, StepEvidence, Trust, Viewport } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
@@ -75,30 +75,11 @@ export interface Group {
 /** Only weak signals: no self-report, survey answer or other signal. Judged by every member, since a group's kind is its first member's. */
 export const isWeak = (group: Group) => group.members.every((m) => WEAK.has(m.kind));
 
-// Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
-const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;
-
 /** The readable names of the run's text and design files (poi/pois.ts), from its frozen project. */
 export const placesOf = (events: GnomiEvent[]): Map<string, string> => assetPlaces(runPois(events));
 
 /** Each POI's name by its id, from the run's frozen project. */
 export const poiNamesOf = (events: GnomiEvent[]): Map<string, string> => new Map(runPois(events).map((poi) => [poi.id, poi.name]));
-
-/**
- * host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. A text's
- * or design's stored file is its readable name when `places` knows it, so titles and pages never show a file id.
- */
-export function pagePattern(url: string, places?: Map<string, string>): string {
-  const place = places?.get(url);
-  if (place) return place;
-  try {
-    const { host, pathname } = new URL(url);
-    const path = pathname.split('/').map((part) => (ID_SEGMENT.test(part) ? ':id' : part)).join('/').replace(/\/+$/, '');
-    return `${host}${path || '/'}`;
-  } catch {
-    return url;
-  }
-}
 
 /** Lowercase words only, so "Clear pricing!" and "clear  pricing" are one answer. */
 export const normaliseText = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

@@ -1,6 +1,7 @@
 import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportReach, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
-import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { pagePattern } from '../signals/index.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's, check's and author's answers come in as
 // report.themes, report.checks and report.suggestions events and are checked against the deterministic ids here, every time.

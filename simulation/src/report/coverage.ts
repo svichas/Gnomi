@@ -17,7 +17,7 @@ function hintOf(curve: number[] | undefined, last: { personas: number; themes: n
   if (curve.length < CURVE_MIN) return `With ${count(curve.length, 'persona')} the curve is too short to read.${aside}`;
   if (last.themes) return `${who} still found ${count(last.themes, 'new problem')} in this simulated run, so a larger run may find more.${aside}`;
   // The last to start are the first cut off, so their silence says nothing.
-  if (status !== 'finished') return `${who} found nothing new, but the run stopped early, so they may not have got far.${aside}`;
+  if (status !== 'finished') return `${who} found nothing new, but the run did not finish, so they may not have got far.${aside}`;
   return `${who} found nothing new in this simulated run.${aside}`;
 }
 

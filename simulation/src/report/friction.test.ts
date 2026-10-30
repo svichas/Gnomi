@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ActionTarget, EventPayloads, EventType, GnomiEvent } from '../types.ts';
-import { buildCandidates, groupCandidates, pagePattern } from './friction.ts';
+import { pagePattern } from '../signals/index.ts';
+import { buildCandidates, groupCandidates } from './friction.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const OTHER = 'http://gym.test/settings';

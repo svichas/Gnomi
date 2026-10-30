@@ -1,5 +1,6 @@
 import type { GnomiEvent, Outcome, ReportFlow, ReportFlowPage, ReportPersona, WebPoi } from '../types.ts';
-import { pagePattern, placesOf } from './friction.ts';
+import { pagePattern } from '../signals/index.ts';
+import { placesOf } from './friction.ts';
 
 /** Pages a flow shows: a real site can have many, so the most reached stay, ties going to where personas ended, and the rest are counted as left out. */
 export const FLOW_PAGES = 8;

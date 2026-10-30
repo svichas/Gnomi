@@ -1,4 +1,3 @@
-import { pagePattern } from '../report/friction.ts';
 import type { PageDriver, PageError } from '../seams.ts';
 import type { AccessibilityViolation, Device, EventOf, EventPayloads, GnomiEvent, PageSnapshot, SignalBase, SignalThresholds } from '../types.ts';
 
@@ -20,6 +19,26 @@ const ERRORISH = /\b(?:error|invalid|required|incorrect|failed|went wrong|alread
 const base = (step: Step): SignalBase => ({ step_no: step.step_no, url: step.result.url_before, ref: step.action.ref });
 /** A page's identity for loops and revisits: its URL without the fragment. */
 const pageKey = (url: string) => url.split('#')[0];
+
+// Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
+const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;
+
+/**
+ * host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. A text's
+ * or design's stored file is its readable name when `places` knows it, so titles and pages never show a file id.
+ */
+export function pagePattern(url: string, places?: Map<string, string>): string {
+  const place = places?.get(url);
+  if (place) return place;
+  try {
+    const { host, pathname } = new URL(url);
+    const path = pathname.split('/').map((part) => (ID_SEGMENT.test(part) ? ':id' : part)).join('/').replace(/\/+$/, '');
+    return `${host}${path || '/'}`;
+  } catch {
+    return url;
+  }
+}
+
 /** The steps among `steps` in the `window` steps ending at `end`, end included. */
 const within = (steps: Step[], end: Step, window: number) => steps.filter((s) => s.step_no > end.step_no - window && s.step_no <= end.step_no);
 /** A click on a button: the only action here that can submit a form, so the only one that takes a snapshot after it. */
