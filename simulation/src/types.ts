@@ -266,6 +266,7 @@ export interface SignalThresholds {
   back_window: number; // …within this many steps is a backtrack
   revisit_window: number; // so is returning to a page acted on in this many previous steps
   small_target_px: number; // a mobile tap target narrower or shorter than this, in CSS pixels
+  interference_s?: number; // a failed action on what another persona changed this many seconds before may be theirs; absent on older runs, which keep no such tag
 }
 
 export type RunStatus = 'running' | 'finished' | 'stopped' | 'interrupted';

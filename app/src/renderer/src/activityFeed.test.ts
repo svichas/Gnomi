@@ -12,7 +12,7 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 
 const step = (seq: number, persona = 'p-1', round = 1, poi = 'poi-1') => event(seq, 'persona.step', {
   step_no: 2, action: { type: 'click', ref: 'next' }, target: { role: 'button', name: 'Next' },
-  result: { ok: true }, thought: 'I expect to see a confirmation.', screenshot: null, feeling: 0,
+  result: { ok: true, url_before: 'http://gym.test/' }, thought: 'I expect to see a confirmation.', screenshot: null, feeling: 0,
 } as EventPayloads['persona.step'], persona, round, poi);
 
 test('highlights group a thought, action and its detected friction despite concurrent participants', () => {

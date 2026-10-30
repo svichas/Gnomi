@@ -32,6 +32,7 @@ export interface Row {
   detail?: string;
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
+  page?: string; // the page a step's screenshot shows, as a reader names it
   source?: { type: GnomiEvent['type']; round: number | null; poi_id: string | null; step?: number };
 }
 
@@ -142,6 +143,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
         badge: action.type === 'done' || action.type === 'abandon' ? undefined : result.ok ? { ok: true, text: 'ok' } : { ok: false, text: `error: ${error || 'failed'}` },
         quote: thought,
         screenshot: event.payload.screenshot,
+        page: place(result.url_before),
       };
     }
     case 'persona.friction_reported': {
@@ -294,7 +296,6 @@ export function foldRows(fold: RowFold, events: GnomiEvent[]): { added: Row[]; r
   return { added, replaced };
 }
 
-/** The activity feed, newest first. */
 // A stored screenshot is what a vision persona saw, not the page as designed, and a screen-reader persona was never shown it.
 const SHOT_LABEL: Record<Perception, string> = {
   deuteranopia: 'Simulated red–green colour blindness: the colours here are not the page’s own.',
@@ -312,8 +313,9 @@ export function shotLabels(events: GnomiEvent[]): (row: Row) => string | undefin
   };
 }
 
-export function toRows(events: GnomiEvent[]): Row[] {
-  const fold = emptyRows();
+/** The activity feed, newest first. `places` names texts and designs when `events` has no run.started, as one persona's events do not. */
+export function toRows(events: GnomiEvent[], places = new Map<string, string>()): Row[] {
+  const fold = { ...emptyRows(), places };
   foldRows(fold, events);
   return fold.rows;
 }

@@ -423,6 +423,7 @@ function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
     ...(c.box && { box: c.box }),
     signals: c.signals,
     ...(c.scan && { scan: c.scan }),
+    ...(c.interference && { interference: true as const }),
     ...stepEvidence(c),
   };
 }
@@ -704,6 +705,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const met = felt(members);
         const personas = new Set(met.map((m) => m.persona_id)).size;
         const hand = firstHand(met, id, themeTags, echoes);
+        const interference = members.filter((m) => m.interference).length;
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
@@ -729,6 +731,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           affected,
           evidence: pickEvidence(members).map((m) => evidenceOf(m, ctx)),
           seqs: [...new Set(members.flatMap((m) => m.seqs))].sort((a, b) => a - b),
+          ...(interference > 0 && { interference }),
           suggestion: null,
         };
       })

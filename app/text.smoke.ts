@@ -97,6 +97,10 @@ try {
   assert.equal(await personas.getByText('In the text:').count(), 3);
   assert.match(await personas.innerText(), /In the text: “# Plotline pricing”/);
   await page.screenshot({ path: join(shots, 'text-report.png'), fullPage: true });
+  // The inspector gets her events alone, with no run.started, and still names the text.
+  await personas.getByRole('button', { name: /^Open .*timeline$/ }).first().click();
+  await page.getByRole('dialog', { name: 'Persona details' }).getByRole('region', { name: 'Timeline', exact: true }).getByText('Started reading Pricing page', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
 
   const assets = join(projectDir, 'assets');
   assert.ok(existsSync(assets), 'the pasted text is in the project folder');

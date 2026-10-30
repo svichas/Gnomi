@@ -55,14 +55,15 @@ export function clusterThemes(runs: Report[], themesOf = (run: Report) => run.th
 
 /**
  * The finished runs' themes as one set. Reports go in the order the runs ran. Pure.
- * `live` says the set goes on: between two runs no run is running, and only the process running the set knows.
+ * `live` says the process running the set still holds it: between two runs no run is running, and only that process knows more follow.
  * shortcut: a reader in another process (`gnomi report --repeat`) sees that gap as incomplete, for the moment it lasts; record a set's end in the log if that ever matters.
  */
 export function combineReports(reports: Report[], live = false): RepeatSet {
   const compared = reports.filter((report) => report.status === 'finished');
   const repeat = reports[0]?.repeat;
   const of = repeat?.of ?? reports.length;
-  const running = live || reports.some((report) => report.status === 'running');
+  // `live` only bridges the gap between two runs: the host holds a set until its last report is written, long after its runs say it is over.
+  const running = reports.some((report) => report.status === 'running') || (live && compared.length === reports.length && reports.length < of);
   return {
     group: repeat?.group ?? null,
     of,
