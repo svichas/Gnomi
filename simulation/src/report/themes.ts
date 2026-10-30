@@ -587,6 +587,23 @@ export function wentWell(events: GnomiEvent[], ctx?: Context, groups = likeGroup
   return likes.sort((a, b) => b.personas - a.personas || b.count - a.count || a.seqs[0] - b.seqs[0]);
 }
 
+/** Evidence first, so one self-report cannot top a problem many met; then severity tier, then the share's low end × trust. */
+export const rankOrder = (a: ReportTheme, b: ReportTheme) =>
+  EVIDENCE_ORDER[b.prevalence?.level ?? 'none'] - EVIDENCE_ORDER[a.prevalence?.level ?? 'none'] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id);
+
+/**
+ * Where to look first within this run; the rank stays as it is, so a next can sit below a later. An objection is an attitude, not
+ * a fix, so it has none. One persona's recorded failure can still be a real defect (docs/interpreting-simulations.md).
+ */
+export function priorityOf({ category, severity, trust, prevalence: share }: ReportTheme): 'fix_now' | 'next' | 'later' | null {
+  if (category === 'objection') return null;
+  const severe = Math.round(severity) >= 3;
+  const level = share?.level;
+  if (severe && level === 'strong') return 'fix_now';
+  if (level === 'strong' || (severe && level === 'some') || (severe && level === 'single' && trust !== 'reported')) return 'next';
+  return 'later';
+}
+
 export interface Analysis {
   themes: ReportTheme[];
   set_aside?: ReportTheme[]; // left out of themes by the evidence check; absent when it set none aside
@@ -693,8 +710,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           suggestion: null,
         };
       })
-      // Evidence first, so one self-report cannot top a problem many met; then severity tier, then the share's low end × trust.
-      .sort((a, b) => EVIDENCE_ORDER[b.prevalence!.level] - EVIDENCE_ORDER[a.prevalence!.level] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
+      .sort(rankOrder);
 
     // After a rejudge, a check older than the newest answer reviewed the earlier themes, whose positional ids may now name others.
     const newest = lastFor(events, 'report.checks', poi_id);

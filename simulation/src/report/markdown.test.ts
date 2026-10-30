@@ -416,3 +416,38 @@ test('a run of a repeat set says how each finding did across the set, only when 
   assert.ok(lone.includes('- Incomplete set: 1 of 3 runs finished.'));
   assert.doesNotMatch(reportToMarkdown({ ...report, themes: [theme] }), /Repeat/, 'a lone run is as it was');
 });
+
+const priorityBase = (over: Partial<ReportTheme>): ReportTheme => ({ ...theme, title: 'Saving a job fails', ...over });
+
+test('each theme opens with its suggested priority, explained as a look within this run', () => {
+  const strong = { personas: 3, exposed: 3, share: 1, low: 0.4, high: 1, level: 'strong' } as const;
+  const md = reportToMarkdown({
+    ...report,
+    themes: [
+      priorityBase({ prevalence: strong }),
+      priorityBase({ id: 'g2', rank: 2, title: 'Too dear', category: 'objection', prevalence: strong }),
+      priorityBase({ id: 'g3', rank: 3, title: 'From an older report' }),
+    ],
+  });
+  assert.ok(md.includes('### 1. Saving a job fails\n\nSuggested priority in this run: **Fix now**\n\nSave does nothing'));
+  assert.ok(md.includes('### 2. Too dear\n\nSave does nothing'), 'an objection is an attitude, not a fix');
+  assert.ok(md.includes('### 3. From an older report\n\nSuggested priority in this run: **Later**\n'));
+  assert.ok(md.includes('suggest where to look first within this run'));
+});
+
+test('a competitor\'s theme has no priority: its problems are not the team\'s to fix', () => {
+  const pois: Report['pois'] = [...report.pois, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true }];
+  const strong = { personas: 3, exposed: 3, share: 1, low: 0.4, high: 1, level: 'strong' } as const;
+  const md = reportToMarkdown({ ...report, pois, themes: [priorityBase({ poi_id: 'poi-rival', title: 'Rival breaks', prevalence: strong }), priorityBase({ id: 'g2', prevalence: strong })] });
+  assert.ok(md.includes('#### 1. Rival breaks\n\nSave does nothing'));
+  assert.ok(md.includes('#### 1. Saving a job fails\n\nSuggested priority in this run: **Fix now**'));
+});
+
+test('the written summary follows the banner, escaped like the rest of the report', () => {
+  const md = reportToMarkdown({ ...report, themes: [priorityBase({ title: 'Save <b>fails</b> [here](http://evil.test)' })] });
+  const summary = md.split('\n')[4];
+  assert.equal(md.split('\n')[2], `> ${HYPOTHESIS_BANNER}`);
+  assert.match(summary, /^The biggest problem in this run is “Save &lt;b&gt;fails&lt;\/b&gt; \\\[here\\\]\(http:\/\/evil\.test\)”, met by 2 personas\./);
+  assert.equal(md.split('\n')[6], '- Tried: Gym (http://localhost:3001/)');
+  assert.doesNotMatch(reportToMarkdown(report), /biggest problem|No friction theme/, 'a report older than themes has no summary');
+});
