@@ -13,6 +13,7 @@ export const STUDY_FINDINGS = 5;
 /** This many consecutive words shared with a finding mean an entry quotes it. Fewer are ordinary words. */
 export const QUOTE_WORDS = 4;
 export const NOTE_MAX = 2_000;
+export const NOTE_WARNING = "Leave out names and contact details. A note stays in this project's log, even after a correction, and appears in reports and exports.";
 /** Of the author's input, what the findings may take, so estimateStudy's high end holds. */
 const THEME_TOKENS = 8_000;
 const STUDY_TIMEOUT_MS = 180_000;
@@ -78,8 +79,9 @@ export async function runStudyPlan({ config, report, round, llm, record }: { con
   record({ run_id, round, persona_id: null, poi_id: null, type: 'report.study', payload: { answer, themes, left_out: leftOutOf(report, covered.length) } });
 }
 
-// Case and punctuation cannot hide a quote: "Can't find, the SAVE button" and "can't find the save button" are one run of words.
-const wordsOf = (text: string) => text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+// Case and punctuation cannot hide a quote: "Can't find, the SAVE button" and "cant find the save button" are one run of words.
+// An apostrophe or hyphen sits inside a word, so it goes rather than splits it: "don't" is one word and "e-mail" is "email".
+const wordsOf = (text: string) => text.normalize('NFKC').toLowerCase().replace(/['’ʼ\u2010-]/g, '').match(/[\p{L}\p{N}]+/gu) ?? [];
 const runsOf = (text: string) => wordsOf(text).flatMap((_, i, words) => (i + QUOTE_WORDS > words.length ? [] : [words.slice(i, i + QUOTE_WORDS).join(' ')]));
 
 /** The word runs a participant must never meet: what the findings say and what their evidence quotes. */
@@ -108,9 +110,10 @@ export function studyPlan({ answer, themes, left_out }: EventPayloads['report.st
 const validationOf = ({ payload: { status, note, study_date, title } }: EventOf<'finding.validated'>): ThemeValidation => ({ status, note, study_date, title });
 
 /**
- * Hands each theme its latest outcome and returns those that no longer match one. An outcome names a theme by its keys, as ids change
- * after a rejudge. A correction of the same keys replaces what it corrects; then the newest come first, each taking a theme of its own
- * while one is free, so a split theme keeps its outcome on one part. An older outcome of a theme that has a newer one stays in the log.
+ * Hands each theme its latest outcome and returns those with none to sit on. An outcome names a theme by its keys, as ids change after
+ * a rejudge. Only the same keys make a correction, which replaces what it corrects; then the newest come first, each taking a theme of
+ * its own while one is free, so a split theme keeps its outcome on one part. One left over overlaps at most a theme with a newer
+ * outcome, which may be a study of another finding, so it stays in view.
  */
 function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTheme[]): ThemeValidation[] {
   const refOf = ({ poi_id, payload: { keys, category } }: EventOf<'finding.validated'>) => ({ keys, category, poi_id: poi_id ?? '' });
@@ -119,7 +122,7 @@ function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTh
   for (const outcome of [...latest.values()].sort((a, b) => b.seq - a.seq)) {
     const theme = themeByKeys(refOf(outcome), themes.filter((t) => !t.validation));
     if (theme) theme.validation = validationOf(outcome);
-    else if (!themeByKeys(refOf(outcome), themes)) unmatched.push(validationOf(outcome));
+    else unmatched.push(validationOf(outcome));
   }
   return unmatched;
 }

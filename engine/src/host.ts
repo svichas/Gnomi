@@ -47,6 +47,7 @@ const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
 const sets = new Map<string, LiveSet>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
+const planning = new Set<string>(); // by runKey: the renderer's busy state ends with the report tab, and each plan has its own cap
 let closing = false; // no repeat starts once shutdown has begun
 const quitting = new AbortController(); // the only stop for model work after a run, which has no stop button
 type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
@@ -473,7 +474,14 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (!FAKE_LLM) requireCredential(project.settings, 'author', project.settings.routing.author, secret);
     const { cost_usd: [, most], unpriced } = estimateStudy({ settings: project.settings });
     if (unpriced.length) throw new Error(`No price is known for ${unpriced.join(', ')}.`);
-    await planStudy(place, run, cappedGateway(projectGateway({ fake: FAKE_LLM, secrets: secret, config: project, record: place.record }), most, quitting.signal));
+    const key = runKey(place.store.dir, run_id);
+    if (planning.has(key)) throw new Error('A study plan is already being written.');
+    planning.add(key);
+    try {
+      await planStudy(place, run, cappedGateway(projectGateway({ fake: FAKE_LLM, secrets: secret, config: project, record: place.record }), most, quitting.signal));
+    } finally {
+      planning.delete(key);
+    }
     return null;
   },
   async record_outcome(outcome) {

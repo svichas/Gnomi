@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { createRecorder } from '@gnomi/simulation/run.ts';
 import { readsImages } from '@gnomi/simulation/settings.ts';
 import type { ModelChoice, ProviderId } from '@gnomi/simulation/types.ts';
 
@@ -233,6 +235,7 @@ test('outcome records what a team found, refuses what is wrong, survives a rejud
   const good = ['--run', 'r-0001', '--theme', theme, '--status', 'supported', '--date', '2026-10-12'];
 
   assert.match(outcome('--run', 'r-0001').stderr, /outcome needs --run, --theme, --status and --date/);
+  assert.match(outcome('--run', 'r-0001').stderr, /Leave out names and contact details/, 'the usage warns what a note must not hold');
   assert.match(outcome(...good.slice(0, 5), 'maybe', '--date', '2026-10-12').stderr, /status must be/);
   assert.match(outcome(...good.slice(0, 7), 'yesterday').stderr, /real date/);
   assert.match(outcome(...good.slice(0, 7), '2999-01-01').stderr, /in the future/);
@@ -248,6 +251,13 @@ test('outcome records what a team found, refuses what is wrong, survives a rejud
 
   cli('rejudge', project, '--run', 'r-0001');
   assert.equal(report().themes.find((t: { validation?: object }) => t.validation)?.validation.note, 'Five of six stalled here.', 'a rejudge keeps it, as it is in the log');
+
+  const store = openProject(project);
+  const gone = { keys: ['["poi",null,"kind","gone"]'], category: 'friction' as const, title: 'A finding the judge merged away', status: 'contradicted' as const, note: null, study_date: '2026-10-02' };
+  createRecorder(store, () => {})({ run_id: 'r-0001', round: 1, persona_id: null, poi_id: before.themes[0].poi_id, type: 'finding.validated', payload: gone });
+  store.close();
+  const { unmatched_outcomes } = JSON.parse(cli('report', project, '--json')).report;
+  assert.deepEqual(unmatched_outcomes.map((o: { title: string }) => o.title), [gone.title], "an agent's summary lists what has no finding left");
 });
 
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {

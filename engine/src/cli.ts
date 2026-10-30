@@ -23,6 +23,7 @@ import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
+import { NOTE_WARNING } from '@gnomi/simulation/report/study.ts';
 import { createRecorder, roleOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
@@ -62,6 +63,7 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   outcome <project dir> --run <run id> --theme <theme id> --status supported|contradicted|unresolved --date YYYY-MM-DD [--note "<text>"]
       records what your team's own study found about a finding. No model call. It changes no simulated number and stays with this
       run; record another to correct it, as the latest counts.
+      ${NOTE_WARNING}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -259,6 +261,7 @@ function summarize(report: Report) {
         .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }) })),
     })),
     ...(report.study_count && { study_count: report.study_count }),
+    ...(report.unmatched_outcomes && { unmatched_outcomes: report.unmatched_outcomes }),
     sentiment: (report.sentiment ?? []).map(({ name, surveyed, sentiment, would_continue }) => ({ segment: name, surveyed, sentiment, would_continue })),
     cost_usd: report.cost_usd,
     duration_ms: report.duration_ms,

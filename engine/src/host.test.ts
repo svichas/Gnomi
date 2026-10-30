@@ -121,6 +121,22 @@ test('a study plan and an outcome reach the app through report.generated, and a 
   await assert.rejects(call('plan_study', { run_id: 'r-9999' }), /There is no run r-9999/);
 });
 
+test('a second plan for a run is refused while the first is written, so leaving the report and clicking again cannot spend twice', async () => {
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'twice.md' });
+  await call('save_project', { project: project({}, { pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
+  const { run_id } = await call('start_run', { reset: false });
+  await new Promise<void>((resolve) => {
+    const poll = setInterval(() => events.some((e) => e.run_id === run_id && e.type === 'report.generated') && (clearInterval(poll), resolve()), 50);
+  });
+  const plans = () => events.filter((e) => e.run_id === run_id && e.type === 'report.study').length;
+  const first = call('plan_study', { run_id });
+  await assert.rejects(call('plan_study', { run_id }), /already being written/);
+  await first;
+  assert.equal(plans(), 1, 'one call was paid for');
+  await call('plan_study', { run_id });
+  assert.equal(plans(), 2, 'the refusal ends with the plan');
+});
+
 test('record_session refuses a role the session store cannot name, and a production target, before any browser opens', async () => {
   await assert.rejects(call('record_session', { role: 'Recruiters team' }), /1–40 lowercase letters/);
   await call('save_project', { project: project({ start_url: 'https://www.acme.com/' }) });

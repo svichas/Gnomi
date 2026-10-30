@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
 import { cappedGateway, checkRun, credential, endedRun, estimateFor, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runSet } from './workspace.ts';
+import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -52,6 +53,16 @@ test('a capped gateway makes no call once its own calls have spent the cap, nor 
   const stop = new AbortController();
   stop.abort();
   await assert.rejects(ask(cappedGateway(scripted, 1, stop.signal)));
+});
+
+test('a free model has nothing to cap: at the $0 its estimate gives, an invalid answer still gets its retry', async () => {
+  const settings = { ...DEFAULT_SETTINGS, routing: { ...DEFAULT_SETTINGS.routing, author: PROVIDER_DEFAULTS.openai_compatible.author } };
+  const { cost_usd: [, most] } = estimateStudy({ settings });
+  assert.equal(most, 0);
+  const scripted = createScriptedGateway([{ nonsense: true }, { saved: true }], (() => {}) as unknown as Recorder);
+  const capped = cappedGateway(scripted, most, new AbortController().signal);
+  const { object } = await capped.call({ role: 'author', model: settings.routing.author, run_id: null, persona_id: null, round: 1, system: '', user: [], schema: z.object({ saved: z.boolean() }) });
+  assert.deepEqual(object, { saved: true });
 });
 
 const poi: WebPoi = { id: 'poi-1', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null };

@@ -66,6 +66,19 @@ test('a task that repeats a complaint is caught, one that shares only common wor
   assert.ok(!quotesFinding('Post a job.', complaint), 'too short to hold a run');
 });
 
+test('a contraction and a hyphenated word count as one word, so the check counts words and punctuation changes nothing', () => {
+  const contraction = complaintOf(["I don't know how to save this job"]);
+  assert.ok(!quotesFinding("Stop when you don't know how.", contraction), 'three shared words, and "don\'t" is one of them, not two');
+  assert.ok(quotesFinding('I dont know how to go on', contraction), 'the same words but for an apostrophe');
+  assert.ok(quotesFinding('I don’t know how to go on', contraction), 'a curly apostrophe');
+  assert.ok(quotesFinding('I donʼt know how to go on', contraction), 'a modifier-letter apostrophe');
+  const hyphen = complaintOf(['e-mail address field is empty']);
+  assert.ok(quotesFinding('Say why the email address field is here.', hyphen), 'with and without the hyphen');
+  assert.ok(quotesFinding('Say why the e‑mail address field is here.', hyphen), 'a non-breaking hyphen');
+  assert.ok(!quotesFinding('Check the sign-up email address field.', hyphen), 'three shared words');
+  assert.ok(quotesFinding('The save — then quit button', complaintOf(['the save then quit'])), 'a dash between words still splits them');
+});
+
 test('a plan drops what quotes the finding and counts it; the notes for the researcher may name the area', () => {
   const made = studyPlan(plan({
     screener: ['Do you hire at least once a quarter?', 'Is the salary range hidden behind a form on your site?'],
@@ -96,6 +109,7 @@ test('the plan file opens with the warning, escapes model text and says what was
   const made = studyPlan({ ...plan({ screener: ['Do you use <b>this</b>?'], themes: [{ theme_id: 'g1', tasks: ['Post [a job](http://evil.test).'], observe: ['Watch the form.'] }] }), left_out: { objections: 2, competitors: 1, set_aside: 1, scan_only: 1, lower_ranked: 3 } });
   const file = studyPlanToMarkdown({ goal: 'Post a job', run_id: 'r-1' } as Report, made);
   assert.ok(file.startsWith('# Study plan: Post a job\n\n> These hypotheses come from simulated users and are unproven. Do not show them to participants'), file);
+  assert.match(file.split('\n')[2], /A model wrote this plan/, 'nobody takes it for the team\'s own work');
   assert.match(file, /&lt;b&gt;this&lt;\/b&gt;/);
   assert.doesNotMatch(file, /(?<!\\)\]\(http/, 'a link is escaped');
   assert.match(file, /Left out of this plan: 3 lower-ranked findings; 2 objections; 1 competitor finding; 1 set aside by the evidence check; 1 found by the accessibility scan alone, which needs an audit rather than a study with people\./);
@@ -219,7 +233,7 @@ test('an outcome survives a rejudge that changes theme ids, keeps the title it w
   assert.match(reportToMarkdown(report), /Your team's study, 12 Oct 2026: supported\.\*\* Recorded for "First name 0"\./);
 });
 
-test('a newer outcome keeps its theme after a rejudge, and an older one on other keys falls to a part of its own or stays in the log', () => {
+test('a newer outcome keeps its theme after a rejudge, and an older one on other keys falls to a part of its own or is listed', () => {
   const { events, record } = logOf(['/jobs', '/users']);
   record(judged(events, [['g1', 'g2']]));
   const merged = buildReport(events).themes![0];
@@ -235,7 +249,21 @@ test('a newer outcome keeps its theme after a rejudge, and an older one on other
   record(judged(events, [['g1', 'g2']]));
   const joined = buildReport(events);
   assert.equal(joined.themes![0].validation?.status, 'contradicted', 'the newest of the two');
-  assert.equal(joined.unmatched_outcomes, undefined, 'the older is superseded, not orphaned');
+  assert.deepEqual(joined.unmatched_outcomes?.map((o) => o.status), ['supported'], 'the older studied other keys, so it is no correction and stays in view');
+});
+
+test('two studied findings that a rejudge merges are two studies: the older is listed, never lost', () => {
+  const { events, record } = logOf(['/jobs', '/users']);
+  const [jobs, users] = buildReport(events).themes!;
+  record(outcome({ ...jobs, title: 'Study A on /jobs' }, 'supported', 'Five of six stalled.'));
+  record(outcome({ ...users, title: 'Study B on /users' }, 'contradicted'));
+  record(judged(events, [['g1', 'g2']]));
+  const report = buildReport(events);
+  assert.equal(report.themes!.length, 1);
+  assert.equal(report.themes![0].validation?.title, 'Study B on /users', 'the newer one sits on the theme');
+  assert.deepEqual(report.unmatched_outcomes, [{ status: 'supported', note: 'Five of six stalled.', study_date: '2026-10-12', title: 'Study A on /jobs' }]);
+  assert.deepEqual(report.study_count, { of: 1, supported: 0, contradicted: 1, unresolved: 0, not_studied: 0 }, 'a listed outcome counts towards no finding');
+  assert.match(reportToMarkdown(report), /- \*\*Study A on \/jobs\*\*: Your team's study, 12 Oct 2026: supported\. Five of six stalled\./);
 });
 
 test('an outcome whose finding is gone is listed with its title, never dropped, and the latest for those keys wins', () => {
@@ -285,7 +313,7 @@ test('the count covers the top findings there are, and reads plainly with fewer 
   assert.equal(studyCountText({ of: 5, supported: 2, contradicted: 1, unresolved: 1, not_studied: 1 }), "Of the top 5 findings, your team's studies supported 2, contradicted 1, left 1 unresolved, and 1 is not studied yet.");
   assert.equal(studyCountText({ of: 1, supported: 1, contradicted: 0, unresolved: 0, not_studied: 0 }), "Of the top 1 finding, your team's studies supported 1.");
   assert.equal(studyCountText({ of: 2, supported: 0, contradicted: 0, unresolved: 0, not_studied: 2 }), 'Of the top 2 findings, 2 are not studied yet.');
-  assert.doesNotMatch(reportToMarkdown(report), /\d%[^\n]*studies/, 'no percentages');
+  assert.doesNotMatch(reportToMarkdown(report).split('\n').find((text) => text.includes("your team's studies"))!, /%/, 'no percentages');
 });
 
 test('more than five findings count only the top five', () => {
@@ -366,7 +394,7 @@ test('the outcome reads as the team\'s, beside the finding and apart from its nu
   const markdown = reportToMarkdown(buildReport(events));
   assert.match(markdown, /\*\*From your team's studies, not the simulation:\*\* Of the top 1 finding, your team's studies supported 1\./);
   assert.match(markdown, /\*\*Your team's study, 12 Oct 2026: supported\.\*\* Line one # not a heading \\\[x\\\]\(http:\/\/evil\.test\)/, 'a note cannot break the page or hide a link');
-  assert.doesNotMatch(markdown.split('## Themes')[1].split('## Frictions')[0].replaceAll('validate', ''), /validated/i);
+  assert.doesNotMatch(markdown.split('## Themes')[1].split('## Frictions')[0], /validated/i);
 });
 
 test('the estimate of a plan is one call whose high end is a ceiling, and a model with no price says so', () => {

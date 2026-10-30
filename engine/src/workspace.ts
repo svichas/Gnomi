@@ -55,7 +55,8 @@ export function cappedGateway(llm: LlmGateway, cap: number, signal: AbortSignal)
         signal: req.signal ? AbortSignal.any([req.signal, stop]) : stop,
         onAttempt(attempt) {
           spent += attempt.payload.cost_usd;
-          if (spent >= cap) reached.abort(new Error(`The $${cap.toFixed(2)} budget was reached`));
+          // A free attempt reaches no cap, not even the $0 a local model's estimate gives, so its retry still runs.
+          if (attempt.payload.cost_usd > 0 && spent >= cap) reached.abort(new Error(`The $${cap.toFixed(2)} budget was reached`));
           req.onAttempt?.(attempt);
         },
       });

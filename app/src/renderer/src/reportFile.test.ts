@@ -295,9 +295,10 @@ test("the HTML export shows a team's study outcome beside its finding, whose it 
   report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away' }];
   report.study_plan = { screener: ['Do you hire?'], screener_dropped: 0, left_out: { objections: 0, competitors: 0, set_aside: 0, scan_only: 0, lower_ranked: 0 }, hypotheses: [{ title: 'Save does nothing', poi_id: 'poi-gym', tasks: ['Post a job.'], dropped: 0, observe: ['Watch the button.'] }] };
   const html = await reportFile(report, 'html', thumbnails());
-  for (const text of ['Your team&#x27;s study, 12 Oct 2026: supported', 'Five of &lt;six&gt; stalled.', 'Recorded for &quot;An older name&quot;.', 'Of the top 1 finding, your team&#x27;s studies supported 1.', 'Merged away', 'Your team&#x27;s study, 2 Oct 2026: contradicted', 'Do not show them to participants', 'Post a job.', 'Watch the button.']) {
+  for (const text of ['Your team&#x27;s study, 12 Oct 2026: supported', 'Five of &lt;six&gt; stalled.', 'Recorded for &quot;An older name&quot;.', 'Of the top 1 finding, your team&#x27;s studies supported 1.', 'Merged away', 'Your team&#x27;s study, 2 Oct 2026: contradicted', 'Do not show them to participants', 'A model wrote this plan', 'Post a job.', 'Watch the button.', 'Kept apart from the simulated numbers above.']) {
     assert.ok(html.includes(text), text);
   }
+  assert.ok(!html.includes('work, kept apart'), 'the section does not call a generated plan the team\'s work');
   assert.doesNotMatch(html, /<(?:button|select|textarea|input)\b/, 'nothing to record or plan with in a file');
   assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Check with real people'), 'with none of it, no section');
 });

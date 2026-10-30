@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { droppedText, leftOutText, NO_SCREENER, NO_TASKS, OUTCOME_NOTE, outcomeDetails, outcomeText, OUTDATED_PLAN, STUDY_WARNING, studyCountText, studyPlanToMarkdown, UNMATCHED_NOTE } from '@gnomi/simulation/report/markdown.ts';
-import { competitorsOf, localDate, NOTE_MAX, topFindings } from '@gnomi/simulation/report/study.ts';
+import { competitorsOf, localDate, NOTE_MAX, NOTE_WARNING, topFindings } from '@gnomi/simulation/report/study.ts';
 import { STUDY_STATUSES } from '@gnomi/simulation/types.ts';
 import type { Report as ReportData, ReportStudyPlan, ReportTheme, RunEstimate, StudyStatus, ThemeValidation } from '@gnomi/simulation/types.ts';
 import { unpricedText } from './cost.ts';
@@ -48,7 +48,7 @@ export function RecordOutcome({ runId, theme }: { runId: string; theme: ReportTh
           </Field>
           <Field label="Study date"><input type="date" className={inputClass} value={date} max={localDate()} onChange={(e) => setDate(e.target.value)} /></Field>
         </div>
-        <Field label="Note, optional"><textarea className={inputClass} rows={2} maxLength={NOTE_MAX} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        <Field label="Note, optional" hint={NOTE_WARNING}><textarea className={inputClass} rows={2} maxLength={NOTE_MAX} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
         <Button small onClick={() => void save()} loading={busy} disabled={!status || !date}>Save study outcome</Button>
         <OutcomeNote outcome={outcome} />
       </div>}
@@ -130,7 +130,7 @@ function PlanButton({ runId, again }: { runId: string; again: boolean }) {
   const plan = () =>
     run(async () => {
       await call('plan_study', { run_id: runId }); // the plan arrives with the report, on report.generated
-      return null;
+      return { ok: true, text: 'Study plan written above.' };
     });
   return (
     <div className="report-export">
@@ -141,7 +141,7 @@ function PlanButton({ runId, again }: { runId: string; again: boolean }) {
   );
 }
 
-/** The team's own work with real people, under the simulated findings and apart from them. An export carries what exists and no controls. */
+/** A generated plan and what the team's studies found, under the simulated findings and apart from them. An export carries what exists and no controls. */
 export function Study({ report }: { report: ReportData }) {
   const inFile = useContext(InFile);
   const { study_plan: plan, study_count: tally, unmatched_outcomes: unmatched = [] } = report;
@@ -149,7 +149,7 @@ export function Study({ report }: { report: ReportData }) {
   if (!plan && !tally && unmatched.length === 0 && (inFile || findings === 0)) return null;
   return (
     <section aria-labelledby="study-title" className="report-study">
-      <SectionHeading id="study-title" title="Check with real people" hint="Your team's work, kept apart from the simulated numbers above." />
+      <SectionHeading id="study-title" title="Check with real people" hint="Kept apart from the simulated numbers above." />
       <div className="space-y-4">
         {tally && <p className="report-goal">{studyCountText(tally)}</p>}
         {unmatched.length > 0 && (

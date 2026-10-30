@@ -65,7 +65,7 @@ export const outcomeDetails = ({ note, title }: ThemeValidation, current?: strin
 /** Said wherever outcomes are shown: what people found stays apart from what the simulation did, and belongs to one run. */
 export const OUTCOME_NOTE = "Study outcomes are your team's own, from real people. They change no simulated count, rank, label or summary, reach no model, and stay with this run: a repeat set or a comparison does not carry them across.";
 
-export const UNMATCHED_NOTE = 'This report no longer has a finding for these outcomes, for example after the findings were judged again. They stay here, with the title each was recorded for.';
+export const UNMATCHED_NOTE = 'These outcomes have no finding of their own in this report, for example after the findings were judged again and two studied ones became one. They stay here, with the title each was recorded for.';
 
 /** "Of the top 5 findings, your team's studies supported 2, contradicted 1, left 1 unresolved, and 1 is not studied yet": counts, as a handful of chosen findings is no sample. */
 export function studyCountText({ of, supported, contradicted, unresolved, not_studied }: StudyCount): string {
@@ -75,7 +75,7 @@ export function studyCountText({ of, supported, contradicted, unresolved, not_st
 }
 
 /** At the top of every plan: the file goes to a researcher, who must keep the hypotheses from participants. */
-export const STUDY_WARNING = 'These hypotheses come from simulated users and are unproven. Do not show them to participants: people get only the screener and the tasks.';
+export const STUDY_WARNING = 'These hypotheses come from simulated users and are unproven. Do not show them to participants: people get only the screener and the tasks. A model wrote this plan, so read it before you use it.';
 
 export const NO_TASKS = 'No task is left for this hypothesis, so write one by hand that does not mention the finding.';
 export const NO_SCREENER = 'No screener question is left, so write them by hand from who you want to reach.';

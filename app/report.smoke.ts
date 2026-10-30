@@ -425,6 +425,7 @@ try {
   const planButton = root.getByRole('button', { name: 'Plan a study', exact: true });
   await root.getByText(/costs at most \$/).waitFor();
   await planButton.click();
+  await root.getByRole('status').getByText('Study plan written above.', { exact: true }).waitFor(); // what a screen reader hears after the wait
   await root.getByRole('heading', { name: /^Hypothesis 1: / }).waitFor();
   await root.getByRole('button', { name: 'Plan again' }).waitFor();
   assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'one model call');
@@ -442,6 +443,7 @@ try {
   await studied.getByLabel('What your study found').selectOption('contradicted');
   await studied.getByLabel('Study date').fill('2026-10-02');
   await studied.getByLabel('Note, optional').fill('Everyone finished the task.');
+  assert.ok(await studied.getByText('Leave out names and contact details', { exact: false }).isVisible(), 'the form warns where a note goes');
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'the outcome form fits a narrow viewport');
   await studied.scrollIntoViewIfNeeded();
