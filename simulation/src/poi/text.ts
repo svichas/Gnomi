@@ -32,7 +32,7 @@ export function textParts(text: string, max = PART_CHARS): { start: number; end:
   return parts;
 }
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * The passage a confusion quotes, checked against `text`: the model's offsets when they hold the quote, else the quote's occurrence

@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
 import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
-import { assess, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, validateOptions, webDefects } from './checks.ts';
-import { runEvaluation } from './run.ts';
-import type { LlmAttempt } from '../seams.ts';
+import { applyMapping, assess, controlThemes, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, validateOptions, webDefects } from './checks.ts';
+import { mapThemes, rescoreEvaluation, runEvaluation, unmappedRuns } from './run.ts';
+import type { LlmAttempt, LlmGateway } from '../seams.ts';
 import { profileBlock } from '../agent/prompt.ts';
-import type { Persona, ReportTheme } from '../types.ts';
+import type { Persona, Report, ReportTheme } from '../types.ts';
 
 test('the frozen acceptance fixture is deterministic, has fifty people and a guaranteed German probe', () => {
   const first = fixture('http://localhost:4317');
@@ -148,6 +148,23 @@ test('defect scores need a hint in the title, description, elements or evidence 
   assert.equal(defectScores([themeOf(1, 'observed', ['h/settings'], 'save draft')], catalogue, ['D01']).found, 0, 'a hint on another page pairs nothing');
 });
 
+test('defect hints match whole words, not parts of them', () => {
+  const catalogue = '- id: D25\n  poi: web\n  pages: [settings]\n  hints: [covered, re-enter, 404]\n';
+  const found = (title: string) => defectScores([themeOf(1, 'observed', ['h/settings'], title)], catalogue, ['D25']).found;
+  assert.equal(found('I discovered the Save button'), 0);
+  assert.equal(found('Error 4040'), 0);
+  assert.equal(found('The Save button is Covered.'), 1);
+  assert.equal(found('Save (covered) did nothing'), 1);
+  assert.equal(found('Had to re-enter it'), 1);
+  assert.equal(found('A 404, twice'), 1);
+});
+
+test('control themes count confirmed and observed themes, not reported ones', () => {
+  assert.equal(controlThemes([{ trust: 'confirmed' }, { trust: 'observed' }, { trust: 'reported' }]), 2);
+  assert.equal(controlThemes([{ trust: 'reported' }]), 0);
+  assert.equal(controlThemes([]), 0);
+});
+
 test('defect scores assign themes and defects one-to-one, so one theme on a shared page credits one defect', () => {
   const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new, jobs]\n  hints: [lost draft]\n- id: D04\n  poi: web\n  pages: [jobs/new]\n  hints: [lost draft]\n';
   const theme = (rank: number, pages: string[]) => themeOf(rank, 'observed', pages);
@@ -178,6 +195,63 @@ test('mapping scores give each run high-severity recall and top-theme precision,
   assert.deepEqual(scores.a, { found: ['D01', 'D02'], defects_high: 2, recall_high: 1, matched: 4, top: 7, precision: 4 / 7 });
   assert.deepEqual(scores.b, { found: [], defects_high: 2, recall_high: 0, matched: 0, top: 1, precision: 0 });
   assert.deepEqual(mappingScores([], catalogue, []), {});
+});
+
+test('a mapper answer keeps a catalogue id, an unknown id becomes null and an omitted theme stays unanswered, not a false positive', () => {
+  const catalogue = '- id: D01\n  poi: web\n  severity: high\n  pages: [jobs]\n';
+  const item = (theme_id: string, run = 'a') => ({ run, theme_id, rank: 1, trust: 'observed', defect: null as string | null | undefined, notes: '' });
+  const applied = applyMapping([item('valid'), item('unknown'), item('none'), item('omitted')], [
+    { theme_id: 'valid', defect: 'D01', reason: 'Same button.' },
+    { theme_id: 'unknown', defect: 'D99', reason: 'A guess.' },
+    { theme_id: 'none', defect: null, reason: 'No defect fits.' },
+    { theme_id: 'stray', defect: 'D01', reason: 'No such theme.' },
+  ], ['D01']);
+  assert.deepEqual(applied.slice(0, 3).map(({ defect, notes }) => [defect, notes]), [['D01', 'Same button.'], [null, 'A guess.'], [null, 'No defect fits.']]);
+  assert.equal(applied[3].defect, undefined);
+  assert.match(applied[3].notes, /left this theme out/);
+  assert.ok(!('defect' in JSON.parse(JSON.stringify(applied[3]))), 'absent in theme-mapping.json, where null is an answer');
+  assert.deepEqual(mappingScores(applied, catalogue, ['D01']).a, { found: ['D01'], defects_high: 1, recall_high: 1, matched: 1, top: 3, precision: 1 / 3 }, 'three answers, so the omitted theme is no false positive');
+  assert.deepEqual(mappingScores(applyMapping([item('omitted', 'b')], [], ['D01']), catalogue, ['D01']), {}, 'a run with no answers has no scores');
+});
+
+test('the mapping stops at the allowance and keeps what it paid for, so a run it did not reach is not scored', async () => {
+  const catalogue = readFileSync(new URL('../../../demo/GymSite/defects.yaml', import.meta.url), 'utf8');
+  const mapper = { provider: 'deepseek', model: 'deepseek-v4-pro' } as const;
+  const theme = { ...themeOf(1, 'observed', ['h/jobs']), id: 't1', seqs: [1] };
+  const runs = ['a', 'b', 'c'].map((name) => ({ name, report: { themes: [theme] } as Report }));
+  const answer = { object: { mappings: [{ theme_id: 't1', defect: 'D03', reason: 'The same link.' }] }, cost_usd: 1 };
+  const gateway = (call: () => Promise<unknown>) => ({ call }) as unknown as LlmGateway;
+
+  const reached = createAllowance(1);
+  let calls = 0;
+  const stopped = await mapThemes(runs, catalogue, mapper, gateway(async () => { calls++; reached.observe(attempt(1)); return answer; }), reached);
+  assert.equal(calls, 1, 'the second call is never made');
+  assert.equal(stopped.failure, null, 'a stop, not a failure');
+  assert.deepEqual(stopped.items.map((item) => [item.run, item.defect]), [['a', 'D03']]);
+  assert.deepEqual(Object.keys(mappingScores(stopped.items, catalogue, DEFECT_IDS)), ['a'], 'b and c are not scored as false positives');
+  assert.deepEqual(unmappedRuns(runs, stopped.items), ['b', 'c']);
+  assert.deepEqual(unmappedRuns(runs, null), ['a', 'b', 'c']);
+  assert.deepEqual(unmappedRuns([...runs, { name: 'quiet', report: { themes: [] } as Partial<Report> as Report }], stopped.items), ['b', 'c'], 'a run with no themes has nothing to map');
+
+  const retried = createAllowance(1); // a failed paid attempt that reaches the allowance makes the gateway throw the abort
+  let turn = 0;
+  const midCall = await mapThemes(runs, catalogue, mapper, gateway(async () => {
+    if (++turn === 1) return answer;
+    retried.observe(attempt(1));
+    retried.check();
+  }), retried);
+  assert.deepEqual([midCall.items.map((item) => item.run), midCall.failure], [['a'], null]);
+
+  const broken = await mapThemes(runs, catalogue, mapper, gateway(async () => { if (++turn === 4) throw new Error('DeepSeek answered 500'); return answer; }), createAllowance(1));
+  assert.deepEqual([broken.items.map((item) => item.run), broken.failure], [['a'], 'DeepSeek answered 500'], 'a real failure is reported and still keeps the paid mappings');
+});
+
+test('--rescore takes the evaluation folder and nothing that would run', () => {
+  const options = parseOptions(['--rescore', '/tmp/example']);
+  assert.deepEqual([options.rescore, options.out, options.mode], [true, '/tmp/example', 'scripted']);
+  assert.equal(parseOptions([]).rescore, undefined);
+  for (const other of ['--live', '--evaluate', '--m3']) assert.throws(() => parseOptions(['--rescore', '/tmp/example', other]), /--rescore takes only/);
+  assert.throws(() => parseOptions(['--rescore', '/tmp/example', '--out', '/tmp/other']), /--rescore takes only/);
 });
 
 test('a mapper names a provider and a model, runs with --evaluate only, and comes from another provider than the navigator', () => {
@@ -271,13 +345,44 @@ test('with a mapper, a scripted evaluation writes the model mapping, a short sam
   const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline', '--personas', '4', '--mapper', 'deepseek:deepseek-v4-pro', '--out', out]));
   assert.equal(result.error, null);
   const sheet = JSON.parse(readFileSync(join(out, 'theme-mapping.json'), 'utf8'));
-  assert.deepEqual([sheet.status, sheet.catalogue, sheet.mapper], ['MAPPED_BY_MODEL', 'defects.yaml', { provider: 'deepseek', model: 'deepseek-v4-pro' }]);
+  assert.deepEqual([sheet.status, sheet.catalogue, sheet.mapper], ['NOT_RUN', 'defects.yaml', { provider: 'deepseek', model: 'deepseek-v4-pro' }], 'no model mapped a scripted run');
   assert.ok(sheet.items.length > 0 && sheet.items.every((item: { run: string; defect: null; notes: string }) => item.run === 'r1-baseline' && item.defect === null && /no model/.test(item.notes)), 'control runs are not mapped');
-  assert.deepEqual(result.defect_metrics.status, 'MAPPED_BY_MODEL');
+  assert.deepEqual(result.defect_metrics.status, 'NOT_RUN');
+  assert.match(result.defect_metrics.detail, /no model mapped the themes/);
+  assert.doesNotMatch(result.defect_metrics.detail, /A model mapped/);
+  assert.equal(result.status, 'NOT_RUN', 'every run with themes was mapped');
   assert.deepEqual(Object.keys(result.defect_metrics.runs!), ['r1-baseline']);
   assert.equal(result.defect_metrics.runs!['r1-baseline'].recall_high, 0);
   const attempts = readFileSync(join(out, 'attempts.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(attempts.map((a) => [a.payload.role, a.payload.purpose]), [['judge', 'map_themes']]);
   assert.match(readFileSync(join(out, 'theme-mapping.md'), 'utf8'), /# Theme mapping sample[\s\S]*Mapped to no defect\. Scripted demo/);
   assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /\| r1-baseline \| 0 \| 0 \|/);
+
+  // A person corrects the mapping: the numbers move, the estimates stay, and nothing runs.
+  const items: { defect?: string | null; trust: string }[] = sheet.items;
+  const correct = (change: (list: typeof items) => typeof items) => writeFileSync(join(out, 'theme-mapping.json'), JSON.stringify({ ...sheet, items: change(structuredClone(items)) }));
+  const attempted = readFileSync(join(out, 'attempts.jsonl'), 'utf8');
+  correct(([first, ...rest]) => [{ ...first, defect: 'D03', trust: 'confirmed' }, { ...rest[0], defect: undefined }, ...rest.slice(1)]);
+  const rescored = rescoreEvaluation(out);
+  const answered = items.length - 1;
+  assert.deepEqual([rescored.defect_metrics.runs!['r1-baseline'].recall_high, rescored.defect_metrics.runs!['r1-baseline'].precision], [0.1, 1 / answered]);
+  assert.deepEqual([rescored.means.baseline.recall_high.mean, rescored.means.baseline.precision.mean], [0.1, 1 / answered], 'the scoreboard moves too');
+  assert.equal(rescored.replicates[0].arms.baseline!.outcomes!.defect_proxy.recall_high, 0, 'the hint-based estimate is kept');
+  assert.equal(rescored.defect_metrics.status, 'NOT_RUN', 'a scripted rehearsal stays one');
+  assert.match(rescored.defect_metrics.detail, /1 theme has no answer and counts in no score/);
+  assert.deepEqual(JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')).defect_metrics, rescored.defect_metrics);
+  const scoreboard = readFileSync(join(out, 'results.md'), 'utf8');
+  assert.match(scoreboard, new RegExp(`\\| r1-baseline \\| 0\\.1 \\| ${Number((1 / answered).toFixed(4))} \\|`));
+  assert.match(scoreboard, /## Scoreboard\n\nMeans per arm\. recall_high and precision come from theme-mapping\.json/);
+  assert.match(scoreboard, new RegExp(`\\| baseline \\| 0\\.1 \\| ${Number((1 / answered).toFixed(4))} \\| 0 \\|`));
+  assert.equal(readFileSync(join(out, 'attempts.jsonl'), 'utf8'), attempted, 'no model call');
+  correct(() => []);
+  const empty = rescoreEvaluation(out);
+  assert.deepEqual([empty.defect_metrics.runs, empty.means.baseline.recall_high.mean, empty.replicates[0].arms.baseline!.outcomes!.precision], [{}, null, null], 'a run the mapping does not cover has no score, not an estimate');
+  assert.match(empty.defect_metrics.detail, /Not mapped, so not scored: r1-baseline/);
+  correct(([first, ...rest]) => [{ ...first, defect: 'D3' }, ...rest]);
+  const before = readFileSync(join(out, 'results.json'), 'utf8');
+  assert.throws(() => rescoreEvaluation(out), /D3/, 'a mistyped id would score as a false positive');
+  assert.equal(readFileSync(join(out, 'results.json'), 'utf8'), before);
+  assert.throws(() => rescoreEvaluation(dir), /evaluation folder with results\.json/);
 });
