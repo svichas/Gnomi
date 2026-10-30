@@ -819,9 +819,11 @@ test('a theme\'s evidence carries the box of what it is about and Markdown names
   const log = (step: EventPayloads['persona.step']) => stored([startedAt, [1100, { ...env, type: 'persona.step', payload: step }], [1200, { ...env, type: 'persona.friction_reported', payload: { ...friction(1, 'Save is hidden'), about } }]]);
   const report = buildReport(log({ ...shot, viewport: [0, 0, 1280, 800] }));
   assert.deepEqual(report.themes?.[0].evidence[0].box, { left: 10, top: 10, width: 10, height: 10, element: 'button "Save"' });
-  assert.ok(reportToMarkdown(report).includes('   - Marked on it: button "Save"'));
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('   - About: button "Save"'));
+  assert.ok(!md.includes('Marked'), 'the file named in the Markdown has no mark on it; only the HTML overlay draws one');
   const old = buildReport(log(shot));
   assert.ok(!('box' in old.themes![0].evidence[0]));
   assert.equal(old.themes?.[0].evidence[0].screenshot, shot.screenshot, 'the plain screenshot stays');
-  assert.ok(!reportToMarkdown(old).includes('Marked on it'));
+  assert.ok(!reportToMarkdown(old).includes('   - About: '));
 });

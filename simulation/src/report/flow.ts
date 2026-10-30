@@ -1,8 +1,10 @@
 import type { GnomiEvent, Outcome, ReportFlow, ReportFlowPage, ReportPersona, WebPoi } from '../types.ts';
 import { pagePattern, placesOf } from './friction.ts';
 
-/** Pages a flow shows: a real site can have many, so the most reached stay and the rest are counted as left out. */
+/** Pages a flow shows: a real site can have many, so the most reached stay, ties going to where personas ended, and the rest are counted as left out. */
 export const FLOW_PAGES = 8;
+
+const endedOn = ({ ended }: ReportFlowPage) => Object.values(ended).reduce((sum, n) => sum + n, 0);
 
 /**
  * Where the personas of each web POI went, with no new data: each persona's pages in order, from the URLs its steps start
@@ -34,10 +36,11 @@ export function buildFlow(events: GnomiEvent[], pois: WebPoi[], personas: Report
       ended[outcome] = (ended[outcome] ?? 0) + 1;
     }
 
-    const ranked = [...pages.values()].sort((a, b) => b.reached - a.reached); // a stable sort: ties stay in the order they were first reached
-    const shown = ranked.slice(0, FLOW_PAGES);
-    const left = ranked.slice(FLOW_PAGES);
-    const onShow = new Set(shown.map(({ page }) => page));
+    const byReach = (a: ReportFlowPage, b: ReportFlowPage) => b.reached - a.reached;
+    const onShow = new Set([...pages.values()].sort((a, b) => byReach(a, b) || endedOn(b) - endedOn(a)).slice(0, FLOW_PAGES).map(({ page }) => page));
+    const ranked = [...pages.values()].sort(byReach); // a stable sort: ties stay in the order they were first reached, so a path reads from its start
+    const shown = ranked.filter(({ page }) => onShow.has(page));
+    const left = ranked.filter(({ page }) => !onShow.has(page));
     return [{
       poi_id: poi.id,
       personas: paths.size,
@@ -49,7 +52,7 @@ export function buildFlow(events: GnomiEvent[], pois: WebPoi[], personas: Report
         })
         .filter(({ from, to }) => onShow.has(from) && onShow.has(to))
         .sort((a, b) => b.personas - a.personas),
-      left_out: { pages: left.length, ended: left.flatMap(({ ended }) => Object.values(ended)).reduce((sum, n) => sum + n, 0) },
+      left_out: { pages: left.length, ended: left.reduce((sum, page) => sum + endedOn(page), 0) },
     }];
   });
 }

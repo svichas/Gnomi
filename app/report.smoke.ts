@@ -37,7 +37,7 @@ const shotPath = (name: string) => `runs/${config.run_id}/shots/${name}.jpg`;
 const box = { left: 25, top: 50, width: 20, height: 10, element: 'button "Publish"' };
 const [evidence] = report.themes[0].evidence;
 report.themes[0].evidence = [{ ...evidence, screenshot: shotPath('wide'), box }, { ...evidence, screenshot: shotPath('tall'), box }, { ...evidence, screenshot: shotPath('wide') }, { ...evidence, screenshot: shotPath('gone'), box }];
-const pageName = (i: number) => `staging.hiring.example.com/settings/organisation/users/:id/permissions/${i}`;
+const pageName = (i: number) => `app.example.com/dashboard/campaigns/new-campaign/summary-${i}`; // as wide as real names get, so the check at 320 px proves the graph's limit
 const flow: ReportFlow = {
   poi_id: report.pois[0].id, personas: 6, left_out: { pages: 3, ended: 1 },
   pages: Array.from({ length: 8 }, (_, i) => ({ page: pageName(i), reached: 6 - Math.floor(i / 2), ended: i === 0 ? { abandoned: 1 } : i === 7 ? { done: 2, repeated_failure: 1 } : {} })),

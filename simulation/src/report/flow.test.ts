@@ -54,13 +54,20 @@ test('a redirect that lands between two steps is a move too', () => {
 
 test('past the cap the most reached pages stay and the rest are counted, with who ended there', () => {
   const walk = Array.from({ length: FLOW_PAGES + 3 }, (_, i): [string, string] => [`/a${i}`, `/a${i + 1}`]);
-  const events = [...steps('a', walk), ...steps('b', walk.slice(0, 2)), ...steps('c', walk.slice(0, 2))];
+  const events = [...steps('a', walk), ...steps('b', walk.slice(0, FLOW_PAGES)), ...steps('c', walk.slice(0, FLOW_PAGES))];
   const [f] = flow(events, [persona('a', 'abandoned'), persona('b', 'done'), persona('c', 'done')]);
   assert.equal(f.pages.length, FLOW_PAGES);
   assert.deepEqual(f.pages.slice(0, 3).map((p) => p.reached), [3, 3, 3]);
   assert.deepEqual(f.left_out, { pages: 4, ended: 1 });
   const shown = new Set(f.pages.map((p) => p.page));
   assert.ok(f.moves.every((m) => shown.has(m.from) && shown.has(m.to)), 'no move points at a page that is not there');
+});
+
+test('at the cap a tie goes to the page where a persona ended, and the pages on show keep the order of the path', () => {
+  const walk = Array.from({ length: FLOW_PAGES + 1 }, (_, i): [string, string] => [`/a${i}`, `/a${i + 1}`]);
+  const [f] = flow(steps('a', walk), [persona('a', 'abandoned')]);
+  assert.deepEqual(f.pages.map((p) => p.page), [...Array.from({ length: FLOW_PAGES - 1 }, (_, i) => page(`/a${i}`)), page(`/a${FLOW_PAGES + 1}`)]);
+  assert.deepEqual(f.left_out, { pages: 2, ended: 0 });
 });
 
 test('each POI gets its own flow from its own steps, with its own outcome', () => {
@@ -97,7 +104,7 @@ test('Markdown carries the same counts, says what was left out and says "ended h
   const md = reportToMarkdown(logged([web('ours')], steps('a', walk, 'ours')));
   assert.match(md, /## Where personas went/);
   assert.match(md, /\| gym\.test\/a0 \| 1 \| 0 \| gym\.test\/a1 \(1\) \|/);
-  assert.match(md, /2 less visited pages left out, where 1 persona ended/);
+  assert.match(md, /2 less visited pages left out, where 0 personas ended/);
   assert.match(md, /Ended here" says where an episode ended, not why/);
   assert.doesNotMatch(md, /dropped off/i);
   assert.equal(reportToMarkdown({ ...logged([web('ours')], []), flows: undefined }).includes('Where personas went'), false, 'an older report has no such section');

@@ -319,7 +319,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
     ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
-    ...(e.box ? [`   - Marked on it: ${line(e.box.element)}`] : []),
+    ...(e.box ? [`   - About: ${line(e.box.element)}`] : []),
     `   - Event: #${e.seq}`,
   ].join('\n');
 }
