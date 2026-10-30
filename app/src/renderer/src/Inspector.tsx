@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Segment } from '@gnomi/simulation/types.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
+import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import type { PersonaState, Row } from './activity.ts';
@@ -24,6 +25,8 @@ function Replay({ steps, name }: { steps: Row[]; name: string }) {
       if (event.key === 'ArrowRight') go(index + 1);
     }}>
       <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Replay</h3><span>Left and right arrow keys</span></div>
+      {/* Apart from the visible count, whose total grows with every step of a live run: only flipping should be announced. */}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{`Step ${index + 1}: ${step.title}`}</p>
       <div className="inspector-replay-frame">
         <div className="inspector-replay-stage">
           {/* Neighbours sit behind the step on show, so moving to one shows an image that has already loaded. */}
@@ -31,7 +34,7 @@ function Replay({ steps, name }: { steps: Row[]; name: string }) {
             {row.screenshot ? <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} /> : <p className="text-sm text-stone-500">No screenshot for this step.</p>}
           </div>)}
         </div>
-        <div className="inspector-replay-caption" aria-live="polite">
+        <div className="inspector-replay-caption">
           <p className="font-medium text-stone-900">Step {index + 1} of {steps.length}</p>
           <p>{step.title}</p>
           {step.page && <p className="break-all text-xs text-stone-500">{step.page}</p>}
@@ -48,7 +51,7 @@ function Replay({ steps, name }: { steps: Row[]; name: string }) {
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
-  runId: string; persona: Persona; schema?: PersonaSchema; pois?: { id: string; name: string }[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  runId: string; persona: Persona; schema?: PersonaSchema; pois?: Poi[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
   state: PersonaState; // the run's own status for her: her events alone miss the run's end and a comparison's rules
   events: GnomiEvent[]; // hers only, in order
   social: SocialMemory | null; // null: the run had no social rounds
@@ -74,7 +77,7 @@ export function Inspector(props: {
     section?.focus({ preventScroll: true });
   }
 
-  const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
+  const rows = toRows(events, assetPlaces(pois ?? [])); // newest first, like the feed, so a live persona's latest step is at the top
   const steps = rows.filter((row) => row.source?.type === 'persona.step').toReversed();
   const replayable = steps.some((row) => row.screenshot); // a text's steps have none, so there is nothing to flip through
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;

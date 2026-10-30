@@ -294,9 +294,9 @@ export function foldRows(fold: RowFold, events: GnomiEvent[]): { added: Row[]; r
   return { added, replaced };
 }
 
-/** The activity feed, newest first. */
-export function toRows(events: GnomiEvent[]): Row[] {
-  const fold = emptyRows();
+/** The activity feed, newest first. `places` names texts and designs when `events` has no run.started, as one persona's events do not. */
+export function toRows(events: GnomiEvent[], places = new Map<string, string>()): Row[] {
+  const fold = { ...emptyRows(), places };
   foldRows(fold, events);
   return fold.rows;
 }

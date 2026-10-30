@@ -8,7 +8,7 @@ const ARCS = 40; // px of the gutter the moves curve through
 const TEXT = ARCS + 10; // px where a page's words and bar start
 const BAR = 70; // percent of the width that everyone's bar takes; what is left holds the gutter on the narrowest screen
 // shortcut: a name of nothing but wide letters (m, w) still clips, and its title and the table have it whole; measure the text if a real name does.
-const NAME = 24; // characters of a page's name, at up to about 7.3 px each, that fit the 182 px a 320 px screen leaves
+const NAME = 22; // characters of a page's name, at up to about 7.3 px each, that fit the 167 px a 320 px screen leaves beside a 15 px scrollbar
 
 /** The end of a long page name, which is what tells two pages apart; the table has them whole. */
 const short = (page: string) => (page.length > NAME ? `…${page.slice(1 - NAME)}` : page);

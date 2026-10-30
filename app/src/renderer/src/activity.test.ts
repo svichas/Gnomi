@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
+import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, Poi, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
+import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildGraph } from '@gnomi/engine/graph/index.ts';
@@ -193,6 +194,17 @@ test('the swarm graph and the grid read one status: a budget or failure stop is 
 test('a step row names the page its screenshot shows, not the one the step led to', () => {
   const [row] = toRows([event(1, 'persona.step', { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: 'https://app.test/jobs', url_after: 'https://app.test/jobs/1', dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] })]);
   assert.equal(row.page, 'https://app.test/jobs');
+});
+
+test('a slice of the log with no run.started still names a design or text by the places it is given', () => {
+  const design: Poi = { id: 'poi-1', type: 'design', name: 'Checkout', segments: null, frames: [{ asset: 'aaaaaaaaaaaaaaaa.png', name: 'Payment' }, { asset: 'bbbbbbbbbbbbbbbb.png', name: null }] };
+  const text: Poi = { id: 'poi-2', type: 'text', name: 'Pricing copy', segments: null, asset: 'cccccccccccccccc.md' };
+  const step = (seq: number, url: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: url, url_after: url, dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] });
+  const hers = [step(1, 'asset:aaaaaaaaaaaaaaaa.png'), step(2, 'asset:cccccccccccccccc.md')];
+  assert.deepEqual(toRows(hers, assetPlaces([design, text])).map((row) => row.page), ['Pricing copy', 'Checkout, screen 1 "Payment"']);
+  assert.deepEqual(toRows(hers).map((row) => row.page), ['a text', 'a design screen'], 'with no places the stored file still stays hidden');
+  const started = event(0, 'run.started', { config: { project: { pois: [design, text] } } as unknown as RunConfig }, null);
+  assert.deepEqual(toRows([started, ...hers]).map((row) => row.page).slice(0, 2), ['Pricing copy', 'Checkout, screen 1 "Payment"'], 'the whole log needs none');
 });
 
 test('the activity filters keep one persona, one segment or one kind of event', () => {

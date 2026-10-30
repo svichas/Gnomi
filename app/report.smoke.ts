@@ -142,8 +142,10 @@ try {
   const atStep = async (n: number, mounted: number) => {
     await caption.getByText(`Step ${n} of 4`, { exact: true }).waitFor();
     assert.equal(await stage.locator(':scope > *').count(), mounted, `only step ${n} and its neighbours are in the page`);
+    assert.match(await replay.locator('[aria-live]').textContent() ?? '', new RegExp(`^Step ${n}: `), 'one live node, with no total for a new step to change');
   };
   await atStep(1, 2);
+  assert.equal(await replay.locator('[aria-live]').textContent(), 'Step 1: Clicked button "Next"');
   assert.ok(await caption.getByText('Clicked button "Next"', { exact: true }).isVisible(), 'the action');
   assert.ok(await caption.getByText('http://gym.test/poi-gym', { exact: true }).isVisible(), 'the page');
   const shown = stage.locator('img:visible');
@@ -231,6 +233,9 @@ try {
   assert.ok(await root.getByRole('cell', { name: '3: 2 reached the goal, 1 got stuck' }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'all details fit a narrow viewport');
+  // A classic scrollbar on any machine, as Windows, Linux and a Mac with a mouse have: an overlay one leaves the graph 15 px that those do not.
+  await page.evaluate(() => { const bar = new CSSStyleSheet(); bar.replaceSync('::-webkit-scrollbar { width: 15px }'); document.adoptedStyleSheets.push(bar); });
+  assert.equal(await page.evaluate(() => innerWidth - document.documentElement.clientWidth), 15, 'the scrollbar takes its width');
   await graph.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-flow-320.png') });
   const overrun = await graph.evaluate((svg) => {
