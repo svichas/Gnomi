@@ -253,3 +253,21 @@ test('owner studies label the focal tool and action owner; legacy comparison vot
   assert.match(legacy, /At a glance/);
   assert.doesNotMatch(legacy, /Side-by-side comparison/);
 });
+
+test('a run of a repeat set shows on each finding how many runs it appeared in, and exports say the same', async () => {
+  const report = fixture(1, 0);
+  report.repeat = { group: 'set-a', index: 1, of: 3 };
+  const prevalence = { personas: 1, exposed: 2, share: 0.5, low: 0.1, high: 0.9, level: 'some' as const };
+  report.themes = [{ id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge', trust: 'reported', severity: 2, score: 0, personas: 2, frictions: 2, prevalence, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null }];
+  const repeats = { group: 'set-a', of: 3, compared: 2, incomplete: true, families: ['anthropic', 'deepseek'], findings: [{ poi_id: 'poi-gym', seen_in: 2, of: 2, families: ['anthropic'], titles: ['Save does nothing', 'The form loses work'], themes: { 'r-0001': 'g1' } }] };
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const html = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 1 of 3 in a repeat set.', 'Incomplete set: 2 of 3 runs finished.', 'Repeats test robustness inside the simulation', 'Appeared in 2 of 2 runs', 'Only anthropic runs produced this', 'Named in other runs: The form loses work']) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /confidence/i);
+  const alone = renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} }));
+  assert.ok(alone.includes('Run 1 of 3 in a repeat set.'));
+  assert.doesNotMatch(alone, /Appeared in/);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes('Appeared in 2 of 2 runs'));
+  assert.ok((await reportFile(report, 'md', thumbnails(), repeats)).includes('- Repeats: Appeared in 2 of 2 runs. Only anthropic runs produced this'));
+  assert.doesNotMatch(await reportFile(report, 'json', thumbnails(), repeats), /Appeared in/, 'the JSON stays the run\'s own report');
+});

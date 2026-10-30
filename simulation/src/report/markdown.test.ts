@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Report, ReportTheme } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
+import type { RepeatSet } from './repeats.ts';
 import { missingUsageText, reportToMarkdown } from './markdown.ts';
 
 const url = 'http://localhost:3001/jobs/new';
@@ -344,4 +345,31 @@ test('missing-usage copy names the count and preserves uncertainty about provide
   assert.match(missingUsageText(2)!, /^2 model calls did not report complete usage/);
   assert.match(missingUsageText(2)!, /Canceled or failed requests may still incur provider charges/);
   assert.match(missingUsageText(2)!, /Actual charges may exceed the recorded cost/);
+});
+
+test('a run of a repeat set says how each finding did across the set, only when read with the set', () => {
+  const set: RepeatSet = {
+    group: 'set-a', of: 3, compared: 3, incomplete: false, families: ['anthropic', 'deepseek'],
+    findings: [{ poi_id: 'poi-gym', seen_in: 2, of: 3, families: ['anthropic'], titles: ['Saving a job\nfails', 'The form [loses](x) work'], themes: { 'r-0001': 'g1+g3' } }],
+  };
+  const own = { ...report, repeat: { group: 'set-a', index: 1, of: 3 }, themes: [theme] };
+  const read = reportToMarkdown(own, set);
+  assert.ok(read.includes('- Repeat: run 1 of 3 in set set-a'));
+  assert.ok(read.includes('- 3 runs compared. Repeats test robustness inside the simulation'));
+  assert.ok(read.includes('- Repeats: Appeared in 2 of 3 runs. Only anthropic runs produced this'));
+  assert.ok(read.includes('- Named in other runs: The form \\[loses\\](x) work'), 'a title is the model\'s text, escaped');
+  assert.doesNotMatch(read, /confidence|validated/i);
+
+  const alone = reportToMarkdown(own);
+  assert.ok(alone.includes('- Repeat: run 1 of 3 in set set-a'), 'the run says which set it is in');
+  assert.doesNotMatch(alone, /Appeared in|robustness/);
+
+  const family = reportToMarkdown(own, { ...set, families: ['anthropic'] });
+  assert.ok(family.includes('- Repeats: Appeared in 2 of 3 runs\n'), 'one family in the set flags nothing');
+  const uncompared = reportToMarkdown({ ...own, run_id: 'r-0003' }, set);
+  assert.doesNotMatch(uncompared, /Appeared in/, 'a run the set left out has no such line');
+  const lone = reportToMarkdown(own, { ...set, findings: [{ ...set.findings[0], seen_in: 1, of: 1 }], compared: 1, incomplete: true });
+  assert.doesNotMatch(lone, /Appeared in/, 'one finished run compares nothing');
+  assert.ok(lone.includes('- Incomplete set: 1 of 3 runs finished.'));
+  assert.doesNotMatch(reportToMarkdown({ ...report, themes: [theme] }), /Repeat/, 'a lone run is as it was');
 });

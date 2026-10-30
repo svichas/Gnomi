@@ -51,6 +51,8 @@ npm run acceptance -w @gnomi/simulation -- --evaluate --repeats 1 --arms baselin
 | `precision` | The same estimate, over the report's top 20 themes. |
 | `control_themes` | Themes on the control build with trust confirmed or observed: the false-positive definition in [the evaluation plan](roadmap.md#evaluation-plan). |
 
+They also give each arm a `stability`: the Jaccard overlap of the top ten themes of two replicates, averaged over every pair of complete replicates, with themes paired by `matchThemes` in [report/match.ts](../simulation/src/report/match.ts). It is a single number per arm, so it has no paired interval, and it needs at least two complete replicates. It differs from the M3 `stability` criterion above, which overlaps reviewed defect mappings, and `matchThemes` can pair two themes that only share one key, so it can read a little high.
+
 Add `--mapper provider:model` to have a judge map every theme of the Gym v2 runs after they finish. The mapper must come from a different provider than the navigator, because the evaluation plan asks for another model family, and live it needs that provider's key and a priced model. It shares `--allowance-usd` and writes `theme-mapping.json` with status `MAPPED_BY_MODEL`, plus `theme-mapping.md`, a sample of 20 themes picked by a fixed hash for a person to check. `results.md` then lists high-severity recall and top-20 precision per run, from `mappingScores` in [checks.ts](../simulation/src/acceptance/checks.ts). That function reads any `theme-mapping.json` items, so a reviewed mapping can replace the estimate.
 
 A model's mapping is not a reviewed one. The plan's other judge rules (both orders, calibration against a labelled set) are not built.

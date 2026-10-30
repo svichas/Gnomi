@@ -13,10 +13,11 @@ import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
+import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, Persona, PersonaProgress, ProjectConfig, ProviderId, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -96,8 +97,49 @@ export function checkComparison(config: ProjectConfig) {
   if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
 }
 
-export const estimateFor = (config: ProjectConfig, personas: Persona[]) =>
-  estimateRun({ personas, settings: config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison });
+/**
+ * The runs of a set, each with its share of the cost budget. `also` adds one more with the navigator and socialiser on that model.
+ * One run is a lone run, with no repeat. The audience seed stays, so personas and the follow graph are the same in every run.
+ */
+export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoice): { config: ProjectConfig; repeat?: RunConfig['repeat'] }[] {
+  if (!Number.isInteger(repeats) || repeats < 1) throw new Error('The number of repeats must be a whole number of at least 1.');
+  const of = repeats + (also ? 1 : 0);
+  if (of === 1) return [{ config }];
+  const group = randomUUID().slice(0, 8);
+  const { routing, cost_budget_usd } = config.settings;
+  return Array.from({ length: of }, (_, i) => ({
+    config: { ...config, settings: { ...config.settings, cost_budget_usd: cost_budget_usd / of, routing: also && i === repeats ? { ...routing, navigator: also, socialiser: also } : routing } },
+    repeat: { group, index: i + 1, of },
+  }));
+}
+
+/** Runs a set one after another, as a project has one active run. A run that does not finish ends the set. Returns the reports there are. */
+export async function runSet<Run>(runs: Run[], run: (planned: Run, index: number) => Promise<Report>): Promise<Report[]> {
+  const reports: Report[] = [];
+  for (const [index, planned] of runs.entries()) {
+    reports.push(await run(planned, index));
+    if (reports.at(-1)!.status !== 'finished') break;
+  }
+  return reports;
+}
+
+/** The reports of a set's runs so far, in the order they ran. */
+export const repeatReports = (store: ProjectStore, group: string): Report[] => store.listRuns()
+  .filter((run) => run.config.repeat?.group === group)
+  .sort((a, b) => a.config.repeat!.index - b.config.repeat!.index)
+  .map((run) => buildReport(store.events(run.run_id)));
+
+/** The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too. */
+export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice): RunEstimate {
+  const each = repeatRuns(config, repeats, also).map((run) => estimateRun({ personas, settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
+  const sum = (pick: (estimate: RunEstimate) => number) => each.reduce((total, estimate) => total + pick(estimate), 0);
+  return {
+    calls: sum((e) => e.calls),
+    cost_usd: [sum((e) => e.cost_usd[0]), sum((e) => e.cost_usd[1])],
+    minutes: [sum((e) => e.minutes[0]), sum((e) => e.minutes[1])],
+    unpriced: [...new Set(each.flatMap((e) => e.unpriced))],
+  };
+}
 
 /** The preflight of tech.md §9.1 and §9.3 short of checking recorded logins: never production, every POI's own, personas current, keys present. Returns who runs. */
 /** Every role a run of `config` calls a model for, as the Review step lists them. */
@@ -133,7 +175,7 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
 export function launchRun(
   store: ProjectStore,
   config: ProjectConfig,
-  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number },
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat'] },
   deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
 ): RunHandle {
   let handle: RunHandle | undefined;

@@ -23,7 +23,7 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Respon
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
-import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, TOP, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Options, type Status } from './checks.ts';
+import { ARMS, assess, BILLING_CAVEAT, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, STABILITY_TOP, TOP, topOverlap, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Options, type Status } from './checks.ts';
 import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
@@ -723,6 +723,8 @@ export async function runEvaluation(options: Options, env: Record<string, string
     return [metric, { n: values.length, mean: values.length ? mean(values) : null }];
   }))]));
   const differences = Object.fromEntries(arms.filter((arm) => arm !== 'baseline').map((arm) => [arm, Object.fromEntries(METRICS.map((metric) => [metric, pairedDifference(series(arm, metric), series('baseline', metric))]))]));
+  // Across replicates, so one number per arm rather than one per run; over the same replicates as the means.
+  const stability = Object.fromEntries(arms.map((arm) => [arm, topOverlap(complete.map((entry) => finished.find((run) => run.name === `r${entry.replicate}-${arm}`)?.report?.themes ?? []))]));
   const missing = Object.entries(BENCHMARK).filter(([, value]) => value === null).map(([key]) => key);
   const scripted = options.mode === 'scripted';
   const labels = scripted ? { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' } as const : { behavioural_validity: 'NOT_VALIDATED', efficiency: 'INCONCLUSIVE' } as const;
@@ -736,7 +738,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
     status, mode: options.mode, scope: EVALUATE_SCOPE, labels, missing_benchmark: missing, error, repeats: seeds.length, complete_replicates: complete.length, arms, mapper: options.mapper ?? null,
     method: 'Per arm, the mean over the replicates complete in every arm; per arm against baseline, the mean of per-replicate differences with a two-sided 95% Student t interval over replicate pairs where both finished, given only for three or more pairs that vary. Personas are never the unit. No multiplicity correction is applied.',
     intervals: primary.length ? `confirmatory for ${primary.join(', ')}; exploratory otherwise` : 'exploratory: no primary metric is declared', defect_metrics,
-    replicates, means, differences,
+    replicates, means, differences, stability,
     recorded_cost_usd: allowance.spent(), missing_usage_attempts: allowance.unknown(),
     allowance_stop_reason: stopReason(allowance),
     elapsed_ms: Date.now() - started, billing_caveat: BILLING_CAVEAT,
@@ -751,8 +753,8 @@ export async function runEvaluation(options: Options, env: Record<string, string
     ] : [`Mapped defect recall: n/a (${defect_metrics.status}). Mapped defect precision: n/a (${defect_metrics.status}). ${defect_metrics.detail}`, '']),
     `Intervals: ${result.intervals}.`, '',
     `${scripted ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${complete.length} of ${seeds.length} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${error ? ` Error: ${error}` : ''}`, '',
-    '## Scoreboard', '', 'Means per arm. recall_high and precision are hint-based estimates, not reviewed mappings.', '', '| Arm | recall_high | precision | control_themes |', '| --- | --- | --- | --- |',
-    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} |`), '',
+    '## Scoreboard', '', `Means per arm. recall_high and precision are hint-based estimates, not reviewed mappings. stability is the mean overlap of the top ${STABILITY_TOP} themes across every pair of complete replicates, matched by matchThemes; n/a with fewer than two.`, '', '| Arm | recall_high | precision | control_themes | stability |', '| --- | --- | --- | --- | --- |',
+    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} | ${fmt(stability[arm])} |`), '',
     ...Object.entries(differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
       ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? `n/a (${d.note})` : `${fmt(d.lower)} to ${fmt(d.upper)}${primary.includes(metric) ? '' : ' (exploratory)'}`} | ${d.n} |`), '',

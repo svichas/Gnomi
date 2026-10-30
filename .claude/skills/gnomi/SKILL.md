@@ -26,7 +26,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
    ```bash
    npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --json > runs/acme.log 2>&1
    ```
-   Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"`, or when the process has exited with an error on stderr.
+   Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"` (`"kind":"repeats"` for a [repeat set](#repeat-runs)), or when the process has exited with an error on stderr.
 5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. A rate is `null`, not 0, when nobody it covers started (for example a segment a stopped run never reached). Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw.
 
 ## Points of interest
@@ -57,9 +57,25 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
   - To change who is in the audience, edit `audience.segments` (each has `id`, `name`, `description`, `share` in percent, the shares summing to 100, `typical_goals`, `mobile_share` 0–1, `patience` and `tech_skill` ranges 1–5, `usage_frequency`, `goal_override`, `kind` "user" or "buyer") or `audience.persona_count`, then run `audience update <audience.json> --json`. Unchanged personas are kept; new or changed slots are written.
 - A run reuses the file's personas while they are current for the product name, description and goal. Passing a different `--goal`, `--name` or `--product` to `run` writes them again for that run only (a `note` says so) and costs model calls; re-run `audience create` with the new values to keep them.
 
+## Repeat runs
+
+One run is one sample of a noisy model. A repeat set shows which findings come back:
+
+```bash
+npm run -s gnomi -- estimate --pois pois.json --audience audiences/acme.json --repeats 3 --also-model deepseek:deepseek-v4-pro --json
+npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --repeats 3 --also-model deepseek:deepseek-v4-pro --json > runs/acme.log 2>&1
+```
+
+- `--repeats n` makes n runs one after another with the same personas and follow graph. `--also-model provider:model` adds one more run with the navigator and socialiser on that model (it must have a price, and its key must be set). The judge and author stay the same for every run.
+- Each run gets `cost_budget_usd` divided by the number of runs, and its own report and `run` line. `estimate` takes the same flags and gives the total, so check it against the budget as usual.
+- A run that stops ends the set: no further run starts.
+- The last line has `"kind":"repeats"`: `group`, `of` (runs planned), `compared` (runs that finished), `incomplete`, `families`, and `findings`, each with `seen_in`, `of`, its model `families` and its `titles`. A stopped run is not compared.
+- `report <project dir> --repeat <group> --json` reads a set again; `--format md` gives a table. `report --run <id> --format md` adds "Appeared in 3 of 3 runs" to each finding of a run in a set. Each run's own files stay as they were written.
+- Say "appeared in 2 of 3 runs", and flag a finding only one model family produced. Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis, so never call it confidence, or validated. When `titles` holds different problems, the match was wrong: read those themes before counting them as one.
+
 ## Earlier runs
 
-- `runs <project dir> --json` lists runs, newest first. It only reads the folder, so a run the app is running stays `running`; so does one whose process was killed, until the next `run --project` on that folder or the app opens it.
+- `runs <project dir> --json` lists runs, newest first, with each run's `repeat` (`group`, `index`, `of`), or null for a lone run. It only reads the folder, so a run the app is running stays `running`; so does one whose process was killed, until the next `run --project` on that folder or the app opens it.
 - `report <project dir> [--run r-0002] --format summary|md|json` rebuilds a run's report; `summary` is the default and the same object a run returns.
 - `rejudge <project dir> [--run r-0002] --json` runs an ended run's judge and author again with the current prompts and the run's own judge and author models, without browsing, and rewrites its report files. Use it after the theming rules change; it needs the judge's and author's keys and costs a few model calls (the result line gives `cost_usd`, and `runs` counts it in the run's cost). It spends at most what is left of the run's cost budget; when that is used up it refuses, and `--budget <usd>` sets what this rejudge may spend instead.
 

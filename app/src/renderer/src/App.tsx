@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectInfo, SessionRun } from '@gnomi/engine/protocol.ts';
 import type { Audience, PersonaSchema, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { AudienceTab } from './Audience.tsx';
-import { call, connected, errorText, onEvent, setEventProject, stopped } from './engine.ts';
+import { call, connected, errorText, onEvent, onRepeatFailed, setEventProject, stopped } from './engine.ts';
 import { isEnd } from './activity.ts';
 import { initialDraft, toConfig } from './form.ts';
 import type { Draft, Form } from './form.ts';
@@ -102,7 +102,9 @@ export function App() {
     const project = await call('get_project', {});
     if (project.dir === projectDir.current) setInfo(project);
   }, []);
-  useEffect(() => onEvent((event) => { if (isEnd(event)) void refresh().catch((err) => setProblem(errorText(err))); }, info?.dir), [refresh, info?.dir]);
+  // A start too: the next run of a repeat set starts by itself, and only the run list says a run is active.
+  useEffect(() => onEvent((event) => { if (isEnd(event) || event.type === 'run.started') void refresh().catch((err) => setProblem(errorText(err))); }, info?.dir), [refresh, info?.dir]);
+  useEffect(() => onRepeatFailed((error) => setProblem(`The repeat set ended early: ${error}`)), []);
   const refreshProviders = useCallback(async () => {
     const available = await window.gnomi.listProviders();
     setProviders(available);
@@ -337,6 +339,7 @@ export function App() {
                   }}
                   onChecked={refresh}
                   onStarted={(id) => {
+                    setProblem(null);
                     setRunId(id);
                     setTab('run');
                     void refresh();

@@ -76,7 +76,7 @@ export function roleOf(persona: Persona, project: ProjectConfig): string | null 
 }
 
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
-export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean }): Omit<RunConfig, 'run_id'> {
+export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat'] }): Omit<RunConfig, 'run_id'> {
   return {
     seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
     project: structuredClone({ ...project, persona_schema: getPersonaSchema(project.persona_schema) }),
@@ -86,6 +86,7 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     pause_timeout_ms: 10 * 60_000,
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
     signals: { ...DEFAULT_SIGNALS },
+    ...(opts.repeat ? { repeat: opts.repeat } : {}),
   };
 }
 

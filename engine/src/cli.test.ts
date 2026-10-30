@@ -170,3 +170,73 @@ test('runs, report and rejudge leave a run still live in another process running
     db.close();
   }
 });
+
+test('--repeats and --also-model run a set one after another; each run keeps its report and the set is read through report --repeat', () => {
+  const project = join(dir, 'repeats');
+  const settings = join(dir, 'three-dollars.json');
+  writeFileSync(settings, JSON.stringify({ rounds: 1, cost_budget_usd: 3 }));
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  const base = ['--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings];
+  const also = ['--repeats', '2', '--also-model', 'deepseek:deepseek-v4-pro'];
+
+  const [one, set] = [lines('estimate', ...base).at(-1), lines('estimate', ...base, ...also).at(-1)];
+  assert.deepEqual([one.runs, set.runs, set.calls, set.budget_usd], [1, 3, one.calls * 3, 3]);
+  assert.ok(set.cost_usd[1] > one.cost_usd[1]);
+
+  const out = lines('run', ...base, '--project', project, ...also);
+  assert.deepEqual(out.filter((l) => l.kind === 'run').map((l) => [l.run_id, l.status]), [['r-0001', 'finished'], ['r-0002', 'finished'], ['r-0003', 'finished']]);
+  const done = out.at(-1);
+  assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.families, done.run_ids], ['repeats', 3, 3, false, ['anthropic', 'deepseek'], ['r-0001', 'r-0002', 'r-0003']]);
+  assert.ok(done.findings.length > 0 && done.findings.every((f: { seen_in: number; of: number }) => f.seen_in === 3 && f.of === 3), 'scripted runs meet the same groups');
+
+  const report = (run: string) => JSON.parse(readFileSync(join(project, `runs/${run}/report.json`), 'utf8'));
+  assert.deepEqual(report('r-0002').repeat, { group: done.group, index: 2, of: 3 });
+  assert.deepEqual(['r-0001', 'r-0002', 'r-0003'].map((run) => report(run).methods.budgets.cost_usd), [1, 1, 1]);
+  assert.deepEqual(['r-0001', 'r-0003'].map((run) => report(run).methods.models.navigator.provider), ['anthropic', 'deepseek']);
+  assert.deepEqual(['r-0001', 'r-0003'].map((run) => report(run).methods.models.judge.provider), ['anthropic', 'anthropic']);
+
+  const rows = lines('runs', project).filter((l) => l.kind === 'run_row');
+  assert.deepEqual(rows.map((r) => r.repeat), [3, 2, 1].map((index) => ({ group: done.group, index, of: 3 })));
+  assert.match(cli('runs', project), new RegExp(`^r-0001 .*repeat 1 of 3 in set ${done.group}$`, 'm'));
+
+  const read = lines('report', project, '--repeat', done.group).at(-1);
+  assert.deepEqual(read, (({ project: _p, run_ids: _r, ...rest }) => rest)(done));
+  assert.match(cli('report', project, '--repeat', done.group, '--format', 'md'), new RegExp(`^# Gnomi repeat set ${done.group}[\\s\\S]*3 of 3 runs \\| anthropic, deepseek`));
+  assert.match(cli('report', project, '--run', 'r-0002', '--format', 'md'), /- Repeats: Appeared in 3 of 3 runs/);
+  assert.doesNotMatch(readFileSync(join(project, 'runs/r-0002/report.md'), 'utf8'), /Appeared in/, "a run's own report is not rewritten");
+});
+
+test('a stopped run ends its set, which is labelled incomplete, and runs from before sets read as they did', () => {
+  const project = join(dir, 'repeats-stopped');
+  const settings = join(dir, 'no-budget.json');
+  writeFileSync(settings, JSON.stringify({ rounds: 1, cost_budget_usd: 0 }));
+  const out = cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings, '--project', project, '--repeats', '3', '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(out.filter((l) => l.kind === 'run').map((l) => [l.run_id, l.status]), [['r-0001', 'stopped']], 'no second run after the stop');
+  const done = out.at(-1);
+  assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.run_ids], ['repeats', 3, 0, true, ['r-0001']]);
+  assert.match(cli('report', project, '--repeat', done.group, '--format', 'md'), /Incomplete set: 0 of 3 runs finished/);
+
+  const lone = join(dir, 'lone');
+  const run = cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', lone, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(run.at(-1).kind, 'run', 'a lone run ends as it did');
+  assert.equal(JSON.parse(cli('runs', lone, '--json').split('\n')[0]).repeat, null);
+  assert.equal(JSON.parse(readFileSync(join(lone, 'runs/r-0001/report.json'), 'utf8')).repeat, undefined);
+  assert.doesNotMatch(cli('report', lone, '--format', 'md'), /Repeat/);
+});
+
+test('--repeat, --repeats and --also-model refuse what cannot work, before anything runs', () => {
+  const fails = (...args: string[]) => {
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stdout);
+    return result.stderr;
+  };
+  const base = ['--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan'];
+  assert.match(fails('run', ...base, '--project', join(dir, 'refused'), '--repeats', '0'), /whole number/);
+  assert.match(fails('run', ...base, '--project', join(dir, 'refused'), '--repeats', 'two'), /whole number/);
+  assert.match(fails('run', ...base, '--project', join(dir, 'refused'), '--also-model', 'deepseek'), /provider:model/);
+  assert.match(fails('estimate', ...base, '--also-model', 'other:model'), /provider:model/);
+  assert.match(fails('run', ...base, '--project', join(dir, 'refused'), '--also-model', 'openai:no-such-model'), /no price/);
+  assert.equal(cli('runs', join(dir, 'refused')).startsWith('0 runs'), true, 'no run was started');
+  const project = join(dir, 'lone');
+  assert.match(fails('report', project, '--repeat', 'no-such-set'), /There is no repeat set no-such-set/);
+});

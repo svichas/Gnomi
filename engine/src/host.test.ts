@@ -18,7 +18,7 @@ import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
 import type { Audience, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
 process.env.GNOMI_FAKE_LLM = '1';
-const { call, connect, events, progress, toMain } = await startHost();
+const { call, connect, events, progress, toMain, repeatFailures } = await startHost();
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-host-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -396,4 +396,91 @@ test('main gets only its responses over the parent port: events and progress go 
   await call('generate_personas', {});
   assert.ok(progress.length > before, 'the renderer got the progress');
   assert.deepEqual(toMain, []);
+});
+
+const until = async (check: () => Promise<boolean>) => {
+  for (let attempt = 0; attempt < 1200; attempt++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail('The repeat set did not reach the expected state');
+};
+const inSet = async (group: string) => (await call('get_project', {})).runs.filter((run) => run.config.repeat?.group === group).reverse();
+
+test('a repeat set runs one at a time on its share of the budget, and reads back as one comparison', async () => {
+  await call('open_project', { dir: join(dir, 'repeats') });
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'pricing.md' });
+  await call('save_project', { project: project({}, { pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }], settings: { ...DEFAULT_SETTINGS, cost_budget_usd: 3 } }) });
+  assert.equal((await call('estimate_run', { repeats: 3 })).calls, (await call('estimate_run', {})).calls * 3);
+  await assert.rejects(call('start_run', { reset: false, repeats: 0 }), /whole number/);
+
+  const { run_id } = await call('start_run', { reset: false, repeats: 3 });
+  await assert.rejects(call('start_run', { reset: false }), /already in progress/);
+  const { group, index, of } = (await call('get_project', {})).runs.find((run) => run.run_id === run_id)!.config.repeat!;
+  assert.deepEqual([index, of], [1, 3]);
+  // Edits while the set runs are for the next start: its later runs keep what it started with.
+  await call('save_project', { project: project({}, { goal: 'Changed mid-set', pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
+  // A run's row says finished while its report is still being saved; the session list waits for the report.
+  await until(async () => (await call('get_session_runs', {})).filter((run) => run.project_dir === join(dir, 'repeats') && run.status === 'finished').length === 3);
+
+  const runs = await inSet(group);
+  assert.deepEqual(runs.map((run) => run.config.repeat?.index), [1, 2, 3]);
+  assert.deepEqual(runs.map((run) => run.config.project.settings.cost_budget_usd), [1, 1, 1]);
+  assert.deepEqual(runs.map((run) => run.config.project.goal), ['Post a job', 'Post a job', 'Post a job']);
+  for (const [i, run] of runs.slice(1).entries()) assert.ok(run.started_at >= runs[i].ended_at!, 'each starts when the last has ended');
+  assert.equal((await call('get_report', { run_id })).repeat?.group, group);
+
+  const set = await call('get_repeats', { group });
+  assert.deepEqual([set.group, set.of, set.compared, set.incomplete], [group, 3, 3, false]);
+  assert.ok(set.findings.length > 0 && set.findings.every((f) => f.seen_in === 3 && Object.keys(f.themes).length === 3));
+  assert.equal((await call('get_repeats', { group: 'no-such-set' })).findings.length, 0);
+});
+
+test('stopping a run ends its repeat set, which reads as incomplete, and the project can start again', async () => {
+  const { run_id } = await call('start_run', { reset: false, repeats: 3 });
+  await call('stop_run', { run_id });
+  const { group } = (await call('get_project', {})).runs.find((run) => run.run_id === run_id)!.config.repeat!;
+  await until(async () => (await inSet(group)).every((run) => run.status === 'stopped'));
+  await new Promise((resolve) => setTimeout(resolve, 100)); // a next run would have started by now
+  assert.equal((await inSet(group)).length, 1);
+  const set = await call('get_repeats', { group });
+  assert.deepEqual([set.of, set.compared, set.incomplete], [3, 0, true]);
+  assert.deepEqual(repeatFailures, [], 'a stop is no failure');
+
+  const next = await call('start_run', { reset: false });
+  await until(async () => (await call('get_project', {})).runs.find((run) => run.run_id === next.run_id)?.status === 'finished');
+});
+
+test('each repeat resets staging and checks its logins again, and a repeat that cannot start ends the set and says why', async (t) => {
+  const gym = await startGym({ port: 0, defects: 'none' });
+  t.after(() => gym.close());
+  const setDir = join(dir, 'repeat-logins');
+  await call('open_project', { dir: setDir });
+  await call('set_secret', { name: 'session_key', value: key });
+  await call('save_project', { project: project({ start_url: `${gym.url}/`, reset_hook_url: `${gym.url}/__reset` }, { role: 'recruiter' }) });
+  const login = openProject(setDir);
+  await createSessionStore(login, createFsBlobStore(setDir), key).save({ role: 'recruiter', start_url: `${gym.url}/`, hosts: [new URL(gym.url).host], recorded_at: 1, verified_at: 1, expires_at: null }, { cookies: [] });
+  login.close();
+  // The login goes as the second run ends its browsing, so that run still gets it and only the third finds it gone.
+  const { push } = events;
+  t.after(() => { events.push = push; });
+  events.push = (...added) => {
+    if (added.some((event) => event.type === 'report.started' && event.run_id === 'r-0002')) {
+      const db = new DatabaseSync(join(setDir, 'project.sqlite'));
+      db.exec('DELETE FROM session');
+      db.close();
+    }
+    return push.apply(events, added);
+  };
+
+  await call('start_run', { reset: true, repeats: 3 });
+  await until(async () => repeatFailures.length > 0);
+  assert.match(repeatFailures[0], /No login is recorded for "recruiter"/);
+  const runs = (await call('get_project', {})).runs.reverse();
+  assert.deepEqual(runs.map((run) => [run.run_id, run.status]), [['r-0001', 'finished'], ['r-0002', 'finished']], 'the third never started');
+  for (const run of runs) assert.equal((await call('get_events', { run_id: run.run_id, after_seq: null, persona_id: null })).filter((event) => event.type === 'run.reset_called').length, 1, run.run_id);
+  const [first, second] = runs.map((run) => run.config.sessions[0].verified_at!);
+  assert.ok(first > 1 && second > first, 'the login was checked again');
+  await assert.rejects(call('start_run', { reset: false }), /No login is recorded/, 'the set is over, so the project can start again');
+  await call('open_project', { dir });
 });

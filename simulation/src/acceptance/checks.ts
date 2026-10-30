@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { mean, sampleVariance } from 'simple-statistics';
 import { isPriced } from '../llm/prices.ts';
+import { matchThemes } from '../report/match.ts';
 import type { LlmAttempt } from '../seams.ts';
 import type { ReportTheme, RunSettings } from '../types.ts';
 
@@ -198,6 +199,22 @@ export function mappingScores(items: { run: string; rank: number; trust: string;
     return { found, defects_high: high.length, recall_high: high.length ? found.length / high.length : null, matched, top: top.length, precision: top.length ? matched / top.length : null };
   };
   return Object.fromEntries([...new Set(items.map((item) => item.run))].filter((run) => !run.endsWith('control')).map((run) => [run, score(run)]));
+}
+
+export const STABILITY_TOP = 10; // stability is measured over a report's top ten themes
+
+/**
+ * Stability from docs/roadmap.md's evaluation plan: the Jaccard overlap of two runs' top themes, averaged over every pair of runs. Themes
+ * count as the same by matchThemes, not by a reviewed mapping, so it can pair themes that share one key. Null with no pair to compare.
+ */
+export function topOverlap(runs: ReportTheme[][]): number | null {
+  const tops = runs.map((themes) => themes.filter((theme) => theme.rank <= STABILITY_TOP));
+  const overlaps = tops.flatMap((a, i) => tops.slice(i + 1).flatMap((b) => {
+    const shared = matchThemes(a, b).pairs.length;
+    const all = a.length + b.length - shared;
+    return all ? [shared / all] : []; // two runs with no themes say nothing either way
+  }));
+  return overlaps.length ? mean(overlaps) : null;
 }
 
 /** Two-sided 95% Student t quantiles for 1 to 30 degrees of freedom. */

@@ -241,6 +241,7 @@ export interface RunConfig {
   app_version: string;
   signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
   injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
+  repeat?: { group: string; index: number; of: number }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run
 }
 
 /** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */

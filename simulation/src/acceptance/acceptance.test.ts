@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
 import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
-import { assess, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, validateOptions, webDefects } from './checks.ts';
+import { assess, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, topOverlap, validateOptions, webDefects } from './checks.ts';
 import { runEvaluation } from './run.ts';
 import type { LlmAttempt } from '../seams.ts';
 import { profileBlock } from '../agent/prompt.ts';
@@ -224,6 +224,20 @@ test("the generic persona's prompt block differs only by segment, besides its na
   assert.equal(new Set(plain.personas.map(block)).size, segments.length);
 });
 
+test('stability is the mean Jaccard overlap of the top ten themes over every pair of replicates, matched across runs', () => {
+  const key = (name: string) => JSON.stringify(['web', `gym.test/${name}`, 'element', `button "${name}"`]);
+  const theme = (title: string, rank = 1) => ({ id: `g-${title}`, poi_id: 'web', rank, title, category: 'friction', keys: [key(title)] }) as ReportTheme;
+  const [a, b, c, d] = ['Save does nothing', 'Prices are hidden', 'Candidates page is empty', 'Login loops forever'].map((title) => theme(title));
+  assert.equal(topOverlap([[a, b], [a, b]]), 1, 'other ids and ranks would not matter');
+  assert.equal(topOverlap([[a, b], [c, d]]), 0);
+  assert.equal(topOverlap([[a, b, c], [a, b, d]]), 0.5, 'two shared of four');
+  assert.equal(topOverlap([[a, b], [a, b], [c, d]]), 1 / 3, 'a mean over the three pairs: 1, 0 and 0');
+  assert.equal(topOverlap([[a, theme('Reports never load', 11)], [a, theme('Search ignores filters', 11)]]), 1, 'only the top ten count');
+  assert.equal(topOverlap([[a]]), null, 'one replicate compares nothing');
+  assert.equal(topOverlap([[], []]), null, 'nor do two without themes');
+  assert.equal(topOverlap([[a], []]), 0);
+});
+
 test('a scripted evaluation of two replicates and two arms writes matched results in a seeded arm order, labelled not run', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -260,7 +274,8 @@ test('a scripted evaluation of two replicates and two arms writes matched result
   assert.equal(JSON.parse(readFileSync(join(out, 'r1-baseline-control', 'events.json'), 'utf8')).find((e: { type: string }) => e.type === 'run.started').payload.config.seed, result.replicates[0].seed, 'the control run keeps the seed');
   const md = readFileSync(join(out, 'results.md'), 'utf8');
   assert.match(md, /Behavioural validity: NOT_RUN[\s\S]*primary_metrics[\s\S]*Mapped defect recall: n\/a \(NOT_RUN\)[\s\S]*Intervals: exploratory/);
-  assert.match(md, /\| baseline \| 0 \| 0 \| 0 \|/);
+  assert.deepEqual(result.stability, { baseline: 1, chronological_feed: 1 }, 'scripted runs meet the same groups in every replicate');
+  assert.match(md, /\| baseline \| 0 \| 0 \| 0 \| 1 \|/);
   assert.match(md, /\| n\/a \(fewer than three pairs\) \| 2 \|/);
 });
 

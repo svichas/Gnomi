@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential } from './workspace.ts';
+import { cappedGateway, checkRun, credential, estimateFor, repeatRuns, runSet } from './workspace.ts';
 import { createScriptedGateway } from '@gnomi/simulation/llm/scripted.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, ProjectConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, ProjectConfig, Report, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
 
 test('a provider needs its key, and the local one its endpoint', () => {
   const secrets = (name: string) => (name === 'openai_api_key' ? 'sk-test' : null);
@@ -48,4 +48,59 @@ test('a capped gateway makes no call once its own calls have spent the cap, nor 
   const stop = new AbortController();
   stop.abort();
   await assert.rejects(ask(cappedGateway(scripted, 1, stop.signal)));
+});
+
+const poi: WebPoi = { id: 'poi-1', type: 'web', name: 'Gym', start_url: 'http://localhost:3001/', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null };
+const gym: ProjectConfig = { name: 'Gym', description: '', pois: [poi], goal: 'Post a job', role: null, audience: null, settings: { ...DEFAULT_SETTINGS, cost_budget_usd: 6 } };
+const deepseek: ModelChoice = { provider: 'deepseek', model: 'deepseek-v4-pro' };
+
+test('a lone run is as it was; a set shares its budget and group, and only its extra run moves to the other model', () => {
+  assert.deepEqual(repeatRuns(gym), [{ config: gym }]);
+  assert.deepEqual(repeatRuns(gym, 1), [{ config: gym }]);
+  const runs = repeatRuns(gym, 2, deepseek);
+  assert.deepEqual(runs.map((run) => run.repeat?.index), [1, 2, 3]);
+  assert.ok(runs.every((run) => run.repeat?.of === 3 && run.repeat.group === runs[0].repeat?.group));
+  assert.deepEqual(runs.map((run) => run.config.settings.cost_budget_usd), [2, 2, 2]);
+  assert.deepEqual(runs.map((run) => run.config.settings.routing.navigator.provider), ['anthropic', 'anthropic', 'deepseek']);
+  assert.deepEqual(runs[2].config.settings.routing.socialiser, deepseek);
+  assert.deepEqual(runs[2].config.settings.routing.judge, DEFAULT_SETTINGS.routing.judge, 'the judge stays, so every run is analysed alike');
+  assert.equal(gym.settings.cost_budget_usd, 6, 'the project keeps its budget');
+  assert.notEqual(repeatRuns(gym, 2)[0].repeat?.group, runs[0].repeat?.group);
+  assert.equal(repeatRuns(gym, 1, deepseek).length, 2);
+  for (const bad of [0, -1, 1.5, Number.NaN]) assert.throws(() => repeatRuns(gym, bad), /whole number/);
+});
+
+test('the estimate of a set adds up its runs, each at its own prices', () => {
+  const personas = [BUILTIN_PERSONA];
+  const one = estimateFor(gym, personas);
+  const three = estimateFor(gym, personas, 3);
+  assert.equal(three.calls, one.calls * 3);
+  for (const i of [0, 1]) {
+    assert.ok(Math.abs(three.cost_usd[i] - one.cost_usd[i] * 3) < 1e-9);
+    assert.ok(Math.abs(three.minutes[i] - one.minutes[i] * 3) < 1e-9, 'one after another, never side by side');
+  }
+  const also = estimateFor(gym, personas, 1, deepseek);
+  assert.equal(also.calls, one.calls * 2);
+  const other = estimateFor({ ...gym, settings: { ...gym.settings, routing: { ...gym.settings.routing, navigator: deepseek, socialiser: deepseek } } }, personas);
+  assert.ok(Math.abs(also.cost_usd[1] - (one.cost_usd[1] + other.cost_usd[1])) < 1e-9, 'the second run is at DeepSeek prices');
+  assert.notEqual(other.cost_usd[1], one.cost_usd[1]);
+  assert.deepEqual(estimateFor(gym, personas, 1, { provider: 'openai', model: 'no-such-model' }).unpriced, ['no-such-model']);
+});
+
+test('the runs of a set go one at a time, and a run that stops ends it', async () => {
+  const report = (status: Report['status']) => ({ status }) as Report;
+  const started: number[] = [];
+  let active = 0;
+  const run = (statuses: Report['status'][]) => async (_: string, index: number) => {
+    assert.equal(active++, 0, 'one active run');
+    started.push(index);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active--;
+    return report(statuses[index]);
+  };
+  assert.equal((await runSet(['a', 'b', 'c'], run(['finished', 'finished', 'finished']))).length, 3);
+  started.length = 0;
+  assert.deepEqual((await runSet(['a', 'b', 'c'], run(['finished', 'stopped', 'finished']))).map((r) => r.status), ['finished', 'stopped']);
+  assert.deepEqual(started, [0, 1], 'the third never started');
+  await assert.rejects(runSet(['a', 'b'], async (_, index) => { if (index) throw new Error('login gone'); return report('finished'); }), /login gone/);
 });

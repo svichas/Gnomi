@@ -1,6 +1,7 @@
 import { isUnrated } from '../types.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
+import type { RepeatSet } from './repeats.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
 // so HTML and the characters that start a link, image or code span are escaped: a page cannot make the export load an image
@@ -20,7 +21,35 @@ export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
-export function reportToMarkdown(report: Report): string {
+/** "2 runs compared." and what a repeat means, or that the set is incomplete. */
+export const setNote = (set: RepeatSet) => `${set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.`;
+
+/** What a set says about one finding of its run: "Appeared in 3 of 3 runs". Null for a run the set could not compare, or a set of one. */
+export function repeatNote(set: RepeatSet | undefined, run_id: string, theme: ReportTheme) {
+  const finding = set?.findings.find((f) => f.poi_id === theme.poi_id && f.themes[run_id] === theme.id);
+  if (!set || !finding || finding.of < 2) return null;
+  return {
+    appeared: `Appeared in ${finding.seen_in} of ${finding.of} runs`,
+    one_family: set.families.length > 1 && finding.families.length === 1 ? `Only ${finding.families[0]} runs produced this` : null,
+    other_titles: finding.titles.filter((title) => title !== theme.title), // how a reader can spot a false pair (report/repeats.ts)
+  };
+}
+
+/** A set's findings side by side, for `gnomi report --repeat`. */
+export function repeatsToMarkdown(set: RepeatSet): string {
+  return [
+    `# Gnomi repeat set ${set.group ?? ''}`.trimEnd(), '',
+    `> ${setNote(set)}`, '',
+    `Model families: ${set.families.map(line).join(', ') || 'none'}.`, '',
+    '| Finding | Appeared in | Model families | Also named |',
+    '| --- | --- | --- | --- |',
+    ...set.findings.map((f) => `| ${cell(f.titles[0])} | ${f.seen_in} of ${f.of} runs | ${f.families.map(cell).join(', ')} | ${f.titles.slice(1).map(cell).join('; ')} |`),
+    '',
+  ].join('\n');
+}
+
+/** A run of a repeat set gets `set` when read, which adds how its findings did across the set; the run's own report stays as it was. */
+export function reportToMarkdown(report: Report, set?: RepeatSet): string {
   if (report.comparison) return comparisonToMarkdown(report);
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
@@ -33,12 +62,14 @@ export function reportToMarkdown(report: Report): string {
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
+    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}`] : []),
+    ...(set ? [`- ${setNote(set)}`] : []),
     '',
     '## Segments',
     '',
     ...segmentLines(report),
     ...dimensionLines(report),
-    ...themeLines(report),
+    ...themeLines(report, set),
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
@@ -167,7 +198,7 @@ export const TRUST_TEXT = {
   reported: 'a self-report only',
 } as const;
 
-function themeLines(report: Report): string[] {
+function themeLines(report: Report, set?: RepeatSet): string[] {
   if (!report.themes) return [];
   if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
   return [
@@ -177,13 +208,13 @@ function themeLines(report: Report): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t))) : ['', 'No frictions to group into themes.'])];
         })
-      : report.themes.flatMap((theme) => themeToMarkdown(theme))),
+      : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme)))),
   ];
 }
 
-function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
+function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<typeof repeatNote>): string[] {
   const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
@@ -191,6 +222,8 @@ function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
     ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
+    ...(repeats ? [`- Repeats: ${line(repeats.appeared)}${repeats.one_family ? `. ${line(repeats.one_family)}` : ''}`] : []),
+    ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
