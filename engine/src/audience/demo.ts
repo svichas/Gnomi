@@ -187,10 +187,15 @@ function line(text: string, label: string): unknown {
   return found === undefined ? undefined : JSON.parse(found.slice(label.length));
 }
 
-/** Scripted persona_writer answers (proposal and write-ups) for tests and GNOMI_FAKE_LLM. */
+/** Scripted persona_writer answers (proposal, digest and write-ups) for tests and GNOMI_FAKE_LLM. */
 export const DEMO_PERSONA_WRITER: Responder = (req: LlmRequest<unknown>) => {
   const text = req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
   if (req.purpose === 'propose_audience') return proposal((line(text, LOGINS_LABEL) as string[] | undefined) ?? []);
+  if (req.purpose === 'ground_segment') {
+    // The first line of text in the first source, so the remark is word for word; the fact says no model read it.
+    const said = /<source n="1">\n([\s\S]*?)\n<\/source>/.exec(text)?.[1].split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
+    return { facts: ['Goal: scripted demo fact, no model read the sources.'], remarks: said ? [said.slice(0, 200)] : [] };
+  }
   if (['write_persona', 'expand_persona', 'rename_persona'].includes(req.purpose ?? '')) {
     const traits = line(text, TRAITS_LABEL) as Traits | undefined;
     if (!traits) throw new Error('DEMO_PERSONA_WRITER: the request has no sampled traits');

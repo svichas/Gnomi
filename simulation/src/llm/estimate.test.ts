@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, RunSettings } from '../types.ts';
-import { estimateReport, estimateRun } from './estimate.ts';
+import { DIGEST_OUTPUT_TOKENS, estimateDigest, estimateReport, estimateRun } from './estimate.ts';
 import { draftComparison } from '../comparison/config.ts';
 
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
@@ -13,6 +13,17 @@ const persona = (patience: number): Persona => ({ ...BUILTIN_PERSONA, patience }
 //   high: judge 30,000 in + 4,000 out = $0.10; author 20,000 in + 8,000 out = $0.24
 const REPORT = { calls: 2, cost: [0.014 + 0.048, 0.1 + 0.24], minutes: [0.2, 1] } as const;
 const withNavigator = (navigator: ModelChoice, rest: Partial<RunSettings> = {}): RunSettings => ({ ...DEFAULT_SETTINGS, ...rest, routing: { ...DEFAULT_SETTINGS.routing, navigator } });
+
+test('a digest is one call, priced at two attempts at the output limit for its ceiling', () => {
+  // Sonnet 5.5 at $2/$10. Low: 2,000 in + 200 out. High: 2 × (3,000 in + 2,048 out).
+  const estimate = estimateDigest({ bytes: 4_000, model: { provider: 'anthropic', model: 'claude-sonnet-5-5' } });
+  assert.equal(DIGEST_OUTPUT_TOKENS, 2_048);
+  assert.equal(estimate.calls, 1);
+  close(estimate.cost_usd[0], 0.006);
+  close(estimate.cost_usd[1], 0.05296);
+  assert.deepEqual(estimateDigest({ bytes: 4_000, model: { provider: 'openai', model: 'gpt-9-mystery' } }).unpriced, ['gpt-9-mystery']);
+  assert.deepEqual(estimateDigest({ bytes: 4_000, model: { provider: 'openai_compatible', model: 'local' } }).cost_usd, [0, 0]);
+});
 
 test('comparison verifier estimate prices the selected route without changing navigation or assessment calls', () => {
   const comparison = draftComparison({ name: 'Tools', description: '', goal: 'Evaluate plans', role: null, audience: null, settings: DEFAULT_SETTINGS,

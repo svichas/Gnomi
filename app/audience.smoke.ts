@@ -240,6 +240,27 @@ try {
   await page.setViewportSize({ width: 1100, height: 900 });
   await panel.getByRole('button', { name: 'Use the audience mix for Everyday users', exact: true }).click();
   await panel.getByText('From analytics: DE 75%, GR 25%', { exact: true }).waitFor({ state: 'detached' });
+  // Research notes state what they will send and cost before anything leaves, and the digest shows what the writer will read.
+  const notes = join(dir, 'interview.md');
+  writeFileSync(notes, 'I keep every draft in a spreadsheet, write to ana@acme.io.\n');
+  await panel.getByLabel('Research notes for Everyday users', { exact: true }).setInputFiles(notes);
+  const sending = page.getByRole('dialog', { name: 'Send these notes to your model?' });
+  await sending.getByText(/Names and other details are not removed, and the text goes to your model provider/).waitFor();
+  await sending.getByText(/keep some interviews back for a study/).waitFor();
+  await sending.getByText(/^This will cost at most \$\d+\.\d+\.$/).waitFor();
+  for (const width of [1100, 320]) {
+    await page.setViewportSize({ width, height: 960 });
+    await assertFits(page, `research notes dialog overflow at ${width}`);
+    await page.screenshot({ path: join(shots, `audience-sources-${width}.png`) });
+  }
+  await sending.getByRole('button', { name: 'Send and extract', exact: true }).click();
+  const digest = panel.getByRole('list', { name: 'Research digest for Everyday users', exact: true });
+  await digest.getByText('“I keep every draft in a spreadsheet, write to [email removed].”', { exact: true }).waitFor();
+  await panel.getByRole('status').filter({ hasText: 'Extracted 1 fact and 1 remark' }).waitFor();
+  await assertFits(page, 'research digest overflow at 320');
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await panel.getByRole('button', { name: 'Remove the research digest for Everyday users', exact: true }).click();
+  await digest.waitFor({ state: 'detached' });
   // A saved audience outlives this one: save it, start over, start from it, replace it by name, then delete it.
   const segmentList = panel.getByRole('list', { name: 'Segments', exact: true }).locator(':scope > li');
   const segmentCount = await segmentList.count();

@@ -203,6 +203,31 @@ test('audience analytics reports the changes, keeps the file on a dry run, and s
   assert.ok(JSON.parse(readFileSync(file, 'utf8')).personas.every((p: { country: string }) => ['DE', 'GR'].includes(p.country)));
 });
 
+test('audience sources warns first, keeps a digest and no source text, and a refusal leaves the file as it was', () => {
+  const file = join(dir, 'sources.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');
+  const notes = join(dir, 'ana-interview.md');
+  writeFileSync(notes, '# Interview\n\nI compare plans in a spreadsheet, ask ana@acme.io.\n\nA very private second line.');
+  const before = readFileSync(file, 'utf8');
+  const refused = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'audience', 'sources', file, '--segment', 'seg-1', '--file', notes, '--budget', '0.000001', '--fake-llm'], { encoding: 'utf8' });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /could cost up to .* budget/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+  for (const args of [['--segment', 'seg-9', '--file', notes], ['--segment', 'seg-1'], ['--segment', 'seg-1', '--file', notes, '--budget', '0'], ['--segment', 'seg-1', '--file', join(dir, 'pois.json')]]) {
+    assert.equal(spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'audience', 'sources', file, ...args, '--fake-llm'], { encoding: 'utf8' }).status, 1, args.join(' '));
+  }
+  const lines = cli('audience', 'sources', file, '--segment', 'seg-1', '--file', notes, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(lines[0].kind, 'note');
+  assert.match(lines[0].text, /Emails removed: 1\. Phone numbers removed: 0\. .*Names and other details are not removed, and the text goes to your model provider .*keep some interviews back for a study/);
+  const result = lines.at(-1);
+  assert.deepEqual([result.kind, result.segment, result.facts, result.remarks, result.dropped, result.stale], ['sources', 'seg-1', 1, 1, 0, 2]);
+  assert.deepEqual(result.sources.map((s: { name: string }) => s.name), ['ana-interview.md']);
+  const saved = readFileSync(file, 'utf8');
+  assert.match(saved, /I compare plans in a spreadsheet, ask \[email removed\]\./);
+  assert.equal(saved.includes('private second line') || saved.includes('ana@acme'), false, 'only the digest stays');
+  assert.equal(cli('audience', 'update', file, '--json').includes('"written":2'), true, 'a grounded segment is written again');
+});
+
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
   const settings = join(dir, 'navigator.json');
   writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));

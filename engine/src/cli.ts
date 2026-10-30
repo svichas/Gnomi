@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { sourceOf } from './audience/ground.ts';
+import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
 import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, projectGateway, repeatReports, repeatRuns, rerunProject, runRoles, runSet, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
@@ -37,6 +37,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience analytics <audience.json> --file <csv> [--segment <id>] [--dry-run]
       sets segment shares, phone shares, countries and languages from an analytics export, with no model call. Without a segment
       column in the file, --segment says which segment it describes. The file is read once and only its name and hash are kept.
+  audience sources <audience.json> --segment <id> --file <path> [--file <path>...] [--budget <usd>] [--settings <settings.json>] [--fake-llm]
+      condenses interview notes or support tickets (.md or .txt) into the segment's goals, vocabulary, objections, tools and verbatim
+      remarks, with one persona_writer call, refused if it could cost more than --budget ($${SOURCES_BUDGET_USD} by default). Emails and phone numbers
+      are removed first; names and other details are not, and the text goes to your model provider. The files are not kept.
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>]
@@ -364,6 +368,34 @@ function audienceAnalytics(v: Values, path: string | undefined): void {
   );
 }
 
+async function audienceSources(v: Values, path: string | undefined): Promise<void> {
+  if (!path || !v.segment || !v.file?.length) throw new Error(`audience sources needs the audience file, --segment and at least one --file.\n\n${USAGE}`);
+  const file = readAudienceFile(path);
+  const segment = file.audience.segments.find((s) => s.id === v.segment);
+  if (!segment) throw new Error(`There is no segment ${v.segment} in ${path}: it has ${file.audience.segments.map((s) => s.id).join(', ')}.`);
+  const budget = v.budget === undefined ? SOURCES_BUDGET_USD : Number(v.budget);
+  if (!(budget > 0)) throw new Error('--budget must be a positive amount in dollars.');
+  const settings = settingsFrom(v);
+  const fake = v['fake-llm'];
+  requireKey(settings, 'persona_writer', fake);
+  const sources = readSources(v.file);
+  const count = (pick: (source: (typeof sources)[number]) => number) => sources.reduce((sum, source) => sum + pick(source), 0);
+  note(`Emails removed: ${count((s) => s.emails)}. Phone numbers removed: ${count((s) => s.phones)}. ${sourcesNotice(settings.routing.persona_writer)}`);
+  await inTempProject(async (store) => {
+    const config = { ...fileProject(file), settings };
+    store.saveProject(config);
+    const llm = cappedGateway(projectGateway({ fake, secrets: envSecrets, config, record: timeline(store) }), budget, new AbortController().signal);
+    const { grounding, dropped, cost_usd } = await groundSegment(segment, sources, audienceDeps(store, config, llm), budget);
+    const updated = { ...file, audience: { ...file.audience, segments: file.audience.segments.map((s) => (s === segment ? { ...s, grounding } : s)) } };
+    writeAudienceFile(path, updated);
+    const stale = staleIn(updated);
+    out(
+      `Digest of ${segment.name} saved to ${path} (facts: ${grounding.facts.length}, remarks: ${grounding.remarks.length}, $${cost_usd.toFixed(4)}).${dropped ? ` Remarks dropped, not found word for word or over the limit: ${dropped}.` : ''} ${stale} personas would be written again by "audience update".`,
+      { kind: 'sources', file: resolve(path), segment: segment.id, facts: grounding.facts.length, remarks: grounding.remarks.length, dropped, sources: grounding.sources, cost_usd, stale },
+    );
+  });
+}
+
 function listPersonas(v: Values, path: string | undefined): void {
   if (!path) throw new Error(`personas needs the audience file.\n\n${USAGE}`);
   const file = readAudienceFile(path);
@@ -662,6 +694,7 @@ async function main(): Promise<void> {
   if (command === 'audience' && sub === 'create') return createAudienceFile(values);
   if (command === 'audience' && sub === 'update') return updateAudienceFile(values, target);
   if (command === 'audience' && sub === 'analytics') return audienceAnalytics(values, target);
+  if (command === 'audience' && sub === 'sources') return audienceSources(values, target);
   if (command === 'personas') return listPersonas(values, sub);
   if (command === 'estimate') return values.base ? estimateRerun(values, sub) : estimate(values);
   if (command === 'run') return runSimulation(values);

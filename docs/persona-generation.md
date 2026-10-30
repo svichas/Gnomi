@@ -8,11 +8,24 @@ Gnomi creates fictional profiles from audience assumptions supplied or approved 
 
 1. **Define the audience.** Enter segments and their shares, or review the model's optional suggestions. Configure traits such as language, device, patience and access needs, along with the product description and task. Defaults and model suggestions are assumptions until checked against research or audience data. An analytics export can replace some of those assumptions with counts: it sets segment shares, phone shares, and each segment's countries and languages, with no model call. Values Gnomi cannot map are skipped and listed, never guessed, and only the file's name and hash are kept.
 2. **Sample traits in code.** Gnomi allocates the requested population across segments and samples each profile's enabled traits from configured distributions using saved seeds. Segment shares control allocation; they do not prove that those shares match the market.
-3. **Write candidate profiles.** The configured `persona_writer` model receives the product, segment, task and sampled traits. It proposes four short fictional candidates with identities, contexts, goal interpretations, voices and selection weights. Those model-generated weights are not measured probabilities of real people existing.
+3. **Write candidate profiles.** The configured `persona_writer` model receives the product, segment, task and sampled traits, plus the segment's research digest if it has one (see [Grounding a segment in real data](#grounding-a-segment-in-real-data)). It proposes four short fictional candidates with identities, contexts, goal interpretations, voices and selection weights. Those model-generated weights are not measured probabilities of real people existing.
 4. **Select and expand.** Seeded code chooses a candidate using those weights, excluding already-used names where possible. A second model call expands only the chosen biography; the sampled traits remain fixed. Name repair handles collisions.
 5. **Review before running.** Inspect the profiles and diversity report, then edit, regenerate, add or remove personas. A diversity check detects similarities in generated profiles; it does not validate their behaviour against people.
 
 The resulting profile conditions an agent's actions and generated comments during a run. A seed makes code-level sampling repeatable for the same inputs; fresh model responses may still differ. Reusing saved personas preserves their profiles, but neither that nor a seed guarantees identical behaviour in later runs.
+
+## Grounding a segment in real data
+
+A team can add interview notes or support tickets to a segment, as `.md` or `.txt` files, in the app or with `audience sources`.
+
+1. **Redaction.** Code removes emails and phone numbers, in international and national formats, before any model call. Dates, ids and prices stay. Names and other details are **not** removed, and the redacted text goes to the team's model provider. The app and the CLI say so before the call.
+2. **Digest.** One `persona_writer` call reads the redacted text, which is marked as untrusted, and returns at most 8 facts about the segment's goals, vocabulary, objections and tools, and at most 5 remarks. Its most possible cost is shown first, and a call that could cost more than its budget is refused.
+3. **Remarks must be real.** A remark is kept only if it is a word-for-word part of the redacted text, ignoring whitespace. The rest are dropped and counted, so a model that makes up a quote cannot put it in a persona's prompt.
+4. **What stays.** The digest stays on the segment, with each file's name and hash. The files are not copied into the project. A segment's digest replaces the one before it.
+
+The digest goes to the writer with the instruction that personas stay fictional and must not copy a real person's name, employer, contact details or life story. Adding one rewrites only that segment's personas, and personas of other segments stay current.
+
+Data used to write personas cannot also test them, so keep some interviews back for a study. A report's methods list the source names, so a team can check which were used. Grounded personas look more credible whether or not they are more accurate: they are still fictional, and their findings are still hypotheses.
 
 Generated biographies, quotes, opinions and findings remain synthetic. Use them to formulate questions for real participants, not as participant testimony or evidence of customer needs. See [Interpreting simulations](interpreting-simulations.md) for report terminology and validation.
 

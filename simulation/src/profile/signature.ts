@@ -15,11 +15,13 @@ export function profileSignature(project: ProjectConfig, segment: Segment, seed:
   const schema = getPersonaSchema(project.persona_schema);
   const traits = { ...sampleTraits(segment, project.audience, seed), attributes: sampleProfile(schema, segment.id, seed), seed };
   const visible = profileEntries(traits as Persona, schema, 'prompt');
+  // Only what the writer reads: a segment with no digest adds nothing here, so its personas stay current, and an analytics file's name changes no prose.
+  const { facts = [], remarks = [] } = segment.grounding ?? {};
   const promptSchema = schema.attributes.filter((a) => a.enabled && a.use_in_prompt).map(({ id, name, type, group, description }) => ({ id, name, type, group, description })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const input = stable({
     version: 1, seed, schema: promptSchema, traits: Object.fromEntries(visible.map(({ attribute, value }) => [attribute.id, value])),
     product: { name: project.name, description: project.description, goal: segment.goal_override ?? project.goal },
-    segment: { id: segment.id, name: segment.name, description: segment.description, usage_frequency: segment.usage_frequency, entry: segment.entry, account_state: segment.account_state, typical_goals: segment.typical_goals },
+    segment: { id: segment.id, name: segment.name, description: segment.description, usage_frequency: segment.usage_frequency, entry: segment.entry, account_state: segment.account_state, typical_goals: segment.typical_goals, grounding: facts.length || remarks.length ? { facts, remarks } : undefined },
   });
   return `p1-${fnv1a(input).toString(16).padStart(8, '0')}${fnv1a(`profile-input/${input}`).toString(16).padStart(8, '0')}-${input.length}`;
 }

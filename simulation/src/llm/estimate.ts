@@ -29,6 +29,11 @@ const CHECK_CALLS = [1, 5] as const;
 const CHECK_INPUT = [1_500, 16_000] as const;
 const CHECK_OUTPUT = [500, 2_000] as const;
 
+// A digest of a segment's research files (engine/src/audience/ground.ts): one persona_writer call, and one retry after an invalid output.
+export const DIGEST_OUTPUT_TOKENS = 2_048;
+const DIGEST_PROMPT_TOKENS = 1_000;
+const DIGEST_BYTES_PER_TOKEN = [4, 2] as const; // 4 for English; few texts get near 2, so the high figure works as a ceiling
+
 /** One uncached call at `at`'s prices; nothing for a model with no known price, which the estimate lists as unpriced. */
 const price = (model: ModelChoice, input: number, output: number, at: Date) =>
   isPriced(model) ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
@@ -78,6 +83,13 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
     minutes: [minutes(fewest + surveys + social, STEP_SECONDS[0]) + report.minutes[0], minutes(most + surveys + social, STEP_SECONDS[1]) + report.minutes[1]],
     unpriced: [...new Set([...(priced ? [] : [model.model]), ...(socialPriced ? [] : [socialiser.model]), ...report.unpriced])],
   };
+}
+
+/** What a digest of `bytes` of source text costs on `model`: the high figure is two attempts at the output limit, which `audience sources` holds to its budget. */
+export function estimateDigest({ bytes, model, at = new Date() }: { bytes: number; model: ModelChoice; at?: Date }): RunEstimate {
+  const low = price(model, DIGEST_PROMPT_TOKENS + bytes / DIGEST_BYTES_PER_TOKEN[0], OUTPUT_TOKENS, at);
+  const high = 2 * price(model, DIGEST_PROMPT_TOKENS + bytes / DIGEST_BYTES_PER_TOKEN[1], DIGEST_OUTPUT_TOKENS, at);
+  return { calls: 1, cost_usd: [low, high], minutes: [0.1, 3], unpriced: isPriced(model) ? [] : [model.model] };
 }
 
 /** Comparison episodes collect evidence before assessment and optional verification; budget for both passes. */
