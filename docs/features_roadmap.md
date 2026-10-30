@@ -52,10 +52,15 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 | 1. Noise cuts | Steps 1–3 built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6 | Step 4, the interference tag |
 | 2. Finding check | Built, off by default | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision. No settings control in the app yet |
 | 3. Repeat-run reliability | Steps 1–6 built | Scripted tests, including a stopped set and the CLI path. `--evaluate` now reports stability per arm | Step 7, the trait-free run. Whether real findings repeat is unmeasured |
-| Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build |
+| 10. Before/after comparison | Built | The M6 test passes on the real Gym with a scripted navigator: with D01, D14 and D16 switched off, exactly those three read as fixed. On the saved runs against the control build, all three themes read as fixed are real defects (D12, D13) | A live run. The 0.6 overlap for a duplicated run is unmeasured |
+| 15. Written summary | Built | Tests of ten report shapes, and the report smoke test | How it reads on real reports |
+| 16. Plain priority labels | Built | Tests of the rule, and the report smoke test | How the labels read on real reports |
+| 17. Drop-off flow | Built | Tests, plus the report smoke test at 320 px and in the HTML export | Usefulness on real logs is unmeasured |
+| 18. Findings on the screenshot | Built, for new runs | Real-browser tests put the box within 2 px of the element, on desktop, scrolled, on a phone, zoomed out and panned | Usefulness on real logs is unmeasured |
+| Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build, now marked as weak in comparisons |
 | Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
 
-Everything else has not started. All 1,048 tests pass on the branch, with typecheck and lint clean, and the Electron report, UI and main smoke tests pass, though they do not reach the repeat count or the set-aside section. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
+Everything else has not started. All 1,138 tests pass on the branch, with typecheck and lint clean, and the Electron report and main smoke tests pass, though they do not reach the repeat count or the set-aside section. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
 
 ## What "better results" means
 
@@ -118,7 +123,7 @@ Theme ids are positions such as `g1+g4`, so they mean nothing outside one run. [
 
 Size: S. Test it on the two M3 seed reports, where D03, D04, D12, D13 and D18 should match.
 
-Measured on the rebuilt M3 seed reports: D03, D04, D13 and D18 match, with no false pair. D12 does not: its titles score 0.10 and it shares no key, and a lower title threshold would let in false pairs at 0.15. The order became a strong key overlap (above 0.3), then titles, then any shared key, because one shared key is often chance; keys are compared without their host, because each Gym build runs on its own port. Against the control build one false pair remains: D12's theme and a backtracking theme share the link "Settings" on `/settings/users`. A pair like that would show a fixed defect as unchanged, so the M6 test in item 10 should check for it.
+Measured on the rebuilt M3 seed reports: D03, D04, D13 and D18 match, with no false pair. D12 does not: its titles score 0.10 and it shares no key, and a lower title threshold would let in false pairs at 0.15. The order became a strong key overlap (above 0.3), then titles, then any shared key, because one shared key is often chance; keys are compared without their host, because each Gym build runs on its own port. Against the control build one false pair remains: D12's theme and a backtracking theme share the link "Settings" on `/settings/users`. Item 10 handles this by giving a pair on one shared key its own kind, `shared_key`. A comparison shows it as a weak match with both titles, and never as fixed. Repeat sets and the stability metric still count such pairs.
 
 ### Block B: page text kept with each step
 
@@ -335,6 +340,16 @@ The rolling memory summary in [tech.md §6.5](tech.md#65-memory) is also unbuilt
 
 **Risk.** Model aliases can change between runs ([new_simulation.md §5](new_simulation.md#5-logical-execution-and-reproducibility)), so show `response_model` when the two sides differ.
 
+**Built.** `gnomi rerun` and `gnomi compare` work, and the app has Run again and a compare view reached from past runs. The status stays `fixed` in JSON, but the screen and Markdown say "Not seen again" and give the reach, because personas may simply not have tried the failing path. A theme needs 3 personas on every one of its pages before it can read as fixed. A theme with no pages needs 3 personas who answered a survey. An evidence-check set-aside on one side reads as unchanged, and says so.
+
+Measured on the saved 16 October runs against the control build, with no model calls:
+
+- Three themes read as fixed, and all three are real defects (D12, D13) that the control build does not have.
+- The rest of the defect themes read as `not_retested` or as weak matches, because only 4 personas ran. One of those weak matches is D13, so it is held back rather than called fixed.
+- Keys on these rebuilt logs are unreliable, so treat this as a rough signal.
+
+Two limits remain. A theme on a page that exists only because of a defect, such as D03's 404, reads as `not_retested` once fixed, because nobody can reach that page. So a live M6 run with D03 among the three would not show exactly three. A new theme on a page the earlier run never reached still reads as new.
+
 ### 11. CI gate
 
 **How.** Add `gnomi gate <dir> --base <run> --run <run>`, which exits non-zero on a new high-severity theme from `diffReports`. Require a repeat set, as the [regression plan](roadmap.md#evaluation-plan) needs a rolling window over three runs. Document one GitHub Actions example. Some competitors also offer an MCP server, but the CLI's `--json` output and [the skill](../.claude/skills/gnomi/SKILL.md) already give agents a way in, so skip that for now.
@@ -371,17 +386,25 @@ These items are independent of the rest, so a second engineer can build them at 
 
 Add a few sentences above `Glance`: the biggest problem, who it affects and what to look at next. Build it from a template over the ranked themes first, which adds no model cost and cannot invent anything. Add an `author` call only if the template reads badly.
 
+**Built** as `writtenSummary` in [report/summary.ts](../simulation/src/report/summary.ts), from the template alone. It uses the team's own product only.
+
 ### 16. Plain priority labels
 
 Add a pure `priorityOf(theme)` next to the ranking in [report/themes.ts](../simulation/src/report/themes.ts) that maps evidence level and severity to Fix now, Next and Later. Keep the logic out of the renderer, so the app and Markdown agree. The labels describe evidence inside the run, and the hypothesis banner still applies.
+
+**Built.** Labels never reorder themes. Ranking sorts by evidence level first, so a Next can occasionally sit below a Later: one persona meeting a recorded failure stays at Next, because a recorded failure can be a real technical defect. Objections and competitor themes get no label.
 
 ### 17. Drop-off flow
 
 Add a pure `buildFlow` in a new `simulation/src/report/flow.ts`. Use `pagePattern` over each step's `url_before` and `url_after` to count transitions and where personas abandoned, with no new data. [tech.md §4.9](tech.md#49-ui-framework-kit-lists-and-charts) chose Recharts, but it is not in [app/package.json](../app/package.json). Draw a small inline SVG instead, which also survives `renderToStaticMarkup` in the HTML export.
 
+**Built**, with a table of the same counts for Markdown and screen readers. It shows the 8 pages most personas reached and says how many were left out. It says "ended here", because it shows where episodes ended, not why.
+
 ### 18. Findings on the screenshot
 
 Add `box` to `ReportEvidence` and draw it over the screenshot in `Evidence`. Step targets already carry a box, and the page text keeps `[box=…]`, so `targetIn` in [agent/loop.ts](../simulation/src/agent/loop.ts) can read it instead of returning null. Check that the box and the JPEG use the same coordinates and scale. Zaplens' colour-coded dots for attraction and confusion need new persona output, so leave them out.
+
+**Built** for new runs. Each step now records the visual viewport, because a phone zooms out on some pages, so the JPEG's size alone would place the box wrongly. A box shows only when the evidence is about that element. Logs from before this change, and elements inside iframes, show the plain screenshot. The Markdown names the element but draws nothing.
 
 ### 19. Edit before sharing
 
