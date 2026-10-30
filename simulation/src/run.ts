@@ -157,7 +157,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const checkRecordedBudget = () => {
     const now = spentUsd();
     if (now < settings.cost_budget_usd) return now;
-    halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd} recorded-cost budget was reached` }, true);
+    halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd.toFixed(2)} recorded-cost budget was reached` }, true);
     return now;
   };
   const budgetedLlm: LlmGateway = {
@@ -189,7 +189,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (drain.signal.aborted) return false;
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
     if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
-      halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
+      halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd.toFixed(2)} budget` }, false);
       return false;
     }
     inFlight++;
@@ -204,7 +204,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const admit = (steps: number, what: string) => {
     const now = spentUsd();
     if (now + steps * (stepsDone ? now / stepsDone : 0) < settings.cost_budget_usd) return true;
-    halt({ reason: 'cost_budget', detail: `${what} was projected to reach the $${settings.cost_budget_usd} budget` }, false);
+    halt({ reason: 'cost_budget', detail: `${what} was projected to reach the $${settings.cost_budget_usd.toFixed(2)} budget` }, false);
     return false;
   };
 

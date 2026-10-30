@@ -44,7 +44,7 @@ test('a capped gateway makes no call once its own calls have spent the cap, nor 
   const ask = (llm: LlmGateway) => llm.call({ role: 'judge', model: DEFAULT_SETTINGS.routing.judge, run_id: null, persona_id: null, round: 1, system: '', user: [], schema: z.object({}) });
   const capped = cappedGateway(scripted, 1, new AbortController().signal);
   for (let i = 0; i < 3; i++) await ask(capped); // $1.20: the call that crosses the cap is paid for, so it answers
-  await assert.rejects(ask(capped), /\$1 budget/);
+  await assert.rejects(ask(capped), /\$1\.00 budget/);
   const stop = new AbortController();
   stop.abort();
   await assert.rejects(ask(cappedGateway(scripted, 1, stop.signal)));
