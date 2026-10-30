@@ -62,14 +62,14 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
 One run is one sample of a noisy model. A repeat set shows which findings come back:
 
 ```bash
-npm run -s gnomi -- estimate --pois pois.json --audience audiences/acme.json --repeats 3 --also-model deepseek:deepseek-v4-pro --json
-npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --repeats 3 --also-model deepseek:deepseek-v4-pro --json > runs/acme.log 2>&1
+npm run -s gnomi -- estimate --pois pois.json --audience audiences/acme.json --repeats 3 --also-model deepseek:deepseek-flash --json
+npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --repeats 3 --also-model deepseek:deepseek-flash --json > runs/acme.log 2>&1
 ```
 
-- `--repeats n` makes n runs one after another with the same personas and follow graph. `--also-model provider:model` adds one more run with the navigator and socialiser on that model (it must have a price, and its key must be set). The judge and author stay the same for every run.
-- Each run gets `cost_budget_usd` divided by the number of runs, and its own report and `run` line. `estimate` takes the same flags and gives the total, so check it against the budget as usual.
-- A run that stops ends the set: no further run starts.
-- The last line has `"kind":"repeats"`: `group`, `of` (runs planned), `compared` (runs that finished), `incomplete`, `families`, and `findings`, each with `seen_in`, `of`, its model `families` and its `titles`. A stopped run is not compared.
+- `--repeats n` makes n runs one after another with the same personas and follow graph. `--also-model provider:model` adds one more run with the navigator and socialiser on that model (it must have a price, and its key must be set). The judge and author stay the same for every run. A text-only model such as `deepseek:deepseek-v4-pro` gets no screenshots while the others do, so a `note` says the runs differ in images as well as model; prefer a model that reads images.
+- Each run gets `cost_budget_usd` divided by the number of runs (`run_budget_usd` in the `estimate` result), stops when it has spent that, and has its own report and `run` line. `estimate` takes the same flags and gives the total, but the total fitting the budget is not enough: the most expensive run's high estimate, `run_high_usd`, has to fit `run_budget_usd` too. Otherwise that run, usually the `--also-model` one, can stop and leave the set incomplete while the others leave budget unused. Ask the user before such a set, as for a run over budget.
+- A run that stops ends the set: no further run starts. So does a stop that lands just after a run ended; that run stays finished.
+- The last line has `"kind":"repeats"`: `group`, `of` (runs planned), `compared` (runs that finished), `running` (true while the set is still going, when read from another process), `incomplete` (the set ended with fewer finished than planned), `families`, and `findings`, each with `seen_in`, `of`, its model `families` and its `titles`. A stopped run is not compared.
 - `report <project dir> --repeat <group> --json` reads a set again; `--format md` gives a table. `report --run <id> --format md` adds "Appeared in 3 of 3 runs" to each finding of a run in a set. Each run's own files stay as they were written.
 - Say "appeared in 2 of 3 runs", and flag a finding only one model family produced. Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis, so never call it confidence, or validated. When `titles` holds different problems, the match was wrong: read those themes before counting them as one.
 

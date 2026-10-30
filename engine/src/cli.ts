@@ -23,7 +23,7 @@ import { reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/ma
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
 import { createRecorder, type RunHandle } from '@gnomi/simulation/run.ts';
-import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
 import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
@@ -117,7 +117,7 @@ function settingsFrom(v: Values): RunSettings {
 }
 
 /** --also-model, refused before any run is paid for rather than on its run's first model call. */
-function alsoModel(v: Values): ModelChoice | undefined {
+function alsoModel(v: Values, settings: RunSettings): ModelChoice | undefined {
   const value = v['also-model'];
   if (value === undefined) return undefined;
   const colon = value.indexOf(':');
@@ -125,6 +125,8 @@ function alsoModel(v: Values): ModelChoice | undefined {
   if (colon < 1 || !model || !Object.hasOwn(PROVIDER_DEFAULTS, provider)) throw new Error(`--also-model must be provider:model, with provider one of ${Object.keys(PROVIDER_DEFAULTS).join(', ')}.`);
   const choice = { provider: provider as ProviderId, model };
   if (!isPriced(choice)) throw new Error(`--also-model names ${model}, which has no price: the gateway would refuse it after the other runs have been paid for.`);
+  // agent/loop.ts sends screenshots only to a navigator that reads images, so a problem only visible on screen would look like model bias.
+  if (settings.screenshots && readsImages(choice) !== readsImages(settings.routing.navigator)) note(`Only ${readsImages(choice) ? `the ${model} run reads` : `the runs other than ${model} read`} screenshots, so the runs differ in images as well as model: a finding only one family produced may come from what it could see.`);
   return choice;
 }
 
@@ -210,6 +212,9 @@ const timeline = (store: ProjectStore): Recorder => createRecorder(store, (e) =>
 
 const estimateText = (e: RunEstimate) =>
   `about ${e.calls} model calls, $${e.cost_usd[0].toFixed(2)}–${e.cost_usd[1].toFixed(2)}${e.unpriced.length ? ` or more (no price for ${e.unpriced.join(', ')})` : ''}, ${Math.round(e.minutes[0])}–${Math.round(e.minutes[1])} min`;
+
+const budgetText = (e: ReturnType<typeof estimateFor>, budget: number) =>
+  `budget $${budget}${e.run_budget_usd < budget ? ` ($${e.run_budget_usd.toFixed(2)} a run, the dearest may cost $${e.run_high_usd.toFixed(2)})` : ''}`;
 
 /** What an agent reads first: the outcome and each POI's top themes, without the evidence the full report carries. */
 function summarize(report: Report) {
@@ -348,11 +353,11 @@ async function estimate(v: Values): Promise<void> {
     const personas = file?.personas ?? [BUILTIN_PERSONA];
     const stale = file ? personas.filter((p) => !personaProfileIsCurrent(p, config)).length : 0;
     const repeats = Number(v.repeats ?? 1);
-    const also = alsoModel(v);
+    const also = alsoModel(v, settings);
     const e = estimateFor(config, personas, repeats, also);
     const runs = repeats + (also ? 1 : 0);
     out(
-      `${personas.length} personas${runs > 1 ? `, ${runs} runs` : ''}: ${estimateText(e)}; budget $${settings.cost_budget_usd}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
+      `${personas.length} personas${runs > 1 ? `, ${runs} runs` : ''}: ${estimateText(e)}; ${budgetText(e, settings.cost_budget_usd)}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
       { kind: 'estimate', personas: personas.length, runs, stale, ...e, budget_usd: settings.cost_budget_usd },
     );
   });
@@ -369,7 +374,7 @@ async function runSimulation(v: Values): Promise<void> {
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
-    const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v)];
+    const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v, settings)];
     const planned = repeatRuns(config, repeats, also);
     // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
     for (const run of planned) for (const role of runRoles(run.config)) requireKey(run.config.settings, role, fake);
@@ -385,12 +390,15 @@ async function runSimulation(v: Values): Promise<void> {
       store.replacePersonas(personas, file.audience.persona_count);
     }
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
-    note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimateFor(config, personas, repeats, also))}; budget $${settings.cost_budget_usd}`);
+    const estimated = estimateFor(config, personas, repeats, also);
+    note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, settings.cost_budget_usd)}`);
     // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
     const pool = () => (launched[0] ??= launchBrowserPool({ headless: !v.headed }));
     let started: RunHandle;
+    let stopping = false; // a run that has logged its end cannot stop any more, but its set still can
     process.once('SIGINT', () => {
       note('Stopping… (Ctrl-C again to quit at once)');
+      stopping = true;
       started.stop();
       process.once('SIGINT', () => process.exit(130));
     });
@@ -409,7 +417,7 @@ async function runSimulation(v: Values): Promise<void> {
         duration_ms: report.duration_ms, report_json, report_md, summary: summarize(report),
       });
       return report;
-    });
+    }, () => stopping);
     if (planned.length > 1) {
       const set = combineReports(reports);
       out(`\n${repeatsToMarkdown(set)}`, { kind: 'repeats', project: dir, run_ids: reports.map((report) => report.run_id), ...set });

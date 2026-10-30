@@ -11,7 +11,7 @@ import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, f
 import type { Filters, PersonaState } from './activity.ts';
 import { emptyMoments, foldMoments } from './activityFeed.ts';
 import { BlockedBanner } from './Blocked.tsx';
-import { call, errorText, onEvent } from './engine.ts';
+import { call, errorText, onEvent, onRepeatFailed } from './engine.ts';
 import { Inspector } from './Inspector.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { Feed } from './Feed.tsx';
@@ -153,7 +153,9 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
 
   const group = frozenConfig?.repeat?.group;
   const setEnded = runs.filter((run) => run.config.repeat?.group === group && run.status !== 'running').length; // a later repeat ending changes the comparison
-  // biome-ignore lint/correctness/useExhaustiveDependencies: compares again when this report is rebuilt or another run of the set ends
+  const [repeatFailures, setRepeatFailures] = useState(0);
+  useEffect(() => onRepeatFailed(() => setRepeatFailures((failures) => failures + 1)), []); // a repeat that cannot start ends the set with no run ending
+  // biome-ignore lint/correctness/useExhaustiveDependencies: compares again when this report is rebuilt, another run of the set ends or the set fails
   useEffect(() => {
     if (!group || !report) return;
     let current = true;
@@ -164,7 +166,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
     return () => {
       current = false;
     };
-  }, [group, report, setEnded]);
+  }, [group, report, setEnded, repeatFailures]);
 
   async function stop() {
     setStopping(true);

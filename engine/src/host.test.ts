@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { after, test } from 'node:test';
+import { after, test, type TestContext } from 'node:test';
 import { startGym } from '../../demo/GymSite/server.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -15,7 +15,8 @@ import { createSessionStore } from './sessions.ts';
 import { startHost } from './host.fixture.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import { draftComparison } from '@gnomi/simulation/comparison/config.ts';
-import type { Audience, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
+import type { Audience, GnomiEvent, ProjectConfig, Segment, WebPoi } from '@gnomi/simulation/types.ts';
 
 process.env.GNOMI_FAKE_LLM = '1';
 const { call, connect, events, progress, toMain, repeatFailures } = await startHost();
@@ -406,6 +407,8 @@ const until = async (check: () => Promise<boolean>) => {
   assert.fail('The repeat set did not reach the expected state');
 };
 const inSet = async (group: string) => (await call('get_project', {})).runs.filter((run) => run.config.repeat?.group === group).reverse();
+/** A run's row says finished while its report is still being saved; the session list waits for the report. */
+const reported = (run_id: string) => until(async () => (await call('get_session_runs', {})).some((run) => run.project_dir === join(dir, 'repeats') && run.run_id === run_id && run.status === 'finished'));
 
 test('a repeat set runs one at a time on its share of the budget, and reads back as one comparison', async () => {
   await call('open_project', { dir: join(dir, 'repeats') });
@@ -444,11 +447,53 @@ test('stopping a run ends its repeat set, which reads as incomplete, and the pro
   await new Promise((resolve) => setTimeout(resolve, 100)); // a next run would have started by now
   assert.equal((await inSet(group)).length, 1);
   const set = await call('get_repeats', { group });
-  assert.deepEqual([set.of, set.compared, set.incomplete], [3, 0, true]);
+  assert.deepEqual([set.of, set.compared, set.running, set.incomplete], [3, 0, false, true]);
   assert.deepEqual(repeatFailures, [], 'a stop is no failure');
 
   const next = await call('start_run', { reset: false });
-  await until(async () => (await call('get_project', {})).runs.find((run) => run.run_id === next.run_id)?.status === 'finished');
+  await reported(next.run_id);
+});
+
+/** Runs `then` on the first event of `type`, as it is logged. */
+const onFirst = (t: TestContext, type: GnomiEvent['type'], then: (event: GnomiEvent) => void) => {
+  const { push } = events;
+  t.after(() => { events.push = push; });
+  let done = false;
+  events.push = (...added) => {
+    const event = added.find((e) => e.type === type);
+    if (event && !done) {
+      done = true;
+      then(event);
+    }
+    return push.apply(events, added);
+  };
+};
+
+test('a stop that lands after a run has logged its end still ends the set: that run stays finished and the set reads incomplete', async (t) => {
+  onFirst(t, 'run.finished', ({ run_id }) => void call('stop_run', { run_id }));
+  const { run_id } = await call('start_run', { reset: false, repeats: 3 });
+  const { group } = (await call('get_project', {})).runs.find((run) => run.run_id === run_id)!.config.repeat!;
+  await until(async () => (await inSet(group)).every((run) => run.status === 'finished'));
+  await new Promise((resolve) => setTimeout(resolve, 100)); // a next run would have started by now
+  assert.deepEqual((await inSet(group)).map((run) => [run.run_id, run.status]), [[run_id, 'finished']]);
+  const set = await call('get_repeats', { group });
+  assert.deepEqual([set.of, set.compared, set.running, set.incomplete], [3, 1, false, true]);
+  assert.deepEqual(repeatFailures, [], 'a stop is no failure');
+  await reported((await call('start_run', { reset: false })).run_id);
+});
+
+test('between two runs a set still reads as running: the app reads it as soon as a run ends', async (t) => {
+  let between: Promise<RepeatSet> | undefined;
+  onFirst(t, 'report.generated', () => {
+    const started = events.findLast((event) => event.type === 'run.started');
+    if (started?.type === 'run.started') between = call('get_repeats', { group: started.payload.config.repeat!.group }); // answered as this runs: the first run is over and the next has not started
+  });
+  await call('start_run', { reset: false, repeats: 2 });
+  await until(async () => between !== undefined);
+  const set = await between!;
+  assert.deepEqual([set.of, set.compared, set.running, set.incomplete], [2, 1, true, false]);
+  await until(async () => (await inSet(set.group!)).length === 2);
+  await reported((await inSet(set.group!))[1].run_id);
 });
 
 test('each repeat resets staging and checks its logins again, and a repeat that cannot start ends the set and says why', async (t) => {
@@ -477,6 +522,8 @@ test('each repeat resets staging and checks its logins again, and a repeat that 
   await until(async () => repeatFailures.length > 0);
   assert.match(repeatFailures[0], /No login is recorded for "recruiter"/);
   const runs = (await call('get_project', {})).runs.reverse();
+  const failed = await call('get_repeats', { group: runs[0].config.repeat!.group });
+  assert.deepEqual([failed.compared, failed.running, failed.incomplete], [2, false, true], 'the set is over as the failure arrives');
   assert.deepEqual(runs.map((run) => [run.run_id, run.status]), [['r-0001', 'finished'], ['r-0002', 'finished']], 'the third never started');
   for (const run of runs) assert.equal((await call('get_events', { run_id: run.run_id, after_seq: null, persona_id: null })).filter((event) => event.type === 'run.reset_called').length, 1, run.run_id);
   const [first, second] = runs.map((run) => run.config.sessions[0].verified_at!);

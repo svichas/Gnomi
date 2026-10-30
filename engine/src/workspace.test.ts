@@ -87,6 +87,20 @@ test('the estimate of a set adds up its runs, each at its own prices', () => {
   assert.deepEqual(estimateFor(gym, personas, 1, { provider: 'openai', model: 'no-such-model' }).unpriced, ['no-such-model']);
 });
 
+test('each run stops at its share, so the estimate shows a run over its share that the total hides', () => {
+  const personas = [BUILTIN_PERSONA];
+  const sonnet: ModelChoice = { provider: 'anthropic', model: 'claude-sonnet-5-5' };
+  const { cost_usd: [, total] } = estimateFor(gym, personas, 2, sonnet);
+  const tight = { ...gym, settings: { ...gym.settings, cost_budget_usd: total * 1.05 } };
+  const set = estimateFor(tight, personas, 2, sonnet);
+  assert.ok(set.cost_usd[1] < tight.settings.cost_budget_usd, 'the total fits the budget');
+  assert.ok(Math.abs(set.run_budget_usd - tight.settings.cost_budget_usd / 3) < 1e-9);
+  assert.ok(set.run_high_usd > set.run_budget_usd, 'the Sonnet run does not fit its share');
+  assert.equal(set.run_high_usd, estimateFor(tight, personas, 1, sonnet).run_high_usd, 'the dearest run, whatever the number of cheap ones');
+  const one = estimateFor(gym, personas);
+  assert.deepEqual([one.run_budget_usd, one.run_high_usd], [gym.settings.cost_budget_usd, one.cost_usd[1]], 'a lone run has the whole budget');
+});
+
 test('the runs of a set go one at a time, and a run that stops ends it', async () => {
   const report = (status: Report['status']) => ({ status }) as Report;
   const started: number[] = [];
@@ -98,9 +112,14 @@ test('the runs of a set go one at a time, and a run that stops ends it', async (
     active--;
     return report(statuses[index]);
   };
-  assert.equal((await runSet(['a', 'b', 'c'], run(['finished', 'finished', 'finished']))).length, 3);
+  const going = () => false;
+  assert.equal((await runSet(['a', 'b', 'c'], run(['finished', 'finished', 'finished']), going)).length, 3);
   started.length = 0;
-  assert.deepEqual((await runSet(['a', 'b', 'c'], run(['finished', 'stopped', 'finished']))).map((r) => r.status), ['finished', 'stopped']);
+  assert.deepEqual((await runSet(['a', 'b', 'c'], run(['finished', 'stopped', 'finished']), going)).map((r) => r.status), ['finished', 'stopped']);
   assert.deepEqual(started, [0, 1], 'the third never started');
-  await assert.rejects(runSet(['a', 'b'], async (_, index) => { if (index) throw new Error('login gone'); return report('finished'); }), /login gone/);
+  await assert.rejects(runSet(['a', 'b'], async (_, index) => { if (index) throw new Error('login gone'); return report('finished'); }, going), /login gone/);
+  // A stop that lands once a run has logged its end changes nothing in that run, which comes back finished.
+  started.length = 0;
+  assert.deepEqual((await runSet(['a', 'b', 'c'], run(['finished', 'finished', 'finished']), () => started.length === 1)).map((r) => r.status), ['finished']);
+  assert.deepEqual(started, [0], 'the set ended there');
 });

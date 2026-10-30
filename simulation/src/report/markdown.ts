@@ -21,8 +21,11 @@ export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
-/** "2 runs compared." and what a repeat means, or that the set is incomplete. */
-export const setNote = (set: RepeatSet) => `${set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.`;
+/** "2 runs compared." and what a repeat means, or that the set is still going, or that it ended early. */
+export function setNote(set: RepeatSet): string {
+  const state = set.running ? `${set.compared} of ${set.of} runs finished so far.` : set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`;
+  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.`;
+}
 
 /** What a set says about one finding of its run: "Appeared in 3 of 3 runs". Null for a run the set could not compare, or a set of one. */
 export function repeatNote(set: RepeatSet | undefined, run_id: string, theme: ReportTheme) {

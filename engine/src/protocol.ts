@@ -90,6 +90,7 @@ export interface Api {
    * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'.
    */
   start_run: { params: { reset: boolean; repeats?: number }; result: { run_id: string } };
+  /** Also ends the project's repeat set, even when the run has already logged its end and so stays finished. */
   stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */
   resume_personas: { params: { run_id: string; persona_ids: string[] }; result: null };

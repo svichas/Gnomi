@@ -51,8 +51,15 @@ test('a partial set compares the runs that finished and says so: a stopped run m
   assert.match(repeatsToMarkdown(short), /Incomplete set: 1 of 3 runs finished/);
   const running = combineReports([run(1, [save]), run(2, [save], { status: 'running' })]);
   assert.equal(running.compared, 1, 'a run still going is not compared yet');
+  assert.deepEqual([running.running, running.incomplete], [true, false], 'still going is not ended early');
+  assert.match(repeatsToMarkdown(running), /1 of 3 runs finished so far\./);
+  assert.doesNotMatch(repeatsToMarkdown(running), /Incomplete/);
+  const between = combineReports([run(1, [save])], true);
+  assert.deepEqual([between.running, between.incomplete], [true, false], 'the process running the set knows it goes on between two runs');
+  assert.match(repeatsToMarkdown(between), /1 of 3 runs finished so far\./);
+  assert.deepEqual([short.running, stopped.running], [false, false]);
   assert.deepEqual(combineReports([run(1, [], { status: 'stopped' })]).findings, []);
-  assert.deepEqual(combineReports([]), { group: null, of: 0, compared: 0, incomplete: false, families: [], findings: [] });
+  assert.deepEqual(combineReports([]), { group: null, of: 0, compared: 0, running: false, incomplete: false, families: [], findings: [] });
 });
 
 test('each finding names the model families it appeared under, a family being the provider or a local model', () => {

@@ -113,31 +113,43 @@ export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoic
   }));
 }
 
-/** Runs a set one after another, as a project has one active run. A run that does not finish ends the set. Returns the reports there are. */
-export async function runSet<Run>(runs: Run[], run: (planned: Run, index: number) => Promise<Report>): Promise<Report[]> {
+/**
+ * Runs a set one after another, as a project has one active run. A run that does not finish ends the set, and so does `stopped`: a stop
+ * that lands once a run has logged its end changes nothing in that run. Returns the reports there are.
+ */
+export async function runSet<Run>(runs: Run[], run: (planned: Run, index: number) => Promise<Report>, stopped: () => boolean): Promise<Report[]> {
   const reports: Report[] = [];
   for (const [index, planned] of runs.entries()) {
     reports.push(await run(planned, index));
-    if (reports.at(-1)!.status !== 'finished') break;
+    if (reports.at(-1)!.status !== 'finished' || stopped()) break;
   }
   return reports;
 }
 
-/** The reports of a set's runs so far, in the order they ran. */
+/** The reports of a set's runs so far, in the order they ran. A crash logs no end, so only the row says such a run is over. */
 export const repeatReports = (store: ProjectStore, group: string): Report[] => store.listRuns()
   .filter((run) => run.config.repeat?.group === group)
   .sort((a, b) => a.config.repeat!.index - b.config.repeat!.index)
-  .map((run) => buildReport(store.events(run.run_id)));
+  .map((run) => {
+    const report = buildReport(store.events(run.run_id));
+    return run.status === 'interrupted' ? { ...report, status: 'stopped' } : report;
+  });
 
-/** The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too. */
-export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice): RunEstimate {
-  const each = repeatRuns(config, repeats, also).map((run) => estimateRun({ personas, settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
+/**
+ * The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too.
+ * Each run stops at its share, so a total within the budget can hide a run over its share: `run_high_usd` is the dearest run's high estimate.
+ */
+export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
+  const runs = repeatRuns(config, repeats, also);
+  const each = runs.map((run) => estimateRun({ personas, settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
   const sum = (pick: (estimate: RunEstimate) => number) => each.reduce((total, estimate) => total + pick(estimate), 0);
   return {
     calls: sum((e) => e.calls),
     cost_usd: [sum((e) => e.cost_usd[0]), sum((e) => e.cost_usd[1])],
     minutes: [sum((e) => e.minutes[0]), sum((e) => e.minutes[1])],
     unpriced: [...new Set(each.flatMap((e) => e.unpriced))],
+    run_budget_usd: runs[0]!.config.settings.cost_budget_usd,
+    run_high_usd: Math.max(...each.map((e) => e.cost_usd[1])),
   };
 }
 

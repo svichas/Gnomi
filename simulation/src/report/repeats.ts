@@ -18,7 +18,8 @@ export interface RepeatSet {
   group: string | null; // null: runs from before repeat sets
   of: number; // runs planned
   compared: number; // runs that finished: a stopped run missing a theme says nothing about that theme
-  incomplete: boolean; // fewer finished than were planned
+  running: boolean; // the set is still going, so `compared` can grow
+  incomplete: boolean; // the set is over, with fewer finished than were planned
   families: string[]; // the model families of the compared runs
   findings: RepeatFinding[]; // seen in the most runs first, then by rank
 }
@@ -35,8 +36,10 @@ function familyOf({ methods }: Report): string {
  * two counts once and its other part starts a cluster of its own. Reports go in the order the runs ran. Pure.
  * shortcut: matchThemes can pair two themes on one shared key (report/match.ts), which overstates seen_in; the titles stay visible
  * so a reader can spot it, drop such pairs here once the match can tell them apart.
+ * `live` says the set goes on: between two runs no run is running, and only the process running the set knows.
+ * shortcut: a reader in another process (`gnomi report --repeat`) sees that gap as incomplete, for the moment it lasts; record a set's end in the log if that ever matters.
  */
-export function combineReports(reports: Report[]): RepeatSet {
+export function combineReports(reports: Report[], live = false): RepeatSet {
   const compared = reports.filter((report) => report.status === 'finished');
   const clusters: { first: ReportTheme; members: { run: Report; theme: ReportTheme }[] }[] = [];
   for (const run of compared) {
@@ -46,11 +49,13 @@ export function combineReports(reports: Report[]): RepeatSet {
   }
   const repeat = reports[0]?.repeat;
   const of = repeat?.of ?? reports.length;
+  const running = live || reports.some((report) => report.status === 'running');
   return {
     group: repeat?.group ?? null,
     of,
     compared: compared.length,
-    incomplete: compared.length < of,
+    running,
+    incomplete: !running && compared.length < of,
     families: [...new Set(compared.map(familyOf))],
     findings: clusters
       .sort((a, b) => b.members.length - a.members.length || a.first.rank - b.first.rank)

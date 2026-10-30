@@ -1,11 +1,15 @@
 // cli.ts end to end with scripted models, on a text POI (no browser): audience files, runs that reuse their personas, and --json output.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
+import { isPriced } from '@gnomi/simulation/llm/prices.ts';
+import { readsImages } from '@gnomi/simulation/settings.ts';
+import type { ModelChoice, ProviderId } from '@gnomi/simulation/types.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-cli-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -180,13 +184,17 @@ test('--repeats and --also-model run a set one after another; each run keeps its
   const also = ['--repeats', '2', '--also-model', 'deepseek:deepseek-v4-pro'];
 
   const [one, set] = [lines('estimate', ...base).at(-1), lines('estimate', ...base, ...also).at(-1)];
-  assert.deepEqual([one.runs, set.runs, set.calls, set.budget_usd], [1, 3, one.calls * 3, 3]);
+  assert.deepEqual([one.runs, set.runs, set.calls, set.budget_usd, set.run_budget_usd], [1, 3, one.calls * 3, 3, 1]);
   assert.ok(set.cost_usd[1] > one.cost_usd[1]);
+  assert.ok(set.run_high_usd >= one.cost_usd[1] && set.run_high_usd < set.cost_usd[1], 'the dearest run, not the total');
+  assert.match(cli('estimate', ...base, ...also), /budget \$3 \(\$1\.00 a run, the dearest may cost \$\d+\.\d\d\)/);
+  assert.doesNotMatch(cli('estimate', ...base), /a run/, 'a lone run has the whole budget');
 
   const out = lines('run', ...base, '--project', project, ...also);
+  assert.ok(out.some((l) => l.kind === 'note' && /differ in images as well as model/.test(l.text)), 'run says it too, before anything is paid for');
   assert.deepEqual(out.filter((l) => l.kind === 'run').map((l) => [l.run_id, l.status]), [['r-0001', 'finished'], ['r-0002', 'finished'], ['r-0003', 'finished']]);
   const done = out.at(-1);
-  assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.families, done.run_ids], ['repeats', 3, 3, false, ['anthropic', 'deepseek'], ['r-0001', 'r-0002', 'r-0003']]);
+  assert.deepEqual([done.kind, done.of, done.compared, done.running, done.incomplete, done.families, done.run_ids], ['repeats', 3, 3, false, false, ['anthropic', 'deepseek'], ['r-0001', 'r-0002', 'r-0003']]);
   assert.ok(done.findings.length > 0 && done.findings.every((f: { seen_in: number; of: number }) => f.seen_in === 3 && f.of === 3), 'scripted runs meet the same groups');
 
   const report = (run: string) => JSON.parse(readFileSync(join(project, `runs/${run}/report.json`), 'utf8'));
@@ -222,6 +230,62 @@ test('a stopped run ends its set, which is labelled incomplete, and runs from be
   assert.equal(JSON.parse(cli('runs', lone, '--json').split('\n')[0]).repeat, null);
   assert.equal(JSON.parse(readFileSync(join(lone, 'runs/r-0001/report.json'), 'utf8')).repeat, undefined);
   assert.doesNotMatch(cli('report', lone, '--format', 'md'), /Repeat/);
+});
+
+test('a Ctrl-C that lands once a run has logged its end still ends the set', async () => {
+  const child = spawn(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', join(dir, 'repeats-sigint'), '--repeats', '3', '--json', '--fake-llm']);
+  let stdout = '';
+  let sent = false;
+  child.stdout.setEncoding('utf8').on('data', (chunk) => {
+    stdout += chunk;
+    if (sent || !stdout.includes('"type":"run.finished"')) return;
+    sent = true; // a second Ctrl-C quits at once
+    child.kill('SIGINT');
+  });
+  const [code] = await once(child, 'close');
+  assert.equal(code, 0);
+  const out = stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(out.some((l) => l.kind === 'note' && /^Stopping/.test(l.text)));
+  const done = out.at(-1);
+  // The signal may reach the next run just after it starts, which then stops: either way that is the last run, and only the first finished.
+  assert.deepEqual([done.kind, done.of, done.compared, done.running, done.incomplete, done.run_ids.includes('r-0003')], ['repeats', 3, 1, false, true, false]);
+  assert.equal(out.filter((l) => l.kind === 'run')[0].status, 'finished');
+});
+
+test('report --repeat from another process tells a set still going from one that died', () => {
+  const project = join(dir, 'repeats-read');
+  const settings = join(dir, 'settings.json');
+  const { group } = JSON.parse(cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', settings, '--project', project, '--repeats', '2', '--json').trim().split('\n').at(-1)!);
+  const set = () => JSON.parse(cli('report', project, '--repeat', group, '--json'));
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  db.exec("DELETE FROM event WHERE run_id = 'r-0002' AND type IN ('run.finished', 'report.generated'); UPDATE run SET status = 'running' WHERE id = 'r-0002';");
+  assert.deepEqual([set().running, set().incomplete, set().compared], [true, false, 1]);
+  assert.match(cli('report', project, '--repeat', group, '--format', 'md'), /1 of 2 runs finished so far\./);
+  db.exec("UPDATE run SET status = 'interrupted' WHERE id = 'r-0002';");
+  db.close();
+  assert.deepEqual([set().running, set().incomplete, set().compared], [false, true, 1]);
+  assert.match(cli('report', project, '--repeat', group, '--format', 'md'), /Incomplete set: 1 of 2 runs finished\./);
+});
+
+test('--also-model says when its run and the others differ in images, and only then', () => {
+  const notes = (settings: object, model: string) => {
+    const file = join(dir, 'also.json');
+    writeFileSync(file, JSON.stringify(settings));
+    return cli('estimate', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', file, '--also-model', model, '--json').trim().split('\n').map((line) => JSON.parse(line)).filter((l) => l.kind === 'note').map((l) => l.text);
+  };
+  const deepseek = (model: string) => ({ routing: { navigator: { provider: 'deepseek', model } } });
+  assert.match(notes({}, 'deepseek:deepseek-v4-pro')[0], /Only the runs other than deepseek-v4-pro read screenshots.*differ in images as well as model/);
+  assert.match(notes(deepseek('deepseek-v4-pro'), 'anthropic:claude-sonnet-5-5')[0], /Only the claude-sonnet-5-5 run reads screenshots/, 'the other way round too');
+  assert.deepEqual(notes({}, 'deepseek:deepseek-flash'), [], 'both read images');
+  assert.deepEqual(notes(deepseek('deepseek-v4-pro'), 'deepseek:deepseek-v4-pro'), [], 'neither does');
+  assert.deepEqual(notes({ screenshots: false }, 'deepseek:deepseek-v4-pro'), [], 'nobody is sent any');
+});
+
+test("the skill's --also-model commands name a priced model that reads images, so its runs differ only in model", () => {
+  const skill = readFileSync(join(import.meta.dirname, '../../.claude/skills/gnomi/SKILL.md'), 'utf8');
+  const models = [...skill.matchAll(/^npm run .* --also-model (\w+):(\S+)/gm)].map(([, provider, model]): ModelChoice => ({ provider: provider as ProviderId, model: model! }));
+  assert.equal(models.length, 2);
+  for (const model of models) assert.ok(readsImages(model) && isPriced(model), model.model);
 });
 
 test('--repeat, --repeats and --also-model refuse what cannot work, before anything runs', () => {

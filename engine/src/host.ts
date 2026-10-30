@@ -45,9 +45,10 @@ const figma = () => figmaClient({ token: secrets.get('figma_token') ?? null, fet
 const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
-const sets = new Map<string, Promise<unknown>>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
+const sets = new Map<string, LiveSet>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
 let closing = false; // no repeat starts once shutdown has begun
 type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
+type LiveSet = { group: string; stopped: boolean; done?: Promise<unknown> };
 // Only a selected project or one with a live run keeps its database open.
 const projects = new Map<string, OpenProject>();
 const sessionRuns = new SessionRuns((run) => broadcast({ kind: 'session_run', run }));
@@ -175,7 +176,7 @@ async function shutdown() {
   setupTask?.stop.abort(new Error('App is closing. Completed drafts are saved.'));
   await setupTask?.done.catch(() => {});
   for (const run of runs.values()) run.stop();
-  await Promise.allSettled([...[...runs.values()].map((run) => run.done), ...sets.values()]);
+  await Promise.allSettled([...[...runs.values()].map((run) => run.done), ...[...sets.values()].map((set) => set.done)]);
   const pending = recording;
   recording = null;
   await pending?.rec.then((rec) => rec.cancel()).catch(() => {});
@@ -361,22 +362,28 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     noSetup('starting a run');
     const started = launch(planned[0], ready);
     if (planned.length > 1) {
-      sets.set(store.dir, runSet(planned, async (run, index) => {
+      const set: LiveSet = { group: planned[0].repeat!.group, stopped: false };
+      const over = () => closing || set.stopped;
+      sets.set(store.dir, set);
+      set.done = runSet(planned, async (run, index) => {
         if (index === 0) return started.done;
         const next = await prepare();
-        if (closing) throw new Error('The app is closing.');
+        if (over()) throw new Error('The repeat set is over.'); // a stop can land while the next run prepares
         return launch(run, next).done;
-      }).catch((err) => {
-        if (!closing) broadcast({ kind: 'repeat_failed', error: err instanceof Error ? err.message : String(err) });
+      }, over).catch((err) => {
+        if (!over()) broadcast({ kind: 'repeat_failed', error: err instanceof Error ? err.message : String(err) });
       }).finally(() => {
         sets.delete(store.dir);
         if (open?.store !== store) releaseProject(projects.get(store.dir) ?? null);
-      }));
+      });
     }
     return { run_id: started.run_id };
   },
   stop_run({ run_id, project_dir }) {
-    runs.get(runKey(project_dir ? resolve(project_dir) : current().store.dir, run_id))?.stop();
+    const dir = project_dir ? resolve(project_dir) : current().store.dir;
+    runs.get(runKey(dir, run_id))?.stop();
+    const set = sets.get(dir); // a run that has logged its end cannot stop any more, but its set still can
+    if (set) set.stopped = true;
     return null;
   },
   async record_session({ role, target_id }) {
@@ -430,7 +437,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
       ...(persona_id === null ? {} : { personaId: persona_id }),
     }),
   get_report: ({ run_id }) => buildReport(current().store.events(run_id)),
-  get_repeats: ({ group }) => combineReports(repeatReports(current().store, group)),
+  get_repeats({ group }) {
+    const { store } = current();
+    const set = sets.get(store.dir);
+    return combineReports(repeatReports(store, group), set?.group === group && !set.stopped);
+  },
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
     // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.

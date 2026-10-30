@@ -349,7 +349,7 @@ test('missing-usage copy names the count and preserves uncertainty about provide
 
 test('a run of a repeat set says how each finding did across the set, only when read with the set', () => {
   const set: RepeatSet = {
-    group: 'set-a', of: 3, compared: 3, incomplete: false, families: ['anthropic', 'deepseek'],
+    group: 'set-a', of: 3, compared: 3, running: false, incomplete: false, families: ['anthropic', 'deepseek'],
     findings: [{ poi_id: 'poi-gym', seen_in: 2, of: 3, families: ['anthropic'], titles: ['Saving a job\nfails', 'The form [loses](x) work'], themes: { 'r-0001': 'g1+g3' } }],
   };
   const own = { ...report, repeat: { group: 'set-a', index: 1, of: 3 }, themes: [theme] };
