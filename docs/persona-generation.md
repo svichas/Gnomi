@@ -12,6 +12,8 @@ Gnomi creates fictional profiles from audience assumptions supplied or approved 
 4. **Select and expand.** Seeded code chooses a candidate using those weights, excluding already-used names where possible. A second model call expands only the chosen biography; the sampled traits remain fixed. Name repair handles collisions.
 5. **Review before running.** Inspect the profiles and diversity report, then edit, regenerate, add or remove personas. A diversity check detects similarities in generated profiles; it does not validate their behaviour against people.
 
+`gnomi run --also-trait-free` adds a control run of the same people with every trait stripped to their segment. Those stripped personas exist only in that run's frozen snapshot: the audience and its saved profiles do not change.
+
 The resulting profile conditions an agent's actions and generated comments during a run. A seed makes code-level sampling repeatable for the same inputs; fresh model responses may still differ. Reusing saved personas preserves their profiles, but neither that nor a seed guarantees identical behaviour in later runs.
 
 ## Grounding a segment in real data

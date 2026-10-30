@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, Poi, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
+import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, Poi, ProfileAttribute, RunConfig, RunRow, Segment } from '@gnomi/simulation/types.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildGraph } from '@gnomi/engine/graph/index.ts';
 import type { PersonaNode } from '@gnomi/engine/graph/index.ts';
-import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, shotLabels, stopText, toRows, waitingBlocks } from './activity.ts';
+import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, rereadsSet, resetOutcome, runSetup, shotLabels, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -338,4 +338,18 @@ test('a text or design starts as reading or looking through it, by its name, not
   ];
   const titles = toRows(events).filter((row) => row.label === 'Start').map((row) => row.title);
   assert.deepEqual(titles, ['Started looking through Checkout', 'Started reading Pricing copy']);
+});
+
+test('a page reads its repeat set again when a report of that set is written, and for nothing else', () => {
+  const row = (run_id: string, group?: string) => ({ run_id, config: group ? { repeat: { group, index: 1, of: 2 } } : {} }) as RunRow;
+  const runs = [row('r-0001', 'set-a'), row('r-0002', 'set-a'), row('r-0003', 'set-b'), row('r-0004')];
+  const of = (run_id: string, type: 'report.generated' | 'run.finished') => ({ ...event(9, type, type === 'run.finished' ? {} : { path: 'report.json', friction_count: 0 }), run_id }) as GnomiEvent;
+  // The last run of the set, as a page for an earlier run sees it: the row says the run is over, and only the report's own event says what it holds.
+  assert.equal(rereadsSet(of('r-0002', 'run.finished'), 'set-a', runs), false, 'the run list already covers this one');
+  assert.equal(rereadsSet(of('r-0002', 'report.generated'), 'set-a', runs), true);
+  assert.equal(rereadsSet(of('r-0001', 'report.generated'), 'set-a', runs), true);
+  assert.equal(rereadsSet(of('r-0003', 'report.generated'), 'set-a', runs), false, 'another set');
+  assert.equal(rereadsSet(of('r-0004', 'report.generated'), 'set-a', runs), false, 'a lone run');
+  assert.equal(rereadsSet(of('r-0005', 'report.generated'), 'set-a', runs), true, 'the run list has not caught up with a run that just started');
+  assert.equal(rereadsSet(of('r-0004', 'report.generated'), undefined, runs), false, 'a lone run\'s page has no set to read');
 });

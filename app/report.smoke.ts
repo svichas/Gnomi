@@ -109,7 +109,18 @@ try {
   // Keep the real run and inspector; only replace the generated prose with a stable report fixture.
   await page.addInitScript((report) => {
     const post = MessagePort.prototype.postMessage;
+    const heard = new WeakSet<MessagePort>(); // per port: React's scheduler posts on a MessageChannel of its own
     MessagePort.prototype.postMessage = function (message, options) {
+      if (!heard.has(this)) {
+        heard.add(this);
+        this.addEventListener('message', ({ data }) => { if (data.kind === 'event' && data.event.type === 'report.generated' && data.event.run_id === 'r-0004') sessionStorage.setItem('set-reported', '1'); });
+      }
+      // Until the set's last report is written, a read of the set is out of date, so the page only gets it right by reading it again then.
+      if (message?.kind === 'request' && message.method === 'get_repeats' && !sessionStorage.getItem('set-reported')) {
+        const result = { group: message.params.group, of: 2, compared: 1, running: true, incomplete: false, families: [], findings: [] };
+        queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
+        return;
+      }
       if (message?.kind === 'request' && message.method === 'estimate_run' && sessionStorage.getItem('estimate-unpriced')) {
         const result = { calls: 1, cost_usd: [0, 0], minutes: [1, 1], unpriced: ['old-judge'] };
         queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
@@ -462,8 +473,27 @@ try {
   const scans = rerun.events('r-0003', { types: ['accessibility.scanned'] });
   rerun.close();
   assert.ok(scans.length > 0 && scans.every((scan) => scan.type === 'accessibility.scanned' && scan.payload.error === null), `axe-core loads and runs in the built host: ${JSON.stringify(scans[0]?.payload)}`);
+
+  // A set with a trait-free run, seeded: only `gnomi run` starts one. The real engine compares its reports.
+  for (const index of [1, 2, 3]) seedFinishedRun(projectDir, { ...synthetic, repeat: { group: 'trait-free', index, of: 3, trait_free: 3 } }, events);
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.reload();
+  await openReport();
+  await root.getByText('Run 3 of 3 in a repeat set, of personas with no traits. 2 runs compared.', { exact: false }).waitFor();
+  await page.locator('#tab-runs').click();
+  await page.getByRole('button', { name: 'r-0005', exact: false }).first().click();
+  await root.getByText('Run 1 of 3 in a repeat set. 2 runs compared.', { exact: false }).waitFor();
+  assert.ok(await root.getByText('One more run, of personas with no traits, is in no count here.', { exact: false }).isVisible());
+  const traitFreeLine = root.locator('.report-finding-summary').getByText('Personas with no traits hit this too, so it may say more about the model than this audience', { exact: false }).first();
+  await traitFreeLine.waitFor();
+  await traitFreeLine.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'trait-free.png') });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the trait-free note fits a narrow viewport');
+  await traitFreeLine.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'trait-free-320.png') });
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set, a study plan and a study outcome on a real report, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan and a study outcome on a real report, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

@@ -47,3 +47,5 @@ jobs:
       # Ubuntu 24.04 blocks the unprivileged user namespaces Electron's sandbox needs.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: xvfb-run -a npm run smoke -w @gnomi/app
+      # The 320 px checks. Its 240-second deadline fits the job's 30 minutes, after the ten the smoke above may take.
+      - run: xvfb-run -a npm run smoke:report -w @gnomi/app

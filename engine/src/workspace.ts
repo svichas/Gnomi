@@ -8,7 +8,7 @@ import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/c
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createGateway } from '@gnomi/simulation/llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
-import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { BUILTIN_PERSONA, traitFree } from '@gnomi/simulation/persona.ts';
 import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { loginPoi, webPois, withPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
@@ -16,6 +16,7 @@ import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts'
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import { reportToMarkdown, studyPlanToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, isCalendarDate, localDate, NOTE_MAX, runStudyPlan, topFindings } from '@gnomi/simulation/report/study.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { BlobStore, LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
@@ -103,20 +104,25 @@ export function checkComparison(config: ProjectConfig) {
 }
 
 /**
- * The runs of a set, each with its share of the cost budget. `also` adds one more with the navigator and socialiser on that model.
- * One run is a lone run, with no repeat. The audience seed stays, so personas and the follow graph are the same in every run.
+ * The runs of a set, each with its share of the cost budget. `also` adds one more with the navigator and socialiser on that model,
+ * and `withTraitFree` a last one of personas with no traits (runPersonas). One run is a lone run, with no repeat. The audience seed
+ * stays, so personas and the follow graph are the same in every run.
  */
-export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoice): { config: ProjectConfig; repeat?: RunConfig['repeat'] }[] {
+export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoice, withTraitFree = false): { config: ProjectConfig; repeat?: RunConfig['repeat'] }[] {
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error('The number of repeats must be a whole number of at least 1.');
-  const of = repeats + (also ? 1 : 0);
+  if (withTraitFree && !config.audience) throw new Error('A trait-free run strips personas to their segments, so it needs an audience.');
+  const of = repeats + (also ? 1 : 0) + (withTraitFree ? 1 : 0);
   if (of === 1) return [{ config }];
   const group = randomUUID().slice(0, 8);
   const { routing, cost_budget_usd } = config.settings;
   return Array.from({ length: of }, (_, i) => ({
     config: { ...config, settings: { ...config.settings, cost_budget_usd: cost_budget_usd / of, routing: also && i === repeats ? { ...routing, navigator: also, socialiser: also } : routing } },
-    repeat: { group, index: i + 1, of },
+    repeat: { group, index: i + 1, of, ...(withTraitFree ? { trait_free: of } : {}) },
   }));
 }
+
+/** Who a planned run runs. A set's trait-free run has them only in its own snapshot: the audience and the project stay as they are. */
+export const runPersonas = (run: ReturnType<typeof repeatRuns>[number], personas: Persona[]) => (isTraitFree(run) ? traitFree(personas, run.config) : personas);
 
 /**
  * Runs a set one after another, as a project has one active run. A run that does not finish ends the set, and so does `stopped`: a stop
@@ -143,14 +149,14 @@ export const repeatReports = (store: ProjectStore, group: string): Report[] => s
   .sort((a, b) => a.config.repeat!.index - b.config.repeat!.index)
   .map((run) => rowReport(store, run));
 
-/** One side of a comparison: the run, or the finished runs of its set, as a stopped run missing a theme says nothing about it. */
+/** One side of a comparison: the run, or the finished runs of its set, as a stopped run missing a theme says nothing about it. A trait-free run is a control, not a sample of the audience. */
 function comparedSide(store: ProjectStore, run_id: string): Report[] {
   const run = store.listRuns().find((row) => row.run_id === run_id);
   if (!run) throw new Error(`There is no run ${run_id} in this project.`);
   if (run.status === 'running') throw new Error(`${run_id} is still running, so there is nothing to compare yet.`);
   if (run.config.project.comparison) throw new Error(`${run_id} is a comparison study, which compares tools rather than builds.`);
   const group = run.config.repeat?.group;
-  const finished = group ? repeatReports(store, group).filter((report) => report.status === 'finished') : [];
+  const finished = group ? repeatReports(store, group).filter((report) => report.status === 'finished' && !isTraitFree(report)) : [];
   return finished.length ? finished : [rowReport(store, run)];
 }
 
@@ -241,6 +247,7 @@ export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
   const run = store.listRuns().find((row) => row.run_id === run_id);
   if (!run) throw new Error(`There is no run ${run_id} in this project.`);
   if (run.status !== 'finished') throw new Error(`${run_id} is ${run.status}, and only a finished run can be run again.`);
+  if (isTraitFree(run.config)) throw new Error(`${run_id} is a set's trait-free run, whose personas have no traits: run one of the others again.`);
   return run.config;
 }
 
@@ -281,9 +288,9 @@ export function rerunProject(from: RunConfig, urls: Record<string, string> = {})
  * The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too.
  * Each run stops at its share, so a total within the budget can hide a run over its share: `run_high_usd` is the dearest run's high estimate.
  */
-export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
-  const runs = repeatRuns(config, repeats, also);
-  const each = runs.map((run) => estimateRun({ personas, settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
+export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice, withTraitFree = false): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
+  const runs = repeatRuns(config, repeats, also, withTraitFree);
+  const each = runs.map((run) => estimateRun({ personas: runPersonas(run, personas), settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
   const sum = (pick: (estimate: RunEstimate) => number) => each.reduce((total, estimate) => total + pick(estimate), 0);
   return {
     calls: sum((e) => e.calls),

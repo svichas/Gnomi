@@ -183,6 +183,10 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | Name | Unit or range | Value | Rationale | Provenance | Status |
 | --- | --- | --- | --- | --- | --- |
 | `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. A report's coverage lists pages and screens below it as barely tested. | `report/diff.ts`, `report/coverage.ts` | assumed |
+| `GATE_RUNS` | finished runs per side | 3 | The regression plan's rolling window over three runs. | `report/gate.ts`; roadmap.md, evaluation plan | assumed |
+| `GATE_SIGHTINGS` | later runs | 2 | How many a new theme must be high severity in before the gate fails. One run is one sample of a noisy model. | `report/gate.ts` | assumed |
+| high severity | rounded severity | 3 or more of 4 | The priority labels' rule, so a median of 2.5 counts. | `report/themes.ts` (`isSevere`) | assumed |
+| trait-free match | how a run of personas with no traits ties to a finding | keys or title, never one shared key alone, against the finding's first theme | One shared key is often chance. A theme matching only a later run's wording shows no note, which only leaves the note out. | `report/repeats.ts`; features_roadmap.md item 3 | assumed |
 
 ### Reading one run
 

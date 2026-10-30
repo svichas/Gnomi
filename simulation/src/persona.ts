@@ -1,4 +1,4 @@
-import type { Persona } from './types.ts';
+import type { Persona, ProjectConfig } from './types.ts';
 
 // The built-in persona: the whole population when a project has no audience (M0, M1, and any M2 project before
 // its audience is set up). Sampled populations come from engine/src/audience.
@@ -25,3 +25,23 @@ export const BUILTIN_PERSONA: Persona = {
   voice: 'Practical and brisk. Says plainly when something is confusing. Dry humour when a tool wastes her time.',
   seed: 1001,
 };
+
+/**
+ * The generic-persona control (new_simulation.md §9): the same people and seeds, with every prompt-visible trait set to one
+ * constant and the biography stripped to the segment, so prompts differ by segment alone. Names stay distinct because the
+ * social feed attributes posts by name; they are assigned by index, not sampled from traits. Needs an audience.
+ */
+export function traitFree(personas: Persona[], { audience, goal }: Pick<ProjectConfig, 'audience' | 'goal'>): Persona[] {
+  const segments = new Map(audience!.segments.map((s) => [s.id, s]));
+  const middle = ([lo, hi]: [number, number]) => Math.round((lo + hi) / 2);
+  return personas.map((persona) => {
+    const segment = segments.get(persona.segment_id!)!;
+    return {
+      ...persona, attributes: {}, job_title: `${segment.name} team member`, industry: 'Business services', background: segment.description,
+      context_of_use: 'At work.', voice: 'Plain and brief.', tech_skill: middle(segment.tech_skill), patience: middle(segment.patience),
+      device: 'desktop', accessibility_needs: 'none', pronouns: 'they', seniority: 'mid', motivation: 3, familiarity_with_category: 'medium', company_size: 500,
+      country: 'US', city: 'New York', timezone: 'America/New_York', languages: ['en-US'], language: 'en-US', employer: 'Example Works',
+      goal_interpretation: segment.goal_override ?? goal,
+    };
+  });
+}

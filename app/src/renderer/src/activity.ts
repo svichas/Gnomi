@@ -1,4 +1,4 @@
-import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Perception, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Perception, Persona, PersonaSchema, RunConfig, RunRow, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
 import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
@@ -324,6 +324,16 @@ export const isEnd = (event: GnomiEvent) => event.type === 'run.finished' || eve
 
 // The events that end a persona's episode: after one of these she is no longer waiting for anyone.
 const ENDS_EPISODE = new Set(['persona.goal_done', 'persona.abandoned', 'signal.budget_exceeded', 'signal.repeated_failure']);
+
+/**
+ * Whether a run's page reads its repeat set again for an event of any run: a report of the set may have changed, such as a judge's
+ * answers, with no run ending to say so. A run missing from the list has only just started, and the list catches up later.
+ */
+export function rereadsSet(event: GnomiEvent, group: string | undefined, runs: RunRow[]): boolean {
+  if (!group || event.type !== 'report.generated') return false;
+  const run = runs.find(({ run_id }) => run_id === event.run_id);
+  return !run || run.config.repeat?.group === group;
+}
 
 /** What the run page reads from the whole log, folded batch by batch like the feed. */
 export interface LogFold {

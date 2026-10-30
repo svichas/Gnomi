@@ -163,6 +163,7 @@ Run `npm run gnomi` with no command to list every command and option.
 | `compare` | Show what changed between two runs or repeat sets. No model calls. |
 | `study` | Plan a study with real people from an ended run's top findings, and write `study-plan.md` to hand to a researcher. |
 | `outcome` | Record what your team's own study found about a finding. No model calls. |
+| `gate` | For CI: exit non-zero on a new high-severity theme across two repeat sets, or when they cannot be compared. No model calls. |
 
 Provider keys come from the environment (`ANTHROPIC_API_KEY` for the default routing, or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY` when `--settings` routes to them). `--fake-llm` uses scripted answers and calls no model. With `--json`, every command prints one JSON object per line and the last line is its result, which makes it easy to script.
 
@@ -229,6 +230,7 @@ The desktop shell runs the engine in a separate process. The engine drives brows
 | [Points of interest](docs/pois.md) | Web, text, design, competitor, and Figma inputs. |
 | [Persona generation](docs/persona-generation.md) | Audience generation, saved profiles, retries, and diagnostics. |
 | [Roadmap](docs/roadmap.md) | Milestones, measured progress, and remaining work. |
+| [CI gate](docs/ci-gate.md) | What `gnomi gate` decides, with a GitHub Actions example. |
 | [Brand guide](docs/brand.md) | Gnomi's visual identity and writing principles. |
 | [Audience acceptance](docs/m2-acceptance.md) | Population, locale, budget, and provider checks. |
 | [Friction/report acceptance](docs/m3-acceptance.md) | Detection, evidence, ranking, and report evaluation. |

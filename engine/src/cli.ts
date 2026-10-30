@@ -10,7 +10,7 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runRoles, runSet, type Secrets } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -22,9 +22,10 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
-import { diffToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { gateDecision, type GateDecision } from '@gnomi/simulation/report/gate.ts';
+import { diffToMarkdown, gateToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
-import { combineReports } from '@gnomi/simulation/report/repeats.ts';
+import { combineReports, isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { NOTE_WARNING } from '@gnomi/simulation/report/study.ts';
 import { createRecorder, roleOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
@@ -45,14 +46,16 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       are removed first; names and other details are not, and the text goes to your model provider. The files are not kept.
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
-      [--repeats <n>] [--also-model <provider:model>]
+      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
   estimate <project dir> --base <run id> [--repeats <n>]
       what rerun would cost, on that run's frozen settings and personas.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
-      [--repeats <n>] [--also-model <provider:model>]
+      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
       --repeats makes n runs one after another, each with its own report and its share of the cost budget. --also-model adds one
-      more run with the navigator and socialiser on that model. A run that stops ends the set.
+      more run with the navigator and socialiser on that model. --also-trait-free adds one more of the same personas with every
+      trait stripped to their segment, which no count of the set includes: a finding it matches may say more about the model than
+      the audience. It needs --audience, and takes a share of the budget. A run that stops ends the set.
   runs <project dir>
   report <project dir> [--run <run id> | --repeat <group>] [--format summary|md|json]
       --repeat compares the runs of a repeat set; each run keeps its own report.
@@ -62,6 +65,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   compare <project dir> --base <run id> --run <run id>
       what changed between two runs; a run of a repeat set stands for that set's finished runs. No model calls. "Not seen again"
       means the later run did not show a problem, not that it is fixed.
+  gate <project dir> --base <run id> --run <run id>
+      for CI, from saved runs, with no model calls. A run stands for its repeat set, and each side needs 3 finished runs of one set.
+      Exits 1 on a new theme of high severity (a severity that rounds to 3 or more of 4) in at least 2 later runs, 2 when it cannot
+      decide, as when the sides differ in model, personas, goal or points of interest, and 0 otherwise. Exit 0 is no claim about real people.
   rejudge <project dir> [--run <run id>] [--budget <usd>] [--check] [--fake-llm]
       groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
       It spends at most what is left of the run's cost budget, or --budget instead. --check also reviews the friction themes
@@ -98,6 +105,7 @@ const OPTIONS = {
   base: { type: 'string' },
   repeats: { type: 'string' },
   'also-model': { type: 'string' },
+  'also-trait-free': { type: 'boolean', default: false },
   repeat: { type: 'string' },
   budget: { type: 'string' },
   file: { type: 'string', multiple: true },
@@ -456,8 +464,8 @@ async function estimate(v: Values): Promise<void> {
     const stale = file ? personas.filter((p) => !personaProfileIsCurrent(p, config)).length : 0;
     const repeats = Number(v.repeats ?? 1);
     const also = alsoModel(v, settings);
-    const e = estimateFor(config, personas, repeats, also);
-    const runs = repeats + (also ? 1 : 0);
+    const e = estimateFor(config, personas, repeats, also, v['also-trait-free']);
+    const runs = repeats + (also ? 1 : 0) + (v['also-trait-free'] ? 1 : 0);
     out(
       `${personas.length} personas${runs > 1 ? `, ${runs} runs` : ''}: ${estimateText(e)}; ${budgetText(e, settings.cost_budget_usd)}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
       { kind: 'estimate', personas: personas.length, runs, stale, ...e, budget_usd: settings.cost_budget_usd },
@@ -488,7 +496,7 @@ async function runPlanned(dir: string, store: ProjectStore, record: Recorder, pl
     });
     const reports = await runSet(planned, async (run) => {
       // Nobody can resume a blocked persona from a terminal, so a block ends their episode at once.
-      started = launchRun(store, run.config, { personas, sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from }, {
+      started = launchRun(store, run.config, { personas: runPersonas(run, personas), sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from }, {
         blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake: v['fake-llm'], secrets: envSecrets,
       });
       const report = await started.done;
@@ -522,7 +530,7 @@ async function runSimulation(v: Values): Promise<void> {
   try {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
     const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v, settings)];
-    const planned = repeatRuns(config, repeats, also);
+    const planned = repeatRuns(config, repeats, also, v['also-trait-free']);
     // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
     requireKeys(planned, settings, fake);
     store.saveProject(config);
@@ -537,7 +545,7 @@ async function runSimulation(v: Values): Promise<void> {
       store.replacePersonas(personas, file.audience.persona_count);
     }
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
-    const estimated = estimateFor(config, personas, repeats, also);
+    const estimated = estimateFor(config, personas, repeats, also, v['also-trait-free']);
     note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, settings.cost_budget_usd)}`);
     await runPlanned(dir, store, record, planned, personas, v);
   } finally {
@@ -557,6 +565,7 @@ function urlsFrom(v: Values): Record<string, string> {
 /** A finished run again on its frozen config and personas, with run's guards: every key before anything starts, the estimate, the budget. */
 async function rerun(v: Values, dir: string | undefined): Promise<void> {
   if (!v.base) throw new Error(`rerun needs --base <run id>.\n\n${USAGE}`);
+  if (v['also-trait-free']) throw new Error('--also-trait-free is for run: rerun repeats what a run froze.');
   const fake = v['fake-llm'];
   // Beside an app that may have a run live: this leaves it running, and refuses to start a second one.
   const store = existingProject(dir, { recover: false });
@@ -589,7 +598,7 @@ function listRuns(dir: string | undefined): void {
   const store = existingProject(dir);
   try {
     const runs = store.listRuns().map((r) => ({ run_id: r.run_id, status: r.status, stop_reason: r.stop_reason, cost_usd: r.cost_usd, started_at: new Date(r.started_at).toISOString(), goal: r.config.project.goal, repeat: r.config.repeat ?? null }));
-    for (const r of runs) out(`${r.run_id}  ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ''}, $${r.cost_usd.toFixed(4)}, ${r.started_at}: "${r.goal}"${r.repeat ? `, repeat ${r.repeat.index} of ${r.repeat.of} in set ${r.repeat.group}` : ''}`, { kind: 'run_row', ...r });
+    for (const r of runs) out(`${r.run_id}  ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ''}, $${r.cost_usd.toFixed(4)}, ${r.started_at}: "${r.goal}"${r.repeat ? `, repeat ${r.repeat.index} of ${r.repeat.of} in set ${r.repeat.group}${isTraitFree(r) ? ', with no persona traits' : ''}` : ''}`, { kind: 'run_row', ...r });
     out(`${runs.length} run${runs.length === 1 ? '' : 's'} in ${resolve(dir!)}, newest first`, { kind: 'runs', project: resolve(dir!), runs: runs.length });
   } finally {
     store.close();
@@ -657,6 +666,26 @@ function stopOnSigint(): AbortSignal {
 }
 
 const reportFiles = (dir: string, run_id: string) => ({ report_json: resolve(dir, `runs/${run_id}/report.json`), report_md: resolve(dir, `runs/${run_id}/report.md`) });
+
+/** What a CI job reads. Whatever else stops a gate, such as a bad flag or an unknown run, is 2 as well: a job must never read that as a new theme. */
+const GATE_EXIT: Record<GateDecision['decision'], number> = { passed: 0, failed: 1, could_not_decide: 2 };
+
+function gate(v: Values, dir: string | undefined): void {
+  let decision: GateDecision;
+  try {
+    if (!dir || !v.base || !v.run) throw new Error('gate needs the project folder, --base and --run.');
+    const store = existingProject(dir);
+    try {
+      decision = gateDecision(compareRuns(store, v.base, v.run));
+    } finally {
+      store.close();
+    }
+  } catch (err) {
+    decision = { decision: 'could_not_decide', base: [], run: [], failing: [], warnings: [], reasons: [err instanceof Error ? err.message : String(err)] };
+  }
+  out(gateToMarkdown(decision), { kind: 'gate', ...decision });
+  process.exitCode = GATE_EXIT[decision.decision];
+}
 
 /** Runs an ended run's judge, its evidence check when on or asked for, and its author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
 async function rejudge(v: Values, dir: string | undefined): Promise<void> {
@@ -761,11 +790,12 @@ async function main(): Promise<void> {
   if (command === 'outcome') return outcome(values, sub);
   if (command === 'rerun') return rerun(values, sub);
   if (command === 'compare') return compare(values, sub);
+  if (command === 'gate') return gate(values, sub);
   throw new Error(USAGE);
 }
 
 // A finished or stopped run exits 0; only work that could not start or finish exits non-zero.
 main().catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = 1;
+  process.exitCode = process.argv.slice(2).find((arg) => !arg.startsWith('-')) === 'gate' ? GATE_EXIT.could_not_decide : 1;
 });

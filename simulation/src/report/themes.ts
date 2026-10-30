@@ -612,13 +612,16 @@ export function wentWell(events: GnomiEvent[], ctx?: Context, groups = likeGroup
 export const rankOrder = (a: ReportTheme, b: ReportTheme) =>
   EVIDENCE_ORDER[b.prevalence?.level ?? 'none'] - EVIDENCE_ORDER[a.prevalence?.level ?? 'none'] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id);
 
+/** High severity. A theme's severity is a median, so it can sit between two tiers: this rounds as the ranking does. */
+export const isSevere = (severity: number) => Math.round(severity) >= 3;
+
 /**
  * Where to look first within this run; the rank stays as it is, so a next can sit below a later. An objection is an attitude, not
  * a fix, so it has none. One persona's recorded failure can still be a real defect (docs/interpreting-simulations.md).
  */
 export function priorityOf({ category, severity, trust, prevalence: share }: ReportTheme): 'fix_now' | 'next' | 'later' | null {
   if (category === 'objection') return null;
-  const severe = Math.round(severity) >= 3;
+  const severe = isSevere(severity);
   const level = share?.level;
   if (severe && level === 'strong') return 'fix_now';
   if (level === 'strong' || (severe && level === 'some') || (severe && level === 'single' && trust !== 'reported')) return 'next';

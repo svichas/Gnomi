@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, endedRun, estimateFor, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runSet } from './workspace.ts';
+import { cappedGateway, checkRun, credential, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -16,7 +16,7 @@ import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, ModelChoice, Poi, ProjectConfig, Report, RunConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Persona, Poi, ProjectConfig, Report, RunConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
 
 test('a provider needs its key, and the local one its endpoint', () => {
   const secrets = (name: string) => (name === 'openai_api_key' ? 'sk-test' : null);
@@ -114,6 +114,45 @@ test('each run stops at its share, so the estimate shows a run over its share th
   assert.equal(set.run_high_usd, estimateFor(tight, personas, 1, sonnet).run_high_usd, 'the dearest run, whatever the number of cheap ones');
   const one = estimateFor(gym, personas);
   assert.deepEqual([one.run_budget_usd, one.run_high_usd], [gym.settings.cost_budget_usd, one.cost_usd[1]], 'a lone run has the whole budget');
+});
+
+test('a trait-free run is one more run of a set, on the same routing, and only it has the stripped personas', () => {
+  const audience = defaultAudience({ name: 'Gym', role: null, goal: 'Post a job' });
+  const config: ProjectConfig = { ...gym, audience };
+  const people: Persona[] = [{ ...BUILTIN_PERSONA, id: 'p-1', segment_id: audience.segments[0].id, tech_skill: 1, patience: 1, device: 'mobile' }];
+  const runs = repeatRuns(config, 2, undefined, true);
+  const { group } = runs[0].repeat!;
+  assert.deepEqual(runs.map((run) => run.repeat), [1, 2, 3].map((index) => ({ group, index, of: 3, trait_free: 3 })));
+  assert.deepEqual(runs.map((run) => run.config.settings.cost_budget_usd), [2, 2, 2], 'the budget split counts it');
+  assert.deepEqual(runs[2].config.settings.routing, config.settings.routing, 'the same models, so only the traits differ');
+  assert.equal(runPersonas(runs[0], people), people);
+  const [stripped] = runPersonas(runs[2], people);
+  assert.deepEqual([stripped.id, stripped.seed, stripped.name, stripped.device, stripped.attributes], ['p-1', BUILTIN_PERSONA.seed, BUILTIN_PERSONA.name, 'desktop', {}]);
+  assert.equal(stripped.background, audience.segments[0].description);
+  assert.deepEqual(repeatRuns(config, 1, deepseek, true).map((run) => run.config.settings.routing.navigator.provider), ['anthropic', 'deepseek', 'anthropic'], 'last, on the project\'s own models');
+  assert.equal(repeatRuns(config).length, 1, 'off unless asked for');
+  assert.throws(() => repeatRuns(gym, 2, undefined, true), /needs an audience/);
+
+  const plain = estimateFor(config, people);
+  const pared = estimateFor(config, [stripped]);
+  const whole = estimateFor(config, people, 2, undefined, true);
+  assert.notEqual(pared.cost_usd[1], plain.cost_usd[1], 'stripped patience changes the step budget, so the fixture can tell them apart');
+  assert.equal(whole.calls, plain.calls * 2 + pared.calls);
+  assert.ok(Math.abs(whole.cost_usd[1] - (plain.cost_usd[1] * 2 + pared.cost_usd[1])) < 1e-9);
+  assert.equal(whole.run_budget_usd, 2);
+});
+
+test('a rerun of a set with a trait-free run gets its whole budget back, and the trait-free run itself cannot be run again', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-workspace-'));
+  const store = openProject(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const snapshot = (index: number): Omit<RunConfig, 'run_id'> => ({ seed: 1, project: { ...gym, settings: { ...gym.settings, cost_budget_usd: 2 } }, personas: [], sessions: [], reset: false, pause_timeout_ms: 0, app_version: '0', repeat: { group: 'g', index, of: 3, trait_free: 3 } });
+  for (const index of [1, 3]) {
+    const { run_id } = store.createRun(snapshot(index));
+    store.finishRun(run_id, 'finished', null, 0);
+  }
+  assert.equal(rerunProject(finishedRun(store, 'r-0001')).config.settings.cost_budget_usd, 6);
+  assert.throws(() => finishedRun(store, 'r-0002'), /r-0002 is a set's trait-free run/);
 });
 
 test('the runs of a set go one at a time, and a run that stops ends it', async () => {

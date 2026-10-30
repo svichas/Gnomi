@@ -31,6 +31,7 @@
     "./report/diff.ts": "./src/report/diff.ts",
     "./report/dimensions.ts": "./src/report/dimensions.ts",
     "./report/friction.ts": "./src/report/friction.ts",
+    "./report/gate.ts": "./src/report/gate.ts",
     "./report/markdown.ts": "./src/report/markdown.ts",
     "./report/match.ts": "./src/report/match.ts",
     "./report/models.ts": "./src/report/models.ts",
