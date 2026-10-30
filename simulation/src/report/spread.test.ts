@@ -197,7 +197,8 @@ async function withModels(social: boolean, judge: Responder) {
     requests.push({ role: req.role, system: req.system, user: JSON.parse(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('')) });
     return respond(req);
   };
-  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
+  const blobs = { put: async () => {}, get: () => Promise.reject(new Error('no file')) };
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), blobs, record, events: () => events });
   return { events, requests, report: buildReport(events) };
 }
 

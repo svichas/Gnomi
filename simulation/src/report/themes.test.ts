@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, authorThemes, judgeGroups, PAGE_TEXT_MAX, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -78,6 +78,25 @@ test('a survey answer merged into a page theme leaves "reached" at that page; a 
   assert.deepEqual(merged.affected.map((a) => [a.affected, a.reached]), [[2, 3], [2, 2]], 'b2 counts as affected, not through the POI');
   const surveyOnly = analyseFrictions(surveyed, ctx).themes.find((t) => t.id === 'g2');
   assert.deepEqual(surveyOnly?.affected.map((a) => [a.affected, a.reached]), [[0, 3], [1, 2]]);
+});
+
+test('page text reaches the author within its caps: per excerpt, in total, and counted towards the author\'s cap', () => {
+  const [theme] = analyseFrictions(run, ctx).themes;
+  const pages = new Map(theme.evidence.map((e) => [e.step_seq ?? -1, `- button "Save" [ref=e1] [box=0,0,1,1] ${'x'.repeat(5_000)}`]));
+  const [sent] = authorThemes([theme], pages);
+  assert.ok(sent.evidence.every((e) => e.page_text?.length === PAGE_TEXT_MAX && e.page_text.startsWith('- button "Save" xxx')), 'each excerpt is cut to its cap');
+
+  const bare = authorThemes([theme]);
+  const cost = (items: unknown) => Math.ceil(JSON.stringify(items).length / 4);
+  assert.equal(authorThemes([theme], new Map(), cost(bare) + 10).length, 1);
+  assert.equal(authorThemes([theme], pages, cost(bare) + 10).length, 0, 'with its page text the theme no longer fits');
+
+  const many = Array.from({ length: 40 }, (_, i) => ({ ...theme, id: `g${i + 1}` }));
+  const all = authorThemes(many, pages);
+  const excerpts = all.flatMap((t) => t.evidence.flatMap((e) => e.page_text ?? []));
+  assert.equal(all.length, authorThemes(many).length, 'excerpts push no theme out: the later ones go without');
+  assert.ok(excerpts.length > 0 && excerpts.length < all.flatMap((t) => t.evidence).length);
+  assert.ok(excerpts.reduce((sum, text) => sum + cost(text), 0) <= AUTHOR_PAGE_CAP);
 });
 
 test('a merged theme carries the key of each of its groups', () => {

@@ -12,12 +12,18 @@ export const AUTHOR_TOKEN_CAP = 20_000;
 export const JUDGE_POST_CAP = 10_000;
 /** Of what is left, at most this much goes to survey likes; the friction and objection groups get the rest. */
 export const JUDGE_LIKE_CAP = 5_000;
+/** Of the author's cap, at most this much goes to page text, so excerpts cannot push lower-ranked themes out of its input. */
+export const AUTHOR_PAGE_CAP = 10_000;
+/** Characters of page text per piece of evidence: about a median page (M3 seed runs: 1,193) once PAGE_MARKS are gone. */
+export const PAGE_TEXT_MAX = 1_200;
 /** Fewer personas than this on a POI and every share has a wide range, which the report says. */
 export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
 export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
+// The navigator's handles on a page: half its characters, and nothing a suggestion should quote.
+const PAGE_MARKS = / \[(?:ref|box|cursor)=[^\]]*\]/g;
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {
@@ -415,10 +421,21 @@ export function applySuggestions(themes: ReportTheme[], suggestions: AuthorSugge
   return { unknown: [...unknown] };
 }
 
-/** What the author sees for one POI: its ranked themes with evidence, while they fit the cap. */
-export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
+/**
+ * What the author sees for one POI: its ranked themes with evidence, while they fit the cap, and the page at each evidence step
+ * (`pages`, by the step's seq) while that fits its own. Each excerpt counts towards both caps.
+ * shortcut: an excerpt is the top of the page, so an element further down is cut; centre it on the element if suggestions still miss it.
+ */
+export function authorThemes(themes: ReportTheme[], pages: Map<number, string> = new Map(), cap = AUTHOR_TOKEN_CAP) {
   const sent = [];
   let used = 0;
+  let pageUsed = 0;
+  const excerpt = (step_seq: number | null): { page_text?: string } => {
+    const page_text = clip((pages.get(step_seq ?? -1) ?? '').replace(PAGE_MARKS, ''), PAGE_TEXT_MAX);
+    if (!page_text || pageUsed + tokens(page_text) > AUTHOR_PAGE_CAP) return {};
+    pageUsed += tokens(page_text);
+    return { page_text };
+  };
   for (const t of themes) {
     const item = {
       id: t.id,
@@ -428,7 +445,7 @@ export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
       personas: t.personas,
       pages: t.pages,
       elements: t.elements,
-      evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals })),
+      evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals, ...excerpt(e.step_seq) })),
     };
     const cost = tokens(item);
     if (used + cost > cap) break; // ranked, so the rest matter less

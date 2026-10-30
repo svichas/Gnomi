@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -59,7 +59,7 @@ function fakeBrowsers(over: (page: FakePage, n: number) => Partial<PageDriver> =
   return { browsers, pages, peak: () => peak };
 }
 
-async function runWeb(name: string, opts: { personas: Persona[]; navigator: Responder; browsers: BrowserPool; settings?: Partial<RunSettings>; project?: Partial<ProjectConfig>; withLogin?: boolean }) {
+async function runWeb(name: string, opts: { personas: Persona[]; navigator: Responder; browsers: BrowserPool; author?: Responder; settings?: Partial<RunSettings>; project?: Partial<ProjectConfig>; withLogin?: boolean }) {
   const folder = join(dir, name);
   const store = openProject(folder);
   const blobs = createFsBlobStore(folder);
@@ -70,13 +70,39 @@ async function runWeb(name: string, opts: { personas: Persona[]; navigator: Resp
   };
   store.saveProject(project);
   const record = createRecorder(store, () => {});
-  const llm = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : opts.navigator(req)), socialiser: DEMO_SOCIALISER, judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+  const llm = createScriptedGateway({ navigator: (req) => (req.purpose === 'survey' ? DEMO_SURVEY : opts.navigator(req)), socialiser: DEMO_SOCIALISER, judge: DEMO_JUDGE, author: opts.author ?? DEMO_AUTHOR }, record);
   const config = store.createRun(newRunConfig(project, { personas: opts.personas, sessions: opts.withLogin ? [recruiter] : [], reset: false }));
   const report = await startRun(config, { store, blobs, browsers: opts.browsers, llm, record, sessions: opts.withLogin ? sessions : null }).done;
   const events = store.events(config.run_id);
   store.close();
   return { report, events };
 }
+
+test('each step keeps the page text the model saw, identical pages share one file, and the author reads it back', async () => {
+  const text = '- textbox "Password" [ref=e1] [password: filled]\n- button "Save" [ref=e2]';
+  const { browsers } = fakeBrowsers(() => ({ snapshot: async () => ({ url: 'http://gym.test/', title: 'Gym', text, hash: 'abc123' }) }));
+  const shown: string[] = [];
+  const authored: string[] = [];
+  let steps = 0;
+  const { report, events } = await runWeb('page-text', {
+    personas: personas(1), browsers,
+    navigator(req) {
+      shown.push(req.user.map((part) => (part.type === 'text' ? part.text : '')).join(''));
+      return { ...step(++steps === 2 ? 'done' : 'wait'), friction: { severity: 2, what: 'Save does nothing', expected: 'Saved', about_ref: null } };
+    },
+    author(req) {
+      authored.push(req.user.map((part) => (part.type === 'text' ? part.text : '')).join(''));
+      return DEMO_AUTHOR(req);
+    },
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  const hashes = of(events, 'persona.step').map((e) => e.payload.snapshot_hash);
+  assert.deepEqual(hashes, ['abc123', 'abc123']);
+  assert.deepEqual(readdirSync(join(dir, 'page-text', 'runs', report.run_id, 'snapshots')), ['abc123.txt']);
+  assert.equal(readFileSync(join(dir, 'page-text', 'runs', report.run_id, 'snapshots', 'abc123.txt'), 'utf8'), text);
+  assert.ok(shown[0].includes(text), 'the file holds exactly what the navigator was shown');
+  assert.equal(JSON.parse(authored[0]).themes[0].evidence[0].page_text, '- textbox "Password" [password: filled] - button "Save"');
+});
 
 test('between social rounds a persona holds no page: open pages stay within the concurrency, and a woken persona is back where it was, logged in', async () => {
   const { browsers, pages, peak } = fakeBrowsers();

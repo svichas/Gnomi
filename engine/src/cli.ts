@@ -454,13 +454,13 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
       process.once('SIGINT', () => process.exit(130));
     });
     const path = `runs/${run_id}/report`;
+    const blobs = createFsBlobStore(dir!);
     let report: Report;
     try {
-      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), record, events });
+      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), blobs, record, events });
     } finally {
       // Written even when the judge failed or was stopped: the author's new suggestions are in the log, and the files are snapshots of it.
       report = buildReport(events());
-      const blobs = createFsBlobStore(dir!);
       await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
       await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
       store.setRunCost(run_id, report.cost_usd);
