@@ -98,6 +98,12 @@ test('a run that stopped early says how much it covers, with or without themes',
   assert.ok(say({ status: 'stopped', stop_reason: 'user', personas, themes: [] }).startsWith(`${opening} No friction theme`));
 });
 
+test('a persona the model failed on did start, so a stopped run counts it', () => {
+  const personas = [person(0, 'model_failed'), person(1, 'model_failed'), person(2, 'not_started')];
+  const themes = [theme({ prevalence: prevalence(2, 2), personas: 2 })];
+  assert.ok(say({ status: 'stopped', personas, themes }).startsWith('The run did not finish: 2 of 3 personas started, so this covers only what they got to. The biggest problem in this run is “Save does nothing”, met by 2 of 2 personas who reached the page.'));
+});
+
 test('one persona is shown as one persona, not as a pattern', () => {
   const text = say({
     personas: [person(0)],
@@ -120,6 +126,14 @@ test('the top theme comes from the team\'s own products by evidence, never from 
   assert.match(text, /Next, look at “One persona on the first POI” on Gym\.$/);
   assert.doesNotMatch(text, /Rival/);
   assert.equal(say({ pois, themes: [rival] }), say({ pois, themes: [] }), 'a run whose only themes are a competitor\'s has none of the team\'s');
+});
+
+test('a run of competitor sites alone has no finding on the team\'s product, and names none of its themes', () => {
+  const pois: Report['pois'] = [{ id: 'poi-app', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true }];
+  const text = 'This run tried only competitor sites, so it has no finding on your product. Next, look at how far each persona got.';
+  assert.equal(say({ pois }), text);
+  assert.equal(say({ pois, themes: [] }), text);
+  assert.equal(say({ pois, themes: [], set_aside: [theme({ rank: 0, check: { verdict: 'environment', reason: 'The fixture was empty.' } })] }), text);
 });
 
 test('one product beside a competitor needs no naming', () => {

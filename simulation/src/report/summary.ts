@@ -1,4 +1,3 @@
-import { isUnrated } from '../types.ts';
 import type { Report, ReportTheme } from '../types.ts';
 import { rankOrder } from './themes.ts';
 
@@ -42,13 +41,15 @@ export function writtenSummary(report: Report): string | null {
   const problems = themes.filter((t) => t.category !== 'objection').sort(rankOrder); // across POIs too, where `rank` restarts
   const [lead, next] = [...problems, ...themes.filter((t) => t.category === 'objection').sort(rankOrder)];
   const aside = report.set_aside?.filter(own).length ?? 0;
-  const started = report.personas.filter((p) => !isUnrated(p.outcome)).length;
+  const started = report.personas.filter((p) => p.outcome !== 'not_started').length; // model_failed began, and can have met a theme
   const verb = problems.length ? 'met' : 'raised';
   return [
     ...(report.status === 'finished' ? [] : [`The run did not finish: ${started} of ${count(report.personas.length, 'persona')} started, so this covers only what they got to.`]),
     ...(problems.length ? [] : [aside
       ? `The evidence check set aside ${aside === 1 ? 'the one friction theme' : `all ${aside} friction themes`} as a persona's mistake or the test setup. That is one model's review, so a real problem can be among them.`
-      : 'No friction theme came up on your product, which does not show that it works for real people.']),
+      : report.pois.every((poi) => poi.competitor) // report/compare.ts counts such a run as the team's, but it tried nothing of theirs
+        ? 'This run tried only competitor sites, so it has no finding on your product.'
+        : 'No friction theme came up on your product, which does not show that it works for real people.']),
     ...(lead ? [
       `${problems.length ? 'The biggest problem in this run is' : 'The top objection is'} ${named(lead)}, ${reach(lead, verb, poiOf(lead))}.`,
       ...((lead.prevalence?.personas ?? lead.personas) === 1 ? ['That is one persona, so it is worth a look but not yet a pattern.'] : []),
