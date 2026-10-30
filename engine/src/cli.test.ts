@@ -695,12 +695,15 @@ test('--also-trait-free adds one run to a set, in its snapshot alone, and only a
   assert.match(cli('report', project, '--run', 'r-0001', '--format', 'md'), /- Repeats: Appeared in 2 of 2 runs\. Personas with no traits hit this too, so it may say more about the model than this audience/);
   assert.match(cli('report', project, '--repeat', done.group, '--format', 'md'), /One more run, of personas with no traits, is in no count here\./);
 
+  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
+  assert.match(refused('study', project).stderr, /r-0003 is a set's trait-free run/, 'the newest run is the control, so study does not plan from it unasked');
+  assert.match(cli('study', project, '--run', 'r-0001'), /r-0001 study plan: /);
+
   cli('rerun', project, '--base', 'r-0001', '--repeats', '2');
   const compared = lines('compare', project, '--base', 'r-0001', '--run', 'r-0004').at(-1);
   assert.deepEqual(compared.before, ['r-0001', 'r-0002'], 'a control is no sample of the audience');
   assert.ok(!compared.notes.some((note: string) => note.includes('did not finish')), compared.notes.join(' | '));
 
-  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
   assert.match(refused('rerun', project, '--base', 'r-0003').stderr, /r-0003 is a set's trait-free run/);
   assert.match(refused('rerun', project, '--base', 'r-0001', '--also-trait-free').stderr, /--also-trait-free is for run/);
   const empty = join(dir, 'trait-free-none');

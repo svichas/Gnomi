@@ -142,6 +142,15 @@ test('a trait-free run is one more run of a set, on the same routing, and only i
   assert.equal(whole.run_budget_usd, 2);
 });
 
+test('a trait-free run of a grounded audience has no digest, as each seed would quote its own remarks', () => {
+  const audience = defaultAudience({ name: 'Gym', role: null, goal: 'Post a job' });
+  const grounding = { facts: [], remarks: ['One.', 'Two.', 'Three.', 'Four.'], sources: [] };
+  const config: ProjectConfig = { ...gym, audience: { ...audience, segments: [{ ...audience.segments[0], grounding }] } };
+  const runs = repeatRuns(config, 1, undefined, true);
+  assert.deepEqual(runs.map((run) => run.config.audience!.segments[0].grounding), [grounding, undefined], 'only the control loses it');
+  assert.equal(config.audience!.segments[0].grounding, grounding, 'the project keeps its digest');
+});
+
 test('a rerun of a set with a trait-free run gets its whole budget back, and the trait-free run itself cannot be run again', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-workspace-'));
   const store = openProject(dir);

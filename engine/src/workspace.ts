@@ -103,6 +103,9 @@ export function checkComparison(config: ProjectConfig) {
   if (comparisonProblems.length) throw new Error(`Comparison: ${comparisonProblems.join(' ')}`);
 }
 
+/** A trait-free run's project. Each seed quotes its own remarks, so they would set stripped personas apart again, and a finding they caused would read as the model's. */
+const ungrounded = (config: ProjectConfig): ProjectConfig => ({ ...config, audience: { ...config.audience!, segments: config.audience!.segments.map(({ grounding: _, ...segment }) => segment) } });
+
 /**
  * The runs of a set, each with its share of the cost budget. `also` adds one more with the navigator and socialiser on that model,
  * and `withTraitFree` a last one of personas with no traits (runPersonas). One run is a lone run, with no repeat. The audience seed
@@ -116,7 +119,7 @@ export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoic
   const group = randomUUID().slice(0, 8);
   const { routing, cost_budget_usd } = config.settings;
   return Array.from({ length: of }, (_, i) => ({
-    config: { ...config, settings: { ...config.settings, cost_budget_usd: cost_budget_usd / of, routing: also && i === repeats ? { ...routing, navigator: also, socialiser: also } : routing } },
+    config: { ...(withTraitFree && i === of - 1 ? ungrounded(config) : config), settings: { ...config.settings, cost_budget_usd: cost_budget_usd / of, routing: also && i === repeats ? { ...routing, navigator: also, socialiser: also } : routing } },
     repeat: { group, index: i + 1, of, ...(withTraitFree ? { trait_free: of } : {}) },
   }));
 }
@@ -202,6 +205,7 @@ export async function rewriteReport({ store, blobs, record }: RunPlace, run_id: 
 
 /** A study plan for an ended run: one author call, then the report again. A failed call adds no plan, so an earlier one stays. */
 export async function planStudy(place: RunPlace, { run_id, config }: RunRow, llm: LlmGateway): Promise<Report> {
+  if (isTraitFree(config)) throw new Error(`${run_id} is a set's trait-free run, whose personas have no traits: plan a study from one of the others.`);
   const { store, blobs, record } = place;
   const log = store.events(run_id);
   const before = buildReport(log);
