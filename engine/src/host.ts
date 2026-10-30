@@ -17,7 +17,8 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, checkComparison, checkRun, compareRuns, credential, estimateFor, finishedRun, launchRun, population, projectGateway, repeatReports, repeatRuns, rerunProject, runSet } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
+import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
 import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
@@ -46,7 +47,9 @@ const clients = new Set<Transport>();
 const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
 const sets = new Map<string, LiveSet>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
+const planning = new Set<string>(); // by runKey: the renderer's busy state ends with the report tab, and each plan has its own cap
 let closing = false; // no repeat starts once shutdown has begun
+const quitting = new AbortController(); // the only stop for model work after a run, which has no stop button
 type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
 type LiveSet = { group: string; stopped: boolean; done?: Promise<unknown> };
 // Only a selected project or one with a live run keeps its database open.
@@ -174,6 +177,7 @@ const info = () => readInfo(current().store, sessions !== null);
 /** Lets the process exit: runs stop, the recorder and the browsers close, the project closes. Main sends it before quitting. */
 async function shutdown() {
   closing = true;
+  quitting.abort(new Error('App is closing.'));
   setupTask?.stop.abort(new Error('App is closing. Completed drafts are saved.'));
   await setupTask?.done.catch(() => {});
   for (const run of runs.values()) run.stop();
@@ -462,6 +466,28 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     return combineReports(repeatReports(store, group), set?.group === group && !set.stopped);
   },
   compare_runs: ({ base, run }) => compareRuns(current().store, base, run),
+  estimate_study: ({ run_id }) => estimateStudy({ settings: modelRun(current().store, run_id, FAKE_LLM, 'planned from').config.project.settings }),
+  async plan_study({ run_id }) {
+    const place = current();
+    const run = modelRun(place.store, run_id, FAKE_LLM, 'planned from');
+    const { project } = run.config;
+    if (!FAKE_LLM) requireCredential(project.settings, 'author', project.settings.routing.author, secret);
+    const { cost_usd: [, most], unpriced } = estimateStudy({ settings: project.settings });
+    if (unpriced.length) throw new Error(`No price is known for ${unpriced.join(', ')}.`);
+    const key = runKey(place.store.dir, run_id);
+    if (planning.has(key)) throw new Error('A study plan is already being written.');
+    planning.add(key);
+    try {
+      await planStudy(place, run, cappedGateway(projectGateway({ fake: FAKE_LLM, secrets: secret, config: project, record: place.record }), most, quitting.signal));
+    } finally {
+      planning.delete(key);
+    }
+    return null;
+  },
+  async record_outcome(outcome) {
+    await recordOutcome(current(), outcome);
+    return null;
+  },
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),
   async get_blob({ path }) {
     // The renderer only ever needs run evidence and POI assets; recorded logins under sessions/ stay out of its reach even encrypted.

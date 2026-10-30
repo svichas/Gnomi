@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, INTERFERENCE_TEXT, interferenceNote, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
@@ -17,6 +17,7 @@ import type { Inspect, Tone } from './reportParts.tsx';
 import { Flow } from './ReportFlow.tsx';
 import { Methods } from './ReportMethods.tsx';
 import { Spread } from './ReportSpread.tsx';
+import { OutcomeDetails, RecordOutcome, Study } from './ReportStudy.tsx';
 
 function duration(ms: number | null) {
   if (ms === null) return 'not finished';
@@ -223,12 +224,14 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <div className="report-finding-copy">
             <h4>{theme.title}</h4>
             <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{theme.interference && ' · possibly interference between personas'}</span></p>
+            {theme.validation && <p className="report-finding-outcome">{outcomeText(theme.validation)}</p>}
           </div>
           {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
           <Icon name="chevron" size={16} />
         </summary>
         <div className="report-finding-body">
+          {theme.validation && <OutcomeDetails outcome={theme.validation} title={theme.title} />}
           <p className="text-sm text-stone-700">{theme.description}</p>
           {theme.suggestion && <div className="report-suggestion">
             <Icon name="spark" size={18} />
@@ -247,6 +250,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           </ul>
           {theme.named_by === 'rules' && <p className="text-xs text-stone-500">Title generated from the page and element.</p>}
           {repeats && repeats.other_titles.length > 0 && <p className="text-xs text-stone-500">Named in other runs: {repeats.other_titles.join('; ')}</p>}
+          {!inFile && <RecordOutcome runId={run_id} theme={theme} />}
         </div>
       </details>
     </li>
@@ -270,6 +274,8 @@ function Findings({ themes, pois, empty, onInspect, renderScreenshot }: { themes
 
 /** Themes the evidence check took out of the ranking, each with the model's reason; nothing here is lost, only moved. */
 function SetAside({ themes, pois }: { themes: ReportTheme[]; pois: ReportData['pois'] }) {
+  const inFile = useContext(InFile);
+  const { run_id } = useContext(Repeats);
   return <div className="space-y-3">
     <p className="text-sm text-stone-600">{SET_ASIDE_TEXT}</p>
     <ul className="space-y-3">
@@ -279,6 +285,8 @@ function SetAside({ themes, pois }: { themes: ReportTheme[]; pois: ReportData['p
           <p className="text-sm font-medium text-stone-900">{theme.title}</p>
           <p className="text-sm text-stone-700">The model&rsquo;s review points to {setAsideCause(theme)}: {theme.check?.reason}</p>
           <p className="text-xs text-stone-500">{count(theme.personas, 'persona')}, {count(theme.frictions, 'report')}{poi && ` · ${poi}`}</p>
+          {theme.validation && <><p className="text-sm font-medium text-stone-900">{outcomeText(theme.validation)}</p><OutcomeDetails outcome={theme.validation} title={theme.title} /></>}
+          {!inFile && <RecordOutcome runId={run_id} theme={theme} />}
         </li>;
       })}
     </ul>
@@ -663,6 +671,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         {summary && <section aria-label="Summary" className="report-goal">{summary}</section>}
         <Glance report={report} themes={themes} />
         {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
+        <Study report={report} />
       </>}
       <div className="report-details">
         <SectionHeading title="Explore the details" hint="A closer look, whenever you need it." />

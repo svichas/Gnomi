@@ -15,10 +15,13 @@ import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
+import { reportToMarkdown, studyPlanToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { competitorsOf, isCalendarDate, localDate, NOTE_MAX, runStudyPlan, topFindings } from '@gnomi/simulation/report/study.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
-import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
+import type { BlobStore, LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, SessionInfo } from '@gnomi/simulation/types.ts';
+import { STUDY_STATUSES } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings, SessionInfo, StudyStatus } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -52,7 +55,8 @@ export function cappedGateway(llm: LlmGateway, cap: number, signal: AbortSignal)
         signal: req.signal ? AbortSignal.any([req.signal, stop]) : stop,
         onAttempt(attempt) {
           spent += attempt.payload.cost_usd;
-          if (spent >= cap) reached.abort(new Error(`The $${cap.toFixed(2)} budget was reached`));
+          // A free attempt reaches no cap, not even the $0 a local model's estimate gives, so its retry still runs.
+          if (attempt.payload.cost_usd > 0 && spent >= cap) reached.abort(new Error(`The $${cap.toFixed(2)} budget was reached`));
           req.onAttempt?.(attempt);
         },
       });
@@ -157,6 +161,81 @@ export function compareRuns(store: ProjectStore, base: string, run: string): Rep
   return diffReports(before, after);
 }
 
+/** What a change to an ended run writes to. */
+export type RunPlace = { store: ProjectStore; blobs: BlobStore; record: Recorder };
+
+/** A run that work after its end may touch. From the log, not the row: a crashed run's row may still say running. Comparison studies have no themes to act on. */
+export function endedRun(store: ProjectStore, run_id: string): RunRow {
+  const run = store.listRuns().find((row) => row.run_id === run_id);
+  if (!run) throw new Error(`There is no run ${run_id} in this project.`);
+  if (store.events(run_id, { types: ['run.finished', 'run.stopped'], limit: 1 }).length === 0) throw new Error(`${run_id} has not ended: it is still running, or it was interrupted before its report.`);
+  if (run.config.project.comparison) throw new Error(`${run_id} is a comparison study, which has no themes to act on.`);
+  return run;
+}
+
+/** The run an ended run's model work starts from, with its own frozen models. Scripted answers never replace a real model's. */
+export function modelRun(store: ProjectStore, run_id: string, fake: boolean, doing: string): RunRow {
+  const run = endedRun(store, run_id);
+  if (!run.config.project.settings?.routing) throw new Error(`${run_id} predates per-run model settings, so it cannot be ${doing}.`);
+  if (fake && store.events(run_id, { types: ['llm.call'] }).some((e) => e.type === 'llm.call' && e.payload.provider !== 'scripted')) throw new Error(`${run_id} was analysed by real models; --fake-llm would replace their answers with scripted ones.`);
+  return run;
+}
+
+/** After any change to an ended run: its report files are snapshots of the log, its row counts what the log does, and an app with the run open reloads, as when a run ends. */
+export async function rewriteReport({ store, blobs, record }: RunPlace, run_id: string): Promise<Report> {
+  endedRun(store, run_id);
+  const log = store.events(run_id);
+  const report = buildReport(log);
+  const path = `runs/${run_id}/report`;
+  await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
+  await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
+  store.setRunCost(run_id, report.cost_usd);
+  record({ run_id, round: log.at(-1)?.round ?? 1, persona_id: null, poi_id: null, type: 'report.generated', payload: { path: `${path}.json`, friction_count: report.frictions.length } });
+  return report;
+}
+
+/** A study plan for an ended run: one author call, then the report again. A failed call adds no plan, so an earlier one stays. */
+export async function planStudy(place: RunPlace, { run_id, config }: RunRow, llm: LlmGateway): Promise<Report> {
+  const { store, blobs, record } = place;
+  const log = store.events(run_id);
+  const before = buildReport(log);
+  if (!topFindings(before.themes ?? [], competitorsOf(before)).length) throw new Error(`${run_id} has no friction finding of your own product to plan a study for.`);
+  let report: Report;
+  try {
+    await runStudyPlan({ config, report: before, round: log.at(-1)?.round ?? 1, llm, record });
+  } finally {
+    // Written even when the call failed: a failed attempt can still cost money, and the files are snapshots of the log.
+    report = await rewriteReport(place, run_id);
+  }
+  await blobs.put(`runs/${run_id}/study-plan.md`, new TextEncoder().encode(studyPlanToMarkdown(report, report.study_plan!)));
+  return report;
+}
+
+export interface StudyOutcome {
+  run_id: string;
+  theme_id: string;
+  status: StudyStatus;
+  study_date: string; // YYYY-MM-DD
+  note?: string | null;
+}
+
+/** Records what a team's own study found, for a finding as it stands now. No model is involved. */
+export async function recordOutcome(place: RunPlace, { run_id, theme_id, status, study_date, note }: StudyOutcome, now = new Date()): Promise<Report> {
+  const { store, record } = place;
+  endedRun(store, run_id);
+  if (!STUDY_STATUSES.includes(status)) throw new Error(`The status must be ${STUDY_STATUSES.join(', ')}, not "${status}".`);
+  if (!isCalendarDate(study_date)) throw new Error(`The study date must be a real date as YYYY-MM-DD, not "${study_date}".`);
+  if (study_date > localDate(now)) throw new Error(`The study date ${study_date} is in the future.`);
+  const text = note?.trim() || null;
+  if (text && text.length > NOTE_MAX) throw new Error(`The note has ${text.length} characters, and the limit is ${NOTE_MAX}.`);
+  const log = store.events(run_id);
+  const { themes = [], set_aside = [] } = buildReport(log);
+  const theme = [...themes, ...set_aside].find((t) => t.id === theme_id);
+  if (!theme) throw new Error(`${run_id} has no finding "${theme_id}".`);
+  record({ run_id, round: log.at(-1)?.round ?? 1, persona_id: null, poi_id: theme.poi_id, type: 'finding.validated', payload: { keys: theme.keys ?? [], category: theme.category, title: theme.title, status, note: text, study_date } });
+  return rewriteReport(place, run_id);
+}
+
 /** A finished run's frozen config, to run it again; a run cut short is not a baseline to repeat. */
 export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
   const run = store.listRuns().find((row) => row.run_id === run_id);
@@ -243,10 +322,13 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
   // A missing key for any role the run calls would fail mid-run or quietly drop the report's analysis.
   const { routing, finding_check, check_model } = config.settings;
   const checker = finding_check && !config.comparison ? check_model : undefined; // its calls are the judge's, on a model of its own
-  for (const [role, { provider }] of [...runRoles(config).map((role) => [role, routing[role]] as const), ...(checker ? [['judge', checker] as const] : [])]) {
-    if (!opts.fake && !credential(provider, config.settings.local_base_url, opts.secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
-  }
+  if (!opts.fake) for (const [role, choice] of [...runRoles(config).map((role) => [role, routing[role]] as const), ...(checker ? [['judge', checker] as const] : [])]) requireCredential(config.settings, role, choice, opts.secrets);
   return personas;
+}
+
+/** The app's wording for a role's missing key; the CLI names the variable to set instead. */
+export function requireCredential(settings: RunSettings, role: LlmRole, { provider }: ModelChoice, secrets: Secrets) {
+  if (!credential(provider, settings.local_base_url, secrets)) throw new Error(provider === 'openai_compatible' ? 'Set the local model endpoint in the project settings first' : `Add ${KEYS[provider].label} key in Settings: the ${role} runs on it`);
 }
 
 /** Starts a run of the personas checkRun returned, on a gateway that backs off when the run is throttled. */

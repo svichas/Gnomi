@@ -8,10 +8,11 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, projectGateway, repeatReports, repeatRuns, rerunProject, runRoles, runSet, type Secrets } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runRoles, runSet, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
+import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
 import { describe } from '@gnomi/simulation/log/describe.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -22,10 +23,11 @@ import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
+import { NOTE_WARNING } from '@gnomi/simulation/report/study.ts';
 import { createRecorder, roleOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings, StudyStatus } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -55,6 +57,13 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
       It spends at most what is left of the run's cost budget, or --budget instead. --check also reviews the friction themes
       against their evidence, whatever the run's finding_check setting.
+  study <project dir> [--run <run id>] [--budget <usd>] [--fake-llm]
+      plans a study with real people from an ended run's top friction findings, with one call on the run's author model, under
+      rejudge's budget rule, and writes runs/<run id>/study-plan.md to hand to a researcher.
+  outcome <project dir> --run <run id> --theme <theme id> --status supported|contradicted|unresolved --date YYYY-MM-DD [--note "<text>"]
+      records what your team's own study found about a finding. No model call. It changes no simulated number and stays with this
+      run; record another to correct it, as the latest counts.
+      ${NOTE_WARNING}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -83,6 +92,10 @@ const OPTIONS = {
   repeat: { type: 'string' },
   budget: { type: 'string' },
   check: { type: 'boolean', default: false },
+  theme: { type: 'string' },
+  status: { type: 'string' },
+  date: { type: 'string' },
+  note: { type: 'string' },
   format: { type: 'string', default: 'summary' },
   json: { type: 'boolean', default: false },
   'fake-llm': { type: 'boolean', default: false },
@@ -245,8 +258,10 @@ function summarize(report: Report) {
       name: poi.name,
       themes: (report.themes ?? []).filter((t) => t.poi_id === poi.id).sort((a, b) => a.rank - b.rank).slice(0, 5)
         // A scan-only theme's prevalence of 0 is not a count of those who met it, so it gives none.
-        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }) })),
+        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }) })),
     })),
+    ...(report.study_count && { study_count: report.study_count }),
+    ...(report.unmatched_outcomes && { unmatched_outcomes: report.unmatched_outcomes }),
     sentiment: (report.sentiment ?? []).map(({ name, surveyed, sentiment, would_continue }) => ({ segment: name, surveyed, sentiment, would_continue })),
     cost_usd: report.cost_usd,
     duration_ms: report.duration_ms,
@@ -563,19 +578,36 @@ function compare(v: Values, dir: string | undefined): void {
   }
 }
 
+const spent = (from: GnomiEvent[]) => from.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
+
+/** What model work after a run may spend: what is left of the run's cost budget, unless --budget says otherwise. */
+function spendable(log: GnomiEvent[], run_id: string, settings: RunSettings, v: Values, command: string): number {
+  const budget = v.budget === undefined ? settings.cost_budget_usd - spent(log) : Number(v.budget);
+  if (!(budget > 0)) throw new Error(v.budget === undefined ? `${run_id} has spent its $${settings.cost_budget_usd.toFixed(2)} budget; pass --budget <usd> to let ${command} spend more.` : '--budget must be a positive amount in dollars.');
+  return budget;
+}
+
+/** Ctrl-C stops the model work, and a second one quits at once. */
+function stopOnSigint(): AbortSignal {
+  const stop = new AbortController();
+  process.once('SIGINT', () => {
+    note('Stopping… (Ctrl-C again to quit at once)');
+    stop.abort();
+    process.once('SIGINT', () => process.exit(130));
+  });
+  return stop.signal;
+}
+
+const reportFiles = (dir: string, run_id: string) => ({ report_json: resolve(dir, `runs/${run_id}/report.json`), report_md: resolve(dir, `runs/${run_id}/report.md`) });
+
 /** Runs an ended run's judge, its evidence check when on or asked for, and its author again with the current prompts and the run's own models, without browsing; the report uses the newest answer. */
 async function rejudge(v: Values, dir: string | undefined): Promise<void> {
   // Writes the judge's new events, beside a run the app may have live.
   const store = existingProject(dir, { recover: false });
   try {
-    const { run_id, config } = pickRun(store, v, dir);
-    // From the log, not the row: a crashed run's row may still say running.
-    if (store.events(run_id, { types: ['run.finished', 'run.stopped'], limit: 1 }).length === 0) throw new Error(`${run_id} has not ended: it is still running, or it was interrupted before its report.`);
-    if (config.project.comparison) throw new Error(`${run_id} is a comparison study, which has no judge to run again.`);
-    const settings = config.project.settings;
-    if (!settings?.routing) throw new Error(`${run_id} predates per-run model settings, so it cannot be judged again.`);
     const fake = v['fake-llm'];
-    if (fake && store.events(run_id, { types: ['llm.call'] }).some((e) => e.type === 'llm.call' && e.payload.provider !== 'scripted')) throw new Error(`${run_id} was analysed by real models; --fake-llm would replace their answers with scripted ones.`);
+    const { run_id, config } = modelRun(store, pickRun(store, v, dir).run_id, fake, 'judged again');
+    const settings = config.project.settings;
     requireKey(settings, 'judge', fake);
     requireKey(settings, 'author', fake);
     const checking = v.check || settings.finding_check;
@@ -583,30 +615,16 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     const events = () => store.events(run_id);
     const log = events();
     const [before, round] = [log.length, log.at(-1)?.round ?? 1];
-    const spent = (from: GnomiEvent[]) => from.reduce((sum, e) => sum + (e.type === 'llm.call' ? e.payload.cost_usd : 0), 0);
-    // What is left of the run's cost budget, unless --budget says what this rejudge may spend.
-    const budget = v.budget === undefined ? settings.cost_budget_usd - spent(log) : Number(v.budget);
-    if (!(budget > 0)) throw new Error(v.budget === undefined ? `${run_id} has spent its $${settings.cost_budget_usd.toFixed(2)} budget; pass --budget <usd> to let rejudge spend more.` : '--budget must be a positive amount in dollars.');
+    const budget = spendable(log, run_id, settings, v, 'rejudge');
     const record = timeline(store);
-    const stop = new AbortController();
-    process.once('SIGINT', () => {
-      note('Stopping… (Ctrl-C again to quit at once)');
-      stop.abort();
-      process.once('SIGINT', () => process.exit(130));
-    });
-    const path = `runs/${run_id}/report`;
+    const stop = stopOnSigint();
     const blobs = createFsBlobStore(dir!);
     let report: Report;
     try {
-      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop.signal), blobs, record, events, check: v.check });
+      await runReportModels({ config, round, llm: cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stop), blobs, record, events, check: v.check });
     } finally {
       // Written even when the judge failed or was stopped: the author's new suggestions are in the log, and the files are snapshots of it.
-      report = buildReport(events());
-      await blobs.put(`${path}.json`, new TextEncoder().encode(JSON.stringify(report, null, 2)));
-      await blobs.put(`${path}.md`, new TextEncoder().encode(reportToMarkdown(report)));
-      store.setRunCost(run_id, report.cost_usd);
-      // As a run ends: an app with this run open reloads its report.
-      record({ run_id, round, persona_id: null, poi_id: null, type: 'report.generated', payload: { path: `${path}.json`, friction_count: report.frictions.length } });
+      report = await rewriteReport({ store, blobs, record }, run_id);
     }
     const added = events().slice(before);
     const cost_usd = spent(added);
@@ -621,9 +639,47 @@ async function rejudge(v: Values, dir: string | undefined): Promise<void> {
     const unsuggested = [...answered].filter((poi) => !suggested.has(poi));
     if (unsuggested.length > 0) note(`The author gave no suggested changes for ${unsuggested.join(', ')}, so its new themes have none.`);
     const themes = report.themes?.length ?? 0;
-    const [report_json, report_md] = [resolve(dir!, `${path}.json`), resolve(dir!, `${path}.md`)];
+    const { report_json, report_md } = reportFiles(dir!, run_id);
     out(`${run_id} judged again: ${themes} themes ($${cost_usd.toFixed(4)})`, { kind: 'rejudge', run_id, themes, cost_usd, report_json, report_md, summary: summarize(report) });
     if (missing.length > 0 && missing.length === asked.length) throw new Error(`The judge gave no valid answer, so ${run_id} keeps its earlier themes; their suggestions were written again.`);
+  } finally {
+    store.close();
+  }
+}
+
+/** One author call on an ended run, under rejudge's refusals and budget rule. */
+async function study(v: Values, dir: string | undefined): Promise<void> {
+  // Writes new events, beside a run the app may have live.
+  const store = existingProject(dir, { recover: false });
+  try {
+    const fake = v['fake-llm'];
+    const run = modelRun(store, pickRun(store, v, dir).run_id, fake, 'planned from');
+    const { run_id, config } = run;
+    const settings = config.project.settings;
+    requireKey(settings, 'author', fake);
+    const log = store.events(run_id);
+    const budget = spendable(log, run_id, settings, v, 'study');
+    const { cost_usd: [low, high] } = estimateStudy({ settings });
+    note(`One call to ${settings.routing.author.model}: about $${low.toFixed(2)}–${high.toFixed(2)}, with $${budget.toFixed(2)} to spend.`);
+    const record = timeline(store);
+    const llm = cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stopOnSigint());
+    const report = await planStudy({ store, blobs: createFsBlobStore(dir!), record }, run, llm);
+    const cost_usd = spent(store.events(run_id).slice(log.length));
+    const study_plan_md = resolve(dir!, `runs/${run_id}/study-plan.md`);
+    out(`${run_id} study plan: ${study_plan_md} ($${cost_usd.toFixed(4)})`, { kind: 'study', run_id, cost_usd, study_plan_md, ...reportFiles(dir!, run_id), plan: report.study_plan });
+  } finally {
+    store.close();
+  }
+}
+
+/** The refusals are the app's too, so they live in recordOutcome. */
+async function outcome(v: Values, dir: string | undefined): Promise<void> {
+  if (!v.run || !v.theme || !v.status || !v.date) throw new Error(`outcome needs --run, --theme, --status and --date.\n\n${USAGE}`);
+  const store = existingProject(dir, { recover: false });
+  try {
+    const { theme: theme_id, status, date: study_date } = v;
+    const report = await recordOutcome({ store, blobs: createFsBlobStore(dir!), record: timeline(store) }, { run_id: v.run, theme_id, status: status as StudyStatus, study_date, note: v.note });
+    out(`${v.run}: study outcome recorded for ${theme_id}`, { kind: 'outcome', run_id: v.run, theme_id, status, study_date, ...reportFiles(dir!, v.run), study_count: report.study_count ?? null });
   } finally {
     store.close();
   }
@@ -641,6 +697,8 @@ async function main(): Promise<void> {
   if (command === 'runs') return listRuns(sub);
   if (command === 'report') return showReport(values, sub);
   if (command === 'rejudge') return rejudge(values, sub);
+  if (command === 'study') return study(values, sub);
+  if (command === 'outcome') return outcome(values, sub);
   if (command === 'rerun') return rerun(values, sub);
   if (command === 'compare') return compare(values, sub);
   throw new Error(USAGE);

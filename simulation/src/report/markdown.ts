@@ -1,5 +1,5 @@
 import { isUnrated } from '../types.ts';
-import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
+import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportStudyPlan, ReportTheme, SpreadStats, StepEvidence, StudyCount, ThemeValidation, Trust } from '../types.ts';
 import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
 import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
@@ -53,6 +53,75 @@ export const coverageText = ({ hint, curve, thin_pages }: ReportCoverage) => [
   ...(curve ? [`New problems per persona, in the order they began: ${curve.join(', ')}.`] : []),
   ...(thin_pages.length ? [`Barely tested, reached by fewer than ${RETEST_REACH} personas: ${thin_pages.map(({ page, personas }) => `${page} (${personas})`).join(', ')}.`] : []),
 ];
+
+const studyDay = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** "Your team's study, 12 Oct 2026: supported": always attributed, so an outcome can never read as something the simulation found. */
+export const outcomeText = ({ status, study_date }: ThemeValidation) => `Your team's study, ${studyDay.format(new Date(`${study_date}T00:00:00Z`))}: ${status}`;
+
+/** The note and, after a rejudge renamed the finding, what it was called when the study was recorded. */
+export const outcomeDetails = ({ note, title }: ThemeValidation, current?: string) => [...(note ? [note] : []), ...(current !== undefined && title !== current ? [`Recorded for "${title}".`] : [])];
+
+/** Said wherever outcomes are shown: what people found stays apart from what the simulation did, and belongs to one run. */
+export const OUTCOME_NOTE = "Study outcomes are your team's own, from real people. They change no simulated count, rank, label or summary, reach no model, and stay with this run: a repeat set or a comparison does not carry them across.";
+
+export const UNMATCHED_NOTE = 'These outcomes have no finding of their own in this report, for example after the findings were judged again and two studied ones became one. They stay here, with the title each was recorded for.';
+
+/** "Of the top 5 findings, your team's studies supported 2, contradicted 1, left 1 unresolved, and 1 is not studied yet": counts, as a handful of chosen findings is no sample. */
+export function studyCountText({ of, supported, contradicted, unresolved, not_studied }: StudyCount): string {
+  const found = [...(supported ? [`supported ${supported}`] : []), ...(contradicted ? [`contradicted ${contradicted}`] : []), ...(unresolved ? [`left ${unresolved} unresolved`] : [])];
+  const parts = [...(found.length ? [`your team's studies ${found[0]}`, ...found.slice(1)] : []), ...(not_studied ? [`${not_studied} ${not_studied === 1 ? 'is' : 'are'} not studied yet`] : [])];
+  return `Of the top ${count(of, 'finding')}, ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts[0]}.`;
+}
+
+/** At the top of every plan: the file goes to a researcher, who must keep the hypotheses from participants. */
+export const STUDY_WARNING = 'These hypotheses come from simulated users and are unproven. Do not show them to participants: people get only the screener and the tasks. A model wrote this plan, so read it before you use it.';
+
+export const NO_TASKS = 'No task is left for this hypothesis, so write one by hand that does not mention the finding.';
+export const NO_SCREENER = 'No screener question is left, so write them by hand from who you want to reach.';
+export const OUTDATED_PLAN = 'The findings were judged again after this plan was written, so it may not match them. Plan again to catch up.';
+
+/** Null when the quote check took nothing out. */
+export const droppedText = (dropped: number) => (dropped ? `${count(dropped, 'draft')} left out because ${dropped === 1 ? 'it' : 'they'} repeated a finding's words.` : null);
+
+/** What a plan does not cover, and why; null when it covers every finding. */
+export function leftOutText({ lower_ranked, objections, competitors, set_aside, scan_only }: ReportStudyPlan['left_out']): string | null {
+  const parts = [
+    ...(lower_ranked ? [count(lower_ranked, 'lower-ranked finding')] : []),
+    ...(objections ? [count(objections, 'objection')] : []),
+    ...(competitors ? [count(competitors, 'competitor finding')] : []),
+    ...(set_aside ? [`${set_aside} set aside by the evidence check`] : []),
+    ...(scan_only ? [`${scan_only} found by the accessibility scan alone, which needs an audit rather than a study with people`] : []),
+  ];
+  return parts.length ? `Left out of this plan: ${parts.join('; ')}.` : null;
+}
+
+function studyPlanLines(plan: ReportStudyPlan, heading: string): string[] {
+  const dropped = droppedText(plan.screener_dropped);
+  const leftOut = leftOutText(plan.left_out);
+  return [
+    ...(plan.outdated ? [OUTDATED_PLAN, ''] : []),
+    `${heading} Screener`, '',
+    ...(plan.screener.length ? plan.screener.map((question) => `- ${line(question)}`) : [NO_SCREENER]),
+    ...(dropped ? ['', dropped] : []),
+    ...plan.hypotheses.flatMap((hypothesis, i) => {
+      const left = droppedText(hypothesis.dropped);
+      return [
+        '', `${heading} Hypothesis ${i + 1}: ${line(hypothesis.title)}`, '',
+        'Tasks:', '',
+        ...(hypothesis.tasks.length ? hypothesis.tasks.map((task, n) => `${n + 1}. ${line(task)}`) : [NO_TASKS]),
+        ...(left ? ['', left] : []),
+        '', 'For the researcher, what to watch for:', '',
+        ...(hypothesis.observe.length ? hypothesis.observe.map((note) => `- ${line(note)}`) : ['- Nothing was written.']),
+      ];
+    }),
+    ...(leftOut ? ['', leftOut] : []),
+  ];
+}
+
+/** The plan on its own, as runs/<id>/study-plan.md: a team can hand a researcher this without the findings. */
+export const studyPlanToMarkdown = (report: Report, plan: ReportStudyPlan): string =>
+  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
 
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
@@ -177,6 +246,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     `> ${report.banner}`,
     '',
     ...(summary ? [line(summary), ''] : []),
+    ...(report.study_count ? [`**From your team's studies, not the simulation:** ${studyCountText(report.study_count)}`, ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
@@ -189,6 +259,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     ...dimensionLines(report),
     ...themeLines(report, set),
     ...setAsideLines(report),
+    ...studyLines(report),
     ...flowLines(report),
     ...sentimentLines(report),
     ...buyerLines(report),
@@ -357,6 +428,16 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
   ];
 }
 
+/** Beside a finding, apart from its simulated numbers. */
+const outcomeLines = (t: ReportTheme) => (t.validation ? [`**${outcomeText(t.validation)}.**${outcomeDetails(t.validation, t.title).map((text) => ` ${line(text)}`).join('')}`, ''] : []);
+
+function studyLines({ study_plan: plan, unmatched_outcomes: unmatched }: Report): string[] {
+  return [
+    ...(unmatched ? ['', '## Study outcomes with no matching finding', '', UNMATCHED_NOTE, '', ...unmatched.map((outcome) => `- **${line(outcome.title)}**: ${outcomeText(outcome)}.${outcomeDetails(outcome).map((text) => ` ${line(text)}`).join('')}`)] : []),
+    ...(plan ? ['', '## Study plan', '', `> ${STUDY_WARNING}`, '', ...studyPlanLines(plan, '###')] : []),
+  ];
+}
+
 function setAsideLines(report: Report): string[] {
   if (!report.set_aside?.length) return [];
   return [
@@ -365,7 +446,7 @@ function setAsideLines(report: Report): string[] {
     SET_ASIDE_TEXT, '',
     ...report.set_aside.map((t) => {
       const poi = themePoi(t, report.pois);
-      return `- **${line(t.title)}**${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`;
+      return `- **${line(t.title)}**${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}${t.validation ? ` ${outcomeLines(t)[0]}` : ''}`;
     }),
     '', '</details>',
   ];
@@ -410,6 +491,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
     ...(priority ? [`Suggested priority in this run: **${PRIORITY_TEXT[priority]}**`, ''] : []),
+    ...outcomeLines(t),
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
     ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),

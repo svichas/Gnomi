@@ -2,6 +2,7 @@ import type { AssetInfo } from '@gnomi/simulation/assets.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
+import type { StudyOutcome } from './workspace.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
@@ -106,6 +107,12 @@ export interface Api {
   get_repeats: { params: { group: string }; result: RepeatSet };
   /** What changed from `base` to `run`, computed when read. A run of a repeat set stands for that set's finished runs. */
   compare_runs: { params: { base: string; run: string }; result: ReportDiff };
+  /** What plan_study would cost: one call on the run's own author model. `cost_usd[1]` is the most it can spend. */
+  estimate_study: { params: { run_id: string }; result: RunEstimate };
+  /** Spends money, so only a person's click calls it, for at most estimate_study's high end. Refuses a run that has not ended and a comparison study. The new plan reaches the report through report.generated. */
+  plan_study: { params: { run_id: string }; result: null };
+  /** What a team's own study found about a finding, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
+  record_outcome: { params: StudyOutcome; result: null };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }

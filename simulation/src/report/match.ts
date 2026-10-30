@@ -80,3 +80,10 @@ export function matchThemes(a: ReportTheme[], b: ReportTheme[], byTitle = true):
   claim('shared_key', keyOverlap, 0);
   return { pairs, only_a: [...only_a], only_b: [...only_b] };
 }
+
+/**
+ * The theme a record of one run's theme now names, as theme ids change after a rejudge. Within a run a shared key is the very same group
+ * of frictions, not the chance it can be across runs, so any overlap counts. Titles stay out: a judge's rename must not move a record.
+ */
+export const themeByKeys = (ref: Pick<ReportTheme, 'keys' | 'poi_id' | 'category'>, themes: ReportTheme[]): ReportTheme | undefined =>
+  matchThemes([{ ...ref, rank: 0 } as ReportTheme], themes, false).pairs[0]?.b;

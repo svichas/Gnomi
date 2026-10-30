@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { createRecorder } from '@gnomi/simulation/run.ts';
 import { readsImages } from '@gnomi/simulation/settings.ts';
 import type { ModelChoice, ProviderId } from '@gnomi/simulation/types.ts';
 
@@ -179,6 +181,83 @@ test('rejudge spends within what is left of the run budget unless --budget allow
   } finally {
     db.close();
   }
+});
+
+test('study plans from an ended run, writes the plan on its own and spends under the rules rejudge does', () => {
+  const project = join(dir, 'study');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const study = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'study', project, '--fake-llm', ...args], { encoding: 'utf8' });
+
+  const lines = cli('study', project, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.match(lines.find((l) => l.kind === 'note').text, /One call to .*about \$.*with \$5\.00 to spend/, 'what it will cost, before it runs');
+  const calls = lines.filter((l) => l.kind === 'event' && l.type === 'llm.call');
+  assert.equal(calls.length, 1);
+  const done = lines.at(-1);
+  assert.deepEqual([done.kind, done.run_id, done.plan.hypotheses.length > 0], ['study', 'r-0001', true]);
+  assert.match(readFileSync(done.study_plan_md, 'utf8'), /^# Study plan: Pick a plan\n\n> These hypotheses come from simulated users and are unproven\. Do not show them to participants/);
+  assert.match(readFileSync(done.report_md, 'utf8'), /## Study plan/, 'the report files are written again');
+  assert.deepEqual(JSON.parse(cli('report', project, '--format', 'json', '--json')).report.study_plan, done.plan, 'the plan comes back from the log');
+
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.cost_usd', 5) WHERE type = 'llm.call'`); // the run spent its $5 budget
+    const spent = study();
+    assert.equal(spent.status, 1);
+    assert.match(spent.stderr, /has spent its \$5\.00 budget; pass --budget <usd> to let study spend more/);
+    assert.match(study('--budget', 'nothing').stderr, /--budget must be a positive amount/);
+    assert.match(cli('study', project, '--budget', '0.5'), /study plan: /);
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.provider', 'anthropic') WHERE type = 'llm.call'`);
+    assert.match(study('--budget', '0.5').stderr, /analysed by real models/);
+    db.exec(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
+    assert.match(study('--budget', '0.5').stderr, /has not ended/);
+  } finally {
+    db.close();
+  }
+  assert.match(study('--run', 'r-0009').stderr, /There is no run r-0009/);
+});
+
+test('study names the key it needs, and calls nothing without it', () => {
+  const project = join(dir, 'study-key');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const { ANTHROPIC_API_KEY: _, ...env } = process.env;
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'study', project], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set ANTHROPIC_API_KEY \(the author runs on anthropic\)/);
+});
+
+test('outcome records what a team found, refuses what is wrong, survives a rejudge and moves no simulated number', () => {
+  const project = join(dir, 'outcome');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const report = () => JSON.parse(cli('report', project, '--format', 'json', '--json')).report;
+  const before = report();
+  const { id: theme, title } = before.themes[0];
+  const outcome = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'outcome', project, ...args], { encoding: 'utf8' });
+  const good = ['--run', 'r-0001', '--theme', theme, '--status', 'supported', '--date', '2026-10-12'];
+
+  assert.match(outcome('--run', 'r-0001').stderr, /outcome needs --run, --theme, --status and --date/);
+  assert.match(outcome('--run', 'r-0001').stderr, /Leave out names and contact details/, 'the usage warns what a note must not hold');
+  assert.match(outcome(...good.slice(0, 5), 'maybe', '--date', '2026-10-12').stderr, /status must be/);
+  assert.match(outcome(...good.slice(0, 7), 'yesterday').stderr, /real date/);
+  assert.match(outcome(...good.slice(0, 7), '2999-01-01').stderr, /in the future/);
+  assert.match(outcome('--run', 'r-0001', '--theme', 'g99', ...good.slice(4)).stderr, /has no finding "g99"/);
+
+  const done = JSON.parse(outcome(...good, '--note', 'Five of six stalled here.', '--json').stdout.trim().split('\n').at(-1)!);
+  assert.deepEqual([done.kind, done.theme_id, done.status, done.study_count.supported], ['outcome', theme, 'supported', 1]);
+  const after = report();
+  assert.deepEqual(after.themes[0].validation, { status: 'supported', note: 'Five of six stalled here.', study_date: '2026-10-12', title });
+  assert.equal(after.llm_calls, before.llm_calls, 'no model call');
+  assert.match(readFileSync(done.report_md, 'utf8'), /Your team's study, 12 Oct 2026: supported/);
+  assert.equal(JSON.parse(cli('report', project, '--json')).report.study_count.supported, 1, "an agent's summary carries it");
+
+  cli('rejudge', project, '--run', 'r-0001');
+  assert.equal(report().themes.find((t: { validation?: object }) => t.validation)?.validation.note, 'Five of six stalled here.', 'a rejudge keeps it, as it is in the log');
+
+  const store = openProject(project);
+  const gone = { keys: ['["poi",null,"kind","gone"]'], category: 'friction' as const, title: 'A finding the judge merged away', status: 'contradicted' as const, note: null, study_date: '2026-10-02' };
+  createRecorder(store, () => {})({ run_id: 'r-0001', round: 1, persona_id: null, poi_id: before.themes[0].poi_id, type: 'finding.validated', payload: gone });
+  store.close();
+  const { unmatched_outcomes } = JSON.parse(cli('report', project, '--json')).report;
+  assert.deepEqual(unmatched_outcomes.map((o: { title: string }) => o.title), [gone.title], "an agent's summary lists what has no finding left");
 });
 
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {

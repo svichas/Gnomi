@@ -32,6 +32,14 @@
 .report-finding-copy h4 { overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; font-weight: 500; }
 .report-finding-copy p { display: flex; align-items: flex-start; gap: 5px; margin-top: 5px; color: var(--gnomi-text-muted); font-size: 11px; line-height: 1.5; }
 .report-finding-copy p > svg { margin-top: 2px; }
+.report-finding-copy p.report-finding-outcome { color: var(--gnomi-text); font-weight: 500; }
+.report-study-entry { overflow-wrap: anywhere; }
+.report-study h4 { font-size: 14px; font-weight: 500; }
+.report-study h5 { font-size: 12px; font-weight: 500; color: var(--gnomi-text-muted); }
+.report-study-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.report-study-actions > .note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
+.report-outcome-form > div { margin-top: 10px; }
+.report-outcome-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 12px; }
 .report-finding-summary > svg, .report-fold > summary > svg { color: var(--gnomi-text-muted); transition: transform var(--gnomi-duration); }
 .report-finding > details[open] > summary > svg, .report-fold[open] > summary > svg { transform: rotate(90deg); }
 .report-finding > details[open] > summary { background: var(--gnomi-canvas); }

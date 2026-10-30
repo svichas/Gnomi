@@ -191,9 +191,15 @@ export const DEMO_JUDGE: Responder = (req) => {
   };
 };
 
-/** A labelled placeholder suggestion for every theme the author was shown. */
+/** A labelled placeholder suggestion for every theme the author was shown; asked for a study plan, a labelled placeholder plan. */
 export const DEMO_AUTHOR: Responder = (req) => {
   const themes = (requestJson(req).themes ?? []) as { id: string }[];
+  if (req.purpose === 'study_plan') {
+    return {
+      screener: ['Scripted demo question: no author model wrote this, so ask it of nobody.'],
+      themes: themes.map((theme) => ({ theme_id: theme.id, tasks: ['Scripted demo task: no author model wrote this, so give it to nobody.'], observe: ['Scripted demo note: run with a model API key to get a real plan.'] })),
+    };
+  }
   return {
     suggestions: themes.map((theme) => ({
       theme_id: theme.id,

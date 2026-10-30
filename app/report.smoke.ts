@@ -1,6 +1,6 @@
 // Report disclosure, evidence navigation, and responsive layout in a disposable Electron project.
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startGym } from '../demo/GymSite/server.ts';
 import type { Page } from 'playwright-core';
@@ -70,6 +70,14 @@ const flow: ReportFlow = {
 };
 report.flows = [flow];
 report.themes[0].drivers = [{ id: 'seniority', name: 'Seniority', value: 'Lead', holders: { affected: 4, reached: 6 }, others: { affected: 1, reached: 9 }, gap: 0.56 }];
+// What the team's own study found, beside a finding that a rejudge renamed; an outcome with no finding left; and a plan with something the quote check took out.
+report.themes[0].validation = { status: 'supported', note: 'Five of six participants could not tell whether the job went live.', study_date: '2026-10-12', title: 'An earlier name for this finding' };
+report.study_count = { of: 5, supported: 1, contradicted: 0, unresolved: 0, not_studied: 4 };
+report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'A finding the judge has since merged away' }];
+report.study_plan = {
+  screener: ['Do you hire for your company at least once a quarter?'], screener_dropped: 1, left_out: { objections: 1, competitors: 0, set_aside: 1, scan_only: 1, lower_ranked: 2 }, outdated: true,
+  hypotheses: [{ title: titles[0], poi_id: report.pois[0].id, tasks: ['Post a job for a new role and make it live.'], dropped: 0, observe: ['Whether people look for a sign that the job is live.'] }, { title: titles[1], poi_id: report.pois[0].id, tasks: [], dropped: 2, observe: [] }],
+};
 report.coverage![0].thin_pages.push({ page: pageName(1), personas: 2 }, { page: pageName(2), personas: 1 }); // as wide as real names get, for the check at 320 px
 const exportedFile = join(dir, 'report.html');
 /** Every frame on show sits on the same spot of its image, whatever size the image is drawn at. */
@@ -295,8 +303,26 @@ try {
   await assertMarks(file, 'in the exported file, printed');
   assert.equal(await file.locator('.report-flow').count(), 1);
   assert.ok(await file.getByText('A persona typed its own name as the hiring manager').isVisible(), 'the export keeps what was set aside');
+  assert.ok(await file.getByText("Your team's study, 12 Oct 2026: supported", { exact: true }).isVisible(), 'the export says whose the outcome is');
+  assert.ok(await file.getByText('Post a job for a new role and make it live.', { exact: true }).isVisible(), 'and carries the plan');
+  assert.equal(await file.getByRole('button').count(), 0, 'with no controls');
   await file.close();
   await page.setViewportSize({ width: 320, height: 1000 });
+  // The team's own study, apart from the simulated numbers, at both widths.
+  const study = root.getByRole('region', { name: 'Check with real people' });
+  assert.ok(await first.locator('summary').getByText("Your team's study, 12 Oct 2026: supported", { exact: true }).isVisible(), 'the outcome sits beside the finding, attributed');
+  assert.ok(await study.getByText("Of the top 5 findings, your team's studies supported 1, and 4 are not studied yet.", { exact: true }).isVisible());
+  assert.ok(await study.getByText('A finding the judge has since merged away', { exact: true }).isVisible(), 'an outcome with no finding is shown, not dropped');
+  assert.ok(await study.getByText('Do not show them to participants', { exact: false }).isVisible());
+  assert.ok(await study.getByText('No task is left for this hypothesis', { exact: false }).isVisible());
+  assert.ok(await study.getByText('2 drafts left out because they repeated a finding\'s words.', { exact: true }).isVisible());
+  assert.ok(await study.getByText(/^Left out of this plan: 2 lower-ranked findings; 1 objection; 1 set aside by the evidence check; 1 found by the accessibility scan alone/).isVisible());
+  assert.match(await study.getByRole('button', { name: 'Plan again' }).locator('..').innerText(), /costs at most \$0\.\d{4}/, 'the control says the most it can cost');
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the study section fits a narrow viewport');
+  await study.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-study-320.png') });
+  await page.setViewportSize({ width: 1100, height: 1000 });
   for (const [variant, message] of [['empty', 'No shared issues were reported in this run.'], ['all-aside', 'No shared issues are left. What the evidence check set aside is below.'], ['legacy', friction.what]]) {
     await page.evaluate((value) => sessionStorage.setItem('report-variant', value), variant);
     await page.reload();
@@ -392,12 +418,49 @@ try {
   await page.screenshot({ path: join(shots, 'repeat-set.png') });
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'the repeat line fits a narrow viewport');
+  // A plan and an outcome on the run's real report: each only on a click, each reloading the report through report.generated.
+  const logOf = () => { const log = openProject(projectDir); try { return log.events('r-0003'); } finally { log.close(); } };
+  assert.equal(logOf().filter((event) => event.type === 'report.study').length, 0, 'opening the report spends nothing');
+  const callsBefore = logOf().filter((event) => event.type === 'llm.call').length;
+  const planButton = root.getByRole('button', { name: 'Plan a study', exact: true });
+  await root.getByText(/costs at most \$/).waitFor();
+  await planButton.click();
+  await root.getByRole('status').getByText('Study plan written above.', { exact: true }).waitFor(); // what a screen reader hears after the wait
+  await root.getByRole('heading', { name: /^Hypothesis 1: / }).waitFor();
+  await root.getByRole('button', { name: 'Plan again' }).waitFor();
+  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'one model call');
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await root.getByRole('button', { name: 'Copy the plan' }).click();
+  await root.getByText('Study plan copied.').waitFor();
+  assert.match(await app.evaluate(({ clipboard }) => clipboard.readText()), /^# Study plan: [\s\S]*Do not show them to participants/);
+  await root.getByRole('button', { name: 'Export the plan' }).click();
+  await root.getByText(/^Study plan exported to/).waitFor();
+  assert.match(readFileSync(exportedFile, 'utf8'), /^# Study plan: /);
+  assert.match(readFileSync(join(projectDir, 'runs/r-0003/study-plan.md'), 'utf8'), /Do not show them to participants/);
+  const studied = root.locator('.report-finding').first();
+  await studied.locator('summary').first().click();
+  await studied.getByRole('button', { name: 'Record a study outcome' }).click();
+  await studied.getByLabel('What your study found').selectOption('contradicted');
+  await studied.getByLabel('Study date').fill('2026-10-02');
+  await studied.getByLabel('Note, optional').fill('Everyone finished the task.');
+  assert.ok(await studied.getByText('Leave out names and contact details', { exact: false }).isVisible(), 'the form warns where a note goes');
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the outcome form fits a narrow viewport');
+  await studied.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-outcome-320.png') });
+  await studied.getByRole('button', { name: 'Save study outcome' }).click();
+  await studied.locator('summary').first().getByText("Your team's study, 2 Oct 2026: contradicted", { exact: true }).waitFor();
+  await studied.getByText('Everyone finished the task.', { exact: true }).waitFor();
+  await root.getByRole('region', { name: 'Check with real people' }).getByText(/^Of the top \d findings?, your team's studies contradicted 1/).waitFor();
+  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'recording an outcome makes no model call');
+  assert.match(readFileSync(join(projectDir, 'runs/r-0003/report.md'), 'utf8'), /Your team's study, 2 Oct 2026: contradicted/);
+  await assertFits(page, 'the recorded outcome fits a narrow viewport');
   const rerun = openProject(projectDir);
   const scans = rerun.events('r-0003', { types: ['accessibility.scanned'] });
   rerun.close();
   assert.ok(scans.length > 0 && scans.every((scan) => scan.type === 'accessibility.scanned' && scan.payload.error === null), `axe-core loads and runs in the built host: ${JSON.stringify(scans[0]?.payload)}`);
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set, a study plan and a study outcome on a real report, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

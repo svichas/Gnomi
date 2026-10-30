@@ -5,6 +5,7 @@ import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
 import { admits, inScenario } from '../comparison/config.ts';
+import { STUDY_OUTPUT_TOKENS } from '../report/study.ts';
 import { costUsd, isPriced } from './prices.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
@@ -28,6 +29,10 @@ const REPORT_MINUTES = [0.2, 1] as const;
 const CHECK_CALLS = [1, 5] as const;
 const CHECK_INPUT = [1_500, 16_000] as const;
 const CHECK_OUTPUT = [500, 2_000] as const;
+// The study plan (report/study.ts): one author call on a run that has ended, with room for one retry of an invalid answer.
+const STUDY_INPUT = [1_500, 10_000] as const; // findings capped at 8k tokens, plus the product, segments and prompt
+const STUDY_OUTPUT = [1_000, STUDY_OUTPUT_TOKENS] as const;
+const STUDY_ATTEMPTS = 2;
 
 /** One uncached call at `at`'s prices; nothing for a model with no known price, which the estimate lists as unpriced. */
 const price = (model: ModelChoice, input: number, output: number, at: Date) =>
@@ -124,4 +129,15 @@ export function estimateReport({ personas, settings, pois = 1, at = new Date() }
   const unpriced = models.filter((m) => !isPriced(m)).map((m) => m.model);
   const calls = pois * (REPORT_CALLS.length + (checker ? Math.round((CHECK_CALLS[0] + CHECK_CALLS[1]) / 2) : 0));
   return { calls, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
+}
+
+/** What a study plan costs, on its own and not part of a run. The high end is a ceiling: output has a hard limit, and a call has at most two attempts. */
+export function estimateStudy({ settings, at = new Date() }: { settings: RunSettings; at?: Date }): RunEstimate {
+  const model = settings.routing.author;
+  return {
+    calls: 1,
+    cost_usd: [price(model, STUDY_INPUT[0], STUDY_OUTPUT[0], at), STUDY_ATTEMPTS * price(model, STUDY_INPUT[1], STUDY_OUTPUT[1], at)],
+    minutes: [...REPORT_MINUTES],
+    unpriced: isPriced(model) ? [] : [model.model],
+  };
 }
