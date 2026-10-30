@@ -1,4 +1,5 @@
 import { assetPlaces, placeName, runPois } from '../poi/pois.ts';
+import { possibleInterference } from '../signals/index.ts';
 import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, ReportBox, SignalKind, StepEvidence, Trust, Viewport } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
@@ -47,6 +48,7 @@ export type Candidate = StepEvidence & {
   box?: ReportBox; // what it is about on that screenshot
   seqs: number[]; // the self-report first, then its signals
   signals: SignalKind[];
+  interference?: true; // one of its signals is possibly another persona's doing
 };
 
 export interface Group {
@@ -155,6 +157,7 @@ export function stepReader(events: GnomiEvent[], defaultPoi: string): (e: GnomiE
 /** Step 1 and 2: every self-report, survey friction and signal as a candidate, merged into confirmed frictions where they meet. */
 export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candidate[] {
   const atStep = stepReader(events, defaultPoi);
+  const interfered = possibleInterference(events);
   const reports: Candidate[] = [];
   const signals: Candidate[] = []; // those that may confirm a self-report
   const unmatched: Candidate[] = [];
@@ -185,7 +188,7 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
       // A console line or exception never corroborates. It may come from a script containment refused, but a blocked request
       // does not log its resource type, so such a step's page errors stay as candidates rather than all being dropped.
       const pageNoise = e.type === 'signal.error' && e.payload.kind !== 'http';
-      const signal: Candidate = { ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind] };
+      const signal: Candidate = { ...atStep(e, e.payload.step_no, e.payload.url), kind, severity: SIGNAL_SEVERITY[kind], trust: 'observed', text: signalText(e), signals: [kind], ...(interfered.has(e.seq) && { interference: true as const }) };
       // A console line or exception is about the page, not the element clicked, so it groups by its text (groupKey).
       if (pageNoise) signal.element = null;
       (CORROBORATES.has(kind) && !pageNoise ? signals : unmatched).push(signal);
@@ -205,6 +208,7 @@ export function buildCandidates(events: GnomiEvent[], defaultPoi: string): Candi
     best.seqs.push(...signal.seqs);
     if (!best.signals.includes(signal.kind as SignalKind)) best.signals.push(signal.kind as SignalKind);
     best.element ??= signal.element;
+    if (signal.interference) best.interference = true;
   }
   return [...reports, ...unmatched, ...surveys].sort((a, b) => a.seqs[0] - b.seqs[0]);
 }

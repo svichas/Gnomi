@@ -63,6 +63,19 @@ test('a signal joins the nearest self-report, and a query string or record id is
   assert.deepEqual(candidates.map((c) => [c.text, c.trust]), [['First', 'reported'], ['Second', 'confirmed']]);
 });
 
+test('a failed action another persona may have caused keeps its tag, also merged into a self-report, and a rebuild agrees', () => {
+  const save = { role: 'button', name: 'Save' };
+  const dead = { ...step(6, JOBS, save), result: { ok: true, url_before: JOBS, url_after: JOBS, dom_changed: false, error: null } };
+  const events = (signals?: object) => [
+    ...log(['run.started', null, { config: { signals } }], ['persona.step', 'p1', step(1, JOBS, save)], ['persona.step', 'p2', step(5, JOBS)], ['persona.friction_reported', 'p2', friction(5, 'Save does nothing')], ['persona.step', 'p2', dead], ['signal.failed_action', 'p2', failed(6)], ['persona.step', 'p3', dead], ['signal.failed_action', 'p3', failed(6)]),
+  ];
+  const tags = (list: GnomiEvent[]) => buildCandidates(list, 'poi').map((c) => [c.persona_id, c.trust, c.interference]);
+  const window = { interference_s: 60 };
+  assert.deepEqual(tags(events(window)), [['p2', 'confirmed', true], ['p3', 'observed', true]]);
+  assert.deepEqual(tags(events(window)), tags(events(window)));
+  assert.deepEqual(tags(events()), [['p2', 'confirmed', undefined], ['p3', 'observed', undefined]], 'an old log');
+});
+
 test('page patterns drop query, fragment and record ids', () => {
   assert.equal(pagePattern('https://gym.test/jobs/123/edit?x=1#y'), 'gym.test/jobs/:id/edit');
   assert.equal(pagePattern('https://gym.test/c/3f2b8c1e-1d2a-4b5c-8d9e-0f1a2b3c4d5e/'), 'gym.test/c/:id');

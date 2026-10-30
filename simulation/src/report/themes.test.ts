@@ -148,6 +148,20 @@ test('evidence: at most three, highest severity first, one per persona first; ev
   assert.deepEqual(theme.seqs, [2, 3, 5, 8]);
 });
 
+test('a theme counts its tagged members and each piece of evidence keeps the tag; nothing leaves the theme', () => {
+  const save = { role: 'button', name: 'Save', box: null };
+  const dead = { ...step(2), target: save, result: { ...step(2).result, dom_changed: false } };
+  const fail = (step_no: number) => ({ step_no, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' });
+  const events = (signals?: object) => log(['run.started', null, { config: { project: {}, signals } }], ['persona.step', 'a1', { ...step(1), target: save }], ['persona.step', 'a2', dead], ['signal.failed_action', 'a2', fail(2)], ['persona.step', 'b1', dead], ['persona.friction_reported', 'b1', friction(2, 2)]);
+  const [tagged] = analyseFrictions(events({ interference_s: 60 }), ctx).themes;
+  const [old] = analyseFrictions(events(), ctx).themes;
+  assert.equal(tagged.interference, 1);
+  assert.deepEqual(tagged.evidence.map((e) => [e.persona_name, e.interference]), [['Abe', true], ['Bo', undefined]]);
+  assert.equal(tagged.frictions, old.frictions, 'the tag removes nothing');
+  assert.equal(tagged.score, old.score, 'nor does it change the rank');
+  assert.ok(!('interference' in old) && !('interference' in old.evidence[0]), 'an old log has no tag');
+});
+
 const groups = (): Group[] =>
   groupCandidates(buildCandidates(log(
     ['persona.friction_reported', 'a1', { ...friction(1, 2, 'One'), where: { url: 'http://gym.test/a', ref: null } }],

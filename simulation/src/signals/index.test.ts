@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Action, ActionResult, ActionTarget } from '../types.ts';
-import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, smallTarget, validationError, type Step } from './index.ts';
+import type { Action, ActionResult, ActionTarget, GnomiEvent } from '../types.ts';
+import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, possibleInterference, smallTarget, validationError, type Step } from './index.ts';
 
 const T = DEFAULT_SIGNALS;
 const A = 'https://app.test/a';
@@ -210,4 +210,49 @@ test('detectSignals: page errors become signal.error on the step; a done step re
   const done = step(3, 'done', A, A, { ref: null, target: null, result: { dom_changed: false } });
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: [], before: null, after: null, thresholds: T }), []);
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: errors.slice(1), before: null, after: null, thresholds: T }).map((s) => s.type), ['signal.error']);
+});
+
+const SAVED = { role: 'button', name: 'Archive job', box: null } as const;
+const MINUTE = 60_000;
+type Timed = [ts: number, persona: string, step: Step, failed?: 'failed'];
+/** A run that froze `signals`, then these steps at their times, each with `failed` followed by its signal. */
+function timed(signals: object | undefined, ...entries: Timed[]): GnomiEvent[] {
+  const logged = [[0, null, 'run.started', { config: { signals } }], ...entries.flatMap(([ts, persona, s, failed]) => [[ts, persona, 'persona.step', s], ...(failed ? [[ts, persona, 'signal.failed_action', { step_no: s.step_no, url: A, ref: 'e1', action: s.action.type, error: 'no_effect' }]] : [])])];
+  return logged.map(([ts, persona_id, type, payload], i) => ({ run_id: 'r-1', round: 1, persona_id, poi_id: persona_id && 'poi', seq: i + 1, ts, type, payload }) as GnomiEvent);
+}
+const archived = step(1, 'click', A, A, { target: SAVED });
+const dead = step(1, 'click', A, A, { target: SAVED, result: { dom_changed: false } });
+const tagged = (signals: object | undefined, ...entries: Timed[]) => [...possibleInterference(timed(signals, ...entries))];
+
+test('possible interference: a failed action on what another persona changed in the minute before, whatever the case of its name', () => {
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [1000 + MINUTE, 'p2', dead, 'failed']), [4]);
+  const shouted = step(1, 'click', A, A, { target: { ...SAVED, name: ' ARCHIVE JOB ' }, result: { dom_changed: false } });
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', shouted, 'failed']), [4]);
+});
+
+test('possible interference: not after the minute, nor before the change, nor by the same persona', () => {
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [1001 + MINUTE, 'p2', dead, 'failed']), [], 'outside the minute');
+  assert.deepEqual(tagged(T, [1000, 'p2', dead, 'failed'], [2000, 'p1', archived]), [], 'the change came after');
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p1', dead, 'failed']), [], 'her own change');
+  const other = step(1, 'click', A, A, { target: { ...SAVED, name: 'Delete job' }, result: { dom_changed: false } });
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', other, 'failed']), [], 'another name');
+  const events = timed(T, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']);
+  assert.deepEqual([...possibleInterference(events.map((e) => (e.persona_id === 'p1' ? { ...e, poi_id: 'rival' } : e)))], [], 'another POI');
+});
+
+test('possible interference: an old log froze no window, so it has no tag', () => {
+  const { interference_s: _, ...old } = T;
+  assert.deepEqual(tagged(old, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']), [], 'thresholds from before the tag');
+  assert.deepEqual(tagged(undefined, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']), [], 'no thresholds at all');
+  const { target: __, ...bare } = dead;
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', bare as Step, 'failed']), [], 'a step with no recorded target');
+  assert.deepEqual([...possibleInterference([])], [], 'an empty log');
+});
+
+test('possible interference: values typed or chosen and clicks that did something change an element; looking, links and failures do not', () => {
+  const on = (type: Action['type'], role = 'button', result: Partial<ActionResult> = {}) => step(1, type, A, A, { target: { ...SAVED, role }, result });
+  for (const change of [on('type', 'textbox'), on('select', 'combobox'), on('click'), on('click', 'checkbox'), on('click', 'button', { dom_changed: false, pending: true })]) assert.deepEqual(tagged(T, [1000, 'p1', change], [2000, 'p2', dead, 'failed']), [4], change.action.type);
+  for (const look of [on('read'), on('hover'), on('click', 'link'), on('click', 'button', { dom_changed: false }), on('type', 'textbox', { ok: false, error: 'not_editable' })]) assert.deepEqual(tagged(T, [1000, 'p1', look], [2000, 'p2', dead, 'failed']), [], `${look.action.type} ${look.target?.role}`);
+  const unnamed = step(1, 'click', A, A, { target: { ...SAVED, name: ' ' } });
+  assert.deepEqual(tagged(T, [1000, 'p1', unnamed], [2000, 'p2', { ...dead, target: unnamed.target }, 'failed']), [], 'an unnamed element matches nothing');
 });

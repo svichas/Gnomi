@@ -1,10 +1,10 @@
 import type { PageError } from '../seams.ts';
-import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../types.ts';
+import type { Device, EventOf, EventPayloads, GnomiEvent, SignalBase, SignalThresholds } from '../types.ts';
 
 // Objective friction signals (tech.md §8.1): pure rules over one persona's steps. The agent loop runs them right after each
 // step and writes what they find to the log, so a report cites what was detected under the run's frozen thresholds.
 
-export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 24 };
+export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 24, interference_s: 60 };
 
 export type Step = Pick<EventPayloads['persona.step'], 'step_no' | 'action' | 'target' | 'result' | 'snapshot_hash'>;
 type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target';
@@ -92,6 +92,39 @@ export function smallTarget(step: Step, device: Device, t: SignalThresholds): Si
   if (device !== 'mobile' || step.action.type !== 'click' || !box) return null;
   const [, , width, height] = box;
   return width > 0 && height > 0 && Math.min(width, height) < t.small_target_px ? { type: 'signal.small_target', payload: { ...base(step), box } } : null;
+}
+
+/**
+ * Whether a step changed the element it acted on (assumed, odd.md): a value typed or chosen, or a click on anything but a link that
+ * did something. Reading, hovering and following a link write nothing. A draft counts too: the log cannot tell it from a shared record.
+ */
+const changedTarget = (step: Step) => step.result.ok && !failedAction(step) && (step.action.type === 'type' || step.action.type === 'select' || (step.action.type === 'click' && step.target?.role !== 'link'));
+
+/**
+ * The failed-action signals (by seq) another persona may have caused (tech.md §9.2): the step's target has the name of something a
+ * different persona changed on the same POI at most interference_s earlier. A fold over the log and its times, so a rebuild agrees;
+ * a run from before this froze no window, so it keeps no tag.
+ * shortcut: names match whole, so a "Save" on another page matches and a renamed record does not; the tag only says possibly, match on the record if readers stop trusting it.
+ */
+export function possibleInterference(events: GnomiEvent[]): Set<number> {
+  const found = new Set<number>();
+  const seconds = events.find((e): e is EventOf<'run.started'> => e.type === 'run.started')?.payload.config.signals?.interference_s;
+  if (!seconds) return found;
+  const nameOf = (e: GnomiEvent, step?: Step) => (step?.target?.name.trim() ? `${e.poi_id}\u0000${step.target.name.trim().toLowerCase()}` : null);
+  const latest = new Map<string, Step>(); // each persona's last step: a signal follows its own step in the log
+  const changes = new Map<string, Map<string, number>>(); // POI and name → persona → when that persona last changed it
+  for (const e of events) {
+    if (e.persona_id === null) continue;
+    if (e.type === 'persona.step') {
+      latest.set(e.persona_id, e.payload);
+      const name = nameOf(e, e.payload);
+      if (name && changedTarget(e.payload)) changes.set(name, (changes.get(name) ?? new Map<string, number>()).set(e.persona_id, e.ts));
+    } else if (e.type === 'signal.failed_action') {
+      const by = changes.get(nameOf(e, latest.get(e.persona_id)) ?? '');
+      for (const [persona, at] of by ?? []) if (persona !== e.persona_id && e.ts - at <= seconds * 1000) found.add(e.seq);
+    }
+  }
+  return found;
 }
 
 /**

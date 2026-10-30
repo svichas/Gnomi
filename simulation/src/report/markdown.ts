@@ -302,6 +302,12 @@ export const TRUST_TEXT = {
 /** Said wherever a set-aside theme is shown: the verdict is one model's reading, and the reader decides. */
 export const SET_ASIDE_TEXT = "A model reviewed the evidence behind these themes and judged that it points to a persona's mistake or the test setup rather than the product. This is a model's review, not a test of the product, so a real problem can be among them: read each reason. They are left out of the ranking and the friction rate, and their events stay in the log.";
 
+/** The tag's reason, for a reader deciding whether to discount it (tech.md §9.2). Nothing tagged leaves the report. */
+export const INTERFERENCE_TEXT = "possibly interference between personas: another persona changed an element of the same name shortly before, so this may be their doing rather than the product's";
+
+/** "1 of 3 reports tagged …": how much of a theme carries the tag. */
+export const interferenceNote = ({ interference, frictions }: ReportTheme) => `${interference} of ${count(frictions, 'report')} tagged ${INTERFERENCE_TEXT}`;
+
 /** What a set-aside theme's verdict points to, in words. */
 export const setAsideCause = ({ check }: ReportTheme) => (check?.verdict === 'environment' ? 'the test setup' : "a persona's mistake");
 
@@ -384,6 +390,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     ...(repeats ? [`- Repeats: ${line(repeats.appeared)}${repeats.one_family ? `. ${line(repeats.one_family)}` : ''}`] : []),
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
+    ...(t.interference ? [`- ${interferenceNote(t)}.`] : []),
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
@@ -413,6 +420,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
     ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
     ...(e.box ? [`   - About: ${line(e.box.element)}`] : []),
+    ...(e.interference ? [`   - Tagged ${INTERFERENCE_TEXT}.`] : []),
     `   - Event: #${e.seq}`,
   ].join('\n');
 }

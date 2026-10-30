@@ -291,6 +291,13 @@ test('themes carry rank, trust, affected share, evidence with event links and la
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
 });
 
+test('a tagged theme and its evidence say possibly interference between personas; an old report says nothing', () => {
+  const tagged = reportToMarkdown({ ...report, themes: [{ ...theme, interference: 1, evidence: [{ ...theme.evidence[0], interference: true }, theme.evidence[1]] }] });
+  assert.match(tagged, /- 1 of 3 reports tagged possibly interference between personas: another persona changed an element of the same name shortly before/);
+  assert.equal(tagged.match(/Tagged possibly interference between personas/g)?.length, 1, 'on the tagged evidence only');
+  assert.doesNotMatch(reportToMarkdown({ ...report, themes: [theme] }), /interference/);
+});
+
 test("a competitor's section with no themes does not point at the undersized-target audit, which covers only the team's product", () => {
   const pois = [...report.pois, { id: 'poi-new', type: 'web', name: 'New site', start_url: null }, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: null, competitor: true }] as Report['pois'];
   const md = reportToMarkdown({ ...report, pois, themes: [theme] });

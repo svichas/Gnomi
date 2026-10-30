@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, INTERFERENCE_TEXT, interferenceNote, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
@@ -194,6 +194,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
           <TrustBadge trust={evidence.trust} />
           {evidence.signals.length > 0 && <span>Signals: {evidence.signals.map((s) => s.replace('_', ' ')).join(', ')}</span>}
         </p>
+        {evidence.interference && <p className="text-xs text-stone-500">Tagged {INTERFERENCE_TEXT}.</p>}
         <p className="text-sm text-stone-900">{evidence.what}</p>
         <Passage passage={evidence.passage} />
         {evidence.quote && <blockquote className="border-l-4 border-stone-300 pl-3 text-sm italic text-stone-700">&ldquo;{evidence.quote}&rdquo;</blockquote>}
@@ -219,7 +220,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <span className="report-finding-number" aria-hidden="true">{number.toString().padStart(2, '0')}</span>
           <div className="report-finding-copy">
             <h4>{theme.title}</h4>
-            <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}</span></p>
+            <p><Icon name="people" size={13} /><span>{count(affected, 'simulated user')}{affected ? ' experienced this' : ' experienced this first-hand'}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{theme.interference && ' · possibly interference between personas'}</span></p>
           </div>
           {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
@@ -234,6 +235,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <div className="report-evidence-heading"><Icon name="activity" size={16} /><h5>Behind this finding</h5></div>
           <div className="flex flex-wrap items-center gap-2"><EvidenceChip finding={theme} /><TrustBadge trust={theme.trust} counts={theme.trust_counts} /></div>
           <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}</p>
+          {theme.interference && <p className="text-xs text-stone-500">{interferenceNote(theme)}.</p>}
           <Affected theme={theme} />
           <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
             {theme.evidence.map((evidence, i) => <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />)}

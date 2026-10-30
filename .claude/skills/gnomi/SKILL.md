@@ -109,4 +109,6 @@ npm run -s gnomi -- compare runs/acme --base r-0001 --run r-0002 --json
 
 ## Reporting back
 
+A theme or piece of evidence tagged "possibly interference between personas" (`interference` in `report_json`) rests on a failed action on something another persona had just changed, so one persona may have caused it rather than the product. Say so when you pass it on. Nothing tagged is removed or ranked lower, and the tag cannot tell a shared record from a private draft.
+
 Findings come from simulated users. Present them as hypotheses to check with real people, with how many personas met each one (`personas`, `share`, `evidence`), not as facts about users. Keep the report's banner in mind and say what the run did not cover (inputs, segments, logged-out only). `report_md` opens with a short template summary, and its Fix now, Next and Later labels suggest where to look first within that run: pass one on as that, never as how much a problem matters to real users.
