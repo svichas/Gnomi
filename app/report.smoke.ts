@@ -148,7 +148,8 @@ try {
   assert.equal(await first.getByText(/^Tagged possibly interference between personas/).count(), 1, 'on the tagged evidence only');
   await first.getByRole('button', { name: friction.persona_name, exact: true }).first().click();
   await page.getByRole('dialog').waitFor();
-  await page.getByRole('dialog').getByText('Simulated red–green colour blindness: the colours here are not the page’s own.').first().waitFor();
+  const simulated = 'Simulated red–green colour blindness: the colours here are not the page’s own.';
+  await page.getByRole('dialog').getByText(simulated).first().waitFor();
   // The replay: real steps from the log, through the buttons, the keyboard, a step with no screenshot and a phone's width.
   const replay = page.getByRole('dialog').getByRole('region', { name: 'Replay' });
   const caption = replay.locator('.inspector-replay-caption');
@@ -167,6 +168,7 @@ try {
   assert.equal(await replay.locator('[aria-live]').textContent(), 'Step 1: Clicked button "Next"');
   assert.ok(await caption.getByText('Clicked button "Next"', { exact: true }).isVisible(), 'the action');
   assert.ok(await caption.getByText('http://gym.test/poi-gym', { exact: true }).isVisible(), 'the page');
+  assert.ok(await caption.getByText(simulated, { exact: true }).isVisible(), 'a screenshot of simulated vision says so here too');
   const shown = stage.locator('img:visible');
   await shown.waitFor();
   await page.waitForFunction((image) => (image as HTMLImageElement).naturalWidth > 0, await shown.elementHandle());
@@ -183,6 +185,7 @@ try {
   await atStep(3, 3);
   assert.ok(await stage.getByText('No screenshot for this step.').isVisible(), 'a step with no screenshot says so');
   assert.equal(await stage.locator('img:visible').count(), 0, 'and shows no neighbour');
+  assert.equal(await caption.getByText(simulated, { exact: true }).count(), 0, 'with no screenshot there is nothing to label');
   await page.keyboard.press('ArrowRight');
   await atStep(4, 2);
   await stage.getByText('The screenshot could not be loaded.').waitFor();

@@ -14,7 +14,7 @@ import './results.css';
  * A persona's steps as a flipbook, oldest first, so a live run's new steps never move the one on show. Only that step and its two
  * neighbours are in the page, and each loads its own image, so a long episode costs three images however far it is flipped.
  */
-function Replay({ steps, name }: { steps: Row[]; name: string }) {
+function Replay({ steps, name, shotLabel }: { steps: Row[]; name: string; shotLabel: (row: Row) => string | undefined }) {
   const [index, setIndex] = useState(0);
   const go = (to: number) => setIndex(Math.max(0, Math.min(to, steps.length - 1)));
   const step = steps[index];
@@ -38,6 +38,7 @@ function Replay({ steps, name }: { steps: Row[]; name: string }) {
           <p className="font-medium text-stone-900">Step {index + 1} of {steps.length}</p>
           <p>{step.title}</p>
           {step.page && <p className="break-all text-xs text-stone-500">{step.page}</p>}
+          {step.screenshot && shotLabel(step) && <p className="text-xs text-stone-500">{shotLabel(step)}</p>}
         </div>
       </div>
       <div className="inspector-replay-controls">
@@ -118,7 +119,7 @@ export function Inspector(props: {
           </p>
         </section>
 
-        {replayable && <Replay steps={steps} name={name} />}
+        {replayable && <Replay steps={steps} name={name} shotLabel={shotLabel} />}
 
         <section aria-label="Timeline" id="inspector-timeline" tabIndex={-1}>
           <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Step by step</h3><span>Newest first</span></div>
