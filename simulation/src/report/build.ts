@@ -234,6 +234,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     const { role, provider, model } = call.payload;
     models[role] ??= routing?.[role] ?? { provider: provider as ProviderId, model };
   }
+  const checkCall = calls.find((e) => e.payload.purpose === 'report_check')?.payload;
 
   const end = events.findLast(
     (e): e is EventOf<'run.finished' | 'run.stopped'> => e.type === 'run.finished' || e.type === 'run.stopped',
@@ -317,6 +318,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       seed: audience?.seed ?? config.seed,
       roles,
       models,
+      ...(checkCall ? { check_model: { provider: checkCall.provider as ProviderId, model: checkCall.model } } : {}),
       // Runs before M2 ran one persona at a time and kept the cost budget at the top level.
       // shortcut: runs before M2 had no wall-clock budget; the default is shown so the field has a value
       budgets: {

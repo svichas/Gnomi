@@ -7,6 +7,7 @@ import type { BlobStore, LlmGateway, Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { CheckVerdict, EventPayloads, GnomiEvent, LlmRole, NewEvent, RunConfig, RunSettings } from '../types.ts';
 import { buildReport } from './build.ts';
+import { reportToMarkdown } from './markdown.ts';
 import { AUTHOR_SYSTEM, CHECK_SYSTEM, judgeSchema, runReportModels } from './models.ts';
 import { CHECK_MAX, TEXT_MAX } from './themes.ts';
 
@@ -266,10 +267,13 @@ test('with the check on, it runs between the judge and the author on the judge\'
   assert.deepEqual(report.themes?.map((t) => t.check?.verdict), ['product', 'product']);
 });
 
-test('check_model routes the check to another model and leaves the judge where it is', async () => {
+test('check_model routes the check to another model, leaves the judge where it is, and the report names it', async () => {
   const check_model = { provider: 'openai', model: 'gpt-6.1-sol' } as const;
-  const { events } = await analyse({ judge: checking(), author: DEMO_AUTHOR }, [], 1, files(), checkOn({ check_model }));
+  const { events, report } = await analyse({ judge: checking(), author: DEMO_AUTHOR }, [], 1, files(), checkOn({ check_model }));
   assert.deepEqual(events.filter((e) => e.type === 'llm.call').map((e) => e.payload.model), [DEFAULT_SETTINGS.routing.judge.model, check_model.model, DEFAULT_SETTINGS.routing.author.model]);
+  assert.equal(report.methods.models.judge?.model, DEFAULT_SETTINGS.routing.judge.model);
+  assert.equal(report.methods.check_model?.model, check_model.model);
+  assert.ok(reportToMarkdown(report).includes(`; evidence check ${check_model.model} (scripted)`));
 });
 
 test('the scripted judge passes every theme as product, so a key-free check changes nothing', async () => {
@@ -359,8 +363,10 @@ test('rejudge --check runs the check on a run whose setting is off; without it n
   const { report, again, requests } = await analyse({ judge: DEMO_JUDGE, author: DEMO_AUTHOR });
   assert.ok(!purposes(requests).includes('report_check'));
   assert.equal(report.themes?.[0].check, undefined);
+  assert.equal(report.methods.check_model, undefined);
   const rejudged = await again({ judge: checking({ g2: 'environment' }), author: DEMO_AUTHOR }, { check: true });
   assert.deepEqual(rejudged.set_aside?.map((t) => t.id), ['g2']);
+  assert.equal(rejudged.methods.check_model?.model, DEFAULT_SETTINGS.routing.judge.model, 'without check_model the judge\'s route ran it');
 });
 
 test('the check sees each piece of evidence with its page, signals, the persona\'s next two steps and its screenshot when the model reads images', async () => {

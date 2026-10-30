@@ -1,6 +1,6 @@
 // The report: a projection of the event log (tech.md §5.1), rebuilt by report/build.ts.
 import type { InfluenceEdge } from '../social/influence.ts';
-import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, Outcome, PoiType, ProfileAttribute, Routing, SignalKind, StepEvidence } from '../types.ts';
+import type { AttributeValue, BuyerAnswers, CheckVerdict, Device, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, SignalKind, StepEvidence } from '../types.ts';
 
 /** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
 export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
@@ -190,6 +190,7 @@ export interface ReportMethods {
   seed: number; // the audience seed, or the run seed without an audience
   roles: string[]; // the logins personas used
   models: Partial<Routing>; // the roles this run called, with their models
+  check_model?: ModelChoice; // the model the evidence check called, which the judge role in models does not show; only in runs with a check call
   budgets: { cost_usd: number; wall_clock_min: number; concurrency: number };
   allowed_hosts: string[]; // start_url's host first, then the POI's allowed hosts
   blocked_requests: { host: string; count: number; reason?: 'observe_only' | 'robots' }[]; // distinct blocked requests per host and reason, most first

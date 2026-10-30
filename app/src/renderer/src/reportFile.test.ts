@@ -175,6 +175,30 @@ test('the share says who read about it first, trust shows its mix, and a competi
   assert.ok(html.includes('1 confirmed, 3 reported'));
 });
 
+test('with several POIs a set-aside theme names its POI, and a competitor\'s does not read as the team\'s own', async () => {
+  const report = fixture(1, 1);
+  report.pois.push({ id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  report.themes = [];
+  const aside = { id: 'g1', poi_id: 'rival', rank: 0, title: 'Aside', description: '', named_by: 'judge' as const, trust: 'reported' as const, severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'environment' as const, reason: 'Blocked.' } };
+  report.set_aside = [aside];
+  const theirs = await reportFile(report, 'html', thumbnails());
+  assert.ok(theirs.includes('1 persona, 1 report · Rival (competitor, observed only)'));
+  assert.ok(theirs.includes('No shared issues were reported in this run.'));
+  assert.ok(!theirs.includes('No shared issues are left.'));
+  report.set_aside = [{ ...aside, poi_id: 'poi-gym' }];
+  const ours = await reportFile(report, 'html', thumbnails());
+  assert.ok(ours.includes('1 persona, 1 report · Gym'));
+  assert.ok(ours.includes('No shared issues are left.'));
+});
+
+test('the methods name the model behind the evidence check', async () => {
+  const report = fixture(1, 1);
+  report.methods.models = { judge: { provider: 'deepseek', model: 'deepseek-v4-pro' } };
+  assert.ok(!(await reportFile(report, 'html', thumbnails())).includes('evidence check:'));
+  report.methods.check_model = { provider: 'openai', model: 'gpt-6.1-sol' };
+  assert.ok((await reportFile(report, 'html', thumbnails())).includes('evidence check: openai gpt-6.1-sol'));
+});
+
 test('comparison HTML leads with the scoped decision, compares every target and keeps valid denominators visible', async () => {
   const report = fixture(5, 1);
   report.comparison = comparisonFixture();
@@ -233,6 +257,7 @@ test('themes the evidence check set aside fold into their own section, each with
     assert.ok(html.includes(text), text);
   }
   assert.doesNotMatch(html, /disprov/i);
+  assert.ok(!html.includes('1 report ·'), 'one POI needs no naming');
   assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Set aside by the evidence check'));
 });
 

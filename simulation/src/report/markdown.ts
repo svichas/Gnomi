@@ -17,6 +17,12 @@ const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 /** A POI as the report names it: a competitor's site says so. */
 export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi.name} (competitor, observed only)` : poi.name);
 
+/** The name of a theme's POI, in a report with several. */
+export const themePoi = ({ poi_id }: ReportTheme, pois: Report['pois']) => {
+  const poi = pois.find(({ id }) => id === poi_id);
+  return pois.length > 1 && poi ? poiName(poi) : undefined;
+};
+
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
@@ -198,7 +204,10 @@ function setAsideLines(report: Report): string[] {
     '', '## Set aside by the evidence check', '',
     '<details>', `<summary>${count(report.set_aside.length, 'theme')} set aside</summary>`, '',
     SET_ASIDE_TEXT, '',
-    ...report.set_aside.map((t) => `- **${line(t.title)}** (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`),
+    ...report.set_aside.map((t) => {
+      const poi = themePoi(t, report.pois);
+      return `- **${line(t.title)}**${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`;
+    }),
     '', '</details>',
   ];
 }
@@ -383,7 +392,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
 }
 
 function methodsToMarkdown(m: ReportMethods): string[] {
-  const models = Object.entries(m.models).map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
+  const models = [...Object.entries(m.models), ...(m.check_model ? [['evidence check', m.check_model] as const] : [])].map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
   const blocked = m.blocked.map(
     (b) =>
       `- Blocked at step ${b.step_no}, persona ${b.persona_id} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,

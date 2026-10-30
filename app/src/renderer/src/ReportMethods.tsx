@@ -29,7 +29,7 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
   const rows: [string, ReactNode][] = [
     ['Seed', String(methods.seed)],
     ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
-    ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}</ul>],
+    ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}{methods.check_model && <li>evidence check: {methods.check_model.provider} {methods.check_model.model}</li>}</ul>],
     ['Budgets', `${usd(methods.budgets.cost_usd)} recorded cost limit, ${methods.budgets.wall_clock_min} minutes, ${methods.budgets.concurrency} browsers at a time`],
     [
       'Concurrency changes',

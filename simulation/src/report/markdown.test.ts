@@ -315,6 +315,14 @@ test('set-aside themes fold apart with each reason, called a model\'s review, an
   assert.ok(split.includes('### Other\n\nThe evidence check set aside every theme here.'));
 });
 
+test('with several POIs each set-aside theme names its POI, and a competitor\'s says so', () => {
+  const aside = (poi_id: string): ReportTheme => ({ ...theme, rank: 0, poi_id, title: `Aside on ${poi_id}`, check: { verdict: 'environment', reason: 'Blocked.' } });
+  const pois = [...report.pois, { ...report.pois[0], id: 'rival', name: 'Rival', competitor: true as const }];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme], set_aside: [aside('poi-gym'), aside('rival')] });
+  assert.ok(md.includes("- **Aside on poi-gym** on Gym (the model's review points to the test setup): Blocked."));
+  assert.ok(md.includes("- **Aside on rival** on Rival (competitor, observed only) (the model's review points to the test setup): Blocked."));
+});
+
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
   const md = reportToMarkdown({
     ...report,
