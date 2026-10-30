@@ -47,10 +47,20 @@ npm run acceptance -w @gnomi/simulation -- --evaluate --repeats 1 --arms baselin
 
 | Metric | How it is measured |
 |---|---|
-| `recall_high` | A hint-based estimate, not a reviewed mapping. `defectScores` pairs a theme with a defect only when they share a catalogue page and one of the defect's `hints` in `defects.yaml` appears in the theme's title, description, elements or evidence. Pairs are one-to-one. |
+| `recall_high` | A hint-based estimate, not a reviewed mapping. `defectScores` pairs a theme with a defect only when they share a catalogue page and one of the defect's `hints` in `defects.yaml` appears, as whole words with a regular ending (`s`, `es`, `d`, `ed` or `ing`), in the theme's title, description, elements or evidence. Pairs are one-to-one. |
 | `precision` | The same estimate, over the report's top 20 themes. |
 | `control_themes` | Themes on the control build with trust confirmed or observed: the false-positive definition in [the evaluation plan](roadmap.md#evaluation-plan). |
 
-Add `--mapper provider:model` to have a judge map every theme of the Gym v2 runs after they finish. The mapper must come from a different provider than the navigator, because the evaluation plan asks for another model family, and live it needs that provider's key and a priced model. It shares `--allowance-usd` and writes `theme-mapping.json` with status `MAPPED_BY_MODEL`, plus `theme-mapping.md`, a sample of 20 themes picked by a fixed hash for a person to check. `results.md` then lists high-severity recall and top-20 precision per run, from `mappingScores` in [checks.ts](../simulation/src/acceptance/checks.ts). That function reads any `theme-mapping.json` items, so a reviewed mapping can replace the estimate.
+Add `--mapper provider:model` to have a judge map every theme of the Gym v2 runs after they finish. The mapper must come from a different provider than the navigator, because the evaluation plan asks for another model family, and live it needs that provider's key and a priced model. It shares `--allowance-usd` and writes `theme-mapping.json` with status `MAPPED_BY_MODEL` (`NOT_RUN` on a scripted rehearsal, where no model maps anything), plus `theme-mapping.md`, a sample of 20 themes picked by a fixed hash for a person to check. `results.md` then lists high-severity recall and top-20 precision per run, from `mappingScores` in [checks.ts](../simulation/src/acceptance/checks.ts).
+
+If the allowance runs out during the mapping, it stops before the next call. The runs mapped so far are kept and scored, the others are named in `results.md` and have no score, and the status is `INCOMPLETE`, not `FAIL`; `results.md` gives the reason it stopped. A provider failure during the mapping is a `FAIL` with the provider's message, and the mappings already paid for are kept. When no run was mapped there is no `theme-mapping.json`, and the evaluation claims no mapping. A theme the model left out has no `defect` key in `theme-mapping.json`, unlike `null`, which is its answer that no defect fits. Such a theme counts in no score until a person gives it an id or `null`.
+
+Once a person has corrected `theme-mapping.json`, score it again:
+
+```sh
+npm run acceptance -w @gnomi/simulation -- --rescore acceptance-results/evaluate-live
+```
+
+This opens no browser and calls no model. It rewrites `results.json` and `results.md` from the folder's `theme-mapping.json`, and refuses an id that is not a web defect switched on in that evaluation. `recall_high` and `precision` then come from the mapping in the per-run table, the scoreboard and the arm differences. A run the mapping does not cover has neither, so an estimate never mixes into a mapped mean, and each run's `outcomes.defect_proxy` keeps the hint-based estimate. The scoreboard's means for those two metrics take only the replicates mapped in every arm, so the arms average the same seeds. A rescore also works out the status again: `INCOMPLETE` while a replicate is unfinished or a run has no score, otherwise `REVIEW_NEEDED` (`NOT_RUN` on a scripted rehearsal). An evaluation that failed stays `FAIL`. Until a rescore, the scoreboard and the arm differences stay hint-based, even with `--mapper`. A rescored live evaluation has the defect status `RESCORED`; the harness cannot tell how many themes a person checked.
 
 A model's mapping is not a reviewed one. The plan's other judge rules (both orders, calibration against a labelled set) are not built.

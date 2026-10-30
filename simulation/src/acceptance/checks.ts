@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { mean, sampleVariance } from 'simple-statistics';
 import { isPriced } from '../llm/prices.ts';
+import { escapeRegExp } from '../poi/text.ts';
 import type { LlmAttempt } from '../seams.ts';
 import type { ReportTheme, RunSettings } from '../types.ts';
 
@@ -12,7 +13,7 @@ export const KEY_ENV: Record<Provider, string> = { anthropic: 'ANTHROPIC_API_KEY
 export const FULL_POPULATION = 50;
 export interface Mapper { provider: Provider; model: string }
 // personas and seeds shrink a live run to save spend; criteria set at full scale then stay NOT_RUN
-export interface Options { mode: Mode; out: string; allowance_usd?: number; m5?: true; m4?: true; m3?: true; evaluate?: true; repeats?: number; arms?: Arm[]; mapper?: Mapper; provider: Provider; personas: number; seeds?: number }
+export interface Options { mode: Mode; out: string; allowance_usd?: number; m5?: true; m4?: true; m3?: true; evaluate?: true; rescore?: true; repeats?: number; arms?: Arm[]; mapper?: Mapper; provider: Provider; personas: number; seeds?: number }
 export interface Criterion { id: string; status: Status; live_required: boolean; detail: string }
 export const BILLING_CAVEAT = 'The allowance stops new work at recorded spend. Already-dispatched calls may still be billed; missing provider usage makes the final bill uncertain. This is not a provider billing cap.';
 
@@ -41,10 +42,11 @@ function parseMapper(value: string, navigator: string): Mapper {
 }
 
 export function parseOptions(args: string[]): Options {
-  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, m5: { type: 'boolean' }, m4: { type: 'boolean' }, m3: { type: 'boolean' }, evaluate: { type: 'boolean' }, repeats: { type: 'string' }, arms: { type: 'string' }, mapper: { type: 'string' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' }, provider: { type: 'string' }, personas: { type: 'string' }, seeds: { type: 'string' } } });
+  const { values } = parseArgs({ args, options: { live: { type: 'boolean' }, m5: { type: 'boolean' }, m4: { type: 'boolean' }, m3: { type: 'boolean' }, evaluate: { type: 'boolean' }, rescore: { type: 'string' }, repeats: { type: 'string' }, arms: { type: 'string' }, mapper: { type: 'string' }, out: { type: 'string' }, 'allowance-usd': { type: 'string' }, provider: { type: 'string' }, personas: { type: 'string' }, seeds: { type: 'string' } } });
   const allowance_usd = values['allowance-usd'] === undefined ? undefined : Number(values['allowance-usd']);
   if (allowance_usd !== undefined && (!Number.isFinite(allowance_usd) || allowance_usd <= 0)) throw new Error('--allowance-usd must be a finite positive recorded-spend allowance.');
   if ([values.m3, values.m4, values.m5, values.evaluate].filter(Boolean).length > 1) throw new Error('Choose one of --m3, --m4, --m5 and --evaluate.');
+  if (values.rescore !== undefined && Object.keys(values).length > 1) throw new Error('--rescore takes only the evaluation folder: it runs nothing.');
   const arms = values.arms?.split(',').map((arm) => arm.trim());
   const unknown = arms?.find((arm) => !(arm in ARMS));
   if (unknown !== undefined) throw new Error(`--arms must name some of ${Object.keys(ARMS).join(', ')}; got ${unknown}.`);
@@ -58,9 +60,10 @@ export function parseOptions(args: string[]): Options {
     return n;
   };
   return {
-    mode: values.live ? 'live' : 'scripted', out: resolve(values.out ?? `acceptance-results/${new Date().toISOString().replaceAll(':', '-')}`), provider: provider as Provider,
+    mode: values.live ? 'live' : 'scripted', out: resolve(values.rescore ?? values.out ?? `acceptance-results/${new Date().toISOString().replaceAll(':', '-')}`), provider: provider as Provider,
     personas: values.personas === undefined ? FULL_POPULATION : whole('personas', values.personas, FULL_POPULATION),
     ...(values.seeds === undefined ? {} : { seeds: whole('seeds', values.seeds, 5) }),
+    ...(values.rescore === undefined ? {} : { rescore: true as const }),
     ...(values.evaluate ? { evaluate: true as const, repeats: values.repeats === undefined ? 5 : whole('repeats', values.repeats, 50), arms: (arms ?? Object.keys(ARMS)) as Arm[] } : {}),
     ...(values.mapper === undefined ? {} : { mapper: parseMapper(values.mapper, provider) }),
     ...(allowance_usd === undefined ? {} : { allowance_usd }), ...(values.m5 ? { m5: true as const } : {}), ...(values.m4 ? { m4: true as const } : {}), ...(values.m3 ? { m3: true as const } : {}),
@@ -139,6 +142,9 @@ export function assess(mode: Mode, facts: Facts, expected = FULL_POPULATION): Cr
 
 export const TOP = 20; // precision is measured over a report's top 20 themes
 
+/** The false positives of a control build: its themes with trust confirmed or observed (docs/roadmap.md's evaluation plan). */
+export const controlThemes = (themes: Pick<ReportTheme, 'trust'>[]) => themes.filter((theme) => theme.trust !== 'reported').length;
+
 const listOf = (entry: string, field: string) => (new RegExp(`${field}: \\[(.*)\\]`).exec(entry)?.[1] ?? '').split(',').map((item) => item.trim().replaceAll('"', '')).filter(Boolean);
 
 /** The catalogue's switched-on web defects. Its fields are read with regular expressions, so each stays on one line. */
@@ -149,16 +155,17 @@ export const webDefects = (catalogue: string, on: string[]) => catalogue.split(/
 
 /**
  * A hint-based estimate of Gym defect recall and precision against the catalogue's enabled web defects, not a reviewed mapping: a
- * theme pairs with a defect only when they share a catalogue page and one of the defect's hints appears in the theme's title,
- * description, elements or evidence. Pairs are assigned one-to-one, so a theme credits at most one defect and a defect at most one
- * theme. A defect is found by a confirmed or observed theme; precision counts the top themes. shortcut: a hint can appear in a theme
- * about another problem; use mappingScores once a theme-mapping.json is recorded.
+ * theme pairs with a defect only when they share a catalogue page and one of the defect's hints appears, as whole words with a regular
+ * ending, in the theme's title, description, elements or evidence. Pairs are assigned one-to-one, so a theme credits at most one defect
+ * and a defect at most one theme. A defect is found by a confirmed or observed theme; precision counts the top themes. shortcut: a hint
+ * can appear in a theme about another problem; use mappingScores once a theme-mapping.json is recorded.
  */
 export function defectScores(themes: ReportTheme[], catalogue: string, on: string[]) {
   const defects = webDefects(catalogue, on);
-  const words = (theme: ReportTheme) => [theme.title, theme.description, ...theme.elements, ...theme.evidence.flatMap((e) => [e.what, e.quote])].join('\n').toLowerCase();
+  const words = (theme: ReportTheme) => [theme.title, theme.description, ...theme.elements, ...theme.evidence.flatMap((e) => [e.what, e.quote])].join('\n');
+  const hasHint = (text: string, hint: string) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(hint)}(?:s|es|d|ed|ing)?(?![\\p{L}\\p{N}])`, 'iu').test(text); // "broken link" catches "broken links", but "covered" misses "discovered"
   const pairs = (theme: ReportTheme, defect: typeof defects[number]) => theme.pages.some((page) => defect.pages.includes(page.split('/').slice(1).join('/') || 'dashboard')) // patterns lead with the host; the Gym's root is its dashboard
-    && defect.hints.some((hint) => words(theme).includes(hint.toLowerCase()));
+    && defect.hints.some((hint) => hasHint(words(theme), hint));
   // The largest one-to-one assignment by augmenting paths, so a greedy first pick cannot block a later theme.
   const assigned = (pool: ReportTheme[], among = defects) => {
     const owner = new Map<string, number>(); // defect id → index in pool of the theme it is assigned to
@@ -183,21 +190,35 @@ export function defectScores(themes: ReportTheme[], catalogue: string, on: strin
 }
 
 /**
+ * One mapper answer applied to its run's items. An answer is a proposal, so a defect the catalogue does not have stays null. A theme the
+ * model left out gets no `defect` at all, which JSON drops: null is an answer that no defect fits, and only that is a false positive.
+ */
+export function applyMapping<T extends { theme_id: string; defect?: string | null; notes: string }>(items: T[], answers: { theme_id: string; defect: string | null; reason: string }[], known: string[]): T[] {
+  return items.map((item) => {
+    const answer = answers.findLast((entry) => entry.theme_id === item.theme_id);
+    if (!answer) return { ...item, defect: undefined, notes: 'The model left this theme out, so it counts in no score until a person gives it a defect or null.' };
+    return { ...item, defect: answer.defect !== null && known.includes(answer.defect) ? answer.defect : null, notes: answer.reason };
+  });
+}
+
+/**
  * Recall of high-severity defects and precision of the top themes per run, from theme-mapping.json items, so a mapping replaces the
  * defectScores estimate. By docs/roadmap.md's definitions a theme mapped to a switched-on defect is a true positive and a defect is
  * found when a confirmed or observed theme maps to it, so two themes may share a defect. A control run has no defect on: it is left out.
+ * A theme with no answer counts for nothing, and a run with no answers has no scores.
  */
-export function mappingScores(items: { run: string; rank: number; trust: string; defect: string | null }[], catalogue: string, on: string[]) {
+export function mappingScores(items: { run: string; rank: number; trust: string; defect?: string | null }[], catalogue: string, on: string[]) {
   const defects = webDefects(catalogue, on);
   const high = defects.filter((defect) => defect.high).map((defect) => defect.id);
+  const answered = items.filter((item) => item.defect !== undefined);
   const score = (run: string) => {
-    const mapped = items.filter((item) => item.run === run);
+    const mapped = answered.filter((item) => item.run === run);
     const found = high.filter((id) => mapped.some((item) => item.defect === id && item.trust !== 'reported'));
     const top = mapped.filter((item) => item.rank <= TOP);
     const matched = top.filter((item) => defects.some((defect) => defect.id === item.defect)).length;
     return { found, defects_high: high.length, recall_high: high.length ? found.length / high.length : null, matched, top: top.length, precision: top.length ? matched / top.length : null };
   };
-  return Object.fromEntries([...new Set(items.map((item) => item.run))].filter((run) => !run.endsWith('control')).map((run) => [run, score(run)]));
+  return Object.fromEntries([...new Set(answered.map((item) => item.run))].filter((run) => !run.endsWith('control')).map((run) => [run, score(run)]));
 }
 
 /** Two-sided 95% Student t quantiles for 1 to 30 degrees of freedom. */

@@ -239,7 +239,7 @@ export interface RunConfig {
   reset: boolean; // POST the POI's reset hook before the run
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
-  signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
+  signals?: SignalThresholds; // frozen per run, so an older run keeps its own (small_target_px was 40). Absent only on logs older than the detectors, which hold no signals
   injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
 }
 

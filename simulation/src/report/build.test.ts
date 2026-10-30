@@ -408,8 +408,20 @@ test('undersized targets are an audit in the methods, not findings: no theme and
   assert.deepEqual(report.themes, []);
   assert.equal(report.weighted.with_friction, 0, 'nobody ran into friction');
   const md = reportToMarkdown(report);
-  assert.ok(md.includes('- Undersized tap targets (an audit, not findings): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
+  assert.ok(md.includes('- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
   assert.ok(!md.includes('s3cret') && !md.includes('Small tap targets'));
+  assert.ok(md.includes('No themes. Small-target and backtrack signals do not make one alone; any undersized targets on your product are listed under Methods.'));
+  assert.ok(!md.includes('No frictions to group into themes'), 'signals did fire');
+});
+
+test("the undersized-target audit covers the team's product, not a competitor's site", () => {
+  const rival = { ...project.pois[0], id: 'poi-rival', name: 'Rival', start_url: 'http://rival.test/', mode: 'observe_only' } as WebPoi;
+  const started = { ...runEnv, type: 'run.started', payload: { config: { ...config, project: { ...project, pois: [...project.pois, rival] } } } } as NewEvent;
+  const onRival = tapAt('p-001', 2, 'Pricing', [0, 0, 30, 20]).map(([ts, event]): [number, NewEvent] => [ts, { ...event, poi_id: 'poi-rival' }]);
+  const report = buildReport(stored([[1000, started], ...tapAt('p-001', 1, 'Jobs', [0, 0, 208, 21]), ...onRival]));
+  assert.deepEqual(report.methods.undersized_targets?.map((t) => t.element), ['link "Jobs"']);
+  const onlyRival = buildReport(stored([[1000, started], ...onRival]));
+  assert.ok(!('undersized_targets' in onlyRival.methods));
 });
 
 test('an older log keeps its frozen threshold, and a log without the signal builds without the audit', () => {

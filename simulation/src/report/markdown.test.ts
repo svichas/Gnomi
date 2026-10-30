@@ -281,13 +281,23 @@ test('themes carry rank, trust, affected share, evidence with event links and la
     assert.ok(md.includes(expected), expected);
   }
   assert.ok(md.indexOf('## Themes') < md.indexOf('## Frictions'));
-  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No frictions to group into themes.'));  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
+  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No themes. Small-target and backtrack signals do not make one alone'));  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
   const echoed = (heard_first: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first }], sentiment: [], went_well: [] });
   assert.ok(echoed(1).includes('95% range 9%–91%); 1 more reported it only after reading about it in the feed'), 'heard-first personas sit beside the share');
   assert.ok(!echoed(0).includes('reading about it in the feed'));
   const mixed = reportToMarkdown({ ...report, themes: [{ ...theme, trust_counts: { confirmed: 1, observed: 0, reported: 3 } }] });
   assert.ok(mixed.includes('- Trust: 1 confirmed, 3 reported\n'), 'the trust mix, not the best member');
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
+});
+
+test("a competitor's section with no themes does not point at the undersized-target audit, which covers only the team's product", () => {
+  const pois = [...report.pois, { id: 'poi-new', type: 'web', name: 'New site', start_url: null }, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: null, competitor: true }] as Report['pois'];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme] });
+  const section = (from: string, to: string) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
+  assert.ok(section('### New site', '### Rival').includes('any undersized targets on your product are listed under Methods.'));
+  const rival = section('### Rival (competitor, observed only)', '\n## ');
+  assert.ok(rival.includes('No themes. Small-target and backtrack signals do not make one alone.'));
+  assert.ok(!rival.includes('Methods'));
 });
 
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {

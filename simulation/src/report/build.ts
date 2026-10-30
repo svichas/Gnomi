@@ -263,7 +263,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const hosts = webPois(pois).flatMap((poi) => [URL.parse(poi.start_url)?.hostname ?? '', ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
   const perTarget = new Map<string, Set<string>>();
-  for (const e of ofType(events, 'signal.small_target')) {
+  for (const e of ofType(ours, 'signal.small_target')) {
     const { page, element } = atStep(e, e.payload.step_no, e.payload.url);
     const [, , width, height] = e.payload.box.map(Math.round);
     const key = JSON.stringify([page, element, width, height]);

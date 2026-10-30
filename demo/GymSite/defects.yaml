@@ -84,7 +84,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [candidates]
-  hints: [slow, loading, seconds, delay, long time]
+  hints: [slow, slowly, slower, loading, seconds, delay, long time]
   affects: [recruiter, hiring_manager]
   visual_only: false
   toggle: D09
@@ -104,7 +104,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [login, "reviews/:id"]
-  hints: [sign-in, sign in, signed in, log in, logged in, redirect]
+  hints: [sign-in, sign in, sign into, signed in, log in, log into, logged in, redirect]
   affects: [hiring_manager]
   visual_only: false
   toggle: D11
@@ -144,7 +144,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
-  hints: [slow, no progress, no spinner, delay, seconds, loading]
+  hints: [slow, slowly, slower, no progress, no spinner, delay, seconds, loading]
   affects: [hiring_manager]
   visual_only: false
   toggle: D15
@@ -244,7 +244,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/approvals]
-  hints: [callout, covers the save, covered, overlap, obscured, hidden behind]
+  hints: [callout, covers the save, covered, overlap, overlapping, obscured, hidden behind]
   affects: [admin]
   visual_only: true
   toggle: D25
