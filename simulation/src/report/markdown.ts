@@ -1,5 +1,5 @@
 import { isUnrated } from '../types.ts';
-import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
+import type { Outcome, Prevalence, Report, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
 
@@ -80,6 +80,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     ...dimensionLines(report),
     ...themeLines(report, set),
     ...setAsideLines(report),
+    ...flowLines(report),
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
@@ -247,6 +248,39 @@ function setAsideLines(report: Report): string[] {
   ];
 }
 
+/** Said wherever a flow is shown: it counts where episodes ended, and leaves the reasons to the findings. */
+export const FLOW_TEXT = 'Each persona counts once per page and once per direction between two pages. "Ended here" says where an episode ended, not why.';
+
+/** "3: 2 done, 1 abandoned": the personas who ended on a page, by outcome. */
+export function flowEnded(ended: ReportFlowPage['ended'], word = (outcome: Outcome) => outcome.replaceAll('_', ' ')): string {
+  const outcomes = Object.entries(ended) as [Outcome, number][];
+  const total = outcomes.reduce((sum, [, n]) => sum + n, 0);
+  return total ? `${total}: ${outcomes.map(([outcome, n]) => `${n} ${word(outcome)}`).join(', ')}` : '0';
+}
+
+/** The pages past the flow's cap; null when it shows them all. */
+export function flowLeftOut({ left_out: { pages, ended } }: ReportFlow): string | null {
+  return pages ? `${count(pages, 'less visited page')} left out, where ${count(ended, 'persona')} ended. Moves to and from them are not counted here.` : null;
+}
+
+function flowLines(report: Report): string[] {
+  if (!report.flows) return [];
+  return [
+    '', '## Where personas went', '',
+    FLOW_TEXT,
+    ...report.flows.flatMap((flow) => {
+      const poi = report.pois.find(({ id }) => id === flow.poi_id);
+      const leftOut = flowLeftOut(flow);
+      return [
+        ...(report.pois.length > 1 && poi ? ['', `### ${line(poiName(poi))}`] : []),
+        '', '| Page | Reached | Ended here | Moved on to |', '| --- | --- | --- | --- |',
+        ...flow.pages.map(({ page, reached, ended }) => `| ${cell(page)} | ${reached} | ${flowEnded(ended)} | ${flow.moves.filter((m) => m.from === page).map((m) => `${cell(m.to)} (${m.personas})`).join(', ') || '-'} |`),
+        ...(leftOut ? ['', leftOut] : []),
+      ];
+    }),
+  ];
+}
+
 function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<typeof repeatNote>): string[] {
   const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
   return [
@@ -285,6 +319,7 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
     ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
+    ...(e.box ? [`   - Marked on it: ${line(e.box.element)}`] : []),
     `   - Event: #${e.seq}`,
   ].join('\n');
 }

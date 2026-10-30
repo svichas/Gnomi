@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { pruneSnapshot, snapshotTargets } from './prune.ts';
+import { boxIn, pruneSnapshot, snapshotTargets } from './prune.ts';
 
 // Fixture strings copy the line shapes Playwright 1.64 really emits.
 const lines = (...l: string[]) => l.join('\n');
@@ -267,4 +267,9 @@ test('keeps every card of a strip that scrolls sideways addressable, marking tho
   assert.doesNotMatch(out, /more\)/);
   assert.match(out, /link "Trip 9" \[ref=e39\] \[box=2772,60,40,18\] \(off screen, right\)$/m);
   assert.match(out, /link "Trip 0" \[ref=e30\] \[box=0,60,40,18\]$/m);
+});
+
+test('a box mark is read off its line, and a line without one has none', () => {
+  assert.deepEqual(boxIn('- button "Save" [ref=e5] [cursor=pointer] [box=8,-12.5,100,40]: Save'), [8, -12.5, 100, 40]);
+  assert.equal(boxIn('- button "Save" [ref=e5]'), null);
 });

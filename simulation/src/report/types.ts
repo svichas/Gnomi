@@ -65,6 +65,15 @@ export interface ReportSegment {
 /** Evidence trust within the simulation (tech.md §8.1): a self-report backed by a signal, a signal alone, a self-report alone. */
 export type Trust = 'confirmed' | 'observed' | 'reported';
 
+/** Where the element a piece of evidence is about sits on its screenshot, in percent of the image, so it scales with no script. */
+export interface ReportBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  element: string; // role "name"
+}
+
 /** One member friction shown as evidence for a theme. */
 export type ReportEvidence = {
   seq: number; // the self-report, survey or signal event
@@ -79,6 +88,7 @@ export type ReportEvidence = {
   what: string;
   quote: string; // the persona's think-aloud at that step, or the survey's reason
   screenshot: string | null;
+  box?: ReportBox; // only when the evidence is about that element and it shows on the screenshot; absent in older logs
   signals: SignalKind[];
 } & StepEvidence;
 
@@ -152,6 +162,22 @@ export interface ReportBuyers {
   unclear: ReportLike[];
 }
 
+/** A page of a flow. */
+export interface ReportFlowPage {
+  page: string; // a page pattern, as themes name it
+  reached: number; // personas who were on it
+  ended: Partial<Record<Outcome, number>>; // personas whose episode ended on it, by outcome
+}
+
+/** Where the personas went on one web POI (report/flow.ts): where episodes ended, never why. */
+export interface ReportFlow {
+  poi_id: string;
+  personas: number; // personas with a step on it
+  pages: ReportFlowPage[]; // the most reached first, at most FLOW_PAGES
+  moves: { from: string; to: string; personas: number }[]; // between pages shown, each persona once per direction, the most first
+  left_out: { pages: number; ended: number }; // pages past the cap, and the personas who ended on one
+}
+
 export interface Report {
   comparison?: import('../comparison/types.ts').ComparisonReport;
   run_id: string;
@@ -174,6 +200,7 @@ export interface Report {
   comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
   buyers?: ReportBuyers[]; // M5 buying survey per POI and segment; only in runs where a buyer answered one
+  flows?: ReportFlow[]; // the team's own web POIs with a step; absent in older reports
   cost_usd: number;
   llm_calls: number;
   unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports

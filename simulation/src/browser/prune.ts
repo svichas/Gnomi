@@ -23,6 +23,12 @@ const NAME = /^(\S+ )"((?:[^"\\]|\\.)*)"/;
 const REF = /\[ref=([^\]]+)\]/;
 const BOX = /\[box=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\]/;
 
+/** The [box=x,y,w,h] mark of a snapshot line, in the CSS pixels of the element's own frame. */
+export function boxIn(line: string): ActionTarget['box'] {
+  const box = BOX.exec(line);
+  return box ? [+box[1], +box[2], +box[3], +box[4]] : null;
+}
+
 interface Line {
   role: string;
   head: string; // role, "name" and [flags], without the YAML quoting
@@ -182,11 +188,10 @@ export function snapshotTargets(raw: string): Map<string, ActionTarget> {
   const walk = (lines: Line[]) => {
     for (const { role, head, value, kids } of lines) {
       const ref = REF.exec(head)?.[1];
-      const box = BOX.exec(head);
       if (ref) {
         const name = NAME.exec(head)?.[2];
         const text = FIELDS.has(role) ? '' : clip(value ?? '');
-        targets.set(ref, { role, name: name === undefined ? text : JSON.parse(`"${name}"`), box: box ? [+box[1], +box[2], +box[3], +box[4]] : null });
+        targets.set(ref, { role, name: name === undefined ? text : JSON.parse(`"${name}"`), box: boxIn(head) });
       }
       walk(kids);
     }

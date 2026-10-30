@@ -4,6 +4,7 @@ import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
 import { buildDimensions, reportAttributes } from './dimensions.ts';
+import { buildFlow } from './flow.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { buyerResults } from './buyers.ts';
 import { stepEvidence, stepReader } from './friction.ts';
@@ -215,6 +216,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');
   const buyers = buyerResults(events, pois, ctx);
+  const flows = comparison ? [] : buildFlow(ours, webPois(ourPois), personas, pois[0]?.id ?? '');
 
   const inUse = audience ? audience.segments.filter((s) => segments.some((seg) => seg.id === s.id)) : [];
   const roleOfUse = comparison ? comparison.study.targets.map((target) => target.session_role) : audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
@@ -305,6 +307,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     ...(comparisons.length ? { comparisons } : {}),
     ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name])), analysis.set_aside) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),
+    ...(flows.length > 0 ? { flows } : {}),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,

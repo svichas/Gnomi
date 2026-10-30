@@ -113,6 +113,29 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
   assert.doesNotMatch(html, /<(?:button|select|script)\b/);
 });
 
+test('the box on a finding and the flow render into the export with no script, and the frame shows only over an image', async () => {
+  const report = fixture(1, 1);
+  const friction = report.frictions[0];
+  const evidence = { ...friction, step_seq: 1, trust: 'reported' as const, signals: [] };
+  report.themes = [{
+    id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Saving fails', description: 'Save does nothing.', named_by: 'rules', trust: 'reported', severity: 2, score: 0.5, personas: 1, frictions: 1, pages: [], elements: [], affected: [], seqs: [1], suggestion: null,
+    evidence: [{ ...evidence, box: { left: 25, top: 50, width: 20, height: 12.5, element: 'button "<Save>"' } }, evidence],
+  }];
+  report.flows = [{
+    poi_id: 'poi-gym', personas: 2, left_out: { pages: 3, ended: 1 },
+    pages: [{ page: 'gym.test/jobs', reached: 2, ended: { abandoned: 1 } }, { page: 'gym.test/jobs/new', reached: 1, ended: { done: 1 } }],
+    moves: [{ from: 'gym.test/jobs', to: 'gym.test/jobs/new', personas: 1 }],
+  }];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.equal(html.split('style="left:25%;top:50%;width:20%;height:12.5%"').length - 1, 1, 'one frame, in percent of the image');
+  assert.equal(html.split('aria-label="Marked on the screenshot: button &quot;&lt;Save&gt;&quot;"').length - 1, 1, 'it names the element');
+  assert.match(html, /\.report-shot:has\(img\) ?> ?\.report-shot-box/, 'without an image there is nothing for it to mark');
+  for (const text of ['Where personas went', '2 reached · 1 ended here', '1: 1 gave up', '1: 1 reached the goal', 'gym.test/jobs/new (1)', '3 less visited pages left out, where 1 persona ended.', 'where an episode ended, not why']) assert.ok(html.replaceAll('&quot;', '"').includes(text), text);
+  assert.match(html, /<svg role="img" aria-label="Moves of 2 personas between 2 pages\./);
+  assert.doesNotMatch(html, /<(?:button|select|script)\b/);
+  assert.doesNotMatch(html, /dropped off/i);
+});
+
 test("a text POI's quoted passages and the buying survey render into the HTML and Markdown exports", async () => {
   const report = fixture(1, 1);
   report.pois = [{ id: 'pricing', type: 'text', name: 'Pricing page', start_url: null }];

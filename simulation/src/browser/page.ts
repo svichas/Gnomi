@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { devices, errors } from 'playwright-core';
 import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page, Request } from 'playwright-core';
 import type { PageDriver, PageError, StorageState } from '../seams.ts';
-import { PRESS_KEYS, type Action, type ActionOutcome, type ActionTarget, type Device, type PageSnapshot } from '../types.ts';
+import { PRESS_KEYS, type Action, type ActionOutcome, type ActionTarget, type Device, type PageSnapshot, type Viewport } from '../types.ts';
 import type { ActionRefusal, Containment, HostRule } from './contain.ts';
 import { personaEnvironment, type LocaleEnvironment } from '../audience/locations.ts';
 import { pickedValue } from './dates.ts';
@@ -773,13 +773,16 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       const values = new Map(ranges.flatMap((ref, i) => (read[i] === null ? [] : [[ref, read[i]] as const])));
       const kinds = await Promise.all(textboxes.map((ref) => page.getByRef(ref).evaluate(fieldKind, null, { timeout: 1_000 }).catch(() => null)));
       const notes = new Map(textboxes.flatMap((ref, i) => (kinds[i] && TYPED_AS[kinds[i]] ? [[ref, TYPED_AS[kinds[i]]] as const] : [])));
-      const { innerHeight: viewportHeight, innerWidth: viewportWidth } = await page.evaluate(() => ({ innerHeight, innerWidth }));
+      const { innerHeight: viewportHeight, innerWidth: viewportWidth, viewport } = await page.evaluate(() => {
+        const { offsetLeft, offsetTop, width, height } = visualViewport!;
+        return { innerHeight, innerWidth, viewport: [offsetLeft, offsetTop, width, height] as Viewport };
+      });
       // The browser's bubble over a field it refused, as the persona reads it on the screenshot. Not after a check of the
       // page's own (checkValidity() on typing): only a click or a key can submit.
       const refused = submitting ? (await Promise.all(page.frames().map((frame) => frame.evaluate(() => (window as unknown as { __gnomiInvalid?: string | null }).__gnomiInvalid ?? null).catch(() => null)))).find(Boolean) : null;
       const text = pruneSnapshot(raw, { passwordFields, values, notes, viewportHeight, viewportWidth }) + (refused ? `\n- alert [invalid]: ${refused.slice(0, 200)}` : '');
       shown = text;
-      return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex') };
+      return { url: page.url(), title: await page.title(), text, hash: createHash('sha1').update(text).digest('hex'), viewport };
     },
 
     async screenshot() {

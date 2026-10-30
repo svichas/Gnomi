@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent } from '../types.ts';
+import type { ActionTarget, EventPayloads, EventType, GnomiEvent } from '../types.ts';
 import { buildCandidates, groupCandidates, pagePattern } from './friction.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
@@ -161,4 +161,74 @@ test('a signal seen after its step’s action cites the next step’s screenshot
   // The persona's next step is on its next POI: that screenshot shows another product.
   const next = { ...log(['persona.step', 'p1', step(6, 'http://other.test/')])[0], poi_id: 'poi-2', seq: 6 } as GnomiEvent;
   assert.equal(buildCandidates([...events, next], 'poi').at(-1)?.screenshot, null);
+});
+
+const save: ActionTarget = { role: 'button', name: 'Save', box: [640, 400, 128, 80] };
+// The step's own action, on `target`, seen on a 1280×800 screen.
+const shown = (over: Partial<EventPayloads['persona.step']> = {}, target: ActionTarget | null = save, ok = true): EventPayloads['persona.step'] => {
+  const base = step(5);
+  return { ...base, target, viewport: [0, 0, 1280, 800], result: { ...base.result, ok, error: ok ? null : 'timeout' }, ...over };
+};
+const onSave = { left: 50, top: 50, width: 10, height: 10, element: 'button "Save"' };
+const boxOf = (...entries: Parameters<typeof log>) => buildCandidates(log(...entries), 'poi').map((c) => c.box);
+
+test('a friction that names an element marks it on its step\'s screenshot, in percent of the image', () => {
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, null)], ['persona.friction_reported', 'p1', { ...friction(5, 'Save is hidden'), about: save }]), [onSave]);
+});
+
+test('an action that failed marks its target, on the failed-action signal and on a friction the step raised without naming anything', () => {
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown()], ['signal.failed_action', 'p1', failed(5)]), [onSave]);
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, save, false)], ['persona.friction_reported', 'p1', friction(5, 'It timed out')]), [onSave]);
+});
+
+test('a friction on a step that went fine says nothing about the step\'s target, so nothing is marked', () => {
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown()], ['persona.friction_reported', 'p1', friction(5, 'The page is confusing')]), [undefined]);
+});
+
+test('a friction about a different element never marks the target of a failed step', () => {
+  const other: ActionTarget = { role: 'link', name: 'Help', box: null };
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, save, false)], ['persona.friction_reported', 'p1', { ...friction(5, 'Help is unclear'), about: other }]), [undefined], 'it named one with no box');
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, save, false)], ['persona.friction_reported', 'p1', { ...friction(5, 'Help is unclear'), where: { url: JOBS, ref: 'e9' } }]), [undefined], 'it named one the snapshot could not place');
+});
+
+test('an element with no box is not marked, nor is any other evidence at the step', () => {
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, { ...save, box: null })], ['signal.failed_action', 'p1', failed(5)]), [undefined]);
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown()], ['signal.loop', 'p1', { step_no: 5, url: JOBS, ref: 'e1', visits: 3 }]), [undefined]);
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown()], ['persona.abandoned', 'p1', { step_no: 5, reason: 'Enough' }]), [undefined]);
+});
+
+test('a box outside the screenshot is left out, and one part way off is cut to what shows', () => {
+  const at = (box: ActionTarget['box']) => boxOf(['persona.step', 'p1', shown({}, { ...save, box })], ['signal.failed_action', 'p1', failed(5)])[0];
+  assert.equal(at([100, 800, 50, 50]), undefined, 'below the fold');
+  assert.equal(at([100, -80, 50, 50]), undefined, 'scrolled away above');
+  assert.equal(at([1280, 100, 50, 50]), undefined, 'beside the screen');
+  assert.equal(at([0, 0, 0, 0]), undefined, 'a closed option, which is nowhere');
+  assert.deepEqual(at([1216, 700, 128, 200]), { left: 95, top: 87.5, width: 5, height: 12.5, element: 'button "Save"' });
+});
+
+test('a box is measured from where the screenshot starts and over what it spans, not the image\'s own size', () => {
+  const panned = shown({ viewport: [600, 0, 400, 600] }, { ...save, box: [800, 300, 40, 60] });
+  assert.deepEqual(boxOf(['persona.step', 'p1', panned], ['signal.failed_action', 'p1', failed(5)])[0], { left: 50, top: 50, width: 10, height: 10, element: 'button "Save"' });
+});
+
+test('an element in a frame is not marked: its box starts at the frame\'s corner', () => {
+  const inFrame = shown({ action: { type: 'click', ref: 'f1e2', text: null } });
+  assert.deepEqual(boxOf(['persona.step', 'p1', inFrame], ['signal.failed_action', 'p1', failed(5)]), [undefined]);
+  assert.deepEqual(boxOf(['persona.step', 'p1', shown({}, null)], ['persona.friction_reported', 'p1', { ...friction(5, 'Save is hidden'), about: save, where: { url: JOBS, ref: 'f1e2' } }]), [undefined]);
+});
+
+test('a signal shown on the next step\'s screenshot is not marked with this step\'s box', () => {
+  const [c] = buildCandidates(log(
+    ['persona.step', 'p1', shown()],
+    ['persona.step', 'p1', { ...shown(), step_no: 6, screenshot: 'shots/6.jpg' }],
+    ['signal.validation_error', 'p1', { step_no: 5, url: JOBS, ref: 'e1', message: 'Required' }],
+  ), 'poi');
+  assert.equal(c.screenshot, 'shots/6.jpg');
+  assert.equal(c.box, undefined);
+});
+
+test('an old log has no viewport, so it shows the plain screenshot, though its targets and about carry boxes', () => {
+  const { viewport: _, ...old } = shown();
+  assert.deepEqual(boxOf(['persona.step', 'p1', old], ['signal.failed_action', 'p1', failed(5)]), [undefined]);
+  assert.deepEqual(boxOf(['persona.step', 'p1', old], ['persona.friction_reported', 'p1', { ...friction(5, 'Save is hidden'), about: save }]), [undefined]);
 });

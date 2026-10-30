@@ -42,6 +42,16 @@
 .report-suggestion p.report-suggestion-how { margin-top: 8px; color: var(--gnomi-text-muted); font-size: 12px; }
 .report-suggestion small { display: block; margin-top: 10px; color: var(--gnomi-text-muted); font-size: 11px; }
 .report-evidence-heading { display: flex; align-items: center; gap: 7px; color: var(--gnomi-text-muted); font-size: 12px; font-weight: 500; }
+.report-shot { position: relative; width: fit-content; max-width: 100%; }
+.report-shot-box { display: none; position: absolute; outline: 2px solid var(--gnomi-error); outline-offset: 1px; box-shadow: 0 0 0 1px var(--gnomi-surface); }
+.report-shot:has(img) > .report-shot-box { display: block; }
+.report-flow { display: block; }
+.report-flow rect[data-tone] { fill: var(--tone); }
+.report-flow-node { fill: var(--gnomi-line); }
+.report-flow-page { fill: var(--gnomi-text); font-size: 12px; font-weight: 500; }
+.report-flow-count { fill: var(--gnomi-text-muted); font-size: 11px; }
+.report-flow-move path { fill: none; stroke: var(--gnomi-action); opacity: .6; }
+.report-flow-move path + path { fill: var(--gnomi-action); stroke: none; opacity: 1; }
 .report-overflow { margin-top: 12px; }
 .report-overflow > summary { width: fit-content; font-size: 12px; }
 .report-overflow > ol { margin-top: 12px; }
