@@ -173,7 +173,18 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 
 | Name | Unit or range | Value | Rationale | Provenance | Status |
 | --- | --- | --- | --- | --- | --- |
-| `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. | `report/diff.ts` | assumed |
+| `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. A report's coverage lists pages and screens below it as barely tested. | `report/diff.ts`, `report/coverage.ts` | assumed |
+
+### Reading one run
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `CURVE_MIN` | personas | 10 | Under this the discovery curve is too short to read, so the report says so and claims nothing from it. | `report/coverage.ts` | assumed |
+| last fifth | personas | `ceil(n / 5)` | The window whose new themes the hint counts. | `report/coverage.ts`; tech.md §6.7 | assumed |
+| `DRIVER_HOLDERS` | personas | 5 | How many must hold a value and have reached a theme's pages before it can read as "more common among". | `report/dimensions.ts`; features_roadmap.md item 8 | assumed |
+| `DRIVER_AFFECTED` | personas | 2 | Of those, how many must have met the theme first-hand, so one persona is never a pattern. | `report/dimensions.ts` | assumed |
+| `DRIVER_GAP` | difference of two rates | 0.25 | The least gap against those without the value. No p-value is given, as connected personas are not independent. | `report/dimensions.ts`; new_simulation.md §9 | assumed |
+| `DRIVER_MAX` | values per theme | 2 | Keeps a finding readable, the largest gap first. | `report/dimensions.ts` | assumed |
 
 ### Friction signals
 

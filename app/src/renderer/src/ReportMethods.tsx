@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import type { ReportHomogeneity, ReportMethods, ReportPersona } from '@gnomi/simulation/types.ts';
-import { BLOCK_REASON_TEXT, scanText } from '@gnomi/simulation/report/markdown.ts';
+import type { Report, ReportCoverage, ReportHomogeneity, ReportMethods, ReportPersona } from '@gnomi/simulation/types.ts';
+import { BLOCK_REASON_TEXT, coverageText, scanText } from '@gnomi/simulation/report/markdown.ts';
 import { resetOutcome } from './activity.ts';
 import { usd } from './ui.tsx';
 import { count } from './reportParts.tsx';
@@ -21,12 +21,22 @@ const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_ex
 const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
 
 /** What the run was set up with, allowed to do and what got in its way (idea.md §6.5), so a team can change a setting and run again. */
-export function Methods({ methods, personas }: { methods: ReportMethods; personas: ReportPersona[] }) {
+export function Methods({ methods, personas, coverage, pois }: { methods: ReportMethods; personas: ReportPersona[]; coverage?: ReportCoverage[]; pois: Report['pois'] }) {
   const none = 'None';
   const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
   const models = Object.entries(methods.models);
   // biome-ignore-start lint/correctness/useJsxKeyInIterable: each row is a [label, value] pair whose value renders alone in its <dd>, not as a list
   const rows: [string, ReactNode][] = [
+    ...(coverage ? [['Coverage', (
+      <div className="space-y-2">
+        {coverage.map((poi) => (
+          <ul key={poi.poi_id} className="space-y-1">
+            {pois.length > 1 && <li className="font-medium">{pois.find(({ id }) => id === poi.poi_id)?.name ?? poi.poi_id}</li>}
+            {coverageText(poi).map((text) => <li key={text}>{text}</li>)}
+          </ul>
+        ))}
+      </div>
+    )] as [string, ReactNode]] : []),
     ['Seed', String(methods.seed)],
     ['Logged in as', methods.roles.length > 0 ? methods.roles.join(', ') : 'Nobody: the personas browsed logged out'],
     ['Models', models.length === 0 ? none : <ul>{models.map(([role, choice]) => <li key={role}>{role.replace('_', ' ')}: {choice.provider} {choice.model}</li>)}{methods.check_model && <li>evidence check: {methods.check_model.provider} {methods.check_model.model}</li>}</ul>],
@@ -115,7 +125,7 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
       {rows.map(([label, value]) => (
         <div key={label} className="grid gap-1 px-3 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
           <dt className="text-stone-500">{label}</dt>
-          <dd className="break-words text-stone-900">{value}</dd>
+          <dd className="min-w-0 break-words text-stone-900">{value}</dd>
         </div>
       ))}
     </dl>

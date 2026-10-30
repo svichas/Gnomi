@@ -3,7 +3,8 @@ import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
-import { buildDimensions, reportAttributes } from './dimensions.ts';
+import { buildCoverage } from './coverage.ts';
+import { buildDimensions, reportAttributes, themeDrivers } from './dimensions.ts';
 import { buildFlow } from './flow.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { buyerResults } from './buyers.ts';
@@ -230,6 +231,13 @@ export function buildReport(events: GnomiEvent[]): Report {
     // Invalid output steps carry a synthetic zero; it is not the persona reporting a neutral feeling.
     if (event.persona_id && event.payload.result.error !== 'invalid_output') latestFeeling.set(event.persona_id, event.payload.feeling);
   }
+  const dimensions = schema ? buildDimensions(population, personas, latestFeeling, schema, withFriction) : undefined;
+  if (dimensions) {
+    for (const theme of analysis.themes.filter((t) => !competitors.has(t.poi_id))) {
+      const drivers = themeDrivers(theme, dimensions, personas, analysis.reach);
+      if (drivers.length > 0) theme.drivers = drivers;
+    }
+  }
   const total = (pick: (e: EventOf<'llm.call'>) => number) => calls.reduce((sum, e) => sum + pick(e), 0);
   // Runs before M2 have no routing, so the call itself names the model it used.
   const routing: Routing | null = settings?.routing ?? null;
@@ -255,6 +263,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     stop_reason = end.payload.detail === null ? end.payload.reason : `${end.payload.reason}: ${end.payload.detail}`;
   }
   const endedAt = end?.ts ?? null;
+  const coverage = comparison ? [] : buildCoverage(ourPois, personas, analysis.themes, analysis.reach, status);
 
   const perHost = new Map<string, number>();
   for (const e of ofType(events, 'containment.blocked_request')) {
@@ -316,7 +325,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     goal: config.project.goal,
     pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null, ...(poi.type === 'web' && poi.mode === 'observe_only' ? { competitor: true as const } : {}) })),
     personas,
-    ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema, withFriction) } : {}),
+    ...(dimensions ? { dimensions } : {}),
     segments,
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
     steps: ofType(events, 'persona.step').length,
@@ -324,6 +333,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     themes: analysis.themes,
     ...(analysis.set_aside ? { set_aside: analysis.set_aside } : {}),
     reach: analysis.reach,
+    ...(coverage.length > 0 ? { coverage } : {}),
     sentiment: competitors.size ? sentimentBySegment(ours, ctx) : analysis.sentiment,
     went_well: competitors.size ? wentWell(ours, ctx) : analysis.went_well,
     ...(comparisons.length ? { comparisons } : {}),
