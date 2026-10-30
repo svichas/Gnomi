@@ -12,12 +12,18 @@ export const AUTHOR_TOKEN_CAP = 20_000;
 export const JUDGE_POST_CAP = 10_000;
 /** Of what is left, at most this much goes to survey likes; the friction and objection groups get the rest. */
 export const JUDGE_LIKE_CAP = 5_000;
+/** Of the author's cap, at most this much goes to page text. Excerpts get only what the themes leave, so they push no theme out. */
+export const AUTHOR_PAGE_CAP = 10_000;
+/** Characters of page text per piece of evidence: about a median page (M3 seed runs: 1,193) once PAGE_MARKS are gone. */
+export const PAGE_TEXT_MAX = 1_200;
 /** Fewer personas than this on a POI and every share has a wide range, which the report says. */
 export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
 export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
+// The navigator's handles on a page: half its characters, and nothing a suggestion should quote.
+const PAGE_MARKS = / \[(?:ref|box|cursor)=[^\]]*\]/g;
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {
@@ -178,7 +184,7 @@ const KIND_TITLE: Record<CandidateKind, string> = {
   small_target: 'Small tap targets',
 };
 
-const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
+export const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
 
 /** A persona's words as a title: the first sentence, cut at a word when it is still too long. */
 function headline(text: string): string {
@@ -415,27 +421,39 @@ export function applySuggestions(themes: ReportTheme[], suggestions: AuthorSugge
   return { unknown: [...unknown] };
 }
 
-/** What the author sees for one POI: its ranked themes with evidence, while they fit the cap. */
-export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
-  const sent = [];
+/**
+ * What the author sees for one POI: its ranked themes with evidence, while they fit the cap, then the page at each evidence step
+ * (`pages`, by the step's seq) while that fits both AUTHOR_PAGE_CAP and what the themes left of the cap.
+ * shortcut: an excerpt is the top of the page, so an element further down is cut; centre it on the element if suggestions still miss it.
+ */
+export function authorThemes(themes: ReportTheme[], pages: Map<number, string> = new Map(), cap = AUTHOR_TOKEN_CAP) {
+  const brief = (t: ReportTheme, excerpt: (step_seq: number | null) => { page_text?: string }) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    trust: t.trust,
+    personas: t.personas,
+    pages: t.pages,
+    elements: t.elements,
+    evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals, ...excerpt(e.step_seq) })),
+  });
+  const sent: ReportTheme[] = [];
   let used = 0;
   for (const t of themes) {
-    const item = {
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      trust: t.trust,
-      personas: t.personas,
-      pages: t.pages,
-      elements: t.elements,
-      evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals })),
-    };
-    const cost = tokens(item);
+    const cost = tokens(brief(t, () => ({})));
     if (used + cost > cap) break; // ranked, so the rest matter less
     used += cost;
-    sent.push(item);
+    sent.push(t);
   }
-  return sent;
+  let room = Math.min(AUTHOR_PAGE_CAP, cap - used);
+  return sent.map((t) =>
+    brief(t, (step_seq) => {
+      const page_text = clip((pages.get(step_seq ?? -1) ?? '').replace(PAGE_MARKS, ''), PAGE_TEXT_MAX);
+      if (!page_text || tokens({ page_text }) > room) return {};
+      room -= tokens({ page_text });
+      return { page_text };
+    }),
+  );
 }
 
 /** Step 8: the mean survey sentiment and the share who would continue, per segment, over users' answers; buyers have their own section. */
@@ -598,6 +616,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
+          keys: draft.groups.map((g) => groupKey(g.members[0])),
           poi_id,
           rank: 0,
           title: draft.title,

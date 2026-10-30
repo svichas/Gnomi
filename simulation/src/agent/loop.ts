@@ -174,6 +174,8 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const { snapshot, shot } = await read().catch((err: unknown) => (String(err).includes('Execution context was destroyed') ? read() : Promise.reject(err)));
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
+    // By the hash the step records, so the report models can find it and identical pages share one file.
+    await blobs.put(`runs/${run_id}/snapshots/${snapshot.hash}.txt`, new TextEncoder().encode(snapshot.text));
     const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
     heard = [];
     if (signal.aborted) return null;

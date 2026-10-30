@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, frictionGroups, judgeGroups, judgeInput, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, AUTHOR_TOKEN_CAP, authorThemes, frictionGroups, judgeGroups, judgeInput, PAGE_TEXT_MAX, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -78,6 +78,48 @@ test('a survey answer merged into a page theme leaves "reached" at that page; a 
   assert.deepEqual(merged.affected.map((a) => [a.affected, a.reached]), [[2, 3], [2, 2]], 'b2 counts as affected, not through the POI');
   const surveyOnly = analyseFrictions(surveyed, ctx).themes.find((t) => t.id === 'g2');
   assert.deepEqual(surveyOnly?.affected.map((a) => [a.affected, a.reached]), [[0, 3], [1, 2]]);
+});
+
+test('page text reaches the author within its caps: per excerpt, in total, and only from what the themes leave of the author\'s cap', () => {
+  const [theme] = analyseFrictions(run, ctx).themes;
+  const pages = new Map(theme.evidence.map((e) => [e.step_seq ?? -1, `- button "Save" [ref=e1] [box=0,0,1,1] ${'x'.repeat(5_000)}`]));
+  const [sent] = authorThemes([theme], pages);
+  assert.ok(sent.evidence.every((e) => e.page_text?.length === PAGE_TEXT_MAX && e.page_text.startsWith('- button "Save" xxx')), 'each excerpt is cut to its cap');
+
+  const bare = authorThemes([theme]);
+  const cost = (items: unknown) => Math.ceil(JSON.stringify(items).length / 4);
+  assert.equal(authorThemes([theme], new Map(), cost(bare) + 10).length, 1);
+  const tight = authorThemes([theme], pages, cost(bare) + 10);
+  assert.equal(tight.length, 1, 'page text never costs a theme its place');
+  assert.ok(tight[0].evidence.every((e) => e.page_text === undefined), 'and the theme goes without it');
+
+  const many = Array.from({ length: 40 }, (_, i) => ({ ...theme, id: `g${i + 1}` }));
+  const all = authorThemes(many, pages);
+  const excerpts = all.flatMap((t) => t.evidence.flatMap((e) => e.page_text ?? []));
+  assert.equal(all.length, authorThemes(many).length, 'excerpts push no theme out: the later ones go without');
+  assert.ok(excerpts.length > 0 && excerpts.length < all.flatMap((t) => t.evidence).length);
+  assert.ok(excerpts.reduce((sum, text) => sum + cost(text), 0) <= AUTHOR_PAGE_CAP);
+
+  // M3's themes cost about 326 tokens each, so 40 leave the excerpts less than their own cap.
+  const real = many.map((t) => ({ ...t, description: 'x'.repeat(1_000) }));
+  const themesAlone = cost(authorThemes(real));
+  assert.ok(themesAlone > AUTHOR_TOKEN_CAP - AUTHOR_PAGE_CAP && themesAlone < AUTHOR_TOKEN_CAP, 'the themes fit, with less than AUTHOR_PAGE_CAP left');
+  const full = authorThemes(real, pages);
+  assert.equal(full.length, real.length, 'excerpts push no theme out at real size either');
+  assert.ok(full.some((t) => t.evidence.some((e) => e.page_text)), 'and they use the room there is');
+  assert.ok(cost(full) <= AUTHOR_TOKEN_CAP, 'together they stay within the cap');
+});
+
+test('a merged theme carries the key of each of its groups', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 2)],
+    ['persona.friction_reported', 'a1', { ...friction(4, 2, 'Home is empty'), where: { url: HOME, ref: null } }],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Both', description: 'Both.', group_ids: ['g1', 'g2'] }] }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.equal(theme.id, 'g1+g2');
+  assert.deepEqual(theme.keys, [JSON.stringify(['poi', 'gym.test/jobs/new', 'element', 'button "save"']), JSON.stringify(['poi', 'gym.test/', 'kind', 'friction'])]);
 });
 
 test('themes rank by score within the POI', () => {

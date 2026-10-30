@@ -85,6 +85,7 @@ export type ReportEvidence = {
 /** Frictions grouped into one problem, ranked by severity tier, then the low end of the first-hand share × trust (tech.md §8.2). */
 export interface ReportTheme {
   id: string; // its group ids joined by '+'
+  keys?: string[]; // each group's key, which unlike the id means the same in another run (report/match.ts); absent in older reports
   poi_id: string;
   rank: number; // 1 first, within the POI
   title: string;
