@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
+import { fixture, generic, germanProbe, grounded, gym, subset } from './fixture.ts';
 import { createGateway } from '../llm/gateway.ts';
 import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
 import { applyMapping, assess, controlThemes, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, topOverlap, validateOptions, webDefects } from './checks.ts';
@@ -320,7 +320,7 @@ test('a mapper names a provider and a model, runs with --evaluate only, and come
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 11);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 12);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,finding_check']).arms, ['baseline', 'finding_check']);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,text_only,fewer_rounds']).arms, ['baseline', 'text_only', 'fewer_rounds']);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
@@ -401,6 +401,30 @@ test('a scripted evaluation of two replicates and two arms writes matched result
   assert.deepEqual(result.stability, { baseline: 1, chronological_feed: 1 }, 'scripted runs meet the same groups in every replicate');
   assert.match(md, /\| baseline \| 0 \| 0 \| 0 \| 1 \|/);
   assert.match(md, /\| n\/a \(fewer than three pairs\) \| 2 \|/);
+});
+
+test('the grounded arm carries the stored remarks into its prompts and names its segments in the methods, on its own runs only, with no extraction call', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline,grounded', '--personas', '4', '--out', out]));
+  assert.equal(result.error, null);
+  assert.equal(result.recorded_cost_usd, 0);
+  const digest = grounded(fixture('http://localhost:4317')).project.audience!.segments.map((segment) => segment.grounding!);
+  const read = (run: string, file: string) => JSON.parse(readFileSync(join(out, run, file), 'utf8'));
+  const prompts = (run: string) => (read(run, 'transcripts.json').map((entry: { request: { system: string } }) => entry.request.system) as string[]).filter((system) => system.includes('<persona>')); // not the judge's or the author's
+  const steps = prompts('r1-grounded');
+  assert.ok(steps.length > 0);
+  assert.ok(steps.every((system) => system.includes('real remarks:\n  # Things real people in this segment have said.')), 'every prompt of the arm carries them');
+  for (const { remarks } of digest) assert.ok(remarks.some((remark) => steps.some((system) => system.includes(JSON.stringify(remark)))), remarks[0]);
+  assert.ok(prompts('r1-baseline').every((system) => !system.includes('real remarks')));
+  const { methods } = read('r1-grounded', 'report.json');
+  assert.deepEqual(methods.grounding.map((segment: { name: string; sources: string[] }) => [segment.name, segment.sources]), [
+    ['Recruiting', ['recruiting.md']], ['Hiring management', ['hiring-managers.md']], ['Workspace administration', ['admins.md']], ['Department coordination', ['coordinators.md']],
+  ]);
+  assert.ok(read('r1-grounded-control', 'report.json').methods.grounding, 'its control run freezes the same audience');
+  assert.equal(read('r1-baseline', 'report.json').methods.grounding, undefined);
+  assert.equal(read('r1-grounded', 'events.json').some((e: { type: string; payload: { purpose?: string } }) => e.type === 'llm.call' && e.payload.purpose === 'ground_segment'), false);
 });
 
 test('the finding_check arm runs the check on its own runs only', async (t) => {

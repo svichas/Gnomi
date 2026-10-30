@@ -24,7 +24,7 @@ import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
 import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
 import { applyMapping, ARMS, assess, BILLING_CAVEAT, controlThemes, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, STABILITY_TOP, TOP, topOverlap, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Mode, type Options, type Status } from './checks.ts';
-import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
+import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, grounded, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
 import { AUDIT_SIZE, auditCriterion, auditItems, FRAME_RATE, replayCriterion, spreadCriterion, spreadOf, type AuditItem, type SeedLog, type Spread } from './social.ts';
 
@@ -736,6 +736,7 @@ export async function runEvaluation(options: Options, env: Record<string, string
     gyms.push(server, control);
     const base = prepare(fixture(server.url), options);
     const plain = generic(base);
+    const researched = grounded(base);
     json(join(options.out, 'fixture.json'), base);
     json(join(options.out, 'manifest.json'), {
       version: 1, suite: 'evaluate', mode: options.mode, scope: EVALUATE_SCOPE, repeats: seeds.length, seeds, arms: Object.fromEntries(arms.map((arm) => [arm, ARMS[arm]])),
@@ -754,8 +755,8 @@ export async function runEvaluation(options: Options, env: Record<string, string
     for (const entry of replicates) {
       for (const arm of entry.order) {
         if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
-        const spec: { settings?: Partial<RunSettings>; generic?: true } = ARMS[arm];
-        const from = spec.generic ? plain : base;
+        const spec: { settings?: Partial<RunSettings>; generic?: true; grounded?: true } = ARMS[arm];
+        const from = spec.generic ? plain : spec.grounded ? researched : base;
         const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
         const name = `r${entry.replicate}-${arm}`;
         const runStarted = performance.now();

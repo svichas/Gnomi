@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -7,10 +7,10 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { InvalidOutputError } from '@gnomi/simulation/llm/gateway.ts';
 import { createScriptedGateway } from '@gnomi/simulation/llm/scripted.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
-import type { LlmGateway, LlmRequest, Responder } from '@gnomi/simulation/seams.ts';
+import type { LlmGateway, LlmRequest, Recorder, Responder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { Grounding, Persona, ProjectConfig } from '@gnomi/simulation/types.ts';
-import { digestCost, groundSegment, groundingLines, MAX_REMARK_CHARS, MAX_SOURCE_BYTES, readSources, redact, verbatimRemarks, type Source } from './ground.ts';
+import { digestCost, groundSegment, groundingLines, MAX_FACTS, MAX_REMARK_CHARS, MAX_REMARKS, MAX_SOURCE_BYTES, readSources, redact, verbatimRemarks, type Source } from './ground.ts';
 import { DEMO_PERSONA_WRITER, defaultAudience, proposeAudience, syncPersonas, type AudienceDeps } from './index.ts';
 import { proposeUser } from './propose.ts';
 import { writerUser } from './write.ts';
@@ -26,9 +26,10 @@ const MODEL = { provider: 'anthropic', model: 'claude-sonnet-5-5' } as const;
 const segment = audience.segments[0];
 const deps = (llm: LlmGateway, extra: Partial<AudienceDeps> = {}): AudienceDeps => ({ llm, model: MODEL, project, ...extra });
 const source = (text: string, name = 'notes.md'): Source => ({ name, sha256: 'abc', text, emails: 0, phones: 0 });
+const noEvent: Recorder = () => { throw new Error('a setup call logs no run event'); };
 const scripted = (responder: Responder, opts = {}) => {
   const calls: LlmRequest<unknown>[] = [];
-  const llm = createScriptedGateway({ persona_writer: (req) => { calls.push(req); return responder(req); } }, () => { throw new Error('a setup call logs no run event'); }, opts);
+  const llm = createScriptedGateway({ persona_writer: (req) => { calls.push(req); return responder(req); } }, noEvent, opts);
   return { llm, calls };
 };
 const textOf = (req: LlmRequest<unknown>) => req.user.map((p) => (p.type === 'text' ? p.text : '')).join('\n');
@@ -121,7 +122,7 @@ test('a capped gateway stops the retry once the budget is spent, and the failure
 test('the digest counts its cost and records the attempt, without the source text, in the project', async (t) => {
   const store = openProject(mkdtempSync(join(tmpdir(), 'gnomi-ground-project-')));
   t.after(() => { rmSync(store.dir, { recursive: true, force: true }); });
-  const llm = createScriptedGateway({ persona_writer: DEMO_PERSONA_WRITER }, () => {}, { costPerCall: 0.02 });
+  const llm = createScriptedGateway({ persona_writer: DEMO_PERSONA_WRITER }, noEvent, { costPerCall: 0.02 });
   store.saveProject(project);
   const { cost_usd } = await groundSegment(segment, [source('A very private note.')], audienceDeps(store, project, llm), 1);
   assert.equal(cost_usd, 0.02);
@@ -152,7 +153,7 @@ test('the writer and the proposal read the digest as quoted data, and a segment 
 test('ungrounded personas stay current, and only a grounded segment is rewritten', async () => {
   const two = { ...audience, segments: [{ ...segment, id: 'seg-1', name: 'One', share: 50 }, { ...segment, id: 'seg-2', name: 'Two', share: 50 }] };
   const base = { ...project, audience: two };
-  const writer = () => { const calls: LlmRequest<unknown>[] = []; return { calls, llm: createScriptedGateway({ persona_writer: (req) => { calls.push(req); return DEMO_PERSONA_WRITER(req); } }, () => {}) }; };
+  const writer = () => { const calls: LlmRequest<unknown>[] = []; return { calls, llm: createScriptedGateway({ persona_writer: (req) => { calls.push(req); return DEMO_PERSONA_WRITER(req); } }, noEvent) }; };
   const first = await syncPersonas(two, [], deps(writer().llm, { project: base }));
   const fresh = (p: Persona, project: ProjectConfig) => personaProfileIsCurrent(p, project);
   assert.ok(first.personas.every((p) => fresh(p, base)));
@@ -169,6 +170,21 @@ test('ungrounded personas stay current, and only a grounded segment is rewritten
   assert.deepEqual([...new Set(calls.map((c) => c.persona_id))], [first.personas[0].id], 'only the grounded segment is written again');
   assert.equal(second.personas[1], first.personas[1], 'the other persona is the same object');
   assert.ok(second.personas.every((p) => fresh(p, project2)));
+});
+
+test('the Gym research pack says it is invented, and its stored digest obeys the rules an extraction does', () => {
+  const pack = join(import.meta.dirname, '../../../demo/GymSite/research');
+  const digest: Record<string, Grounding> = JSON.parse(readFileSync(join(pack, 'digest.json'), 'utf8'));
+  assert.equal(Object.keys(digest).length, 4);
+  assert.match(readFileSync(join(pack, 'README.md'), 'utf8'), /Everything here is invented/);
+  for (const stored of Object.values(digest)) {
+    const sources = readSources(stored.sources.map(({ name }) => join(pack, name)));
+    assert.deepEqual(sources.map(({ name, sha256 }) => ({ name, sha256 })), stored.sources, 'the hashes match the files');
+    assert.ok(sources.every(({ text }) => /Invented for the Gym demo/.test(text)));
+    assert.deepEqual(verbatimRemarks(stored.remarks, sources), stored.remarks, 'every remark is word for word in the redacted text');
+    assert.ok(stored.facts.length <= MAX_FACTS && stored.remarks.length <= MAX_REMARKS);
+  }
+  assert.ok(readSources([join(pack, 'recruiting.md')])[0].text.includes('[email removed], [phone removed]'), 'the pack also shows redaction at work');
 });
 
 test('proposing again reads what the segments know', async () => {

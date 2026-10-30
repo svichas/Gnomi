@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { apportion, personaId, sampleTraits, slotSeed } from '../audience/sample.ts';
 import { sampleProfile } from '../profile/sample.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, InjectedPost, Persona, PersonaSchema, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Audience, Grounding, InjectedPost, Persona, PersonaSchema, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
 export const FIXTURE_VERSION = 2; // 2: the coordination goal no longer needs a candidate list the Gym does not have
 export const SEED = 20261015;
@@ -133,4 +134,14 @@ export function generic(base: Fixture): Fixture {
       country: 'US', city: 'New York', timezone: 'America/New_York', languages: ['en-US'], language: 'en-US', employer: 'Example Works',
     };
   }) };
+}
+
+/**
+ * The same people on segments grounded in the Gym's research pack (demo/GymSite/research), through its stored digest, so the arm makes no
+ * extraction call. The fixture's prose is authored, so the digest reaches these personas through their remarks alone. The pack is invented.
+ */
+export function grounded(base: Fixture): Fixture {
+  const digest: Record<string, Grounding> = JSON.parse(readFileSync(new URL('../../../demo/GymSite/research/digest.json', import.meta.url), 'utf8'));
+  const audience = base.project.audience!;
+  return { ...base, project: { ...base.project, audience: { ...audience, segments: audience.segments.map((segment) => ({ ...segment, grounding: digest[segment.id] })) } } };
 }
