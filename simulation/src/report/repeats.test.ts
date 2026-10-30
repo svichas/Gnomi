@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { repeatsToMarkdown } from './markdown.ts';
-import { combineReports } from './repeats.ts';
+import { repeatNote, repeatsToMarkdown, TRAIT_FREE_TEXT } from './markdown.ts';
+import { combineReports, isTraitFree } from './repeats.ts';
 import type { ModelChoice, Report, ReportTheme } from '../types.ts';
 
 const key = (name: string) => JSON.stringify(['web', `gym.test/${name}`, 'element', `button "${name}"`]);
@@ -97,4 +97,64 @@ test('the set page keeps the titles, escapes model text and speaks of robustness
   assert.match(md, /2 runs compared\. Repeats test robustness inside the simulation/);
   assert.match(md, /\| Save \\\| does nothing \| 2 of 2 runs \| anthropic, deepseek \| \\\[The form\\\]\(x\) loses work \|/);
   assert.doesNotMatch(md, /confidence|validated/i);
+});
+
+/** Runs of a set with a trait-free run after them: the last run of `runs` plus one. */
+const withControl = (runs: ReportTheme[][], control: ReportTheme[], over: Partial<Report> = {}) => {
+  const of = runs.length + 1;
+  const repeat = (index: number) => ({ group: 'set-a', index, of, trait_free: of });
+  return [...runs.map((themes, i) => run(i + 1, themes, { repeat: repeat(i + 1) })), run(of, control, { repeat: repeat(of), ...over })];
+};
+
+test('a trait-free run is left out of every count of its set, and the set says so', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const price = theme('g2', 'Prices are hidden', ['price'], { rank: 2 });
+  const reports = withControl([[save, price], [save]], [theme('g5', 'Only the control saw this', ['other'])], { methods: { models: { navigator: DEEPSEEK } } as Report['methods'] });
+  assert.deepEqual(reports.map(isTraitFree), [false, false, true]);
+  const set = combineReports(reports);
+  assert.deepEqual([set.of, set.compared, set.running, set.incomplete, set.families, set.trait_free], [2, 2, false, false, ['anthropic'], 'r-3']);
+  assert.deepEqual(seen(set), [['Save does nothing', 2, 2], ['Prices are hidden', 1, 2]], 'the control\'s own theme adds no finding');
+  assert.ok(set.findings.every((finding) => !('r-3' in finding.themes)));
+  assert.match(repeatsToMarkdown(set), /2 runs compared\.[^\n]*One more run, of personas with no traits, is in no count here\./);
+});
+
+test('a finding the trait-free run also hit says so, keeps its place, and a weak match does not count', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const price = theme('g2', 'Prices are hidden', ['price'], { rank: 2 });
+  const plain = combineReports([run(1, [save, price], { repeat: undefined }), run(2, [save, price], { repeat: undefined })]);
+  const set = combineReports(withControl([[save, price], [save, price]], [theme('g7', 'Plans have no price', ['price'])]));
+  assert.deepEqual(set.findings.map((f) => [f.titles[0], f.seen_in, f.trait_free]), [['Save does nothing', 2, undefined], ['Prices are hidden', 2, true]]);
+  assert.deepEqual(set.findings.map((f) => f.titles[0]), plain.findings.map((f) => f.titles[0]), 'the note changes no rank');
+
+  const note = (finding: ReportTheme, runId = 'r-1') => repeatNote(set, runId, finding);
+  assert.equal(note(price)?.trait_free, TRAIT_FREE_TEXT);
+  assert.equal(note(price)?.appeared, 'Appeared in 2 of 2 runs');
+  assert.equal(note(save)?.trait_free, null);
+  assert.match(repeatsToMarkdown(set), /\| Prices are hidden \| 2 of 2 runs\. Personas with no traits hit this too, so it may say more about the model than this audience \|/);
+
+  const wide = (id: string, title: string, own: string) => theme(id, title, ['settings', `${own}-a`, `${own}-b`]);
+  const weak = combineReports(withControl([[wide('g1', 'Invite form rejects the email', 'invite')], [wide('g1', 'Invite form rejects the email', 'invite')]], [wide('g7', 'Approval toggle does nothing', 'toggle')]));
+  assert.equal(weak.findings[0].trait_free, undefined, 'one shared key is often chance');
+});
+
+test('a stopped trait-free run marks nothing and ends nothing, and a set of one still shows the note', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const stopped = combineReports(withControl([[save], [save]], [save], { status: 'stopped' }));
+  assert.deepEqual([stopped.trait_free, stopped.findings[0].trait_free, stopped.incomplete], [undefined, undefined, false]);
+  const going = combineReports(withControl([[save], [save]], [], { status: 'running' }), true);
+  assert.deepEqual([going.running, going.compared], [false, 2], 'the runs it counts are over');
+  const one = combineReports(withControl([[save]], [theme('g3', 'Saving fails', ['save'])]));
+  assert.deepEqual([one.of, one.compared], [1, 1]);
+  assert.deepEqual([repeatNote(one, 'r-1', save)?.appeared, repeatNote(one, 'r-1', save)?.trait_free], [null, TRAIT_FREE_TEXT]);
+  assert.equal(repeatNote(combineReports([run(1, [save], { repeat: { group: 'g', index: 1, of: 1 } })]), 'r-1', save), null, 'a set of one with nothing to add');
+});
+
+test('a run marked with no trait-free index is an ordinary run, on old logs and new', () => {
+  const old = run(1, []);
+  assert.equal(isTraitFree(old), false);
+  assert.equal(isTraitFree({ repeat: undefined }), false);
+  assert.equal(isTraitFree({ repeat: null }), false);
+  const save = theme('g1', 'Save does nothing', ['save']);
+  assert.deepEqual(Object.keys(combineReports([run(1, [save], { of: 1 })])).sort(), ['compared', 'families', 'findings', 'group', 'incomplete', 'of', 'running'], 'a set without it has no new field');
+  assert.equal('trait_free' in combineReports([run(1, [save], { of: 1 })]).findings[0], false);
 });

@@ -7,7 +7,7 @@ import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { socialMemory } from '@gnomi/engine/graph/feed.ts';
 import { Activity, ProfileFilters } from './Activity.tsx';
-import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, foldRows, merge, runSetup, stateWord, statesOf, waitingOf } from './activity.ts';
+import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, foldRows, merge, rereadsSet, runSetup, stateWord, statesOf, waitingOf } from './activity.ts';
 import type { Filters, PersonaState } from './activity.ts';
 import { emptyMoments, foldMoments } from './activityFeed.ts';
 import { BlockedBanner } from './Blocked.tsx';
@@ -156,7 +156,9 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
   const setEnded = runs.filter((run) => run.config.repeat?.group === group && run.status !== 'running').length; // a later repeat ending changes the comparison
   const [repeatFailures, setRepeatFailures] = useState(0);
   useEffect(() => onRepeatFailed(() => setRepeatFailures((failures) => failures + 1)), []); // a repeat that cannot start ends the set with no run ending
-  // biome-ignore lint/correctness/useExhaustiveDependencies: compares again when this report is rebuilt, another run of the set ends or the set fails
+  const [setReports, setSetReports] = useState(0);
+  useEffect(() => onEvent((event) => { if (rereadsSet(event, group, runs)) setSetReports((reports) => reports + 1); }), [group, runs]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: compares again when this report is rebuilt, a report of the set is written, another run of the set ends or the set fails
   useEffect(() => {
     if (!group || !report) return;
     let current = true;
@@ -167,7 +169,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
     return () => {
       current = false;
     };
-  }, [group, report, setEnded, repeatFailures]);
+  }, [group, report, setEnded, setReports, repeatFailures]);
 
   async function stop() {
     setStopping(true);

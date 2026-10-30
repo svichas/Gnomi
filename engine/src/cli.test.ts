@@ -429,3 +429,114 @@ test('--url still names the one web app of a run, the last one given', () => {
   const out = cli('estimate', '--url', 'http://localhost:1', '--url', 'http://localhost:2', '--goal', 'Look around', '--json');
   assert.equal(JSON.parse(out.trim().split('\n').at(-1)!).kind, 'estimate');
 });
+
+test('gate reads saved sets with no model calls, and each outcome has its exit code and its reasons', () => {
+  const project = join(dir, 'gate');
+  const pois = join(dir, 'pois.json');
+  const gate = (base: string, run: string, ...more: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'gate', project, '--base', base, '--run', run, ...more], { encoding: 'utf8' });
+  const lines = (result: ReturnType<typeof spawnSync>) => JSON.parse(String(result.stdout).trim().split('\n').at(-1)!);
+  const db = () => new DatabaseSync(join(project, 'project.sqlite'));
+  const calls = () => { const open = db(); const { n } = open.prepare(`SELECT count(*) AS n FROM event WHERE type = 'llm.call'`).get() as { n: number }; open.close(); return n; };
+  // A person in that run meets a new problem, as if the scripted run had shown it.
+  const worsen = (run_id: string) => {
+    const open = db();
+    open.exec(`INSERT INTO event (run_id, seq, ts, round, persona_id, poi_id, type, payload_json)
+      SELECT run_id, (SELECT max(seq) + 1 FROM event WHERE run_id = '${run_id}'), ts, round, persona_id, poi_id, 'persona.friction_reported', json_object(
+        'step_no', 1, 'severity', 4, 'what', 'The plan table is empty', 'expected', 'Prices', 'where', json_object('url', 'asset:other.md', 'ref', NULL), 'heard_post_ids', json_array())
+      FROM event WHERE run_id = '${run_id}' AND type = 'persona.step' LIMIT 1`);
+    open.close();
+  };
+  cli('run', '--pois', pois, '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project, '--repeats', '3');
+  cli('rerun', project, '--base', 'r-0001', '--repeats', '3');
+  const spent = calls();
+
+  const passed = gate('r-0001', 'r-0005');
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.match(passed.stdout, /^# Gnomi gate: passed\n/);
+  assert.ok(passed.stdout.includes('No new high-severity theme in these simulated runs. This does not show that people will not hit one.'));
+  assert.deepEqual(lines(gate('r-0002', 'r-0004', '--json')), { kind: 'gate', decision: 'passed', base: ['r-0001', 'r-0002', 'r-0003'], run: ['r-0004', 'r-0005', 'r-0006'], failing: [], warnings: [], reasons: [] });
+
+  worsen('r-0004');
+  const once = gate('r-0001', 'r-0004', '--json');
+  assert.equal(once.status, 0, 'one sighting warns');
+  assert.deepEqual([lines(once).decision, lines(once).failing, lines(once).warnings.map((theme: { status: string }) => theme.status)], ['passed', [], ['new']]);
+  assert.match(gate('r-0001', 'r-0004').stdout, /## Warnings \(1\)/);
+
+  worsen('r-0005');
+  const failed = gate('r-0001', 'r-0004', '--json');
+  assert.equal(failed.status, 1);
+  const { decision, failing } = lines(failed);
+  assert.equal(decision, 'failed');
+  assert.deepEqual(failing.map((theme: { status: string; after: { seen_in: number; of: number }; sightings: { run_id: string }[] }) => [theme.status, theme.after, theme.sightings.map(({ run_id }) => run_id)]), [['new', { seen_in: 2, of: 3 }, ['r-0004', 'r-0005']]]);
+  assert.match(gate('r-0001', 'r-0004').stdout, /^# Gnomi gate: failed\n/);
+  assert.equal(calls(), spent, 'reading never calls a model');
+
+  cli('rerun', project, '--base', 'r-0001');
+  const old = gate('r-0001', 'r-0007', '--json');
+  assert.equal(old.status, 2);
+  assert.deepEqual([lines(old).decision, lines(old).reasons], ['could_not_decide', ['The later side has 1 finished run, and the gate needs 3 from one repeat set.']]);
+
+  const open = db();
+  open.exec(`UPDATE run SET status = 'interrupted' WHERE id = 'r-0006'`);
+  open.close();
+  const stopped = gate('r-0001', 'r-0004', '--json');
+  assert.equal(stopped.status, 2);
+  assert.match(lines(stopped).reasons.join(), /later side has 2 finished runs[\s\S]*Only 2 of the 3 runs of the later set/);
+
+  assert.equal(gate('r-0001', 'r-0404').status, 2, 'an unknown run is no regression');
+  assert.match(gate('r-0001', 'r-0404').stdout, /There is no run r-0404/);
+  assert.match(lines(gate('r-0001', 'r-0002', '--json')).reasons.join(), /one run or one repeat set/);
+  const fails = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8' }).status;
+  assert.equal(fails('gate', project, '--base', 'r-0001'), 2, 'a missing flag');
+  assert.equal(fails('gate', join(dir, 'no-such-project'), '--base', 'r-0001', '--run', 'r-0002'), 2, 'not a project');
+  assert.equal(fails('gate', project, '--base', 'r-0001', '--run', 'r-0002', '--nonsense'), 2, 'a flag parseArgs refuses');
+  assert.equal(fails('compare', project, '--base', 'r-0001', '--run', 'r-0404'), 1, 'other commands are as they were');
+});
+
+test('--also-trait-free adds one run to a set, in its snapshot alone, and only a matching finding changes', () => {
+  const project = join(dir, 'trait-free');
+  const [file, pois, settings] = [join(dir, 'trait-free.json'), join(dir, 'pois.json'), join(dir, 'settings.json')];
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--product', 'A pricing page.', '--goal', 'Pick a plan', '--pois', pois, '--count', '4');
+  const saved = readFileSync(file, 'utf8');
+  const base = ['--pois', pois, '--audience', file, '--settings', settings];
+
+  const plain = lines('estimate', ...base, '--repeats', '2').at(-1);
+  const whole = lines('estimate', ...base, '--repeats', '2', '--also-trait-free').at(-1);
+  assert.deepEqual([plain.runs, whole.runs, plain.run_budget_usd / whole.run_budget_usd], [2, 3, 1.5], 'the estimate and the budget split count it');
+  assert.ok(whole.cost_usd[1] > plain.cost_usd[1]);
+
+  const out = lines('run', ...base, '--project', project, '--repeats', '2', '--also-trait-free');
+  const done = out.at(-1);
+  assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.trait_free, done.run_ids], ['repeats', 2, 2, false, 'r-0003', ['r-0001', 'r-0002', 'r-0003']]);
+  assert.ok(done.findings.length > 0 && done.findings.every((finding: { seen_in: number; of: number; trait_free: boolean; themes: object }) => finding.seen_in === 2 && finding.of === 2 && finding.trait_free && !('r-0003' in finding.themes)));
+  assert.equal(readFileSync(file, 'utf8'), saved, 'the audience file is as it was');
+
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  const stored = db.prepare('SELECT count(*) AS n FROM persona').get() as { n: number };
+  const started = (run_id: string) => JSON.parse((db.prepare(`SELECT payload_json FROM event WHERE run_id = ? AND type = 'run.started'`).get(run_id) as { payload_json: string }).payload_json).config;
+  const [ordinary, control] = [started('r-0001'), started('r-0003')];
+  const people = JSON.parse(saved).personas;
+  assert.deepEqual([stored.n, ordinary.personas], [4, people], 'the project keeps its personas, and an ordinary run has them');
+  assert.deepEqual(control.repeat, { group: done.group, index: 3, of: 3, trait_free: 3 });
+  assert.deepEqual(control.personas.map((persona: { id: string; seed: number }) => [persona.id, persona.seed]), people.map((persona: { id: string; seed: number }) => [persona.id, persona.seed]));
+  assert.ok(control.personas.every((persona: { background: string; attributes: object; voice: string; goal_interpretation: string }) => persona.background === control.project.audience.segments[0].description && !Object.keys(persona.attributes).length && persona.voice === 'Plain and brief.' && persona.goal_interpretation === 'Pick a plan'));
+  assert.deepEqual(control.project, ordinary.project, 'and so does the project in the snapshot');
+  db.close();
+
+  assert.match(cli('runs', project), /^r-0003 .*repeat 3 of 3 in set \S+, with no persona traits$/m);
+  assert.match(cli('report', project, '--run', 'r-0001', '--format', 'md'), /- Repeats: Appeared in 2 of 2 runs\. Personas with no traits hit this too, so it may say more about the model than this audience/);
+  assert.match(cli('report', project, '--repeat', done.group, '--format', 'md'), /One more run, of personas with no traits, is in no count here\./);
+
+  cli('rerun', project, '--base', 'r-0001', '--repeats', '2');
+  const compared = lines('compare', project, '--base', 'r-0001', '--run', 'r-0004').at(-1);
+  assert.deepEqual(compared.before, ['r-0001', 'r-0002'], 'a control is no sample of the audience');
+  assert.ok(!compared.notes.some((note: string) => note.includes('did not finish')), compared.notes.join(' | '));
+
+  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
+  assert.match(refused('rerun', project, '--base', 'r-0003').stderr, /r-0003 is a set's trait-free run/);
+  assert.match(refused('rerun', project, '--base', 'r-0001', '--also-trait-free').stderr, /--also-trait-free is for run/);
+  const empty = join(dir, 'trait-free-none');
+  assert.match(refused('run', '--pois', pois, '--goal', 'Pick a plan', '--project', empty, '--also-trait-free').stderr, /needs an audience/);
+  assert.ok(!existsSync(join(empty, 'runs')), 'before any run starts');
+});

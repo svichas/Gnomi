@@ -1,7 +1,7 @@
 import { isUnrated } from '../types.ts';
 import type { Report, ReportSpread, ReportTheme } from '../types.ts';
 import { matchThemes, type ThemeMatch } from './match.ts';
-import { clusterThemes, type ThemeCluster } from './repeats.ts';
+import { clusterThemes, plannedRuns, type ThemeCluster } from './repeats.ts';
 import { pathOf } from './themes.ts';
 
 // What changed between two builds (features_roadmap.md item 10). Each side is one report or the finished runs of a repeat set, so
@@ -19,6 +19,13 @@ export interface Seen {
   of: number; // runs of the side
 }
 
+/** A later run's theme on a new row. `weak`: only one shared key ties it to the side's first sighting, so it may be another problem. */
+export interface Sighting {
+  run_id: string;
+  severity: number;
+  weak?: true;
+}
+
 export interface ThemeDiff {
   status: DiffStatus;
   poi_id: string;
@@ -32,6 +39,7 @@ export interface ThemeDiff {
   weak?: true; // only one shared key holds the two sides together, so they may be different problems
   grouped_with?: string[]; // on a weak row, what a side's run was clustered with on one shared key; before_title and after_title are the themes that tied
   set_aside?: 'before' | 'after'; // the side whose evidence check set it aside
+  sightings?: Sighting[]; // on a new row, one per later run with the theme: `severity` above is only the first run's
 }
 
 /** A number on both sides: the mean over a side's runs that have one. */
@@ -58,6 +66,12 @@ export interface SpreadDiff {
   segments: { segment_id: string | null; name: string; readers: Change }[];
 }
 
+/** A note that makes the two sides unlike, for a reader that must act on it rather than print it (report/gate.ts). */
+export interface DiffGap {
+  kind: 'model' | 'personas' | 'pois' | 'stopped' | 'unrated';
+  text: string;
+}
+
 export interface ReportDiff {
   before: string[]; // run ids
   after: string[];
@@ -66,6 +80,7 @@ export interface ReportDiff {
   segments: SegmentDiff[];
   spread: SpreadDiff[]; // POIs with spread on both sides
   notes: string[]; // how the two sides differ, where that weakens the comparison
+  gaps: DiffGap[]; // those of the notes that say the sides are not like for like
 }
 
 interface Link {
@@ -180,25 +195,30 @@ function modelNotes(before: Report[], after: Report[]): string[] {
   });
 }
 
-function notesOn(before: Report[], after: Report[]): string[] {
+function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
   const all = [...before, ...after];
   const audience = (run: Report) => JSON.stringify(run.personas.map((persona) => [persona.id, persona.name, persona.segment_id]).sort());
   const pois = (side: Report[]) => new Map(side.flatMap((run) => run.pois.filter((poi) => !poi.competitor).map((poi) => [poi.id, poi.name] as const)));
   const [was, now] = [pois(before), pois(after)];
   const missing = (from: Map<string, string>, other: Map<string, string>) => [...from].filter(([id]) => !other.has(id)).map(([, name]) => name);
   const unfinished = (side: Report[], which: string) => {
-    const of = side[0]?.repeat?.of ?? 0;
+    const of = side[0]?.repeat ? plannedRuns(side[0].repeat) : 0;
     return side.length < of ? [`Only ${side.length} of the ${of} runs of the ${which} set are compared: the others did not finish.`] : [];
   };
+  const gaps = (kind: DiffGap['kind'], texts: string[]) => texts.map((text) => ({ kind, text }));
   return [
-    ...modelNotes(before, after),
-    ...(new Set(all.map(audience)).size > 1 ? ['The two sides have different personas, so a change may come from who tried it rather than the build.'] : []),
-    ...(missing(was, now).length ? [`The later run did not try ${listed(missing(was, now))}, so its themes read as not retested.`] : []),
-    ...(missing(now, was).length ? [`The earlier run did not try ${listed(missing(now, was))}, so its themes read as new.`] : []),
-    ...all.filter((run) => run.status !== 'finished').map((run) => `${run.run_id} stopped early${run.stop_reason ? ` (${run.stop_reason})` : ''}, so it covers less than a full run.`),
-    ...unfinished(before, 'earlier'),
-    ...unfinished(after, 'later'),
-    ...(after.some((run) => !run.reach) ? ['A later report does not say which pages personas reached, so a theme it does not show reads as not retested unless another later run does.'] : []),
+    ...gaps('model', modelNotes(before, after)),
+    ...gaps('personas', new Set(all.map(audience)).size > 1 ? ['The two sides have different personas, so a change may come from who tried it rather than the build.'] : []),
+    ...gaps('pois', [
+      ...(missing(was, now).length ? [`The later run did not try ${listed(missing(was, now))}, so its themes read as not retested.`] : []),
+      ...(missing(now, was).length ? [`The earlier run did not try ${listed(missing(now, was))}, so its themes read as new.`] : []),
+    ]),
+    ...gaps('stopped', [
+      ...all.filter((run) => run.status !== 'finished').map((run) => `${run.run_id} stopped early${run.stop_reason ? ` (${run.stop_reason})` : ''}, so it covers less than a full run.`),
+      ...unfinished(before, 'earlier'),
+      ...unfinished(after, 'later'),
+    ]),
+    ...gaps('unrated', all.filter((run) => run.personas.every((persona) => isUnrated(persona.outcome))).map((run) => `No persona in ${run.run_id} got a valid answer from the model, so it says nothing about the build.`)),
   ];
 }
 
@@ -242,8 +262,11 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
     ...paired(asideLater, 'after'),
     ...paired(asideEarlier, 'before'),
     ...gone.filter((cluster) => !asideLater.some((link) => link.a === cluster)).map((cluster) => row((reachOn(after, cluster.first.poi_id, pagesOf(cluster)) ?? 0) >= RETEST_REACH ? 'fixed' : 'not_retested', cluster, null)),
-    ...added.filter((cluster) => !asideEarlier.some((link) => link.b === cluster)).map((cluster) => row('new', null, cluster)),
+    ...added.filter((cluster) => !asideEarlier.some((link) => link.b === cluster)).map((cluster) => row('new', null, cluster, {
+      sightings: cluster.members.map(({ run, theme, by }) => ({ run_id: run.run_id, severity: theme.severity, ...(by === 'shared_key' ? { weak: true as const } : {}) })),
+    })),
   ];
+  const gaps = gapsBetween(before, after);
   return {
     before: before.map((run) => run.run_id),
     after: after.map((run) => run.run_id),
@@ -251,6 +274,10 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
     themes: themes.sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || b.severity - a.severity),
     segments: segmentChanges(before, after),
     spread: spreadChanges(before, after),
-    notes: notesOn(before, after),
+    notes: [
+      ...gaps.map(({ text }) => text),
+      ...(after.some((run) => !run.reach) ? ['A later report does not say which pages personas reached, so a theme it does not show reads as not retested unless another later run does.'] : []),
+    ],
+    gaps,
   };
 }

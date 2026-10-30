@@ -329,6 +329,30 @@ test('owner studies label the focal tool and action owner; legacy comparison vot
   assert.doesNotMatch(legacy, /Side-by-side comparison/);
 });
 
+test('a finding personas with no traits also hit says so in the app and the exports, and a trait-free run says what it is', async () => {
+  const report = fixture(1, 0);
+  report.repeat = { group: 'set-a', index: 1, of: 3, trait_free: 3 };
+  const prevalence = { personas: 1, exposed: 2, share: 0.5, low: 0.1, high: 0.9, level: 'some' as const };
+  report.themes = [{ id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge', trust: 'reported', severity: 2, score: 0, personas: 2, frictions: 2, prevalence, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null }];
+  const finding = { poi_id: 'poi-gym', seen_in: 2, of: 2, families: ['anthropic'], titles: ['Save does nothing'], themes: { 'r-0001': 'g1' } };
+  const repeats = { group: 'set-a', of: 2, compared: 2, running: false, incomplete: false, families: ['anthropic'], trait_free: 'r-0003', findings: [{ ...finding, trait_free: true as const }] };
+  const note = 'Personas with no traits hit this too, so it may say more about the model than this audience';
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const html = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 1 of 3 in a repeat set.', '2 runs compared.', 'One more run, of personas with no traits, is in no count here.', 'Appeared in 2 of 2 runs', note]) assert.ok(html.includes(text), text);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes(note));
+  assert.ok((await reportFile(report, 'md', thumbnails(), repeats)).includes(`- Repeats: Appeared in 2 of 2 runs. ${note}`));
+
+  const plain = { ...repeats, trait_free: undefined, findings: [finding] };
+  assert.ok(!renderToStaticMarkup(createElement(Report, { report, repeats: plain, onInspect: () => {} })).includes(note), 'no match, no note');
+  const one = { ...repeats, of: 1, compared: 1, findings: [{ ...finding, seen_in: 1, of: 1, trait_free: true as const }] };
+  const alone = renderToStaticMarkup(createElement(Report, { report, repeats: one, onInspect: () => {} }));
+  assert.ok(alone.includes(note) && !alone.includes('Appeared in'), 'one run has no count to show, and still the note');
+  const control = { ...report, repeat: { group: 'set-a', index: 3, of: 3, trait_free: 3 } };
+  assert.ok(renderToStaticMarkup(createElement(Report, { report: control, repeats, onInspect: () => {} })).includes('Run 3 of 3 in a repeat set, of personas with no traits.'));
+  assert.ok((await reportFile(control, 'md', thumbnails(), repeats)).includes('run 3 of 3 in set set-a, of personas with no traits'));
+});
+
 test('a run of a repeat set shows on each finding how many runs it appeared in, and exports say the same', async () => {
   const report = fixture(1, 0);
   report.repeat = { group: 'set-a', index: 1, of: 3 };

@@ -2,7 +2,8 @@ import { isUnrated } from '../types.ts';
 import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
 import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
-import type { RepeatSet } from './repeats.ts';
+import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
+import { isTraitFree, type RepeatSet } from './repeats.ts';
 import { writtenSummary } from './summary.ts';
 import { priorityOf } from './themes.ts';
 
@@ -60,16 +61,20 @@ export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only'
 /** "2 runs compared." and what a repeat means, or that the set is still going, or that it ended early. */
 export function setNote(set: RepeatSet): string {
   const state = set.running ? `${set.compared} of ${set.of} runs finished so far.` : set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`;
-  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.`;
+  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.${set.trait_free ? ' One more run, of personas with no traits, is in no count here.' : ''}`;
 }
 
-/** What a set says about one finding of its run: "Appeared in 3 of 3 runs". Null for a run the set could not compare, or a set of one. */
+/** On a finding that the set's run of personas with no traits matched. It removes nothing and changes no rank. */
+export const TRAIT_FREE_TEXT = 'Personas with no traits hit this too, so it may say more about the model than this audience';
+
+/** What a set says about one finding of its run: "Appeared in 3 of 3 runs". Null for a run the set could not compare, or a set of one with nothing to add. */
 export function repeatNote(set: RepeatSet | undefined, run_id: string, theme: ReportTheme) {
   const finding = set?.findings.find((f) => f.poi_id === theme.poi_id && f.themes[run_id] === theme.id);
-  if (!set || !finding || finding.of < 2) return null;
+  if (!set || !finding || (finding.of < 2 && !finding.trait_free)) return null;
   return {
-    appeared: `Appeared in ${finding.seen_in} of ${finding.of} runs`,
+    appeared: finding.of < 2 ? null : `Appeared in ${finding.seen_in} of ${finding.of} runs`,
     one_family: set.families.length > 1 && finding.families.length === 1 ? `Only ${finding.families[0]} runs produced this` : null,
+    trait_free: finding.trait_free ? TRAIT_FREE_TEXT : null,
     other_titles: finding.titles.filter((title) => title !== theme.title), // how a reader can spot a false pair (report/repeats.ts)
   };
 }
@@ -82,7 +87,7 @@ export function repeatsToMarkdown(set: RepeatSet): string {
     `Model families: ${set.families.map(line).join(', ') || 'none'}.`, '',
     '| Finding | Appeared in | Model families | Also named |',
     '| --- | --- | --- | --- |',
-    ...set.findings.map((f) => `| ${cell(f.titles[0])} | ${f.seen_in} of ${f.of} runs | ${f.families.map(cell).join(', ')} | ${f.titles.slice(1).map(cell).join('; ')} |`),
+    ...set.findings.map((f) => `| ${cell(f.titles[0])} | ${f.seen_in} of ${f.of} runs${f.trait_free ? `. ${TRAIT_FREE_TEXT}` : ''} | ${f.families.map(cell).join(', ')} | ${f.titles.slice(1).map(cell).join('; ')} |`),
     '',
   ].join('\n');
 }
@@ -164,6 +169,30 @@ export function diffToMarkdown(diff: ReportDiff): string {
   ].join('\n');
 }
 
+const GATE_HEADLINE: Record<GateResult, string> = {
+  passed: 'No new high-severity theme in these simulated runs. This does not show that people will not hit one.',
+  failed: `A new high-severity theme came back in at least ${GATE_SIGHTINGS} of the later simulated runs. It is a hypothesis to check, not evidence about real users.`,
+  could_not_decide: 'The gate could not decide, so this is not a pass.',
+};
+
+/** A gate's verdict, for `gnomi gate`. */
+export function gateToMarkdown(gate: GateDecision): string {
+  const rows = (themes: ThemeDiff[]) => themes.map((theme) => {
+    const sightings = theme.sightings ?? [];
+    const severe = severeSightings(theme).length;
+    const loose = sightings.some(({ weak }) => weak) ? ' Some of those runs only share one place on a page, so they may be different problems.' : '';
+    return `- **${line(diffTitle(theme))}**, ${sightings.length ? `high severity in ${severe} of ${count(theme.after.of, 'later run')}` : `severity ${theme.severity} of 4`}: ${line(diffText(theme))}${loose}`;
+  });
+  return [
+    `# Gnomi gate: ${gate.decision.replaceAll('_', ' ')}`, '',
+    ...(gate.base.length ? [`Compared ${gate.base.map(line).join(', ')} to ${gate.run.map(line).join(', ')}.`, ''] : []),
+    `> ${GATE_HEADLINE[gate.decision]}`, '',
+    ...(gate.reasons.length ? ['## Why it could not decide', '', ...gate.reasons.map((reason) => `- ${line(reason)}`), ''] : []),
+    ...(gate.failing.length ? [`## ${gate.reasons.length ? 'Would have failed' : 'Failed on'} (${gate.failing.length})`, '', ...rows(gate.failing), ''] : []),
+    ...(gate.warnings.length ? [`## Warnings (${gate.warnings.length})`, '', 'High severity, but too thin to fail on.', '', ...rows(gate.warnings), ''] : []),
+  ].join('\n');
+}
+
 /** A run of a repeat set gets `set` when read, which adds how its findings did across the set; the run's own report stays as it was. */
 export function reportToMarkdown(report: Report, set?: RepeatSet): string {
   if (report.comparison) return comparisonToMarkdown(report);
@@ -180,7 +209,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
-    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}`] : []),
+    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}${isTraitFree(report) ? ', of personas with no traits' : ''}`] : []),
     ...(set ? [`- ${setNote(set)}`] : []),
     '',
     '## Segments',
@@ -414,7 +443,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
     ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
-    ...(repeats ? [`- Repeats: ${line(repeats.appeared)}${repeats.one_family ? `. ${line(repeats.one_family)}` : ''}`] : []),
+    ...(repeats ? [`- Repeats: ${[repeats.appeared, repeats.one_family, repeats.trait_free].filter((text) => text !== null).map(line).join('. ')}`] : []),
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
     ...(t.interference ? [`- ${interferenceNote(t)}.`] : []),
     `- Severity ${t.severity} of 4, ${t.scan_only ? '' : `score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, `}${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,

@@ -4,7 +4,7 @@ import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
 import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, INTERFERENCE_TEXT, interferenceNote, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
-import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
+import { isTraitFree, type RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
@@ -222,7 +222,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <span className="report-finding-number" aria-hidden="true">{number.toString().padStart(2, '0')}</span>
           <div className="report-finding-copy">
             <h4>{theme.title}</h4>
-            <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{theme.interference && ' · possibly interference between personas'}</span></p>
+            <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats?.appeared && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{repeats?.trait_free && ` · ${repeats.trait_free}`}{theme.interference && ' · possibly interference between personas'}</span></p>
           </div>
           {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
@@ -654,7 +654,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         </div>
         <p className="report-goal">{report.goal}</p>
         <p className="report-context"><Icon name="people" size={14} />{count(report.personas.length, 'simulated user')}<span aria-hidden="true">·</span>Findings to validate with real people</p>
-        {report.repeat && <p className="text-sm text-stone-600">Run {report.repeat.index} of {report.repeat.of} in a repeat set.{repeats && ` ${setNote(repeats)}`}</p>}
+        {report.repeat && <p className="text-sm text-stone-600">Run {report.repeat.index} of {report.repeat.of} in a repeat set{isTraitFree(report) && ', of personas with no traits'}.{repeats && ` ${setNote(repeats)}`}</p>}
         {report.status === 'stopped' && report.stop_reason && (report.stop_reason.startsWith('error: ') ? <Note tone="error">{stopText(report.stop_reason)}</Note> : <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>)}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}

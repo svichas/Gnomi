@@ -348,12 +348,13 @@ All M5 criteria are unmeasured live: the frame-mismatch check needs a vision-cap
 
 ## Deliberately deferred
 
+CI left this list: the CLI exists, and `gnomi gate` reads saved repeat sets ([guide](ci-gate.md)).
+
 | Item | Why deferred | Earliest |
 |---|---|---|
 | Native mobile apps as POIs | Needs a simulator-driving stack and a different perception model; most early users test web flows | after 1.0 |
 | Simulated Figma prototype (rebuilt from the file's interaction data) | Frame export covers most of the value; the interaction rebuild needs a spike | M5 spike, ship in M7 if it works |
 | Driving Figma's prototype viewer live | Not planned: Figma's terms do not permit programmatic access and the viewer has no accessibility tree | never |
-| Headless/CLI and CI integration | Engine is a library from M0 so this is cheap later; designers come first | after 1.0 |
 | Hosted report sharing | Conflicts with local-first; zip export covers teams for now | after 1.0 |
 | Cloud runner: the same engine in a container job, WebSocket transport, run folders in object storage, per-run key injection, a tunnel client for private staging, egress proxy per job | Local-first is the wedge and needs no server; the M0 seams make this additive rather than a rewrite; sharding across machines waits until one job is not enough ([tech.md](tech.md#16-cloud-readiness)) | after 1.0; about 4–6 weeks for a single-job runner, several months for a multi-tenant service || Per-persona accounts created automatically | Needs app-specific sign-up automation; namespacing created objects within a shared role account covers v1 | after 1.0 |
 | Screenshot PII redaction | Staging data is the team's; add when teams ask | after 1.0 |

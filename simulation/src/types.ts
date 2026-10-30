@@ -247,7 +247,7 @@ export interface RunConfig {
   app_version: string;
   signals?: SignalThresholds; // frozen per run, so an older run keeps its own (small_target_px was 40). Absent only on logs older than the detectors, which hold no signals
   injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
-  repeat?: { group: string; index: number; of: number }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run
+  repeat?: { group: string; index: number; of: number; trait_free?: number }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set
 }
 
 /** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */

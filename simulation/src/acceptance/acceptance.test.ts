@@ -8,6 +8,7 @@ import { createGateway } from '../llm/gateway.ts';
 import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
 import { applyMapping, assess, controlThemes, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, topOverlap, validateOptions, webDefects } from './checks.ts';
 import { mapThemes, rescoreEvaluation, runEvaluation, unmappedRuns } from './run.ts';
+import { traitFree } from '../persona.ts';
 import type { LlmAttempt, LlmGateway } from '../seams.ts';
 import { profileBlock } from '../agent/prompt.ts';
 import type { Persona, Report, ReportTheme } from '../types.ts';
@@ -335,6 +336,15 @@ test('the generic persona keeps the person and seed but strips attributes and bi
   assert.deepEqual([after.id, after.seed, after.device, after.attributes], [before.id, before.seed, before.device, {}]);
   assert.equal(after.background, base.project.audience!.segments[0].description);
   assert.equal(after.patience, 3);
+});
+
+test('a persona\'s own reading of the task goes too, which the fixture\'s prose hid: it only ever repeated the segment\'s goal', () => {
+  const base = subset(fixture('http://localhost:4317'), 4);
+  assert.deepEqual(generic(base).personas.map((p) => p.goal_interpretation), base.personas.map((p) => p.goal_interpretation), 'the fixture\'s control is as it was');
+  const written = base.personas.map((p) => ({ ...p, goal_interpretation: `Written for ${p.name}` }));
+  assert.deepEqual(new Set(traitFree(written, base.project).map((p) => p.goal_interpretation)), new Set(base.project.audience!.segments.map((s) => s.goal_override)));
+  const audience = { ...base.project.audience!, segments: base.project.audience!.segments.map((s) => ({ ...s, goal_override: null })) };
+  assert.ok(traitFree(written, { audience, goal: 'The project goal' }).every((p) => p.goal_interpretation === 'The project goal'));
 });
 
 test("the generic persona's prompt block differs only by segment, besides its name and seed", () => {
