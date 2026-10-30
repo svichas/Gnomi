@@ -1,6 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportEvidence, ReportTheme, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportEvidence, ReportTheme, ReportReach, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 

@@ -224,7 +224,9 @@ test('limitations say what the analysis could not do', () => {
     'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ]);
-  assert.deepEqual(analyseFrictions(log(['persona.step', 'a1', step(1)]), ctx), { themes: [], sentiment: [], went_well: [], limitations: [
+  const { reach, ...quiet } = analyseFrictions(log(['persona.step', 'a1', step(1)]), ctx);
+  assert.deepEqual(reach.map(({ poi_id, started }) => [poi_id, started]), [['poi', ['a1']]]);
+  assert.deepEqual(quiet, { themes: [], sentiment: [], went_well: [], limitations: [
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ] });
 });

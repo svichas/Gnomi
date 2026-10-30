@@ -10,14 +10,15 @@ import { createGateway } from '@gnomi/simulation/llm/gateway.ts';
 import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER } from '@gnomi/simulation/llm/scripted.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { preflight } from '@gnomi/simulation/poi/index.ts';
-import { webPois } from '@gnomi/simulation/poi/pois.ts';
+import { loginPoi, webPois, withPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
-import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, SessionInfo } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -126,14 +127,76 @@ export async function runSet<Run>(runs: Run[], run: (planned: Run, index: number
   return reports;
 }
 
-/** The reports of a set's runs so far, in the order they ran. A crash logs no end, so only the row says such a run is over. */
+/** A run's report. A crash logs no end, so only the row says such a run is over. */
+function rowReport(store: ProjectStore, run: RunRow): Report {
+  const report = buildReport(store.events(run.run_id));
+  return run.status === 'interrupted' ? { ...report, status: 'stopped' } : report;
+}
+
+/** The reports of a set's runs so far, in the order they ran. */
 export const repeatReports = (store: ProjectStore, group: string): Report[] => store.listRuns()
   .filter((run) => run.config.repeat?.group === group)
   .sort((a, b) => a.config.repeat!.index - b.config.repeat!.index)
-  .map((run) => {
-    const report = buildReport(store.events(run.run_id));
-    return run.status === 'interrupted' ? { ...report, status: 'stopped' } : report;
+  .map((run) => rowReport(store, run));
+
+/** One side of a comparison: the run, or the finished runs of its set, as a stopped run missing a theme says nothing about it. */
+function comparedSide(store: ProjectStore, run_id: string): Report[] {
+  const run = store.listRuns().find((row) => row.run_id === run_id);
+  if (!run) throw new Error(`There is no run ${run_id} in this project.`);
+  if (run.status === 'running') throw new Error(`${run_id} is still running, so there is nothing to compare yet.`);
+  if (run.config.project.comparison) throw new Error(`${run_id} is a comparison study, which compares tools rather than builds.`);
+  const group = run.config.repeat?.group;
+  const finished = group ? repeatReports(store, group).filter((report) => report.status === 'finished') : [];
+  return finished.length ? finished : [rowReport(store, run)];
+}
+
+/** What changed from `base` to `run`, computed when read. */
+export function compareRuns(store: ProjectStore, base: string, run: string): ReportDiff {
+  const [before, after] = [comparedSide(store, base), comparedSide(store, run)];
+  if (before.some((a) => after.some((b) => a.run_id === b.run_id))) throw new Error(`${base} and ${run} are one run or one repeat set: compare two separate runs.`);
+  return diffReports(before, after);
+}
+
+/** A finished run's frozen config, to run it again; a run cut short is not a baseline to repeat. */
+export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
+  const run = store.listRuns().find((row) => row.run_id === run_id);
+  if (!run) throw new Error(`There is no run ${run_id} in this project.`);
+  if (run.status !== 'finished') throw new Error(`${run_id} is ${run.status}, and only a finished run can be run again.`);
+  return run.config;
+}
+
+/** `url` on the old address's origin, moved to the new one; anywhere else it stays. */
+function moved(url: string, from: string, to: string): string {
+  const [at, old, next] = [URL.parse(url), URL.parse(from), URL.parse(to)];
+  return at && old && next && at.origin === old.origin ? `${next.origin}${at.pathname}${at.search}${at.hash}` : url;
+}
+
+/**
+ * What a run frozen in `from` runs again on. `urls` gives web POIs a new address by id, as a PR preview or a restarted Gym has another:
+ * the new host joins the POI's allowed hosts, its reset hook moves with it, and `loginUrl` moves a recorded login's start page, which
+ * would otherwise take logged-in personas back to the old build. A bad address is refused by the same preflight as any other.
+ * A run of a set holds its share of the budget, so the budget goes back to the whole, for repeatRuns to share out.
+ */
+export function rerunProject(from: RunConfig, urls: Record<string, string> = {}): { config: ProjectConfig; loginUrl: (url: string) => string } {
+  const project: ProjectConfig = withPois(from.project);
+  if (!project.settings?.routing) throw new Error(`${from.run_id} predates per-run model settings, so it cannot be run again.`);
+  const web = webPois(project.pois);
+  const stray = Object.keys(urls).find((id) => !web.some((poi) => poi.id === id));
+  if (stray) throw new Error(`${from.run_id} has no web point of interest "${stray}"; it has ${web.map((poi) => `"${poi.id}"`).join(', ') || 'none'}.`);
+  if (project.comparison && Object.keys(urls).length) throw new Error(`${from.run_id} is a comparison study: change a tool's address in its setup.`);
+  const pois = project.pois.map((poi) => {
+    if (poi.type !== 'web' || urls[poi.id] === undefined) return poi;
+    const url = urls[poi.id];
+    const host = URL.parse(url)?.hostname;
+    return { ...poi, start_url: url, allowed_hosts: host ? [...new Set([...poi.allowed_hosts, host])] : poi.allowed_hosts, reset_hook_url: poi.reset_hook_url && moved(poi.reset_hook_url, poi.start_url, url) };
   });
+  const login = loginPoi(project.pois);
+  const to = login && urls[login.id];
+  return {
+    config: { ...project, pois, settings: { ...project.settings, cost_budget_usd: project.settings.cost_budget_usd * (from.repeat?.of ?? 1) } },
+    loginUrl: (url) => (to ? moved(url, login.start_url, to) : url),
+  };
+}
 
 /**
  * The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too.
@@ -160,21 +223,23 @@ export function runRoles(config: ProjectConfig): LlmRole[] {
   return ['navigator', ...(social ? ['socialiser' as const] : []), 'judge', ...(config.comparison ? [] : ['author' as const])];
 }
 
-export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets }): Persona[] {
+export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { reset: boolean; fake: boolean; secrets: Secrets; personas?: Persona[] }): Persona[] {
   checkComparison(config);
   const refusal = preflight(config, (id) => { try { return existsSync(join(store.dir, assetPath(id))); } catch { return false; } });
   if (refusal) throw new Error(refusal);
   if (opts.reset && !webPois(effectiveComparisonPois(config)).some((poi) => poi.reset_hook_url)) throw new Error('This project has no reset hook for the configured access scope. Add one in the project settings, or start without resetting.');
-  const personas = population(store, config);
+  const personas = opts.personas ?? population(store, config);
   if (!personas.length) throw new Error('This audience has no personas yet. Generate them before starting a run.');
-  const generatedCount = store.getGeneratedPersonaCount();
-  if (config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
-  if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
-  if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
-  if (config.audience && personas.some((person) =>
-    // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
-    !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
-  )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
+  if (!opts.personas) { // a rerun's frozen personas are what it repeats: the project's audience may have moved on
+    const generatedCount = store.getGeneratedPersonaCount();
+    if (config.audience && generatedCount !== null && generatedCount !== config.audience.persona_count) throw new Error('The persona count has changed. Generate personas again before starting a run.');
+    if (config.persona_schema !== undefined) validatePersonaSchema(config.persona_schema);
+    if (config.persona_schema && !config.audience) throw new Error('Create an audience and generate its personas before running a configured profile.');
+    if (config.audience && personas.some((person) =>
+      // Old projects had no writer-input signature; retain their saved profiles until a schema is configured.
+      !(config.persona_schema === undefined && person.profile_signature === undefined) && !personaProfileIsCurrent(person, config),
+    )) throw new Error('Profile inputs have changed. Generate personas again to refresh their biographies before starting a run.');
+  }
   // A missing key for any role the run calls would fail mid-run or quietly drop the report's analysis.
   const { routing, finding_check, check_model } = config.settings;
   const checker = finding_check && !config.comparison ? check_model : undefined; // its calls are the judge's, on a model of its own
@@ -188,12 +253,14 @@ export function checkRun(store: ProjectStore, config: ProjectConfig, opts: { res
 export function launchRun(
   store: ProjectStore,
   config: ProjectConfig,
-  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat'] },
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat']; from?: RunConfig },
   deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
 ): RunHandle {
   let handle: RunHandle | undefined;
   const llm = projectGateway({ fake: deps.fake, secrets: deps.secrets, config, record: deps.record, onThrottle: (provider) => handle?.throttle(provider) });
   const base = newRunConfig(config, run);
-  handle = startRun(store.createRun({ ...base, pause_timeout_ms: run.pause_timeout_ms ?? base.pause_timeout_ms }), { store, blobs: deps.blobs, browsers: deps.browsers, llm, record: deps.record, sessions: deps.sessions });
+  // A rerun keeps what the run froze: a run without an audience draws a new seed otherwise, and the signal defaults may have moved.
+  const frozen = run.from ? { seed: run.from.seed, ...(run.from.signals ? { signals: run.from.signals } : {}) } : {};
+  handle = startRun(store.createRun({ ...base, ...frozen, pause_timeout_ms: run.pause_timeout_ms ?? base.pause_timeout_ms }), { store, blobs: deps.blobs, browsers: deps.browsers, llm, record: deps.record, sessions: deps.sessions });
   return handle;
 }

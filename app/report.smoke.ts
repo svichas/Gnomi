@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { startGym } from '../demo/GymSite/server.ts';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
@@ -13,6 +14,9 @@ const projectDir = join(dir, 'report.gnomi');
 const { config: synthetic, events } = syntheticRun({ personas: 6, pois: 1, rounds: 2, seed: 4 });
 synthetic.project.name = 'Hiring app';
 const config = seedFinishedRun(projectDir, synthetic, events);
+// The later build: the same personas on the same pages, with nobody meeting the frictions of the first.
+seedFinishedRun(projectDir, synthetic, events.filter((event) => event.type !== 'persona.friction_reported'));
+const gym = await startGym({ port: 0, defects: 'none' });
 const store = openProject(projectDir);
 const report = buildReport(store.events(config.run_id));
 store.close();
@@ -105,14 +109,60 @@ try {
     assert.ok(await root.getByText(variant === 'empty' ? 'No shared issues were reported in this run.' : friction.what, { exact: true }).first().isVisible());
     await assertFits(page, `${variant} report fits a narrow viewport`);
   }
+  // Compare, reached from the run history: the real engine call, on the real reports of the two seeded runs.
+  await page.evaluate(() => sessionStorage.removeItem('report-variant'));
+  await page.reload();
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.locator('#tab-runs').click();
+  const history = page.locator('#panel-runs');
+  assert.equal(await history.getByLabel('Earlier run').inputValue(), config.run_id, 'the two newest runs to begin with');
+  await assertFits(page, 'the run picker fits');
+  await history.getByLabel('Later run').selectOption(config.run_id);
+  assert.ok(await history.getByRole('button', { name: 'Compare', exact: true }).isDisabled(), 'a run against itself says nothing');
+  await history.getByLabel('Later run').selectOption('r-0002');
+  await history.getByRole('button', { name: 'Compare', exact: true }).click();
+  const compare = history.getByRole('region', { name: 'Comparison of two runs' });
+  await compare.waitFor();
+  assert.ok(await compare.getByText('means the later run did not show a problem, not that it is fixed', { exact: false }).isVisible(), 'the notice leads the view');
+  assert.ok(await compare.getByRole('heading', { name: /^Not seen again/ }).isVisible());
+  assert.ok(await compare.getByText(/was in 1 of 1 run, not seen in 1 of 1, 6 personas reached its page\./).first().isVisible());
+  assert.equal(await compare.getByText(/^Fixed\b/).count(), 0, 'nothing on the screen calls a problem fixed');
+  for (const width of [1440, 768, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await assertFits(page, `compare overflow at ${width}`);
+    assert.ok(await compare.locator('.report-finding-copy h4').first().evaluate((title) => title.getBoundingClientRect().width > 200), `a theme keeps its width at ${width}`);
+    await page.screenshot({ path: join(shots, `compare-${width}.png`), fullPage: true });
+  }
+  await history.getByRole('button', { name: 'Back to past runs' }).click();
+  await history.getByLabel('Earlier run').waitFor();
+
+  // Run again: refused by the engine with its reason, then a real rerun on another address.
+  await page.getByRole('button', { name: 'r-0002', exact: false }).first().click();
+  await page.getByRole('button', { name: 'Run again', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Run again' });
+  await dialog.getByText(/^About \$/).waitFor();
+  await assertFits(page, 'the dialog fits a narrow viewport');
+  await page.screenshot({ path: join(shots, 'run-again-320.png') });
+  const address = dialog.getByLabel(/^Address of/);
+  await address.fill('not a web address');
+  await dialog.getByRole('button', { name: 'Start run' }).click();
+  await dialog.getByText('is not a web address Gnomi can open', { exact: false }).waitFor();
+  await address.fill(`${gym.url}/`);
+  await dialog.getByRole('button', { name: 'Start run' }).click();
+  await dialog.waitFor({ state: 'detached' });
+  await page.locator('.run-history-context code').getByText('r-0003', { exact: true }).waitFor();
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.getByRole('button', { name: 'Run again', exact: true }).waitFor({ timeout: 30_000 });
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, keyboard toggles, evidence inspector, continued numbering, detail sections, empty/legacy reports, and 320–1440px layouts');
+  console.log('ok    collapsed findings, keyboard toggles, evidence inspector, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });
   throw error;
 } finally {
   await app.close();
+  await gym.close();
   if (passed) rmSync(dir, { recursive: true, force: true });
   else console.error(`Report fixture retained: ${dir}`);
 }

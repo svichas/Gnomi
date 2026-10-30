@@ -31,22 +31,35 @@ function familyOf({ methods }: Report): string {
   return navigator.provider === 'openai_compatible' ? navigator.model : navigator.provider;
 }
 
+/** One problem across runs: the theme that started the cluster, and each run's theme for it. */
+export interface ThemeCluster {
+  first: ReportTheme;
+  members: { run: Report; theme: ReportTheme }[]; // one per run
+}
+
 /**
- * Clusters the finished runs' themes, each run's against every cluster's first theme, one to one per run, so a theme a run split in
- * two counts once and its other part starts a cluster of its own. Reports go in the order the runs ran. Pure.
+ * Clusters runs' themes, each run's against every cluster's first theme, one to one per run, so a theme a run split in two counts
+ * once and its other part starts a cluster of its own. Runs go in the order they ran. Pure.
  * shortcut: matchThemes can pair two themes on one shared key (report/match.ts), which overstates seen_in; the titles stay visible
- * so a reader can spot it, drop such pairs here once the match can tell them apart.
+ * so a reader can spot it, skip pairs `by: 'shared_key'` here if that misleads.
+ */
+export function clusterThemes(runs: Report[], themesOf = (run: Report) => run.themes ?? []): ThemeCluster[] {
+  const clusters: ThemeCluster[] = [];
+  for (const run of runs) {
+    const { pairs, only_b } = matchThemes(clusters.map((cluster) => cluster.first), themesOf(run));
+    for (const { a, b } of pairs) clusters.find((cluster) => cluster.first === a)!.members.push({ run, theme: b });
+    for (const theme of only_b) clusters.push({ first: theme, members: [{ run, theme }] });
+  }
+  return clusters;
+}
+
+/**
+ * The finished runs' themes as one set. Reports go in the order the runs ran. Pure.
  * `live` says the set goes on: between two runs no run is running, and only the process running the set knows.
  * shortcut: a reader in another process (`gnomi report --repeat`) sees that gap as incomplete, for the moment it lasts; record a set's end in the log if that ever matters.
  */
 export function combineReports(reports: Report[], live = false): RepeatSet {
   const compared = reports.filter((report) => report.status === 'finished');
-  const clusters: { first: ReportTheme; members: { run: Report; theme: ReportTheme }[] }[] = [];
-  for (const run of compared) {
-    const { pairs, only_b } = matchThemes(clusters.map((cluster) => cluster.first), run.themes ?? []);
-    for (const { a, b } of pairs) clusters.find((cluster) => cluster.first === a)!.members.push({ run, theme: b });
-    for (const theme of only_b) clusters.push({ first: theme, members: [{ run, theme }] });
-  }
   const repeat = reports[0]?.repeat;
   const of = repeat?.of ?? reports.length;
   const running = live || reports.some((report) => report.status === 'running');
@@ -57,7 +70,7 @@ export function combineReports(reports: Report[], live = false): RepeatSet {
     running,
     incomplete: !running && compared.length < of,
     families: [...new Set(compared.map(familyOf))],
-    findings: clusters
+    findings: clusterThemes(compared)
       .sort((a, b) => b.members.length - a.members.length || a.first.rank - b.first.rank)
       .map(({ first, members }) => ({
         poi_id: first.poi_id,

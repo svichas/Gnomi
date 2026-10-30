@@ -1,0 +1,243 @@
+import { isUnrated } from '../types.ts';
+import type { Report, ReportSpread, ReportTheme } from '../types.ts';
+import { matchThemes } from './match.ts';
+import { clusterThemes, type ThemeCluster } from './repeats.ts';
+import { pathOf } from './themes.ts';
+
+// What changed between two builds (features_roadmap.md item 10). Each side is one report or the finished runs of a repeat set, so
+// there is one path, and it is computed when read, as a rejudge can change either side. Calling a live problem fixed is the worst
+// error here, so every doubt below falls on the side of "not fixed". Competitor POIs stay out, as they do of every other figure.
+
+/** Personas who must reach a theme's pages in one later run before its absence means anything. */
+export const RETEST_REACH = 3;
+
+/** `fixed` is for M6 and JSON readers; people read "Not seen again" (markdown.ts), as the personas may not have tried the failing path. */
+export type DiffStatus = 'fixed' | 'new' | 'unchanged' | 'not_retested';
+
+export interface Seen {
+  seen_in: number; // runs of the side with this theme
+  of: number; // runs of the side
+}
+
+export interface ThemeDiff {
+  status: DiffStatus;
+  poi_id: string;
+  before_title: string | null; // null: only the later side has it
+  after_title: string | null; // null: only the earlier side has it
+  before: Seen;
+  after: Seen;
+  severity: number; // the later side's when it has the theme
+  pages: string[]; // without their host, which a new build may change
+  reached: number | null; // the most personas who reached all its pages in one later run; null: no later report says
+  weak?: true; // only one shared key ties the two sides, so they may be different problems
+  set_aside?: 'before' | 'after'; // the side whose evidence check set it aside
+}
+
+/** A number on both sides: the mean over a side's runs that have one. */
+export interface Change {
+  before: number | null;
+  after: number | null;
+  delta: number | null;
+}
+
+export interface SegmentDiff {
+  segment_id: string | null;
+  name: string;
+  sentiment: Change;
+  with_friction: Change;
+}
+
+export interface SpreadDiff {
+  poi_id: string;
+  name: string;
+  posts: Change;
+  second_hand: Change; // personas who posted about it without meeting it first-hand
+  readers: Change; // personas shown a post about it
+  sentiment: Change; // the mean opinion at the last round with one
+  segments: { segment_id: string | null; name: string; readers: Change }[];
+}
+
+export interface ReportDiff {
+  before: string[]; // run ids
+  after: string[];
+  pois: { id: string; name: string }[]; // the team's, of both sides
+  themes: ThemeDiff[]; // new first, then unchanged, not retested, fixed; worst first within each
+  segments: SegmentDiff[];
+  spread: SpreadDiff[]; // POIs with spread on both sides
+  notes: string[]; // how the two sides differ, where that weakens the comparison
+}
+
+interface Link {
+  a: ThemeCluster;
+  b: ThemeCluster;
+  weak: boolean;
+}
+
+const themesIn = (clusters: ThemeCluster[]) => clusters.flatMap(({ members }) => members.map(({ theme }) => theme));
+const holding = (theme: ReportTheme) => ({ members }: ThemeCluster) => members.some((member) => member.theme === theme);
+
+/**
+ * The ties between two sides' clusters, by any of their themes, as a side's runs can name a problem differently. Matching is one to
+ * one, but a judge can merge two problems in one run and split them in another: a leftover that overlaps a taken theme is still
+ * alive, so each gets its own pair. A tie is weak only when nothing better than one shared key holds it.
+ */
+function tie(a: ThemeCluster[], b: ThemeCluster[]): Link[] {
+  const [xs, ys] = [themesIn(a), themesIn(b)];
+  const { pairs, only_a, only_b } = matchThemes(xs, ys);
+  const links: Link[] = [];
+  for (const pair of [...pairs, ...only_a.flatMap((x) => matchThemes([x], ys).pairs), ...only_b.flatMap((y) => matchThemes(xs, [y]).pairs)]) {
+    const [from, to] = [a.find(holding(pair.a))!, b.find(holding(pair.b))!];
+    const link = links.find((known) => known.a === from && known.b === to);
+    if (link) link.weak &&= pair.by === 'shared_key';
+    else links.push({ a: from, b: to, weak: pair.by === 'shared_key' });
+  }
+  return links;
+}
+
+const pagesOf = ({ members }: ThemeCluster) => [...new Set(members.flatMap(({ theme }) => theme.pages.map(pathOf)))];
+
+/**
+ * The most personas who reached every page in one run; a theme with no pages counts who started its POI, and a POI a run does not
+ * have counts nobody. A persona the run never started or the model never answered tried nothing, so it is left out, as in every rate.
+ * Null when no run has reach. Two hosts of a POI with one path count as one page, as in report/match.ts.
+ * shortcut: a buyer objection has no pages, so it counts everyone who started the POI, not the buyers; use buyer reach if that misleads.
+ */
+function reachOn(side: Report[], poi_id: string, pages: string[]): number | null {
+  const reached = side.flatMap((run) => {
+    if (!run.reach) return [];
+    const spot = run.reach.find((reach) => reach.poi_id === poi_id);
+    if (!spot || run.pois.find((poi) => poi.id === poi_id)?.competitor) return [0];
+    const at = new Map<string, Set<string>>();
+    for (const [page, ids] of Object.entries(spot.pages)) at.set(pathOf(page), new Set([...(at.get(pathOf(page)) ?? []), ...ids]));
+    const needed = pages.length ? pages.map((page) => at.get(page) ?? new Set<string>()) : [new Set(spot.started)];
+    return run.personas.filter((persona) => !isUnrated(persona.pois?.[poi_id] ?? persona.outcome) && needed.every((ids) => ids.has(persona.id))).length;
+  });
+  return reached.length ? Math.max(...reached) : null;
+}
+
+const mean = (values: (number | null | undefined)[]) => {
+  const known = values.filter((value) => typeof value === 'number');
+  return known.length ? known.reduce((sum, value) => sum + value, 0) / known.length : null;
+};
+
+function change(before: (number | null | undefined)[], after: (number | null | undefined)[]): Change {
+  const [was, now] = [mean(before), mean(after)];
+  return { before: was, after: now, delta: was === null || now === null ? null : now - was };
+}
+
+function segmentChanges(before: Report[], after: Report[]): SegmentDiff[] {
+  const named = new Map([...before, ...after].flatMap((run) => run.segments.map((segment) => [segment.id, segment.name] as const)));
+  const across = <T>(pick: (run: Report) => T) => [before.map(pick), after.map(pick)] as const;
+  return [...named].map(([id, name]) => ({
+    segment_id: id,
+    name,
+    sentiment: change(...across((run) => run.sentiment?.find((row) => row.segment_id === id)?.sentiment)),
+    with_friction: change(...across((run) => run.segments.find((row) => row.id === id)?.with_friction)),
+  }));
+}
+
+function spreadChanges(before: Report[], after: Report[]): SpreadDiff[] {
+  const spreadOf = (side: Report[], poi_id: string): ReportSpread[] => side.flatMap((run) => (run.pois.find((poi) => poi.id === poi_id)?.competitor ? [] : (run.spread ?? []).filter((spread) => spread.poi_id === poi_id)));
+  const ids = [...new Set(before.flatMap((run) => (run.spread ?? []).map((spread) => spread.poi_id)))].filter((id) => spreadOf(before, id).length && spreadOf(after, id).length);
+  return ids.map((poi_id) => {
+    const [was, now] = [spreadOf(before, poi_id), spreadOf(after, poi_id)];
+    const across = (pick: (spread: ReportSpread) => number | null | undefined) => change(was.map(pick), now.map(pick));
+    const segments = new Map([...was, ...now].flatMap((spread) => spread.segments.map((segment) => [segment.segment_id, segment.name] as const)));
+    return {
+      poi_id,
+      name: was[0].name,
+      posts: across((spread) => spread.posts),
+      second_hand: across((spread) => spread.second_hand.length),
+      readers: across((spread) => spread.readers?.length),
+      sentiment: across((spread) => spread.sentiment.findLast((round) => round.mean !== null)?.mean),
+      segments: [...segments].map(([id, name]) => ({ segment_id: id, name, readers: across((spread) => spread.segments.find((segment) => segment.segment_id === id)?.personas ?? 0) })),
+    };
+  });
+}
+
+const distinct = (values: string[]) => [...new Set(values)].sort();
+const listed = (values: string[]) => values.join(', ');
+const sameList = (a: string[], b: string[]) => listed(a) === listed(b);
+
+function modelNotes(before: Report[], after: Report[]): string[] {
+  const roles = distinct([...before, ...after].flatMap((run) => Object.keys(run.methods.models))) as (keyof Report['methods']['models'])[];
+  return roles.flatMap((role) => {
+    const route = (side: Report[]) => distinct(side.flatMap((run) => { const model = run.methods.models[role]; return model ? [`${model.provider}:${model.model}`] : []; }));
+    const reported = (side: Report[]) => distinct(side.flatMap((run) => run.methods.response_models?.[role] ?? []));
+    const [routes, answers] = [[route(before), route(after)], [reported(before), reported(after)]];
+    const differ = ([a, b]: string[][]) => a.length > 0 && b.length > 0 && !sameList(a, b);
+    if (differ(routes)) return [`The ${role} ran on ${listed(routes[0])} in the earlier run and ${listed(routes[1])} in the later one, so a change may come from the model rather than the build.`];
+    return differ(answers) ? [`The provider's ${role} model answered as ${listed(answers[0])} in the earlier run and ${listed(answers[1])} in the later one, so a change may come from the model rather than the build.`] : [];
+  });
+}
+
+function notesOn(before: Report[], after: Report[]): string[] {
+  const all = [...before, ...after];
+  const audience = (run: Report) => JSON.stringify(run.personas.map((persona) => [persona.id, persona.name, persona.segment_id]).sort());
+  const pois = (side: Report[]) => new Map(side.flatMap((run) => run.pois.filter((poi) => !poi.competitor).map((poi) => [poi.id, poi.name] as const)));
+  const [was, now] = [pois(before), pois(after)];
+  const missing = (from: Map<string, string>, other: Map<string, string>) => [...from].filter(([id]) => !other.has(id)).map(([, name]) => name);
+  const unfinished = (side: Report[], which: string) => {
+    const of = side[0]?.repeat?.of ?? 0;
+    return side.length < of ? [`Only ${side.length} of the ${of} runs of the ${which} set are compared: the others did not finish.`] : [];
+  };
+  return [
+    ...modelNotes(before, after),
+    ...(new Set(all.map(audience)).size > 1 ? ['The two sides have different personas, so a change may come from who tried it rather than the build.'] : []),
+    ...(missing(was, now).length ? [`The later run did not try ${listed(missing(was, now))}, so its themes read as not retested.`] : []),
+    ...(missing(now, was).length ? [`The earlier run did not try ${listed(missing(now, was))}, so its themes read as new.`] : []),
+    ...all.filter((run) => run.status !== 'finished').map((run) => `${run.run_id} stopped early${run.stop_reason ? ` (${run.stop_reason})` : ''}, so it covers less than a full run.`),
+    ...unfinished(before, 'earlier'),
+    ...unfinished(after, 'later'),
+    ...(after.some((run) => !run.reach) ? ['A later report does not say which pages personas reached, so a theme it does not show reads as not retested unless another later run does.'] : []),
+  ];
+}
+
+const ORDER: DiffStatus[] = ['new', 'unchanged', 'not_retested', 'fixed'];
+
+/** Compares two sides. `after` is the later one. Pure. */
+export function diffReports(before: Report[], after: Report[]): ReportDiff {
+  const ours = (pick: (run: Report) => ReportTheme[] | undefined) => (run: Report) => (pick(run) ?? []).filter((theme) => !run.pois.find((poi) => poi.id === theme.poi_id)?.competitor);
+  const [ranked, aside] = [ours((run) => run.themes), ours((run) => run.set_aside)];
+  const [was, now] = [clusterThemes(before, ranked), clusterThemes(after, ranked)];
+  const links = tie(was, now);
+  const gone = was.filter((cluster) => !links.some((link) => link.a === cluster));
+  const added = now.filter((cluster) => !links.some((link) => link.b === cluster));
+  // Kept on one side and set aside on the other, it was seen on both: the check changed its mind, which says nothing about the build.
+  const asideLater = tie(gone, clusterThemes(after, aside));
+  const asideEarlier = tie(clusterThemes(before, aside), added);
+
+  const row = (status: DiffStatus, a: ThemeCluster | null, b: ThemeCluster | null, more: Pick<ThemeDiff, 'weak' | 'set_aside'> = {}): ThemeDiff => {
+    const { first } = (b ?? a)!;
+    const pages = pagesOf((b ?? a)!);
+    return {
+      status,
+      poi_id: first.poi_id,
+      before_title: a?.first.title ?? null,
+      after_title: b?.first.title ?? null,
+      before: { seen_in: a?.members.length ?? 0, of: before.length },
+      after: { seen_in: b?.members.length ?? 0, of: after.length },
+      severity: first.severity,
+      pages,
+      reached: reachOn(after, first.poi_id, pages),
+      ...more,
+    };
+  };
+  const paired = (ties: Link[], set_aside?: 'before' | 'after') => ties.map(({ a, b, weak }) => row('unchanged', a, b, { ...(weak ? { weak: true as const } : {}), ...(set_aside ? { set_aside } : {}) }));
+  const themes = [
+    ...paired(links),
+    ...paired(asideLater, 'after'),
+    ...paired(asideEarlier, 'before'),
+    ...gone.filter((cluster) => !asideLater.some((link) => link.a === cluster)).map((cluster) => row((reachOn(after, cluster.first.poi_id, pagesOf(cluster)) ?? 0) >= RETEST_REACH ? 'fixed' : 'not_retested', cluster, null)),
+    ...added.filter((cluster) => !asideEarlier.some((link) => link.b === cluster)).map((cluster) => row('new', null, cluster)),
+  ];
+  return {
+    before: before.map((run) => run.run_id),
+    after: after.map((run) => run.run_id),
+    pois: [...new Map([...before, ...after].flatMap((run) => run.pois.filter((poi) => !poi.competitor).map((poi) => [poi.id, poi.name] as const)))].map(([id, name]) => ({ id, name })),
+    themes: themes.sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || b.severity - a.severity),
+    segments: segmentChanges(before, after),
+    spread: spreadChanges(before, after),
+    notes: notesOn(before, after),
+  };
+}

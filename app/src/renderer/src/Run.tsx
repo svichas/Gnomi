@@ -17,6 +17,7 @@ import { personaLabel } from './ProfileFields.tsx';
 import { Feed } from './Feed.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
+import { RunAgain } from './RunAgain.tsx';
 import { Swarm } from './Swarm.tsx';
 import { Button, Note, Screenshot } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
@@ -292,10 +293,13 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
   );
 }
 
-export function Run({ runId, runs, onSetup, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; active: boolean }) {
+export function Run({ runId, runs, onSetup, onStarted, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; onStarted(runId: string): void; active: boolean }) {
+  const [again, setAgain] = useState(false);
+  const row = runs.find((run) => run.run_id === runId);
   return (
     <div className="run-page">
-      {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div>{row?.status === 'finished' && <Button variant="link" onClick={() => setAgain(true)}><Icon name="play" size={16} />Run again</Button>}<Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {again && row && <RunAgain run={row} running={runs.some((run) => run.status === 'running')} onClose={() => setAgain(false)} onStarted={(id) => { setAgain(false); onStarted(id); }} />}
       {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} runs={runs} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );

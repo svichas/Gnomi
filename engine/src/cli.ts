@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
-import { audienceDeps, cappedGateway, checkRun, credential, estimateFor, KEYS, launchRun, projectGateway, repeatReports, repeatRuns, runRoles, runSet, type Secrets } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, projectGateway, repeatReports, repeatRuns, rerunProject, runRoles, runSet, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -19,13 +19,13 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
-import { reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { diffToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
-import { createRecorder, type RunHandle } from '@gnomi/simulation/run.ts';
+import { createRecorder, roleOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from '@gnomi/simulation/seams.ts';
-import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
@@ -43,6 +43,12 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   runs <project dir>
   report <project dir> [--run <run id> | --repeat <group>] [--format summary|md|json]
       --repeat compares the runs of a repeat set; each run keeps its own report.
+  rerun <project dir> --base <run id> [--repeats <n>] [--url <poi id>=<url>]... [--fake-llm] [--headed]
+      runs a finished run again with its frozen settings, personas and goal, under a new run id. --url gives a web point of interest
+      a new address, such as a PR preview, and its host joins the allowed hosts. --repeats makes a set, as run does.
+  compare <project dir> --base <run id> --run <run id>
+      what changed between two runs; a run of a repeat set stands for that set's finished runs. No model calls. "Not seen again"
+      means the later run did not show a problem, not that it is fixed.
   rejudge <project dir> [--run <run id>] [--budget <usd>] [--check] [--fake-llm]
       groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
       It spends at most what is left of the run's cost budget, or --budget instead. --check also reviews the friction themes
@@ -58,7 +64,7 @@ const OPTIONS = {
   out: { type: 'string' },
   audience: { type: 'string' },
   pois: { type: 'string' },
-  url: { type: 'string' },
+  url: { type: 'string', multiple: true },
   allow: { type: 'string', default: '' },
   goal: { type: 'string' },
   name: { type: 'string' },
@@ -69,6 +75,7 @@ const OPTIONS = {
   project: { type: 'string' },
   id: { type: 'string' },
   run: { type: 'string' },
+  base: { type: 'string' },
   repeats: { type: 'string' },
   'also-model': { type: 'string' },
   repeat: { type: 'string' },
@@ -150,7 +157,7 @@ function webPoi(raw: Record<string, unknown>, id: string): Poi {
 
 /** The POIs from --pois or --url; files named by "path" are imported into the project's assets/ folder. */
 async function poisFrom(v: Values, blobs: BlobStore): Promise<Poi[]> {
-  if (v.url) return [webPoi({ start_url: v.url, allowed_hosts: v.allow.split(',').map((h) => h.trim()).filter(Boolean) }, 'poi-1')];
+  if (v.url) return [webPoi({ start_url: v.url.at(-1), allowed_hosts: v.allow.split(',').map((h) => h.trim()).filter(Boolean) }, 'poi-1')];
   if (!v.pois) throw new Error(`Pass --pois or --url.\n\n${USAGE}`);
   const list = readJson(v.pois, 'Points-of-interest file');
   if (!Array.isArray(list) || !list.length) throw new Error(`${v.pois} must hold a JSON array of points of interest.`);
@@ -367,36 +374,17 @@ async function estimate(v: Values): Promise<void> {
   });
 }
 
-async function runSimulation(v: Values): Promise<void> {
-  const file = v.audience ? readAudienceFile(v.audience) : null;
-  const fake = v['fake-llm'];
-  const settings = settingsFrom(v);
-  requireKey(settings, 'navigator', fake);
-  const dir = resolve(v.project ?? join('gnomi-runs', new Date().toISOString().replace(/[:.]/g, '-')));
-  const store = openProject(dir);
+/** Fails before anything is written or paid for, naming the variable to set. */
+function requireKeys(planned: ReturnType<typeof repeatRuns>, settings: RunSettings, fake: boolean) {
+  for (const run of planned) for (const role of runRoles(run.config)) requireKey(run.config.settings, role, fake);
+  if (settings.finding_check) requireKey(settings, 'judge', fake, settings.check_model);
+}
+
+/** Runs what was planned, one after another: each writes its report files and prints its result, and a set ends with its comparison. */
+async function runPlanned(dir: string, store: ProjectStore, record: Recorder, planned: ReturnType<typeof repeatRuns>, personas: Persona[], v: Values, from?: RunConfig): Promise<void> {
   const blobs = createFsBlobStore(dir);
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
-    const config = configFor(v, file, await poisFrom(v, blobs), settings);
-    const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v, settings)];
-    const planned = repeatRuns(config, repeats, also);
-    // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
-    for (const run of planned) for (const role of runRoles(run.config)) requireKey(run.config.settings, role, fake);
-    if (settings.finding_check) requireKey(settings, 'judge', fake, settings.check_model);
-    store.saveProject(config);
-    note(`Project folder: ${dir}`);
-    const record = timeline(store);
-    if (file) {
-      const llm = projectGateway({ fake, secrets: envSecrets, config, record });
-      const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
-      const again = rewritten(file.personas, personas);
-      // Not saved back: the file stays what it was written for.
-      if (again) note(`${again} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
-      store.replacePersonas(personas, file.audience.persona_count);
-    }
-    const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
-    const estimated = estimateFor(config, personas, repeats, also);
-    note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, settings.cost_budget_usd)}`);
     // Texts and designs are read from their files: a run where nobody opens a web app never launches a browser.
     const pool = () => (launched[0] ??= launchBrowserPool({ headless: !v.headed }));
     let started: RunHandle;
@@ -409,8 +397,8 @@ async function runSimulation(v: Values): Promise<void> {
     });
     const reports = await runSet(planned, async (run) => {
       // Nobody can resume a blocked persona from a terminal, so a block ends their episode at once.
-      started = launchRun(store, run.config, { personas, sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat }, {
-        blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake, secrets: envSecrets,
+      started = launchRun(store, run.config, { personas, sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from }, {
+        blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake: v['fake-llm'], secrets: envSecrets,
       });
       const report = await started.done;
       const markdown = reportToMarkdown(report);
@@ -429,6 +417,72 @@ async function runSimulation(v: Values): Promise<void> {
     }
   } finally {
     await launched[0]?.then((pool) => pool.close()).catch(() => {});
+  }
+}
+
+async function runSimulation(v: Values): Promise<void> {
+  const file = v.audience ? readAudienceFile(v.audience) : null;
+  const fake = v['fake-llm'];
+  const settings = settingsFrom(v);
+  requireKey(settings, 'navigator', fake);
+  const dir = resolve(v.project ?? join('gnomi-runs', new Date().toISOString().replace(/[:.]/g, '-')));
+  const store = openProject(dir);
+  const blobs = createFsBlobStore(dir);
+  try {
+    const config = configFor(v, file, await poisFrom(v, blobs), settings);
+    const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v, settings)];
+    const planned = repeatRuns(config, repeats, also);
+    // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
+    requireKeys(planned, settings, fake);
+    store.saveProject(config);
+    note(`Project folder: ${dir}`);
+    const record = timeline(store);
+    if (file) {
+      const llm = projectGateway({ fake, secrets: envSecrets, config, record });
+      const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
+      const again = rewritten(file.personas, personas);
+      // Not saved back: the file stays what it was written for.
+      if (again) note(`${again} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
+      store.replacePersonas(personas, file.audience.persona_count);
+    }
+    const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
+    const estimated = estimateFor(config, personas, repeats, also);
+    note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, settings.cost_budget_usd)}`);
+    await runPlanned(dir, store, record, planned, personas, v);
+  } finally {
+    store.close();
+  }
+}
+
+/** --url poi_id=url, as many as there are POIs to move. */
+function urlsFrom(v: Values): Record<string, string> {
+  return Object.fromEntries((v.url ?? []).map((pair) => {
+    const equals = pair.indexOf('=');
+    if (equals < 1) throw new Error(`--url must be <poi id>=<url>, not "${pair}".`);
+    return [pair.slice(0, equals), pair.slice(equals + 1)];
+  }));
+}
+
+/** A finished run again on its frozen config and personas, with run's guards: every key before anything starts, the estimate, the budget. */
+async function rerun(v: Values, dir: string | undefined): Promise<void> {
+  if (!v.base) throw new Error(`rerun needs --base <run id>.\n\n${USAGE}`);
+  const fake = v['fake-llm'];
+  // Beside an app that may have a run live: this leaves it running, and refuses to start a second one.
+  const store = existingProject(dir, { recover: false });
+  try {
+    const from = finishedRun(store, v.base);
+    const { config } = rerunProject(from, urlsFrom(v));
+    if (from.personas.some((persona) => roleOf(persona, config) !== null)) throw new Error(`${v.base} logs in, and recorded logins are only available in the app.`);
+    const repeats = Number(v.repeats ?? 1);
+    const planned = repeatRuns(config, repeats);
+    requireKeys(planned, config.settings, fake);
+    const active = store.listRuns().find((run) => run.status === 'running');
+    if (active) throw new Error(`${active.run_id} is still running in this project, so another run cannot start. If its process was killed, opening the project in the app clears it.`);
+    const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets, personas: from.personas }))[0]!;
+    const estimated = estimateFor(config, personas, repeats);
+    note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, config.settings.cost_budget_usd)}`);
+    await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from);
+  } finally {
     store.close();
   }
 }
@@ -475,6 +529,17 @@ function showReport(v: Values, dir: string | undefined): void {
     if (v.format === 'md') return void console.log(reportToMarkdown(report, run.config.repeat && combineReports(repeatReports(store, run.config.repeat.group))));
     const body = v.format === 'json' ? report : summarize(report);
     console.log(json ? JSON.stringify({ kind: 'report', format: v.format, report: body }) : JSON.stringify(body, null, 2));
+  } finally {
+    store.close();
+  }
+}
+
+function compare(v: Values, dir: string | undefined): void {
+  if (!v.base || !v.run) throw new Error(`compare needs --base and --run.\n\n${USAGE}`);
+  const store = existingProject(dir);
+  try {
+    const diff = compareRuns(store, v.base, v.run);
+    out(diffToMarkdown(diff), { kind: 'compare', ...diff });
   } finally {
     store.close();
   }
@@ -558,6 +623,8 @@ async function main(): Promise<void> {
   if (command === 'runs') return listRuns(sub);
   if (command === 'report') return showReport(values, sub);
   if (command === 'rejudge') return rejudge(values, sub);
+  if (command === 'rerun') return rerun(values, sub);
+  if (command === 'compare') return compare(values, sub);
   throw new Error(USAGE);
 }
 

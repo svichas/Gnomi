@@ -239,6 +239,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         suggestion: null,
       },
     ],
+    reach: [{ poi_id: 'poi-gym', started: ['p-001'], pages: { 'localhost:3001/jobs/new': ['p-001'] } }],
     sentiment: [],
     went_well: [],
     cost_usd: 0.75,

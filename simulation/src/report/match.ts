@@ -9,7 +9,7 @@ import type { ReportTheme } from './types.ts';
  * personas meet unrelated problems at one button, so it only counts after titles: in the M3 seed reports a false pair shares 0.11
  * and two true pairs 0.09 to 0.11.
  * shortcut: one shared key still pairs themes with no better partner (D12 with a theme of the control build, on a link both used),
- * weigh keys by their frictions if themes ever keep them.
+ * weigh keys by their frictions if themes ever keep them. Such a pair says `by: 'shared_key'`, so a reader of the match can hold it apart.
  */
 export const KEY_MATCH = 0.3;
 
@@ -22,7 +22,7 @@ export const TITLE_MATCH = 0.2;
 export interface ThemeMatch {
   a: ReportTheme;
   b: ReportTheme;
-  by: 'keys' | 'title';
+  by: 'keys' | 'title' | 'shared_key';
 }
 
 export interface ThemeMatches {
@@ -77,6 +77,6 @@ export function matchThemes(a: ReportTheme[], b: ReportTheme[]): ThemeMatches {
   };
   claim('keys', keyOverlap, KEY_MATCH);
   claim('title', titleOverlap, TITLE_MATCH);
-  claim('keys', keyOverlap, 0);
+  claim('shared_key', keyOverlap, 0);
   return { pairs, only_a: [...only_a], only_b: [...only_b] };
 }

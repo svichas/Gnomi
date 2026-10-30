@@ -1,5 +1,6 @@
 import { isUnrated } from '../types.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
+import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type ThemeDiff } from './diff.ts';
 import { formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
 
@@ -54,6 +55,76 @@ export function repeatsToMarkdown(set: RepeatSet): string {
     '| --- | --- | --- | --- |',
     ...set.findings.map((f) => `| ${cell(f.titles[0])} | ${f.seen_in} of ${f.of} runs | ${f.families.map(cell).join(', ')} | ${f.titles.slice(1).map(cell).join('; ')} |`),
     '',
+  ].join('\n');
+}
+
+/** At the top of every comparison: the status stays `fixed` for machines, but nothing here may tell a person a problem is fixed. */
+export const DIFF_NOTICE = '"Not seen again" means the later run did not show a problem, not that it is fixed: the personas may simply not have tried the failing path. These are simulated findings, so treat every change here as a hypothesis and check it with real users.';
+
+export const DIFF_LABEL: Record<DiffStatus, string> = { fixed: 'Not seen again', new: 'New', unchanged: 'Unchanged', not_retested: 'Not retested' };
+
+export const DIFF_HINT: Record<DiffStatus, string> = {
+  fixed: 'The later run did not show these, on pages it did reach. That does not prove they are fixed.',
+  new: 'Only the later run showed these.',
+  unchanged: 'Both sides showed these.',
+  not_retested: `The later run did not show these, but fewer than ${RETEST_REACH} personas reached their pages, so their absence says nothing.`,
+};
+
+/** What a person reads as a comparison row's name: the later title when there is one. */
+export const diffTitle = (theme: ThemeDiff) => (theme.after_title ?? theme.before_title)!;
+
+/** "was in 3 of 4 runs, not seen in 3 of 3, 6 personas reached its page", then what weakens the row, in plain words. */
+export function diffText(theme: ThemeDiff): string {
+  const runs = ({ seen_in, of }: Seen) => `${seen_in} of ${count(of, 'run')}`;
+  const reach = theme.reached === null
+    ? 'the later report does not say who got there'
+    : `${count(theme.reached, 'persona')} ${theme.pages.length === 0 ? 'started it' : theme.pages.length === 1 ? 'reached its page' : 'reached all its pages'}`;
+  const seen = `was in ${runs(theme.before)}`;
+  const gone = `${seen}, not seen in ${theme.after.of} of ${theme.after.of}, ${reach}`;
+  const titles = theme.before_title !== null && theme.after_title !== null && theme.before_title !== theme.after_title;
+  return [
+    `${theme.status === 'fixed' ? gone : theme.status === 'not_retested' ? `${gone}${theme.reached === null ? '' : `, and it takes ${RETEST_REACH} to say anything`}` : `${seen}, now in ${runs(theme.after)}`}.`,
+    ...(theme.weak ? [`They only share one place on a page, so "${theme.before_title}" and "${theme.after_title}" may be different problems.`] : titles ? [`Earlier called "${theme.before_title}".`] : []),
+    ...(theme.set_aside ? [`The evidence check set it aside in the ${theme.set_aside === 'before' ? 'earlier' : 'later'} run and kept it in the other, so this is not a change in the product.`] : []),
+  ].join(' ');
+}
+
+/** Posts and personas average over a set's runs, so a side can be 2.5. */
+export const plainNumber = (n: number) => String(Math.round(n * 10) / 10);
+
+/** "0.50 → 1.00 (+0.50)", or a dash for a side without the number. */
+export function changeText(change: Change, show: (n: number) => string, delta = (n: number) => `${n > 0 ? '+' : ''}${show(n)}`): string {
+  const side = (n: number | null) => (n === null ? '-' : show(n));
+  return `${side(change.before)} → ${side(change.after)}${change.delta === null ? '' : ` (${delta(change.delta)})`}`;
+}
+
+export const pointsChange = (change: Change) => changeText(change, (n) => pct(n), (n) => `${n > 0 ? '+' : ''}${Math.round(n * 100)} points`);
+
+/** Two sides of a comparison, for `gnomi compare`. */
+export function diffToMarkdown(diff: ReportDiff): string {
+  const side = (ids: string[]) => ids.map(line).join(', ');
+  const poi = (theme: ThemeDiff) => (diff.pois.length > 1 ? ` on ${line(diff.pois.find(({ id }) => id === theme.poi_id)?.name ?? theme.poi_id)}` : '');
+  return [
+    `# Gnomi comparison: ${side(diff.before)} to ${side(diff.after)}`, '',
+    `> ${DIFF_NOTICE}`, '',
+    ...(diff.notes.length ? ['## What weakens this comparison', '', ...diff.notes.map((note) => `- ${line(note)}`), ''] : []),
+    ...(['new', 'unchanged', 'not_retested', 'fixed'] as const).flatMap((status) => {
+      const themes = diff.themes.filter((theme) => theme.status === status);
+      return themes.length ? [`## ${DIFF_LABEL[status]} (${themes.length})`, '', DIFF_HINT[status], '', ...themes.map((theme) => `- **${line(diffTitle(theme))}**${poi(theme)}, severity ${theme.severity} of 4: ${line(diffText(theme))}`), ''] : [];
+    }),
+    ...(diff.themes.length ? [] : ['No themes on either side.', '']),
+    ...(diff.segments.length ? [
+      '## By segment', '',
+      '| Segment | Mean sentiment, -2 to +2 | Ran into friction |',
+      '| --- | --- | --- |',
+      ...diff.segments.map((s) => `| ${cell(s.name)} | ${changeText(s.sentiment, (n) => n.toFixed(2))} | ${pointsChange(s.with_friction)} |`), '',
+    ] : []),
+    ...(diff.spread.length ? [
+      '## Opinion spread', '',
+      '| Product | Posts | Second-hand | Reached | Mean sentiment, last round |',
+      '| --- | --- | --- | --- | --- |',
+      ...diff.spread.map((s) => `| ${cell(s.name)} | ${changeText(s.posts, plainNumber)} | ${changeText(s.second_hand, plainNumber)} | ${changeText(s.readers, plainNumber)} | ${changeText(s.sentiment, (n) => n.toFixed(2))} |`), '',
+    ] : []),
   ].join('\n');
 }
 

@@ -28,6 +28,7 @@
     "./profile/schema.ts": "./src/profile/schema.ts",
     "./profile/signature.ts": "./src/profile/signature.ts",
     "./report/build.ts": "./src/report/build.ts",
+    "./report/diff.ts": "./src/report/diff.ts",
     "./report/dimensions.ts": "./src/report/dimensions.ts",
     "./report/friction.ts": "./src/report/friction.ts",
     "./report/markdown.ts": "./src/report/markdown.ts",
