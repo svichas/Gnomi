@@ -1,6 +1,6 @@
 # Gnomi — features roadmap
 
-*Status: draft, 2026-10-30. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). None of these features is built yet. Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
+*Status: in progress, updated 2026-10-30. See [Progress](#progress) for what is built. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
 
 ## Summary
 
@@ -38,9 +38,22 @@ Most ideas come from competitors. Items 0, 1, 2 and 9 come from Gnomi's own run 
 
 The research produced three conclusions that shape this order:
 
-- **We cannot yet prove that a feature improves results.** The evaluation harness compares completion, abandonment, theme counts and cost. It does not compare recall or precision, so item 0 comes first.
+- **We could not prove that a feature improves results.** The evaluation harness compared completion, abandonment, theme counts and cost, but not recall or precision, so item 0 came first.
 - **False findings are the most visible problem.** The Gym's defect-free control build still produced six themes on 16 October, and every theme that matched no defect on the defect builds belonged to one of three kinds also seen on the control build. That is why items 1 and 2 outrank grounding.
 - **One small block unlocks five features.** Items 3, 10, 11, 12 and 13 all need to tell whether two themes from different runs are the same problem. Theme ids cannot do that today, so [Block A](#block-a-theme-matching-across-runs) is built once and reused.
+
+## Progress
+
+Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and nothing here has had a live run.
+
+| Item | Status | Verified | Left to do |
+|---|---|---|---|
+| 0. Results scoreboard | Steps 1–4 built | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67 | Step 5, the live baseline, which needs a spending decision. Reviewer follow-ups in wave 2 |
+| 1. Noise cuts | Steps 1–3 built | Rebuilding the saved control report gives 4 themes, down from 6 | Step 4, the interference tag. Reviewer follow-ups in wave 2 |
+| Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build |
+| Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
+
+Everything else has not started. All 985 tests pass on the branch, with typecheck and lint clean. No live run has used these changes, and the Electron smoke tests have not run. GitHub CI is blocked by a billing problem, so these checks ran locally.
 
 ## What "better results" means
 
@@ -149,14 +162,14 @@ Size: S.
 
 **How.**
 
-1. In `buildCandidates`, stop `small_target` and `backtrack` from starting a theme alone. They can still attach to a theme a persona reported, without raising its trust. The change works on old logs because it is in the fold.
+1. In `analyseFrictions`, stop a draft made only of `small_target` and `backtrack` signals from becoming a theme. Candidates and groups stay as they are, because group ids are positions and saved judge answers refer to them. The change works on old logs because it is in the fold. A group that mixes a self-report with a weak signal behaves as before, so its trust can still read `observed`.
 2. List undersized targets in the methods appendix as an audit, without ranking them as findings.
 3. Set `small_target_px` to 24 in `DEFAULT_SIGNALS`. Thresholds are frozen per run, so old runs keep their own.
 4. Later, for real staging apps, add the "possibly interference" tag from [tech.md §9.2](tech.md#92-dummy-data), which is not built. Personas sharing a login can break each other's work, and the Gym cannot show this.
 
-**Proof.** Rebuild the saved reports. Without these two kinds and the Candidates themes, which come from the broken goal, those logs would give precision of 5 of 5 and 6 of 6, and 3 themes on the control build. That is arithmetic on a tiny sample, so confirm it at scale.
+**Proof.** Rebuilding the saved control report gives 4 themes, down from 6. The saved defect reports cannot show the precision gain, because their judge answers predate group keys and now name other groups, so their titles are unreliable. A fresh run has to confirm this.
 
-**Risk.** A real small-target problem is hidden unless a persona mentions it. The audit list covers that.
+**Risk.** A real small-target problem is hidden unless a persona mentions it. The audit list covers only targets a persona tapped.
 
 ### 2. Finding check
 
