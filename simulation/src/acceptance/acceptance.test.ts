@@ -443,6 +443,7 @@ test('with a mapper, a scripted evaluation writes the model mapping, a short sam
   assert.deepEqual([rescored.defect_metrics.runs!['r1-baseline'].recall_high, rescored.defect_metrics.runs!['r1-baseline'].precision], [0.1, 1 / answered]);
   assert.deepEqual([rescored.means.baseline.recall_high.mean, rescored.means.baseline.precision.mean], [0.1, 1 / answered], 'the scoreboard moves too');
   assert.equal(rescored.replicates[0].arms.baseline!.outcomes!.defect_proxy.recall_high, 0, 'the hint-based estimate is kept');
+  assert.deepEqual(rescored.stability, result.stability, 'stability does not come from the mapping');
   assert.equal(rescored.defect_metrics.status, 'NOT_RUN', 'a scripted rehearsal stays one');
   assert.match(rescored.defect_metrics.detail, /1 theme has no answer and counts in no score/);
   assert.deepEqual(JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')).defect_metrics, rescored.defect_metrics);
@@ -460,6 +461,9 @@ test('with a mapper, a scripted evaluation writes the model mapping, a short sam
   correct((list) => list);
   assert.equal(rescoreEvaluation(out).status, 'NOT_RUN', 'a rehearsal with every run scored');
   const resave = (change: object) => writeFileSync(join(out, 'results.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')), ...change }));
+  resave({ stability: undefined });
+  assert.equal(rescoreEvaluation(out).status, 'NOT_RUN', 'an evaluation saved before stability existed still rescores');
+  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /\| baseline \|.*\| n\/a \|\n/);
   resave({ mode: 'live', status: 'INCOMPLETE', allowance_stop_reason: 'The acceptance recorded-spend allowance was reached.' });
   assert.equal(rescoreEvaluation(out).status, 'REVIEW_NEEDED', 'a person mapped the runs the allowance stopped');
   const finished = readFileSync(join(out, 'results.md'), 'utf8');

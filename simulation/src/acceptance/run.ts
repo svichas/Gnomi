@@ -688,7 +688,8 @@ const evaluationStatus = (error: string | null, complete: number, repeats: numbe
 interface Scoreboard {
   status: string; mode: Mode; labels: { behavioural_validity: string; efficiency: string }; missing_benchmark: string[]; error: string | null; allowance_stop_reason: string | null; repeats: number; complete_replicates: number; arms: Arm[];
   method: string; intervals: string; rescored_at?: string; defect_metrics: { runs: ReturnType<typeof mappingScores> | null; status: string; detail: string };
-  means: Record<string, Record<string, { n: number; mean: number | null }>>; differences: Record<string, Record<string, ReturnType<typeof pairedDifference>>>; stability: Record<string, number | null>;
+  means: Record<string, Record<string, { n: number; mean: number | null }>>; differences: Record<string, Record<string, ReturnType<typeof pairedDifference>>>;
+  stability?: Record<string, number | null>; // absent from an evaluation saved before it existed, which --rescore can still read
 }
 
 function resultsMarkdown(result: Scoreboard) {
@@ -704,7 +705,7 @@ function resultsMarkdown(result: Scoreboard) {
     `Intervals: ${result.intervals}.`, '',
     `${result.mode === 'scripted' ? 'Scripted rehearsal: no provider calls, so outcomes show the harness, not the model. ' : ''}${result.status === 'INCOMPLETE' ? 'INCOMPLETE: ' : ''}${result.complete_replicates} of ${result.repeats} replicates complete across ${arms.length} arms (${arms.join(', ')}). ${result.method} With few replicates the interval may be too wide to be useful, and it describes the simulator, not a human population.${result.allowance_stop_reason ? ` Stopped early: ${result.allowance_stop_reason}` : ''}${result.error ? ` Error: ${result.error}` : ''}`, '',
     '## Scoreboard', '', `Means per arm. ${result.rescored_at ? `recall_high and precision come from theme-mapping.json, rescored ${result.rescored_at}, over the ${means[arms[0]].recall_high.n} of ${result.complete_replicates} complete replicates mapped in every arm; a run it does not cover has neither.` : 'recall_high and precision are hint-based estimates, not reviewed mappings.'} stability is the mean overlap of the top ${STABILITY_TOP} themes across every pair of complete replicates, matched by matchThemes; n/a with fewer than two.`, '', '| Arm | recall_high | precision | control_themes | stability |', '| --- | --- | --- | --- | --- |',
-    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} | ${fmt(result.stability[arm])} |`), '',
+    ...arms.map((arm) => `| ${arm} | ${fmt(means[arm].recall_high.mean)} | ${fmt(means[arm].precision.mean)} | ${fmt(means[arm].control_themes.mean)} | ${fmt(result.stability?.[arm] ?? null)} |`), '',
     ...Object.entries(result.differences).flatMap(([arm, metrics]) => [
       `## ${arm} − baseline`, '', '| Metric | Mean difference | 95% interval | Pairs |', '| --- | --- | --- | --- |',
       ...Object.entries(metrics).map(([metric, d]) => `| ${metric} | ${fmt(d.mean)} | ${d.lower === null ? `n/a (${d.note})` : `${fmt(d.lower)} to ${fmt(d.upper)}${primary.includes(metric) ? '' : ' (exploratory)'}`} | ${d.n} |`), '',
