@@ -103,6 +103,8 @@ Theme ids are positions such as `g1+g4`, so they mean nothing outside one run. [
 
 Size: S. Test it on the two M3 seed reports, where D03, D04, D12, D13 and D18 should match.
 
+Measured on the rebuilt M3 seed reports: D03, D04, D13 and D18 match, with no false pair. D12 does not: its titles score 0.10 and it shares no key, and a lower title threshold would let in false pairs at 0.15. The order became a strong key overlap (above 0.3), then titles, then any shared key, because one shared key is often chance; keys are compared without their host, because each Gym build runs on its own port. Against the control build one false pair remains: D12's theme and a backtracking theme share the link "Settings" on `/settings/users`. A pair like that would show a fixed defect as unchanged, so the M6 test in item 10 should check for it.
+
 ### Block B: page text kept with each step
 
 The persona's page text exists only inside the navigator's transcript, so the report models cannot see it. The shortcut in [report/models.ts](../simulation/src/report/models.ts) says the same about the author.
