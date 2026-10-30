@@ -65,14 +65,16 @@ function RealData({ audience, segment, onAudience, onChange }: { audience: Audie
     if (paths.length) setPending({ paths, estimate: await call('estimate_sources', { paths }) });
     return null;
   });
-  const extract = ({ paths, estimate }: NonNullable<typeof pending>) => {
-    setPending(null);
-    void action.run(async () => {
+  // The dialog stays open until it ends, so nothing can edit the segment this writes back.
+  const extract = ({ paths, estimate }: NonNullable<typeof pending>) => action.run(async () => {
+    try {
       const { grounding, dropped, cost_usd } = await call('ground_segment', { segment, paths, budget_usd: estimate.high_usd });
       onChange({ ...segment, grounding });
       return { ok: true, text: `Extracted ${count(grounding.facts.length, 'fact')} and ${count(grounding.remarks.length, 'remark')} (${usd(cost_usd)}).${dropped ? ` Dropped ${count(dropped, 'remark')} not found word for word or over the limit.` : ''} Generate personas to write them in.` };
-    });
-  };
+    } finally {
+      setPending(null);
+    }
+  });
   const { countries, languages, ...others } = segment;
   const { facts = [], remarks = [], sources = [] } = segment.grounding ?? {};
   const summary = [countries || languages ? 'Analytics' : '', facts.length || remarks.length ? `${count(facts.length, 'fact')}, ${count(remarks.length, 'remark')}` : ''].filter(Boolean).join(' · ');
@@ -115,13 +117,13 @@ function RealData({ audience, segment, onAudience, onChange }: { audience: Audie
         </Dialog>
       )}
       {pending && (
-        <Dialog title="Send these notes to your model?" onCancel={() => setPending(null)} wide>
+        <Dialog title="Send these notes to your model?" onCancel={() => { if (!action.busy) setPending(null); }} wide>
           <p className="text-sm break-words">{pending.estimate.files.join(', ')}: {count(pending.estimate.emails, 'email')} and {count(pending.estimate.phones, 'phone number')} found.</p>
           <p className="text-sm">{pending.estimate.notice}</p>
           <p className="text-sm font-medium">This will cost at most {usd(pending.estimate.high_usd)}.</p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => extract(pending)}>Send and extract</Button>
-            <Button onClick={() => setPending(null)}>Cancel</Button>
+            <Button variant="primary" loading={action.busy} onClick={() => void extract(pending)}>Send and extract</Button>
+            <Button disabled={action.busy} onClick={() => setPending(null)}>Cancel</Button>
           </div>
         </Dialog>
       )}
