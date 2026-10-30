@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
+import { preflight } from '@gnomi/simulation/poi/index.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { ProjectConfig } from '@gnomi/simulation/types.ts';
 import { ProjectLibrary } from './projects.ts';
@@ -145,6 +146,46 @@ test('export refuses evidence symlinks instead of following them outside the pro
   writeFileSync(join(dir, 'private.txt'), 'secret');
   symlinkSync(join(dir, 'private.txt'), join(source.dir, 'runs', 'private.txt'));
   assert.throws(() => library.exportFolder(source.entry.id, dir), /symbolic/i);
+});
+
+test('duplicates and exports keep the files POIs are made of, so a copy can still run', (t) => {
+  const { dir, library } = setup(t);
+  const source = populated(library);
+  const asset = 'a1b2c3d4e5f60718.md';
+  const texted: ProjectConfig = { ...config, pois: [{ id: 'copy', type: 'text', segments: null, name: 'Pricing copy', asset }] };
+  const store = openProject(source.dir);
+  store.saveProject(texted);
+  store.close();
+  mkdirSync(join(source.dir, 'assets'));
+  writeFileSync(join(source.dir, 'assets', asset), 'Plans start at 10 euros.');
+  for (const copy of [library.directory(library.duplicate(source.entry.id, 'Gym copy').id), library.exportFolder(source.entry.id, dir)]) {
+    const copied = openProject(copy);
+    assert.equal(preflight(copied.getProject()!, (id) => existsSync(join(copy, 'assets', id))), null);
+    copied.close();
+    assert.equal(readFileSync(join(copy, 'assets', asset), 'utf8'), 'Plans start at 10 euros.');
+    assert.equal(existsSync(join(copy, 'sessions')), false);
+    assert.equal(existsSync(join(copy, 'anthropic.key')), false);
+  }
+});
+
+test('duplicate and export refuse asset symlinks and leave no partial copy behind', (t) => {
+  const { dir, library } = setup(t);
+  const source = populated(library);
+  const outside = join(dir, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'private.txt'), 'secret');
+  mkdirSync(join(source.dir, 'assets'));
+  symlinkSync(join(outside, 'private.txt'), join(source.dir, 'assets', 'a1b2c3d4e5f60718.md'));
+  const refused = () => {
+    assert.throws(() => library.duplicate(source.entry.id, 'Gym copy'), /symbolic/i);
+    assert.throws(() => library.exportFolder(source.entry.id, dir), /symbolic/i);
+    assert.deepEqual(library.list().map((project) => project.id), [source.entry.id]);
+    assert.equal(readdirSync(dir).some((name) => name.endsWith('.gnomi')), false);
+  };
+  refused();
+  rmSync(join(source.dir, 'assets'), { recursive: true });
+  symlinkSync(outside, join(source.dir, 'assets'));
+  refused();
 });
 
 test('removal delegates exactly the managed folder to trash and protects the development override', async (t) => {
