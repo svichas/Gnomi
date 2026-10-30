@@ -1,6 +1,6 @@
 import { isUnrated } from '../types.ts';
 import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
-import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type ThemeDiff } from './diff.ts';
+import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
 import { formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
 
@@ -78,14 +78,15 @@ export function diffText(theme: ThemeDiff): string {
   const runs = ({ seen_in, of }: Seen) => `${seen_in} of ${count(of, 'run')}`;
   const reach = theme.reached === null
     ? 'the later report does not say who got there'
-    : `${count(theme.reached, 'persona')} ${theme.pages.length === 0 ? 'started it' : theme.pages.length === 1 ? 'reached its page' : 'reached all its pages'}`;
+    : `${count(theme.reached, 'persona')} ${theme.pages.length === 0 ? 'answered a survey on it' : theme.pages.length === 1 ? 'reached its page' : 'reached all its pages'}`;
   const seen = `was in ${runs(theme.before)}`;
   const gone = `${seen}, not seen in ${theme.after.of} of ${theme.after.of}, ${reach}`;
   const titles = theme.before_title !== null && theme.after_title !== null && theme.before_title !== theme.after_title;
+  const quoted = (...names: (string | null)[]) => new Intl.ListFormat('en').format([...new Set(names)].map((name) => `"${name}"`));
   return [
     `${theme.status === 'fixed' ? gone : theme.status === 'not_retested' ? `${gone}${theme.reached === null ? '' : `, and it takes ${RETEST_REACH} to say anything`}` : `${seen}, now in ${runs(theme.after)}`}.`,
-    ...(theme.weak ? [`They only share one place on a page, so "${theme.before_title}" and "${theme.after_title}" may be different problems.`] : titles ? [`Earlier called "${theme.before_title}".`] : []),
-    ...(theme.set_aside ? [`The evidence check set it aside in the ${theme.set_aside === 'before' ? 'earlier' : 'later'} run and kept it in the other, so this is not a change in the product.`] : []),
+    ...(theme.weak ? [`They only share one place on a page, so ${quoted(...(theme.grouped_with ?? []), theme.before_title, theme.after_title)} may be different problems.`] : titles ? [`Earlier called "${theme.before_title}".`] : []),
+    ...(theme.set_aside ? [`The evidence check set it aside in the ${theme.set_aside === 'before' ? 'earlier' : 'later'} run and kept it in the other, so this says nothing either way about a change in the product.`] : []),
   ].join(' ');
 }
 
@@ -99,6 +100,12 @@ export function changeText(change: Change, show: (n: number) => string, delta = 
 }
 
 export const pointsChange = (change: Change) => changeText(change, (n) => pct(n), (n) => `${n > 0 ? '+' : ''}${Math.round(n * 100)} points`);
+
+/** A product's row of the spread table, then a row per segment, which has only its readers. */
+export const spreadRows = (spread: SpreadDiff) => [
+  { name: spread.name, cells: [changeText(spread.posts, plainNumber), changeText(spread.second_hand, plainNumber), changeText(spread.readers, plainNumber), changeText(spread.sentiment, (n) => n.toFixed(2))] },
+  ...spread.segments.map((segment) => ({ name: `${spread.name}: ${segment.name}`, cells: ['-', '-', changeText(segment.readers, plainNumber), '-'] })),
+];
 
 /** Two sides of a comparison, for `gnomi compare`. */
 export function diffToMarkdown(diff: ReportDiff): string {
@@ -123,7 +130,7 @@ export function diffToMarkdown(diff: ReportDiff): string {
       '## Opinion spread', '',
       '| Product | Posts | Second-hand | Reached | Mean sentiment, last round |',
       '| --- | --- | --- | --- | --- |',
-      ...diff.spread.map((s) => `| ${cell(s.name)} | ${changeText(s.posts, plainNumber)} | ${changeText(s.second_hand, plainNumber)} | ${changeText(s.readers, plainNumber)} | ${changeText(s.sentiment, (n) => n.toFixed(2))} |`), '',
+      ...diff.spread.flatMap(spreadRows).map(({ name, cells }) => `| ${cell(name)} | ${cells.join(' | ')} |`), '',
     ] : []),
   ].join('\n');
 }

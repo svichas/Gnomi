@@ -1,6 +1,6 @@
 import { isUnrated } from '../types.ts';
 import type { Report, ReportSpread, ReportTheme } from '../types.ts';
-import { matchThemes } from './match.ts';
+import { matchThemes, type ThemeMatch } from './match.ts';
 import { clusterThemes, type ThemeCluster } from './repeats.ts';
 import { pathOf } from './themes.ts';
 
@@ -29,7 +29,8 @@ export interface ThemeDiff {
   severity: number; // the later side's when it has the theme
   pages: string[]; // without their host, which a new build may change
   reached: number | null; // the most personas who reached all its pages in one later run; null: no later report says
-  weak?: true; // only one shared key ties the two sides, so they may be different problems
+  weak?: true; // only one shared key holds the two sides together, so they may be different problems
+  grouped_with?: string[]; // on a weak row, what a side's run was clustered with on one shared key; before_title and after_title are the themes that tied
   set_aside?: 'before' | 'after'; // the side whose evidence check set it aside
 }
 
@@ -70,26 +71,33 @@ export interface ReportDiff {
 interface Link {
   a: ThemeCluster;
   b: ThemeCluster;
+  pair: ThemeMatch; // the strongest pair of themes that ties them
+  grouped: string[];
   weak: boolean;
 }
 
 const themesIn = (clusters: ThemeCluster[]) => clusters.flatMap(({ members }) => members.map(({ theme }) => theme));
 const holding = (theme: ReportTheme) => ({ members }: ThemeCluster) => members.some((member) => member.theme === theme);
+/** Who a theme is clustered with on one shared key, which a strong tie on that theme alone does not make the same problem. */
+const looselyWith = ({ first, members }: ThemeCluster, theme: ReportTheme) => (members.find((member) => member.theme === theme)?.by === 'shared_key' ? [first.title] : []);
 
 /**
  * The ties between two sides' clusters, by any of their themes, as a side's runs can name a problem differently. Matching is one to
- * one, but a judge can merge two problems in one run and split them in another: a leftover that overlaps a taken theme is still
- * alive, so each gets its own pair. A tie is weak only when nothing better than one shared key holds it.
+ * one, but a judge can merge two problems in one run and split them in another: a leftover that shares a key with a taken theme is
+ * still alive, so each gets its own pair. Its title alone does not keep it, as a fixed problem can sound like a live one. A tie is
+ * weak only when nothing better than one shared key holds it, inside a side's cluster as well as between the sides.
  */
 function tie(a: ThemeCluster[], b: ThemeCluster[]): Link[] {
   const [xs, ys] = [themesIn(a), themesIn(b)];
   const { pairs, only_a, only_b } = matchThemes(xs, ys);
   const links: Link[] = [];
-  for (const pair of [...pairs, ...only_a.flatMap((x) => matchThemes([x], ys).pairs), ...only_b.flatMap((y) => matchThemes(xs, [y]).pairs)]) {
+  for (const pair of [...pairs, ...only_a.flatMap((x) => matchThemes([x], ys, false).pairs), ...only_b.flatMap((y) => matchThemes(xs, [y], false).pairs)]) {
     const [from, to] = [a.find(holding(pair.a))!, b.find(holding(pair.b))!];
+    const grouped = [...looselyWith(from, pair.a), ...looselyWith(to, pair.b)];
+    const weak = pair.by === 'shared_key' || grouped.length > 0;
     const link = links.find((known) => known.a === from && known.b === to);
-    if (link) link.weak &&= pair.by === 'shared_key';
-    else links.push({ a: from, b: to, weak: pair.by === 'shared_key' });
+    if (!link) links.push({ a: from, b: to, pair, grouped, weak });
+    else if (link.weak && !weak) Object.assign(link, { pair, grouped, weak });
   }
   return links;
 }
@@ -97,10 +105,11 @@ function tie(a: ThemeCluster[], b: ThemeCluster[]): Link[] {
 const pagesOf = ({ members }: ThemeCluster) => [...new Set(members.flatMap(({ theme }) => theme.pages.map(pathOf)))];
 
 /**
- * The most personas who reached every page in one run; a theme with no pages counts who started its POI, and a POI a run does not
- * have counts nobody. A persona the run never started or the model never answered tried nothing, so it is left out, as in every rate.
+ * The most personas who reached every page in one run. A theme with no pages came from a survey, so it counts who started its POI and
+ * answered a survey there: a run can end before its surveys. A POI a run does not have counts nobody. A persona the run never started
+ * or the model never answered tried nothing, so it is left out, as in every rate.
  * Null when no run has reach. Two hosts of a POI with one path count as one page, as in report/match.ts.
- * shortcut: a buyer objection has no pages, so it counts everyone who started the POI, not the buyers; use buyer reach if that misleads.
+ * shortcut: a buyer objection has no pages, so it counts everyone surveyed on the POI, not the buyers; use buyer reach if that misleads.
  */
 function reachOn(side: Report[], poi_id: string, pages: string[]): number | null {
   const reached = side.flatMap((run) => {
@@ -109,7 +118,7 @@ function reachOn(side: Report[], poi_id: string, pages: string[]): number | null
     if (!spot || run.pois.find((poi) => poi.id === poi_id)?.competitor) return [0];
     const at = new Map<string, Set<string>>();
     for (const [page, ids] of Object.entries(spot.pages)) at.set(pathOf(page), new Set([...(at.get(pathOf(page)) ?? []), ...ids]));
-    const needed = pages.length ? pages.map((page) => at.get(page) ?? new Set<string>()) : [new Set(spot.started)];
+    const needed = pages.length ? pages.map((page) => at.get(page) ?? new Set<string>()) : [new Set(spot.started), new Set(spot.surveyed)];
     return run.personas.filter((persona) => !isUnrated(persona.pois?.[poi_id] ?? persona.outcome) && needed.every((ids) => ids.has(persona.id))).length;
   });
   return reached.length ? Math.max(...reached) : null;
@@ -207,7 +216,7 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
   const asideLater = tie(gone, clusterThemes(after, aside));
   const asideEarlier = tie(clusterThemes(before, aside), added);
 
-  const row = (status: DiffStatus, a: ThemeCluster | null, b: ThemeCluster | null, more: Pick<ThemeDiff, 'weak' | 'set_aside'> = {}): ThemeDiff => {
+  const row = (status: DiffStatus, a: ThemeCluster | null, b: ThemeCluster | null, more: Partial<ThemeDiff> = {}): ThemeDiff => {
     const { first } = (b ?? a)!;
     const pages = pagesOf((b ?? a)!);
     return {
@@ -223,7 +232,11 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
       ...more,
     };
   };
-  const paired = (ties: Link[], set_aside?: 'before' | 'after') => ties.map(({ a, b, weak }) => row('unchanged', a, b, { ...(weak ? { weak: true as const } : {}), ...(set_aside ? { set_aside } : {}) }));
+  const paired = (ties: Link[], set_aside?: 'before' | 'after') => ties.map(({ a, b, pair, grouped, weak }) => row('unchanged', a, b, {
+    ...(weak ? { weak: true as const, before_title: pair.a.title, after_title: pair.b.title } : {}),
+    ...(grouped.length ? { grouped_with: grouped } : {}),
+    ...(set_aside ? { set_aside } : {}),
+  }));
   const themes = [
     ...paired(links),
     ...paired(asideLater, 'after'),

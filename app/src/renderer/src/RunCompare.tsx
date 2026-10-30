@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DiffStatus, ReportDiff, ThemeDiff } from '@gnomi/simulation/report/diff.ts';
-import { changeText, DIFF_HINT, DIFF_LABEL, DIFF_NOTICE, diffText, diffTitle, plainNumber, pointsChange } from '@gnomi/simulation/report/markdown.ts';
+import { changeText, DIFF_HINT, DIFF_LABEL, DIFF_NOTICE, diffText, diffTitle, pointsChange, spreadRows } from '@gnomi/simulation/report/markdown.ts';
 import { call, errorText } from './engine.ts';
 import { Icon } from './Icon.tsx';
 import { SeverityChip } from './Report.tsx';
@@ -29,9 +29,10 @@ function Theme({ theme, poi }: { theme: ThemeDiff; poi?: string }) {
 
 function Changes({ id, title, columns, rows }: { id: string; title: string; columns: string[]; rows: { name: string; cells: string[] }[] }) {
   return (
-    <section aria-labelledby={id} className="space-y-3">
+    <div className="space-y-3">
       <h3 id={id} className={heading}>{title}</h3>
-      <div className="overflow-x-auto rounded-lg border border-stone-200">
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
+      <div className="overflow-x-auto rounded-lg border border-stone-200" role="region" aria-labelledby={id} tabIndex={0}>
         <table className="w-full text-sm">
           <thead className="bg-stone-50"><tr>{columns.map((column) => <Th key={column}>{column}</Th>)}</tr></thead>
           <tbody className="divide-y divide-stone-100">
@@ -44,7 +45,7 @@ function Changes({ id, title, columns, rows }: { id: string; title: string; colu
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -52,6 +53,10 @@ function Changes({ id, title, columns, rows }: { id: string; title: string; colu
 export function RunCompare({ base, run, onBack }: { base: string; run: string; onBack(): void }) {
   const [diff, setDiff] = useState<ReportDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  // The button that opened this view is gone, so focus would fall to the top of the window.
+  useEffect(() => (diff ? title : error ? backButton : null)?.current?.focus(), [diff, error]);
   useEffect(() => {
     let current = true;
     call('compare_runs', { base, run }).then(
@@ -66,13 +71,13 @@ export function RunCompare({ base, run, onBack }: { base: string; run: string; o
   const decimal = (n: number) => n.toFixed(2);
   return (
     <div className="run-compare">
-      <Button variant="quiet" className="back-button" onClick={onBack}><Icon name="back" size={18} />Back to past runs</Button>
+      <Button ref={backButton} variant="quiet" className="back-button" onClick={onBack}><Icon name="back" size={18} />Back to past runs</Button>
       {error && <Note tone="error">{error}</Note>}
-      {!diff && !error && <p className="text-sm text-stone-500">Comparing the two runs…</p>}
+      {!diff && !error && <p role="status" className="text-sm text-stone-500">Comparing the two runs…</p>}
       {diff && <section aria-label="Comparison of two runs" className="report-page">
         <div className="report-header">
           <p className="report-eyebrow">Before and after</p>
-          <h2>{diff.before.join(', ')} to {diff.after.join(', ')}</h2>
+          <h2 ref={title} tabIndex={-1}>{diff.before.join(', ')} to {diff.after.join(', ')}</h2>
         </div>
         <Note tone="info">{DIFF_NOTICE}</Note>
         <div className="report-stats run-compare-stats">
@@ -91,7 +96,7 @@ export function RunCompare({ base, run, onBack }: { base: string; run: string; o
           </section>;
         })}
         {diff.segments.length > 0 && <Changes id="compare-segments" title="By segment" columns={['Segment', 'Mood, −2 to +2', 'Ran into friction']} rows={diff.segments.map((segment) => ({ name: segment.name, cells: [changeText(segment.sentiment, decimal), pointsChange(segment.with_friction)] }))} />}
-        {diff.spread.length > 0 && <Changes id="compare-spread" title="Opinion spread" columns={['Product', 'Posts', 'Second-hand', 'Reached', 'Mean sentiment, last round']} rows={diff.spread.map((spread) => ({ name: spread.name, cells: [changeText(spread.posts, plainNumber), changeText(spread.second_hand, plainNumber), changeText(spread.readers, plainNumber), changeText(spread.sentiment, decimal)] }))} />}
+        {diff.spread.length > 0 && <Changes id="compare-spread" title="Opinion spread" columns={['Product', 'Posts', 'Second-hand', 'Reached', 'Mean sentiment, last round']} rows={diff.spread.flatMap(spreadRows)} />}
       </section>}
     </div>
   );

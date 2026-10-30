@@ -47,6 +47,11 @@ try {
   await page.addInitScript((report) => {
     const post = MessagePort.prototype.postMessage;
     MessagePort.prototype.postMessage = function (message, options) {
+      if (message?.kind === 'request' && message.method === 'estimate_run' && sessionStorage.getItem('estimate-unpriced')) {
+        const result = { calls: 1, cost_usd: [0, 0], minutes: [1, 1], unpriced: ['old-judge'] };
+        queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
+        return;
+      }
       if (message?.kind !== 'request' || message.method !== 'get_report') {
         post.call(this, message, Array.isArray(options) ? { transfer: options } : options);
         return;
@@ -124,10 +129,16 @@ try {
   await history.getByRole('button', { name: 'Compare', exact: true }).click();
   const compare = history.getByRole('region', { name: 'Comparison of two runs' });
   await compare.waitFor();
+  const focused = () => page.evaluate(() => document.activeElement?.textContent?.trim());
+  await page.waitForFunction(() => document.activeElement?.tagName === 'H2');
+  assert.equal(await focused(), `${config.run_id} to r-0002`, 'focus moves to the view that replaced the button');
   assert.ok(await compare.getByText('means the later run did not show a problem, not that it is fixed', { exact: false }).isVisible(), 'the notice leads the view');
   assert.ok(await compare.getByRole('heading', { name: /^Not seen again/ }).isVisible());
   assert.ok(await compare.getByText(/was in 1 of 1 run, not seen in 1 of 1, 6 personas reached its page\./).first().isVisible());
   assert.equal(await compare.getByText(/^Fixed\b/).count(), 0, 'nothing on the screen calls a problem fixed');
+  const table = compare.getByRole('region', { name: 'By segment' });
+  await table.focus();
+  assert.equal(await table.evaluate((box) => box === document.activeElement), true, 'the keyboard can reach a table that scrolls');
   for (const width of [1440, 768, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await assertFits(page, `compare overflow at ${width}`);
@@ -136,6 +147,7 @@ try {
   }
   await history.getByRole('button', { name: 'Back to past runs' }).click();
   await history.getByLabel('Earlier run').waitFor();
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Compare');
 
   // Run again: refused by the engine with its reason, then a real rerun on another address.
   await page.getByRole('button', { name: 'r-0002', exact: false }).first().click();
@@ -144,6 +156,15 @@ try {
   await dialog.getByText(/^About \$/).waitFor();
   await assertFits(page, 'the dialog fits a narrow viewport');
   await page.screenshot({ path: join(shots, 'run-again-320.png') });
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.evaluate(() => sessionStorage.setItem('estimate-unpriced', '1'));
+  await page.getByRole('button', { name: 'Run again', exact: true }).click();
+  await dialog.getByText('No price is known for old-judge.', { exact: false }).waitFor();
+  assert.ok(await dialog.getByRole('button', { name: 'Start run' }).isDisabled(), 'a model with no price stops the run, as on the Review step');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.evaluate(() => sessionStorage.removeItem('estimate-unpriced'));
+  await page.getByRole('button', { name: 'Run again', exact: true }).click();
+  await dialog.getByText(/^About \$/).waitFor();
   const address = dialog.getByLabel(/^Address of/);
   await address.fill('not a web address');
   await dialog.getByRole('button', { name: 'Start run' }).click();

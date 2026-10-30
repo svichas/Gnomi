@@ -85,20 +85,20 @@ npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --projec
 To see what a change did, run a finished run again on the new build, then compare the two:
 
 ```bash
-npm run -s gnomi -- estimate --pois pois.json --audience audiences/acme.json --repeats 3 --json
+npm run -s gnomi -- estimate runs/acme --base r-0001 --repeats 3 --json
 npm run -s gnomi -- rerun runs/acme --base r-0001 --url poi-1=https://pr-12.staging.acme.io --repeats 3 --json > runs/acme-rerun.log 2>&1
 npm run -s gnomi -- compare runs/acme --base r-0001 --run r-0002 --json
 ```
 
-- `rerun <project dir> --base <run id>` keeps the base run's frozen settings, models, goal, seed and personas under a new run id, whatever the project has become since. It costs what a run costs, so estimate first and ask the user as for any run. It has `run`'s guards and output: every key checked first, a `note` with the estimate and budget, then `run` lines, and a `repeats` line for `--repeats n`. Each run gets its share of the cost budget. Run it in the background.
+- `rerun <project dir> --base <run id>` keeps the base run's frozen settings, models, goal, seed and personas under a new run id, whatever the project has become since. It costs what a run costs, so estimate first with `estimate <project dir> --base <run id>`, which prices those frozen settings and personas, and ask the user as for any run. It has `run`'s guards and output: every key checked first, a `note` with the estimate and budget, then `run` lines, and a `repeats` line for `--repeats n`. Each run gets its share of the cost budget. Run it in the background.
 - `--url <poi id>=<url>` gives a web POI a new address, such as a PR preview or a restarted Gym. Repeat it per POI. The new host joins that POI's allowed hosts, and production domains are still refused. POI ids are in the report's `pois`. Without it the run repeats the same address, which is how to measure how much a run varies on one build.
 - Only a finished run can be run again, a run that logs in needs the app, and it is refused while another run is live in the folder.
 - `compare <project dir> --base <run id> --run <run id> --json` reads two runs and calls no model. A run of a repeat set stands for that set's finished runs, so `seen_in` and `of` compare how often each theme appeared. Prefer sets on both sides: one run is one sample of a noisy model. Without `--json` it prints Markdown.
-- Each entry of `themes` has a `status`, `before_title`, `after_title`, `before` and `after` (each `seen_in`, `of`), `severity`, `pages` and `reached`, the most personas who reached all its pages in one later run. Read the `notes` first: they say when the two sides differ in model, personas or POIs, or when a run stopped early.
+- Each entry of `themes` has a `status`, `before_title`, `after_title`, `before` and `after` (each `seen_in`, `of`), `severity`, `pages` and `reached`, the most personas who reached all its pages in one later run, or for a theme with no pages who answered a survey on its POI. Read the `notes` first: they say when the two sides differ in model, personas or POIs, or when a run stopped early.
   - `fixed` is the data's word and never yours. **Say "not seen again", with the reach: "was in 3 of 4 runs, not seen in 3 of 3, 6 personas reached its page".** The personas may simply not have tried the failing path, and simulated findings are hypotheses.
-  - `not_retested`: the later run did not show it, but fewer than 3 personas reached its pages, so its absence says nothing. Never count it as gone. A theme on a page only the defect created, such as a 404, ends here once fixed.
-  - `unchanged` with `weak: true`: the two sides share only one key, so they may be different problems. Show both titles and say so.
-  - `unchanged` with `set_aside`: the evidence check set it aside on that side. That is the check's reading, not a change in the product.
+  - `not_retested`: the later run did not show it, but fewer than 3 personas reached its pages, or for a theme with no pages answered a survey, so its absence says nothing. Never count it as gone. A theme on a page only the defect created, such as a 404, ends here once fixed.
+  - `unchanged` with `weak: true`: the two sides share only one key, or a side's runs were grouped on only one key with `grouped_with`, so they may be different problems. Show every title and say so.
+  - `unchanged` with `set_aside`: the evidence check set it aside on that side. That is the check's reading, so it says nothing either way about a change in the product.
   - `new`: only the later side showed it. It can also be an old problem on a page the earlier run never reached.
 
 ## Settings and keys

@@ -35,6 +35,8 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>]
+  estimate <project dir> --base <run id> [--repeats <n>]
+      what rerun would cost, on that run's frozen settings and personas.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
       [--repeats <n>] [--also-model <provider:model>]
@@ -356,6 +358,21 @@ function listPersonas(v: Values, path: string | undefined): void {
   out(`${rows.length} personas, ${stale} stale, written for "${file.product.goal}" on ${file.product.name}`, { kind: 'personas', file: resolve(path), personas: rows.length, stale });
 }
 
+/** What `rerun` would cost: the project may have moved on since, so only what the run froze counts. */
+function estimateRerun(v: Values, dir: string | undefined): void {
+  const store = existingProject(dir);
+  try {
+    const from = finishedRun(store, v.base!);
+    const { config } = rerunProject(from);
+    const repeats = Number(v.repeats ?? 1);
+    const e = estimateFor(config, from.personas, repeats);
+    const budget = config.settings.cost_budget_usd;
+    out(`${from.personas.length} personas${repeats > 1 ? `, ${repeats} runs` : ''}: ${estimateText(e)}; ${budgetText(e, budget)}`, { kind: 'estimate', personas: from.personas.length, runs: repeats, stale: 0, ...e, budget_usd: budget });
+  } finally {
+    store.close();
+  }
+}
+
 async function estimate(v: Values): Promise<void> {
   const file = v.audience ? readAudienceFile(v.audience) : null;
   const settings = settingsFrom(v);
@@ -618,7 +635,7 @@ async function main(): Promise<void> {
   if (command === 'audience' && sub === 'create') return createAudienceFile(values);
   if (command === 'audience' && sub === 'update') return updateAudienceFile(values, target);
   if (command === 'personas') return listPersonas(values, sub);
-  if (command === 'estimate') return estimate(values);
+  if (command === 'estimate') return values.base ? estimateRerun(values, sub) : estimate(values);
   if (command === 'run') return runSimulation(values);
   if (command === 'runs') return listRuns(sub);
   if (command === 'report') return showReport(values, sub);

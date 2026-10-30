@@ -1,4 +1,4 @@
-import { matchThemes } from './match.ts';
+import { matchThemes, type ThemeMatch } from './match.ts';
 import type { Report, ReportTheme } from '../types.ts';
 
 // What the runs of a repeat set have in common (features_roadmap.md item 3). Repeats test robustness inside the simulation; they
@@ -34,7 +34,7 @@ function familyOf({ methods }: Report): string {
 /** One problem across runs: the theme that started the cluster, and each run's theme for it. */
 export interface ThemeCluster {
   first: ReportTheme;
-  members: { run: Report; theme: ReportTheme }[]; // one per run
+  members: { run: Report; theme: ReportTheme; by?: ThemeMatch['by'] }[]; // one per run; `by`: how it joined `first`
 }
 
 /**
@@ -47,7 +47,7 @@ export function clusterThemes(runs: Report[], themesOf = (run: Report) => run.th
   const clusters: ThemeCluster[] = [];
   for (const run of runs) {
     const { pairs, only_b } = matchThemes(clusters.map((cluster) => cluster.first), themesOf(run));
-    for (const { a, b } of pairs) clusters.find((cluster) => cluster.first === a)!.members.push({ run, theme: b });
+    for (const { a, b, by } of pairs) clusters.find((cluster) => cluster.first === a)!.members.push({ run, theme: b, by });
     for (const theme of only_b) clusters.push({ first: theme, members: [{ run, theme }] });
   }
   return clusters;

@@ -272,6 +272,7 @@ export function pickEvidence(members: Candidate[], n = EVIDENCE): Candidate[] {
 interface Reach {
   pages: Map<string, Set<string>>; // persona → page patterns it reached
   poiPages: Map<string, Map<string, Set<string>>>; // poi → page pattern → personas who reached it
+  surveyed: Map<string, Set<string>>; // poi → personas who answered a survey on it
   poi: Map<string, Set<string>>; // poi → personas that reached it at all
   buyers: Map<string, Set<string>>; // poi → personas who answered a buyer survey on it
   buyerSeqs: Set<number>; // the buyer surveys' events
@@ -282,6 +283,7 @@ export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPo
   const pages = new Map<string, Set<string>>();
   const poiPages = new Map<string, Map<string, Set<string>>>();
   const poi = exposureOf(events, defaultPoi);
+  const surveyed = new Map<string, Set<string>>();
   const buyers = new Map<string, Set<string>>();
   const buyerSeqs = new Set<number>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
@@ -291,6 +293,7 @@ export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPo
   };
   for (const e of events) {
     if (!e.persona_id) continue;
+    if (e.type === 'persona.survey') add(surveyed, e.payload.poi_id, e.persona_id);
     if (e.type === 'persona.survey' && e.payload.buyer) {
       add(buyers, e.payload.poi_id, e.persona_id);
       buyerSeqs.add(e.seq);
@@ -304,7 +307,7 @@ export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPo
     if (c.page) reached(c.poi_id, c.page, c.persona_id);
     add(poi, c.poi_id, c.persona_id);
   }
-  return { pages, poiPages, poi, buyers, buyerSeqs };
+  return { pages, poiPages, surveyed, poi, buyers, buyerSeqs };
 }
 
 /**
@@ -752,7 +755,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   return {
     themes,
     ...(set_aside.length > 0 ? { set_aside } : {}),
-    reach: [...reach.poi].map(([poi_id, started]) => ({ poi_id, started: [...started], pages: Object.fromEntries([...(reach.poiPages.get(poi_id) ?? [])].map(([page, ids]) => [page, [...ids]])) })),
+    reach: [...reach.poi].map(([poi_id, started]) => ({ poi_id, started: [...started], surveyed: [...(reach.surveyed.get(poi_id) ?? [])], pages: Object.fromEntries([...(reach.poiPages.get(poi_id) ?? [])].map(([page, ids]) => [page, [...ids]])) })),
     ...(tagged.size > 0 ? { tagged } : {}),
     sentiment,
     went_well: wentWell(events, ctx, likes),

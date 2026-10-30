@@ -314,7 +314,10 @@ export function App() {
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
               {comparing
-                ? <RunCompare key={`${comparing.base}/${comparing.run}`} {...comparing} onBack={() => setComparing(null)} />
+                ? <RunCompare key={`${comparing.base}/${comparing.run}`} {...comparing} onBack={() => {
+                    setComparing(null);
+                    requestAnimationFrame(() => main.current?.querySelector<HTMLElement>('.project-history-compare button')?.focus());
+                  }} />
                 : <ProjectRunHistory runs={info?.runs ?? []} selected={runId} onSelect={(run) => showRun(run.run_id)} onCompare={(base, run) => setComparing({ base, run })} />}
             </div>
             <div role="region" id="panel-project" aria-labelledby="tab-project" hidden={tab !== 'project'}>

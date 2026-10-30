@@ -57,9 +57,9 @@ const categoryOf = (theme: ReportTheme) => theme.category ?? 'friction'; // abse
 
 /**
  * One-to-one pairs within each POI and category, closest first, a tie going to the higher-ranked themes: by a strong key overlap,
- * then by title, then by any shared key. Pure.
+ * then by title, then by any shared key. Pure. `byTitle: false` leaves titles out: TITLE_MATCH only holds for one-to-one matching.
  */
-export function matchThemes(a: ReportTheme[], b: ReportTheme[]): ThemeMatches {
+export function matchThemes(a: ReportTheme[], b: ReportTheme[], byTitle = true): ThemeMatches {
   const only_a = new Set(a);
   const only_b = new Set(b);
   const pairs: ThemeMatch[] = [];
@@ -76,7 +76,7 @@ export function matchThemes(a: ReportTheme[], b: ReportTheme[]): ThemeMatches {
     }
   };
   claim('keys', keyOverlap, KEY_MATCH);
-  claim('title', titleOverlap, TITLE_MATCH);
+  if (byTitle) claim('title', titleOverlap, TITLE_MATCH);
   claim('shared_key', keyOverlap, 0);
   return { pairs, only_a: [...only_a], only_b: [...only_b] };
 }

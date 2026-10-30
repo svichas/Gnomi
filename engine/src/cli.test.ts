@@ -351,6 +351,25 @@ test('rerun runs a finished run again on what it froze, and compare reads the tw
   assert.ok(against.themes.every((theme: { after: { of: number } }) => theme.after.of === 2));
 });
 
+test('estimate --base prices a rerun on what the run froze, not on the defaults, in a project with no pois file', () => {
+  const project = join(dir, 'rerun-estimate');
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  const settings = join(dir, 'frozen.json');
+  writeFileSync(settings, JSON.stringify({ rounds: 1, cost_budget_usd: 2, routing: { navigator: { provider: 'openai', model: 'gpt-6-astra' } } }));
+  const fresh = ['--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan'];
+  cli('run', ...fresh, '--settings', settings, '--project', project);
+
+  const rerun = lines('estimate', project, '--base', 'r-0001', '--repeats', '2').at(-1);
+  const frozen = lines('estimate', ...fresh, '--settings', settings, '--repeats', '2').at(-1);
+  assert.deepEqual([rerun.kind, rerun.runs, rerun.calls, rerun.cost_usd, rerun.run_budget_usd, rerun.budget_usd], ['estimate', 2, frozen.calls, frozen.cost_usd, 1, 2]);
+  assert.notDeepEqual(rerun.cost_usd, lines('estimate', ...fresh, '--repeats', '2').at(-1).cost_usd, 'the defaults would mislead here');
+  assert.match(cli('estimate', project, '--base', 'r-0001'), /^1 personas: about \d+ model calls.*budget \$2/);
+
+  const fails = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args], { encoding: 'utf8' }).stderr;
+  assert.match(fails('estimate', project, '--base', 'r-0009'), /There is no run r-0009/);
+  assert.match(fails('estimate', '--base', 'r-0001'), /Name the project folder/);
+});
+
 test('rerun and compare refuse what cannot work, before anything runs', () => {
   const project = join(dir, 'rerun-refused');
   cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);

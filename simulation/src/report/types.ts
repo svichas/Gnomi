@@ -114,6 +114,7 @@ export interface ReportTheme {
 export interface ReportReach {
   poi_id: string;
   started: string[]; // personas who used the POI at all
+  surveyed: string[]; // personas who answered a survey on it, without which a survey's theme was not asked about again
   pages: Record<string, string[]>; // page pattern → personas who reached it
 }
 

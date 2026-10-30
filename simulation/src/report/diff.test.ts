@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { EventPayloads, EventType, GnomiEvent, Outcome, ProjectConfig, Report, ReportTheme, RunConfig } from '../types.ts';
+import type { EventPayloads, EventType, GnomiEvent, Outcome, ProjectConfig, Report, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
 import { diffReports, RETEST_REACH, type ThemeDiff } from './diff.ts';
 import { groupKey, isWeak } from './friction.ts';
-import { DIFF_HINT, DIFF_NOTICE, diffText, diffToMarkdown } from './markdown.ts';
+import { DIFF_HINT, DIFF_NOTICE, diffText, diffToMarkdown, spreadRows } from './markdown.ts';
 import { frictionGroups } from './themes.ts';
 
 // Sides are folded from synthetic events through buildReport, so keys, pages and reach are the real ones, on another host in each run.
@@ -21,7 +21,7 @@ interface Visit { persona: string; page: string; friction?: string; element?: st
 const visitsTo = (page: string, count: number, friction?: string, element?: string): Visit[] => PERSONAS.slice(0, count).map((id) => ({ persona: id, page, friction, element }));
 
 /** A run where each visit is one persona's step, some with a friction report; the judge answers with one theme per group, named by its first report. */
-function run(run_id: string, host: string, visits: Visit[], over: { pois?: ProjectConfig['pois']; group?: RunConfig['repeat'] } = {}): Report {
+function run(run_id: string, host: string, visits: Visit[], over: { pois?: ProjectConfig['pois']; group?: RunConfig['repeat']; surveys?: { persona: string; frictions: string[] }[] } = {}): Report {
   const config: RunConfig = { run_id, seed: 1, project: { ...project, ...(over.pois && { pois: over.pois }) }, personas: PERSONAS.map(persona), sessions: [], reset: false, pause_timeout_ms: 1000, app_version: '0', ...(over.group && { repeat: over.group }) };
   const events: GnomiEvent[] = [];
   const log = <K extends EventType>(type: K, payload: EventPayloads[K], persona_id: string | null = null, poi_id: string | null = null) => events.push({ run_id, round: 1, persona_id, poi_id, type, payload, seq: events.length + 1, ts: events.length + 1 } as GnomiEvent);
@@ -32,6 +32,7 @@ function run(run_id: string, host: string, visits: Visit[], over: { pois?: Proje
     log('persona.step', { step_no: i + 1, action: { type: 'click', ref: 'e1', text: null }, target: { role: 'button', name: visit.element ?? 'Save', box: null }, result: { ok: true, url_before: url, url_after: url, dom_changed: false, error: null }, thought: 'Trying it.', feeling: 0, snapshot_hash: `h${i}`, screenshot: null, duration_ms: 1, heard_post_ids: [] }, visit.persona, 'web');
     if (visit.friction) log('persona.friction_reported', { step_no: i + 1, severity: 3, what: visit.friction, expected: 'It works', where: { url, ref: 'e1' }, heard_post_ids: [] }, visit.persona, 'web');
   });
+  for (const { persona: id, frictions } of over.surveys ?? []) log('persona.survey', { poi_id: 'web', sentiment: 0, confidence: 1, likes: [], frictions, would_continue: true, reason: 'Asked.' }, id, 'web');
   const groups = frictionGroups(events, 'web').filter((group) => !isWeak(group));
   if (groups.length) log('report.themes', { poi_id: 'web', themes: groups.map((group) => ({ title: group.members[0].text, description: 'What happened.', group_ids: [group.id] })), keys: Object.fromEntries(groups.map((group) => [group.id, groupKey(group.members[0])])) });
   log('run.finished', {});
@@ -42,6 +43,19 @@ const SAVE = 'Save loses the draft';
 const before = (...more: Visit[]) => run('r-1', 'localhost:1111', [...visitsTo('/jobs/new', 3, SAVE), ...more]);
 const statuses = (themes: ThemeDiff[]) => themes.map((theme) => [theme.before_title ?? theme.after_title, theme.status]);
 const only = (themes: ThemeDiff[]) => { assert.equal(themes.length, 1); return themes[0]; };
+const key = (name: string) => JSON.stringify(['web', `gym.test/${name}`, 'element', 'x']);
+/** A report whose themes are written by hand, as a judge can merge and name groups any way. */
+const themed = (run_id: string, themes: [title: string, keys: string[]][]): Report => {
+  const report = before();
+  return { ...report, run_id, themes: themes.map(([title, keys], i) => ({ ...report.themes![0], id: `g${i + 1}`, rank: i + 1, title, keys: keys.map(key) })) };
+};
+/** A theme on many pages of one run, sharing only the Settings element with any other theme built here. */
+const wide = (run_id: string, host: string, title: string, others: string[]): Report => {
+  const report = run(run_id, host, ['/settings/users', ...others].flatMap((page, i) => visitsTo(page, 3, 'x', i ? 'Other' : 'Settings')));
+  return { ...report, themes: [{ ...report.themes![0], title, keys: report.themes!.flatMap((theme) => theme.keys!), pages: report.themes!.flatMap((theme) => theme.pages) }] };
+};
+const [APPROVAL, BACK_AND_FORTH] = ['Approval checkbox is a double negative', 'Personas went back and forth'];
+const [SETTINGS_PAGES, OTHER_PAGES] = [['/settings/approvals', '/settings/a', '/settings/b'], ['/jobs', '/jobs/new', '/candidates']];
 
 test('a theme the later run did not show, on a page enough personas reached, is fixed, and its text never says so', () => {
   const after = run('r-2', 'localhost:2222', visitsTo('/jobs/new', 4));
@@ -93,30 +107,46 @@ test('a theme on two pages needs one set of personas to have reached both', () =
   assert.match(diffText(only(diffReports([merged], [together]).themes)), /3 personas reached all its pages/);
 });
 
-test('a theme with no pages counts who started its POI', () => {
-  const survey = (run_id: string, personas: string[], answer: boolean) => {
-    const report = run(run_id, 'localhost:1111', personas.map((id) => ({ persona: id, page: '/' })));
-    return { ...report, themes: answer ? [{ ...report.themes?.[0], ...SURVEY }] : [], reach: report.reach } as Report;
-  };
-  const SURVEY = { id: 'g1', poi_id: 'web', rank: 1, title: 'Pricing is unclear', description: '', named_by: 'rules', trust: 'reported', severity: 2, score: 0, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null, keys: [JSON.stringify(['web', null, 'survey', 'where pricing'])] } satisfies ReportTheme;
-  const first = survey('r-1', PERSONAS, true);
-  assert.deepEqual((({ status, reached }) => [status, reached])(only(diffReports([first], [survey('r-2', PERSONAS.slice(0, 3), false)]).themes)), ['fixed', 3]);
-  assert.deepEqual((({ status, reached }) => [status, reached])(only(diffReports([first], [survey('r-2', PERSONAS.slice(0, 2), false)]).themes)), ['not_retested', 2]);
-  assert.match(diffText(only(diffReports([first], [survey('r-2', PERSONAS.slice(0, 3), false)]).themes)), /3 personas started it/);
+test('a theme with no pages counts who started its POI and answered a survey there, so a run that asked nobody retests nothing', () => {
+  const PRICING = 'Pricing is unclear';
+  const steps = PERSONAS.map((id) => ({ persona: id, page: '/' }));
+  const first = run('r-1', 'localhost:1111', steps, { surveys: PERSONAS.map((id) => ({ persona: id, frictions: [PRICING] })) });
+  assert.deepEqual(first.themes?.map((theme) => [theme.title, theme.pages]), [[PRICING, []]]);
+  const later = (answered: string[]) => run('r-2', 'localhost:2222', steps, { surveys: answered.map((id) => ({ persona: id, frictions: [] })) });
+  const of = (after: Report) => only(diffReports([first], [after]).themes);
+
+  assert.deepEqual([of(later(PERSONAS.slice(0, 3))).status, of(later(PERSONAS.slice(0, 3))).reached], ['fixed', 3]);
+  assert.deepEqual([of(later(PERSONAS.slice(0, 2))).status, of(later(PERSONAS.slice(0, 2))).reached], ['not_retested', 2]);
+  assert.match(diffText(of(later(PERSONAS.slice(0, 3)))), /3 personas answered a survey on it/);
+
+  const none = of(later([]));
+  assert.deepEqual([none.status, none.reached], ['not_retested', 0], 'a finished run whose surveys all failed');
+  assert.match(diffText(none), /0 personas answered a survey on it, and it takes 3 to say anything/);
+
+  const stopped = diffReports([first], [{ ...later([]), run_id: 'r-2', status: 'stopped', stop_reason: 'cost_budget' }]);
+  assert.deepEqual([only(stopped.themes).status, only(stopped.themes).reached], ['not_retested', 0], 'a run that stopped before its surveys');
+  assert.ok(stopped.notes.some((note) => note.includes('r-2 stopped early (cost_budget)')));
 });
 
 test('a pair on one shared key reads as a weak unchanged with both titles, never plain and never fixed', () => {
-  const shared = { page: '/settings/users', element: 'Settings' };
-  const wide = (run_id: string, host: string, title: string, others: string[]) => {
-    const keys = others.flatMap((page) => visitsTo(page, 3, title, 'Other'));
-    return run(run_id, host, [...visitsTo(shared.page, 3, title, shared.element), ...keys]);
-  };
-  const merge = (report: Report, title: string): Report => ({ ...report, themes: [{ ...report.themes![0], title, keys: report.themes!.flatMap((theme) => theme.keys!), pages: report.themes!.flatMap((theme) => theme.pages) }] });
-  const a = merge(wide('r-1', 'localhost:1111', 'x', ['/settings/approvals', '/settings/a', '/settings/b']), 'Approval checkbox is a double negative');
-  const b = merge(wide('r-2', 'localhost:2222', 'y', ['/jobs', '/jobs/new', '/candidates']), 'Personas went back and forth');
-  const theme = only(diffReports([a], [b]).themes);
-  assert.deepEqual([theme.status, theme.weak, theme.before_title, theme.after_title], ['unchanged', true, 'Approval checkbox is a double negative', 'Personas went back and forth']);
+  const theme = only(diffReports([wide('r-1', 'localhost:1111', APPROVAL, SETTINGS_PAGES)], [wide('r-2', 'localhost:2222', BACK_AND_FORTH, OTHER_PAGES)]).themes);
+  assert.deepEqual([theme.status, theme.weak, theme.before_title, theme.after_title], ['unchanged', true, APPROVAL, BACK_AND_FORTH]);
   assert.match(diffText(theme), /"Approval checkbox is a double negative" and "Personas went back and forth" may be different problems/);
+});
+
+test('a theme a repeat set grouped on one shared key reads as weak, however strongly it ties to the other side, and names what it was grouped with', () => {
+  const a = [wide('a-1', 'localhost:1111', APPROVAL, SETTINGS_PAGES), wide('a-2', 'localhost:1112', BACK_AND_FORTH, OTHER_PAGES)];
+  const theme = only(diffReports(a, [wide('b-1', 'localhost:2222', BACK_AND_FORTH, OTHER_PAGES)]).themes);
+  assert.deepEqual([theme.status, theme.weak, theme.before_title, theme.after_title, theme.grouped_with, theme.before], ['unchanged', true, BACK_AND_FORTH, BACK_AND_FORTH, [APPROVAL], { seen_in: 2, of: 2 }]);
+  assert.match(diffText(theme), /"Approval checkbox is a double negative" and "Personas went back and forth" may be different problems/);
+  const later = only(diffReports([wide('b-1', 'localhost:2222', BACK_AND_FORTH, OTHER_PAGES)], a).themes);
+  assert.deepEqual([later.weak, later.grouped_with], [true, [APPROVAL]], 'the same on the later side');
+});
+
+test('a weak tie shows the two themes that tied, not the first of a set that holds one of them', () => {
+  const set = [themed('a-1', [['Job form forgets what was typed', ['a']]]), themed('a-2', [['The job form has two faults', ['a', 'b']]])];
+  const theme = only(diffReports(set, [themed('b-1', [[BACK_AND_FORTH, ['b', 'c', 'd', 'e', 'f']]])]).themes);
+  assert.deepEqual([theme.weak, theme.before_title, theme.after_title, theme.grouped_with], [true, 'The job form has two faults', BACK_AND_FORTH, undefined]);
 });
 
 test('a problem the judge merged in the later run is alive in each part: a leftover of the one-to-one match is not fixed', () => {
@@ -130,6 +160,20 @@ test('a problem the judge merged in the later run is alive in each part: a lefto
   assert.deepEqual(split.themes.map((theme) => theme.status), ['unchanged', 'unchanged'], 'the same the other way round: no part reads as new');
 });
 
+test('a similar title alone does not keep a leftover alive, but a key it shares with a taken theme does', () => {
+  const [wrong, reviews] = ['Selecting a candidate opens a different candidate profile', 'Candidate links open the wrong candidate review page'];
+  const first = run('r-1', 'localhost:1111', [...visitsTo('/candidates', 3, wrong), ...visitsTo('/reviews/1', 3, reviews)]);
+  const later = run('r-2', 'localhost:2222', [...visitsTo('/candidates', 5), ...visitsTo('/reviews/1', 3, reviews)]);
+  const { themes } = diffReports([first], [later]);
+  assert.deepEqual(statuses(themes), [[reviews, 'unchanged'], [wrong, 'fixed']]);
+  assert.ok(themes.every((theme) => !theme.weak));
+  assert.deepEqual(statuses(diffReports([later], [first]).themes), [[wrong, 'new'], [reviews, 'unchanged']], 'the same the other way round');
+
+  const kept = [[SAVE, ['a', 'b']], [reviews, ['z']]] as [string, string[]][];
+  const [theme] = diffReports([themed('r-1', [...kept, [wrong, ['b', 'c', 'd', 'e', 'f', 'g']]])], [themed('r-2', kept)]).themes.filter(({ before_title }) => before_title === wrong);
+  assert.deepEqual([theme.status, theme.weak, theme.after_title], ['unchanged', true, SAVE], 'it sounds like one taken theme and shares a key with another');
+});
+
 test('a theme set aside on one side is unchanged with the side named, neither fixed nor new', () => {
   const later = run('r-2', 'localhost:2222', visitsTo('/jobs/new', 3, SAVE));
   const moved = { ...later, themes: [], set_aside: later.themes };
@@ -137,7 +181,7 @@ test('a theme set aside on one side is unchanged with the side named, neither fi
   assert.deepEqual([after.status, after.set_aside, after.before.seen_in, after.after.seen_in], ['unchanged', 'after', 1, 1]);
   const earlier = only(diffReports([moved], [before()]).themes);
   assert.deepEqual([earlier.status, earlier.set_aside], ['unchanged', 'before']);
-  assert.match(diffText(earlier), /set it aside in the earlier run/);
+  assert.match(diffText(earlier), /set it aside in the earlier run and kept it in the other, so this says nothing either way about a change in the product\./);
   assert.deepEqual(diffReports([moved], [moved]).themes, [], 'set aside on both sides, neither ranks it');
 });
 
@@ -158,12 +202,9 @@ test('sets on both sides compare how often each theme appeared, and a set can fa
 });
 
 test('a problem is found by any run of a set, not only by the run that started its cluster', () => {
-  const key = (name: string) => JSON.stringify(['web', `gym.test/${name}`, 'element', 'x']);
-  const [report, [theme]] = [before(), before().themes!];
-  const later = (run_id: string, title: string, keys: string[]): Report => ({ ...report, run_id, themes: [{ ...theme, title, keys: keys.map(key) }] });
-  const first = later('b-1', 'Job form forgets what was typed', ['a']);
-  const second = later('b-2', 'The job form has two faults', ['a', 'b']);
-  const found = only(diffReports([later('a-1', 'Save loses the draft', ['b'])], [first, second]).themes);
+  const first = themed('b-1', [['Job form forgets what was typed', ['a']]]);
+  const second = themed('b-2', [['The job form has two faults', ['a', 'b']]]);
+  const found = only(diffReports([themed('a-1', [['Save loses the draft', ['b']]])], [first, second]).themes);
   assert.deepEqual([found.status, found.after.seen_in, found.after_title], ['unchanged', 2, 'Job form forgets what was typed'], 'the later set clusters the two, and only its second run meets the earlier theme');
 });
 
@@ -187,7 +228,7 @@ test('a report with no reach gives not retested with a note, and another later r
 
 test('a run read through buildReport has reach whatever its age, per POI and without a persona who only had a friction elsewhere', () => {
   const report = run('r-2', 'localhost:2222', [...visitsTo('/jobs/new', 2), ...visitsTo('/jobs', 1, 'x')]);
-  assert.deepEqual(report.reach, [{ poi_id: 'web', started: ['p-1', 'p-2'], pages: { 'localhost:2222/jobs/new': ['p-1', 'p-2'], 'localhost:2222/jobs': ['p-1'] } }]);
+  assert.deepEqual(report.reach, [{ poi_id: 'web', started: ['p-1', 'p-2'], surveyed: [], pages: { 'localhost:2222/jobs/new': ['p-1', 'p-2'], 'localhost:2222/jobs': ['p-1'] } }]);
 });
 
 test('the notes name what weakens a comparison: a model, a moved alias, the audience, a stopped run, an unfinished set', () => {
@@ -239,6 +280,8 @@ test('segments change in sentiment and friction, spread changes only where both 
   ).spread;
   assert.deepEqual([spread.posts.delta, spread.second_hand.delta, spread.readers.delta, spread.sentiment], [4, -1, -1, { before: -1, after: 1, delta: 2 }]);
   assert.deepEqual(spread.segments, [{ segment_id: id, name: 'Built-in', readers: { before: 2, after: 0, delta: -2 } }]);
+  assert.deepEqual(spreadRows(spread)[1], { name: 'Gym: Built-in', cells: ['-', '-', '2 → 0 (-2)', '-'] }, 'under its product, with only what a segment has');
+  assert.match(diffToMarkdown({ ...diffReports([before()], [before()]), spread: [spread] }), /\| Gym \| 2 → 6 \(\+4\) \|.*\n\| Gym: Built-in \| - \| - \| 2 → 0 \(-2\) \| - \|/);
   assert.match(diffToMarkdown(diffReports([side(-1, 0.75, {})], [side(1, 0.25, { posts: 6 })])), /Built-in.*-1\.00 → 1\.00 \(\+2\.00\).*75% → 25% \(-50 points\)[\s\S]*Gym \| 2 → 6 \(\+4\) \|/);
 });
 
