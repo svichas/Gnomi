@@ -25,17 +25,17 @@ function setName(dir: string, name: string) {
   writeFileSync(join(dir, NAME_FILE), JSON.stringify({ name }));
 }
 
-/** Only evidence is copied. Unknown files and recorded login state never enter a portable project. */
-function copyEvidence(source: string, destination: string) {
-  if (lstatSync(source).isSymbolicLink()) throw new Error('Evidence contains a symbolic link; export stopped.');
+/** Only POI files and evidence are copied. Unknown files and recorded login state never enter a portable project. */
+function copyProjectFiles(source: string, destination: string) {
+  if (lstatSync(source).isSymbolicLink()) throw new Error('The project contains a symbolic link; copying stopped.');
   mkdirSync(destination);
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     const from = join(source, entry.name);
     const to = join(destination, entry.name);
-    if (entry.isSymbolicLink()) throw new Error('Evidence contains a symbolic link; export stopped.');
-    if (entry.isDirectory()) copyEvidence(from, to);
+    if (entry.isSymbolicLink()) throw new Error('The project contains a symbolic link; copying stopped.');
+    if (entry.isDirectory()) copyProjectFiles(from, to);
     else if (entry.isFile()) copyFileSync(from, to);
-    else throw new Error('Evidence contains an unsupported file; export stopped.');
+    else throw new Error('The project contains an unsupported file; copying stopped.');
   }
 }
 
@@ -158,7 +158,9 @@ export class ProjectLibrary {
       const metadata = join(source, NAME_FILE);
       if (existsSync(metadata) && !lstatSync(metadata).isSymbolicLink()) copyFileSync(metadata, join(destination, NAME_FILE));
       const runs = join(source, 'runs');
-      if (includeRuns && existsSync(runs)) copyEvidence(runs, join(destination, 'runs'));
+      if (includeRuns && existsSync(runs)) copyProjectFiles(runs, join(destination, 'runs'));
+      const assets = join(source, 'assets');
+      if (existsSync(assets)) copyProjectFiles(assets, join(destination, 'assets'));
     } catch (err) {
       rmSync(destination, { recursive: true, force: true });
       throw err;

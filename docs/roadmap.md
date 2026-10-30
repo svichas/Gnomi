@@ -45,7 +45,7 @@ The first M2 gap-closure batch adds:
 
 - Country mixes and optional per-segment employer lists, deterministic sampling, and country/city/timezone/language/employer displays on persona cards and in the inspector.
 - Persona-specific browser locale, timezone, ordered language preferences and `Accept-Language`; the navigator prompt requires thoughts in the persona's first language. The Gym's `/locale` page and a real-browser regression cover Germany → `de-DE`, `Europe/Berlin` and German-first language preferences.
-- A local project home with create, open, rename, duplicate, delete to Trash and folder export. Duplicates carry configuration and personas; exports also carry run history and screenshots. Neither includes recorded logins or provider keys. Project switches refuse active runs, recording and pending project work; unsaved edits require Save, Discard or Cancel.
+- A local project home with create, open, rename, duplicate, delete to Trash and folder export. Duplicates carry configuration, POI files and personas; exports also carry run history and screenshots. Neither includes recorded logins or provider keys. Project switches refuse active runs, recording and pending project work; unsaved edits require Save, Discard or Cancel.
 
 Country sampling currently uses one reference city per supported country (14 countries), not a demographic distribution within countries. Legacy personas retain their language and use UTC when no timezone was stored. Folder export is available; ZIP packaging and import remain M6.
 
@@ -299,7 +299,7 @@ All M5 criteria are unmeasured live: the frame-mismatch check needs a vision-cap
 
 - Run history per project; duplicate a run (same personas, seeds, goals, models) against a new build; "rerun this persona" from the inspector.
 - Compare view between two runs: themes fixed, new, unchanged; sentiment deltas by segment; spread deltas.
-- Project export and import as a zip (database, screenshots, settings minus keys).
+- Project export and import as a zip (database, POI files, screenshots, settings minus keys).
 - Replay mode: record a human session through the recorder as a HAR, then run personas with network replay; unmatched requests are reported; the report marks the run as replayed.
 - Observe-only mode for any web POI.
 - Email sink integration: configure a Mailpit URL; personas with a sink address can complete email-verification steps by Gnomi fetching the link from the sink; the link is visited by the browser, not read into the prompt beyond what the persona needs.
