@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Report, ReportCoverage, ReportHomogeneity, ReportMethods, ReportPersona } from '@gnomi/simulation/types.ts';
-import { BLOCK_REASON_TEXT, coverageText, scanText } from '@gnomi/simulation/report/markdown.ts';
+import { BLOCK_REASON_TEXT, coverageText, GROUNDING_NOTE, groundingText, scanText } from '@gnomi/simulation/report/markdown.ts';
 import { resetOutcome } from './activity.ts';
 import { usd } from './ui.tsx';
 import { count } from './reportParts.tsx';
@@ -114,6 +114,12 @@ export function Methods({ methods, personas, coverage, pois }: { methods: Report
       <div className="space-y-1">
         <p>An audit, not findings: the moderate and minor rules the page scan flagged on your product, not ranked.</p>
         <ul className="space-y-1">{methods.accessibility_audit.map((row) => <li key={row.page + row.rule} className="break-all">{row.page}: {row.help} ({scanText(row)})</li>)}</ul>
+      </div>
+    )] as [string, ReactNode]] : []),
+    ...(methods.grounding ? [['Grounded segments', (
+      <div className="space-y-1">
+        <ul>{methods.grounding.map((segment) => <li key={segment.segment_id}>{groundingText(segment)}</li>)}</ul>
+        <p>{GROUNDING_NOTE}</p>
       </div>
     )] as [string, ReactNode]] : []),
     ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),

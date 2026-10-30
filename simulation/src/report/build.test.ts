@@ -706,6 +706,21 @@ test('the methods list the roles in use, the models called, the budgets and the 
   assert.deepEqual(methods.concurrency_changes, [{ concurrency: 4, reason: 'rate limited by anthropic' }]);
 });
 
+test('the methods name the segments real data shaped, as the run froze them; a segment nobody ran and an old run have no line', () => {
+  const grounding = { facts: ['Tool: spreadsheets'], remarks: ['One.', 'Two.'], sources: [{ name: 'notes.md', sha256: 'abc' }, { name: 'tickets.txt', sha256: 'def' }] };
+  const absent = { ...managers, id: 'seg-c', name: 'Nobody here', share: 0, grounding };
+  const cfg = populationConfig([{ ...recruiters, grounding }, managers, absent]);
+  const report = buildReport(stored(populationScript(cfg)));
+  assert.deepEqual(report.methods.grounding, [{ segment_id: 'seg-a', name: recruiters.name, facts: 1, remarks: 2, sources: ['notes.md', 'tickets.txt'] }]);
+  const markdown = reportToMarkdown(report);
+  assert.ok(markdown.includes(`- Grounded segments: ${recruiters.name}: 2 sources (notes.md, tickets.txt), 1 fact, 2 remarks. Grounded personas are still fictional, and their findings are still hypotheses.`));
+
+  const old = buildReport(stored(populationScript(populationConfig([recruiters, managers]))));
+  assert.ok(!('grounding' in old.methods));
+  assert.doesNotMatch(reportToMarkdown(old), /Grounded/);
+  assert.doesNotMatch(reportToMarkdown(buildReport(stored(finishedRun()))), /Grounded/);
+});
+
 test('a population run reopened from the store folds to the same report', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-report-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
