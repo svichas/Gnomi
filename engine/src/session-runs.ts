@@ -35,7 +35,7 @@ export class SessionRuns {
       if (event.type === 'run.stopped') run.stop_reason = event.payload.detail ?? event.payload.reason;
     } else if (event.type === 'report.generated') {
       run.status = run.stop_reason === null ? 'finished' : 'stopped';
-      run.ended_at = event.ts;
+      run.ended_at ??= event.ts; // a study plan or outcome reports again later, and the run ended when it ended
       this.blocked.delete(key);
     }
     const waiting = this.blocked.get(key);

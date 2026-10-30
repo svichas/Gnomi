@@ -34,6 +34,10 @@ Likewise, `strong`, `some` and `single` describe the report's internal support c
 
 Keep human observations and simulation outputs separately attributed in reports and design reviews. A lack of simulated friction is not evidence that a flow works for people.
 
+**A study plan** (`gnomi study`, or Plan a study in the report) is generated from the top friction findings of the team's own product. It leaves out objections, competitors, findings the evidence check set aside and findings only the accessibility scan made, because a scan finding needs an audit, and it says so. Participants see only the tasks and the screener. Code drops any entry that repeats four or more consecutive words of a finding, its description or its evidence, and the plan says how many it dropped, but a paraphrase can still lead a participant, so read the plan before you use it. The file opens by saying the hypotheses are simulated and unproven: keep them from participants.
+
+**A study outcome** (`gnomi outcome`, or the control on a finding) records step 4 in your team's name, as "Your team's study, 12 Oct 2026: supported". It is what people did, so it stays apart from the simulation: it changes no simulated count, rank, priority, trust level or written summary, and it reaches no model. The latest for a finding counts, so correct one by recording another. It belongs to its run: a repeat set or a comparison does not carry it across, and a finding that comes back in another run needs its own study. The count over the top five findings is a tally of what your team studied, not a measure of Gnomi's accuracy.
+
 ## Wording to reuse
 
 > Gnomi samples traits from the audience settings you define, then uses a language model to write fictional profiles for review. These personas encode assumptions about an audience; they are not a representative sample of real users.

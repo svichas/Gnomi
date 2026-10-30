@@ -97,6 +97,8 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Evidence check (`report/models.ts`, `report/themes.ts`).** Off unless `finding_check` is set or `gnomi rejudge --check` asks for it. A model reads each top friction theme's evidence and answers `product`, `agent_mistake`, `environment` or `unclear`. A theme with `agent_mistake` or `environment` leaves the ranking and the friction rate and the ranks close up; `product` and `unclear` change nothing but the theme's `check` field. Prevalence and scores do not change, and the persona's posts about it still count as first-hand in the spread. The check can reject a real defect and can share bias with the personas, which is why results stay visible and `check_model` can name another family. Its effect has not been measured.
 
+**Study plans and outcomes (`report/study.ts`).** Neither takes part in the simulation. A plan is a model's answer recorded after the run. An outcome is what a team's own study of real people found, and it changes no state, count, rank, priority or trust level; it only sits beside its finding. It does not set `TRUST_WEIGHT` or fill `BENCHMARK`, which stay assumed until there is enough data.
+
 **Accessibility scan and perception limits (`signals/index.ts`, `agent/prompt.ts`, `report/friction.ts`).** Off unless `accessibility_checks` is set. Each page state of a full-mode POI is scanned once per run with axe-core, and critical and serious violations signal once per rule and page pattern, on the step of whichever persona got there first, which is arbitrary. So a scan's signal counts towards no persona, in k, severity or the trust weight: a theme of nothing else has trust `observed`, prevalence 0 and evidence `none`, and says it was found by the scan. It confirms a self-report by any persona on the same page, only when the complaint's words fit the rule's category, and a report only a scan confirms can still be heard first. Moderate and minor violations go to the methods appendix. `colour_blind` and `low_vision` personas browse under Chromium's vision emulation, and `screen_reader` personas get no screenshots. The prompt's words stay as they were. Its effect on recall has not been measured.
 
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
@@ -185,6 +187,8 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `DRIVER_AFFECTED` | personas | 2 | Of those, how many must have met the theme first-hand, so one persona is never a pattern. | `report/dimensions.ts` | assumed |
 | `DRIVER_GAP` | difference of two rates | 0.25 | The least gap against those without the value. No p-value is given, as connected personas are not independent. | `report/dimensions.ts`; new_simulation.md §9 | assumed |
 | `DRIVER_MAX` | values per theme | 2 | Keeps a finding readable, the largest gap first. | `report/dimensions.ts` | assumed |
+| `STUDY_FINDINGS` | themes | 5 | How many top friction themes a study plan covers and the study count reports. | `report/study.ts`; roadmap.md, Confirmed findings | assumed |
+| `QUOTE_WORDS` | consecutive words | 4 | A task or screener entry sharing this many in a row with a finding quotes it. Fewer are ordinary words. Its false positives and misses are unmeasured. | `report/study.ts`; interpreting-simulations.md | assumed |
 
 ### Friction signals
 

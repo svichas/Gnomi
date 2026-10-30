@@ -25,6 +25,8 @@ test('session completion waits for saved results and historical events do not ad
   assert.equal(runs.list()[0].status, 'finished');
   assert.equal(runs.list()[0].project_id, 'pricing.gnomi');
   assert.equal(emitted[0].status, 'running', 'previously emitted snapshots do not change underneath clients');
+  runs.record('/pricing', { ...event({ type: 'report.generated', payload: { path: 'report.json', friction_count: 0 } }), ts: 900 });
+  assert.equal(runs.list()[0].ended_at, 100, 'a study plan or outcome reports again later, and the run ended when it ended');
 });
 
 test('a blocked persona needs the user until she resumes, but never in a comparison, whose blocked tasks end at once', () => {

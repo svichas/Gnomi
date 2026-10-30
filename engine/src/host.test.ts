@@ -94,6 +94,33 @@ test('a run that only reads a text skips the login, which only a web app would l
   assert.equal((await call('get_report', { run_id })).status, 'finished');
 });
 
+test('a study plan and an outcome reach the app through report.generated, and a plan runs only when asked', async () => {
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'study.md' });
+  await call('save_project', { project: project({}, { pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
+  const { run_id } = await call('start_run', { reset: false });
+  const generated = () => events.filter((e) => e.run_id === run_id && e.type === 'report.generated').length;
+  await new Promise<void>((resolve) => {
+    const poll = setInterval(() => generated() > 0 && (clearInterval(poll), resolve()), 50);
+  });
+  const report = await call('get_report', { run_id });
+  assert.equal(report.study_plan, undefined, 'nothing is planned unasked');
+  const estimate = await call('estimate_study', { run_id });
+  assert.deepEqual([estimate.calls, estimate.unpriced], [1, []]);
+  assert.ok(estimate.cost_usd[1] > estimate.cost_usd[0]);
+
+  await call('plan_study', { run_id });
+  assert.equal(generated(), 2, 'an open report reloads');
+  assert.ok((await call('get_report', { run_id })).study_plan?.hypotheses.length);
+
+  const theme_id = report.themes![0].id;
+  await assert.rejects(call('record_outcome', { run_id, theme_id, status: 'proven' as never, study_date: '2026-10-12' }), /status must be/);
+  await call('record_outcome', { run_id, theme_id, status: 'unresolved', study_date: '2026-10-12', note: 'Too few sessions.' });
+  assert.equal(generated(), 3);
+  const studied = await call('get_report', { run_id });
+  assert.deepEqual(studied.themes![0].validation, { status: 'unresolved', note: 'Too few sessions.', study_date: '2026-10-12', title: report.themes![0].title });
+  await assert.rejects(call('plan_study', { run_id: 'r-9999' }), /There is no run r-9999/);
+});
+
 test('record_session refuses a role the session store cannot name, and a production target, before any browser opens', async () => {
   await assert.rejects(call('record_session', { role: 'Recruiters team' }), /1–40 lowercase letters/);
   await call('save_project', { project: project({ start_url: 'https://www.acme.com/' }) });

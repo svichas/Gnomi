@@ -1,6 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -469,7 +469,19 @@ export interface EventPayloads {
   'report.checks': { poi_id: string; checks: ThemeCheck[]; keys: Record<string, string> }; // the evidence check's verdicts on friction themes
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
+  // A study plan's model answer with what it was asked about, in full, so the plan rebuilds from this event alone (report/study.ts).
+  'report.study': {
+    answer: { screener: string[]; themes: { theme_id: string; tasks: string[]; observe: string[] }[] };
+    themes: { id: string; keys: string[]; poi_id: string; title: string; description: string; quotes: string[] }[]; // the findings covered, as they stood
+    left_out: { objections: number; competitors: number; set_aside: number; scan_only: number; lower_ranked: number };
+  };
+  // What a team's own study with real people found, never a model's. keys: theme ids change after a rejudge. The envelope's poi_id is the theme's.
+  'finding.validated': { keys: string[]; category?: 'friction' | 'objection'; title: string; status: StudyStatus; note: string | null; study_date: string }; // title: at the time; study_date: YYYY-MM-DD
 }
+
+/** The human outcome words of docs/interpreting-simulations.md. */
+export const STUDY_STATUSES = ['supported', 'contradicted', 'unresolved'] as const;
+export type StudyStatus = (typeof STUDY_STATUSES)[number];
 
 /**
  * One structured survey answer (tech.md §8.2): a friction got in the way of the task, an objection is a reason to doubt or

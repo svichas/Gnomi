@@ -161,6 +161,8 @@ Run `npm run gnomi` with no command to list every command and option.
 | `rejudge` | Group and name an ended run's themes again with the current judge, without browsing. |
 | `rerun` | Run a finished run again on its frozen settings and personas, optionally at a new address. |
 | `compare` | Show what changed between two runs or repeat sets. No model calls. |
+| `study` | Plan a study with real people from an ended run's top findings, and write `study-plan.md` to hand to a researcher. |
+| `outcome` | Record what your team's own study found about a finding. No model calls. |
 
 Provider keys come from the environment (`ANTHROPIC_API_KEY` for the default routing, or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY` when `--settings` routes to them). `--fake-llm` uses scripted answers and calls no model. With `--json`, every command prints one JSON object per line and the last line is its result, which makes it easy to script.
 

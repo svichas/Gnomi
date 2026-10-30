@@ -88,6 +88,10 @@ export function describe(e: GnomiEvent): string {
       return `${e.payload.poi_id}: ${e.payload.suggestions.length} suggested changes from the author`;
     case 'report.generated':
       return `${e.payload.path} (${e.payload.friction_count} frictions)`;
+    case 'report.study':
+      return `study plan for ${e.payload.themes.length} finding${e.payload.themes.length === 1 ? '' : 's'}`;
+    case 'finding.validated':
+      return `study outcome, ${e.payload.study_date}: ${e.payload.status} for "${e.payload.title}"`;
     case 'comparison.episode_started':
       return `${e.payload.target_id}, ${e.payload.task_id}: position ${e.payload.order + 1}`;
     case 'comparison.episode_finished':

@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, estimateFor, repeatRuns, rerunProject, runSet } from './workspace.ts';
-import { createScriptedGateway } from '@gnomi/simulation/llm/scripted.ts';
+import { cappedGateway, checkRun, credential, endedRun, estimateFor, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runSet } from './workspace.ts';
+import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
+import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
+import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { createRecorder } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { LlmRole, ModelChoice, Poi, ProjectConfig, Report, RunConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
@@ -166,4 +169,122 @@ test("a rerun's frozen personas are not held to the project's current audience, 
   assert.throws(() => checkRun(store, schema, { reset: false, fake: true, secrets: () => null }), /Create an audience/);
   assert.deepEqual(checkRun(store, schema, { reset: false, fake: true, secrets: () => null, personas: [BUILTIN_PERSONA] }), [BUILTIN_PERSONA]);
   assert.throws(() => checkRun(store, schema, { reset: false, fake: false, secrets: () => null, personas: [BUILTIN_PERSONA] }), /Add an Anthropic key/);
+});
+
+/** A project with one run, its row still saying running as a crash leaves it, and with friction on two pages; `end` logs its end. */
+function loggedRun(t: TestContext, project: ProjectConfig = gym) {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-after-'));
+  const store = openProject(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const config = store.createRun({ seed: 1, project, personas: [BUILTIN_PERSONA], sessions: [], reset: false, pause_timeout_ms: 0, app_version: '0' });
+  const { run_id } = config;
+  const place = { store, blobs: createFsBlobStore(dir), record: createRecorder(store, () => {}) };
+  const who = { run_id, round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: 'poi-1' };
+  place.record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config } });
+  place.record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
+  ['/jobs', '/users'].forEach((path, i) => place.record({ ...who, type: 'persona.friction_reported', payload: { step_no: i + 1, severity: 3, what: `Save on ${path} does nothing`, expected: 'Saved', where: { url: `http://localhost:3001${path}`, ref: null }, heard_post_ids: [] } }));
+  const end = () => place.record({ ...who, persona_id: null, poi_id: null, type: 'run.finished', payload: {} });
+  return { dir, store, place, run_id, end, row: () => endedRun(store, run_id), themes: () => buildReport(store.events(run_id)).themes! };
+}
+
+test('work after a run refuses one that has not ended, from the log and not its row, and writes nothing', async (t) => {
+  const { dir, store, place, run_id, end } = loggedRun(t);
+  store.finishRun(run_id, 'finished', null, 0); // a row can say anything: the log says no end was written
+  for (const refused of [() => endedRun(store, run_id), () => modelRun(store, run_id, true, 'judged again')]) assert.throws(refused, /has not ended: it is still running, or it was interrupted/);
+  await assert.rejects(rewriteReport(place, run_id), /has not ended/);
+  await assert.rejects(recordOutcome(place, { run_id, theme_id: 'g1', status: 'supported', study_date: '2026-10-12' }), /has not ended/);
+  assert.equal(existsSync(join(dir, `runs/${run_id}/report.json`)), false);
+  assert.equal(store.events(run_id, { types: ['report.generated', 'finding.validated'] }).length, 0);
+  assert.throws(() => endedRun(store, 'r-9999'), /There is no run r-9999/);
+  end();
+  assert.equal(endedRun(store, run_id).run_id, run_id, 'the row may still say running: a stopped run has its end in the log');
+});
+
+test('a comparison study has no themes to act on, and a run with no routing cannot start model work', (t) => {
+  const study = loggedRun(t, { ...gym, comparison: { targets: [] } as unknown as ProjectConfig['comparison'] });
+  study.end();
+  assert.throws(() => endedRun(study.store, study.run_id), /comparison study, which has no themes to act on/);
+  const old = loggedRun(t, { ...gym, settings: undefined as unknown as RunSettings });
+  old.end();
+  assert.equal(endedRun(old.store, old.run_id).run_id, old.run_id);
+  assert.throws(() => modelRun(old.store, old.run_id, true, 'planned from'), /predates per-run model settings, so it cannot be planned from/);
+});
+
+test('--fake-llm never replaces a real model\'s answers', (t) => {
+  const { store, place, run_id, end } = loggedRun(t);
+  end();
+  assert.equal(modelRun(store, run_id, true, 'judged again').run_id, run_id);
+  place.record({ run_id, round: 1, persona_id: null, poi_id: null, type: 'llm.call', payload: { role: 'judge', provider: 'anthropic', model: 'm', input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.1, latency_ms: 0, status: 'ok', error: null } });
+  assert.throws(() => modelRun(store, run_id, true, 'judged again'), /analysed by real models/);
+  assert.equal(modelRun(store, run_id, false, 'judged again').run_id, run_id);
+});
+
+test('a rewrite makes the files, the row and an open app agree with the log', async (t) => {
+  const { dir, store, place, run_id, end } = loggedRun(t);
+  end();
+  const report = await rewriteReport(place, run_id);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, `runs/${run_id}/report.json`), 'utf8')).run_id, report.run_id);
+  assert.match(readFileSync(join(dir, `runs/${run_id}/report.md`), 'utf8'), /^# Gnomi report: Post a job/);
+  assert.equal(store.events(run_id).at(-1)?.type, 'report.generated');
+});
+
+test('an outcome is refused at the boundary for each thing that can be wrong, and nothing is recorded', async (t) => {
+  const { store, place, run_id, end, themes } = loggedRun(t);
+  end();
+  const [{ id: theme_id }] = themes();
+  const today = new Date(2026, 9, 30, 12);
+  const good = { run_id, theme_id, status: 'supported', study_date: '2026-10-12' } as const;
+  const refused = (over: object, why: RegExp) => assert.rejects(recordOutcome(place, { ...good, ...over } as never, today), why);
+  await refused({ status: 'validated' }, /status must be supported, contradicted, unresolved, not "validated"/);
+  await refused({ study_date: '12/10/2026' }, /real date as YYYY-MM-DD/);
+  await refused({ study_date: '2026-02-30' }, /real date as YYYY-MM-DD/);
+  await refused({ study_date: '2026-10-31' }, /is in the future/);
+  await refused({ note: 'x'.repeat(2_001) }, /2001 characters, and the limit is 2000/);
+  await refused({ theme_id: 'g99' }, /has no finding "g99"/);
+  await refused({ run_id: 'r-9999' }, /There is no run r-9999/);
+  assert.equal(store.events(run_id, { types: ['finding.validated', 'report.generated'] }).length, 0);
+  await recordOutcome(place, { ...good, study_date: '2026-10-30', note: 'y'.repeat(2_000) }, today);
+  await recordOutcome(place, { ...good, note: '   ' }, today);
+  const log = store.events(run_id, { types: ['finding.validated'] });
+  assert.deepEqual(log.map((e) => e.type === 'finding.validated' && e.payload.note?.length), [2_000, undefined], 'today and the longest note pass, and a blank note is none');
+  assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0, 'no model call');
+});
+
+test('a study plan writes its own file and report, and a failed call leaves the report as it was, an earlier plan included', async (t) => {
+  const { dir, store, place, run_id, end, row } = loggedRun(t);
+  end();
+  const plain = buildReport(store.events(run_id));
+  const planFile = join(dir, `runs/${run_id}/study-plan.md`);
+  const failing = createScriptedGateway({ author: () => { throw new Error('The provider is down'); } }, place.record);
+  await assert.rejects(planStudy(place, row(), failing), /The provider is down/);
+  assert.deepEqual(buildReport(store.events(run_id)), plain, 'no plan, and every number as it was');
+  assert.equal(existsSync(planFile), false);
+
+  const invalid = createScriptedGateway({ author: () => ({ nonsense: true }) }, place.record, { costPerCall: 0.01 });
+  await assert.rejects(planStudy(place, row(), invalid), /Invalid output twice/);
+  const failed = buildReport(store.events(run_id));
+  assert.equal(failed.study_plan, undefined);
+  assert.deepEqual(failed.themes, plain.themes);
+  assert.equal(failed.cost_usd, 0.02, 'what failed attempts cost is on the record');
+  assert.equal(store.listRuns()[0].cost_usd, 0.02, 'and in the run row');
+  assert.equal(JSON.parse(readFileSync(join(dir, `runs/${run_id}/report.json`), 'utf8')).cost_usd, 0.02);
+
+  const report = await planStudy(place, row(), createScriptedGateway({ author: DEMO_AUTHOR }, place.record));
+  assert.equal(report.study_plan?.hypotheses.length, 2);
+  const file = readFileSync(planFile, 'utf8');
+  assert.match(file, /^# Study plan: Post a job\n\n> These hypotheses come from simulated users and are unproven\. Do not show them to participants/);
+  assert.doesNotMatch(file, /Save on \/jobs does nothing/, 'a researcher gets the plan, not the evidence');
+
+  await assert.rejects(planStudy(place, row(), failing), /The provider is down/);
+  assert.deepEqual(buildReport(store.events(run_id)).study_plan, report.study_plan, 'the earlier plan stays');
+});
+
+test('a run with no friction of its own has nothing to plan, and no call is made', async (t) => {
+  const { store, place, run_id, end, row } = loggedRun(t);
+  end();
+  const quiet = { ...row(), run_id };
+  const none = { ...place, store: { ...store, events: () => store.events(run_id).filter((e) => e.type !== 'persona.friction_reported') } as typeof store };
+  const unused = createScriptedGateway({}, place.record);
+  await assert.rejects(planStudy(none, quiet, unused), /has no friction finding of your own product/);
+  assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0);
 });
