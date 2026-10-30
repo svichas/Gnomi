@@ -181,6 +181,28 @@ test('rejudge spends within what is left of the run budget unless --budget allow
   }
 });
 
+test('audience analytics reports the changes, keeps the file on a dry run, and stores only the name and hash of the export', () => {
+  const file = join(dir, 'analytics.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');
+  const csv = join(dir, 'export.csv');
+  writeFileSync(csv, 'Country,Users\nGermany,3\nGreece,1\nAtlantis,1\n');
+  const before = readFileSync(file, 'utf8');
+  const dry = cli('audience', 'analytics', file, '--file', csv, '--segment', 'seg-1', '--dry-run', '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(dry.at(-1).changes, ['Everyone: countries DE 75%, GR 25%']);
+  assert.deepEqual(dry.at(-1).skipped, ['Skipped country "Atlantis": 1 user.']);
+  assert.equal(dry.at(-1).dry_run, true);
+  assert.equal(readFileSync(file, 'utf8'), before, 'a dry run writes nothing');
+  assert.match(cli('audience', 'analytics', file, '--file', csv, '--segment', 'seg-1'), /1 change saved to/);
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(saved.audience.segments[0].countries, { DE: 75, GR: 25 });
+  assert.equal(saved.audience.segments[0].grounding.sources[0].name, 'export.csv');
+  assert.match(saved.audience.segments[0].grounding.sources[0].sha256, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify(saved).includes('Atlantis'), false, 'no row of the file is kept');
+  const update = cli('audience', 'update', file, '--json').trim().split('\n').map((line) => JSON.parse(line)).at(-1);
+  assert.equal(update.kind, 'audience');
+  assert.ok(JSON.parse(readFileSync(file, 'utf8')).personas.every((p: { country: string }) => ['DE', 'GR'].includes(p.country)));
+});
+
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
   const settings = join(dir, 'navigator.json');
   writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));

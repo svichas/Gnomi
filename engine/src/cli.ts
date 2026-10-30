@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, proposeAudience, syncPersonas } from './audience/index.ts';
+import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
+import { sourceOf } from './audience/ground.ts';
 import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, projectGateway, repeatReports, repeatRuns, rerunProject, runRoles, runSet, type Secrets } from './workspace.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
@@ -32,6 +34,9 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       [--pois <pois.json> | --url <url>] [--count <n>] [--propose] [--settings <settings.json>] [--fake-llm]
   audience update <audience.json> [--settings <settings.json>] [--fake-llm]
       writes the personas again where the file's audience or product was edited; the rest are kept
+  audience analytics <audience.json> --file <csv> [--segment <id>] [--dry-run]
+      sets segment shares, phone shares, countries and languages from an analytics export, with no model call. Without a segment
+      column in the file, --segment says which segment it describes. The file is read once and only its name and hash are kept.
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>]
@@ -82,6 +87,9 @@ const OPTIONS = {
   'also-model': { type: 'string' },
   repeat: { type: 'string' },
   budget: { type: 'string' },
+  file: { type: 'string', multiple: true },
+  segment: { type: 'string' },
+  'dry-run': { type: 'boolean', default: false },
   check: { type: 'boolean', default: false },
   format: { type: 'string', default: 'summary' },
   json: { type: 'boolean', default: false },
@@ -336,6 +344,24 @@ async function updateAudienceFile(v: Values, path: string | undefined): Promise<
     const llm = projectGateway({ fake: v['fake-llm'], secrets: envSecrets, config, record: timeline(store) });
     await writeAudience(path, file, config, store, llm, 0);
   });
+}
+
+const staleIn = (file: AudienceFile) => file.personas.filter((p) => !personaProfileIsCurrent(p, fileProject(file))).length;
+
+function audienceAnalytics(v: Values, path: string | undefined): void {
+  if (!path || v.file?.length !== 1) throw new Error(`audience analytics needs the audience file and one --file.\n\n${USAGE}`);
+  const file = readAudienceFile(path);
+  const data = readFileSync(v.file[0]);
+  const { audience, changes, skipped } = applyAnalytics(data.toString('utf8'), file.audience, { segment: v.segment, source: sourceOf(v.file[0], data) });
+  const dry_run = v['dry-run'];
+  const updated = { ...file, audience };
+  for (const text of [...changes, ...skipped]) note(text);
+  if (!dry_run && changes.length) writeAudienceFile(path, updated);
+  const stale = staleIn(updated);
+  out(
+    `${changes.length} ${changes.length === 1 ? 'change' : 'changes'}${dry_run ? ', not saved (dry run)' : ` saved to ${path}`}. ${stale} personas would be written again by "audience update".`,
+    { kind: 'analytics', file: resolve(path), dry_run, changes, skipped, stale },
+  );
 }
 
 function listPersonas(v: Values, path: string | undefined): void {
@@ -635,6 +661,7 @@ async function main(): Promise<void> {
   const [command, sub, target] = positionals;
   if (command === 'audience' && sub === 'create') return createAudienceFile(values);
   if (command === 'audience' && sub === 'update') return updateAudienceFile(values, target);
+  if (command === 'audience' && sub === 'analytics') return audienceAnalytics(values, target);
   if (command === 'personas') return listPersonas(values, sub);
   if (command === 'estimate') return values.base ? estimateRerun(values, sub) : estimate(values);
   if (command === 'run') return runSimulation(values);

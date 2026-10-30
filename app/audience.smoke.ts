@@ -1,7 +1,7 @@
 // Real Electron with disposable data. Hold engine requests to inspect long-running UI states,
 // then release them to the scripted engine so completion uses the real saved population.
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
 import type { PersonaProgress } from '@gnomi/simulation/types.ts';
@@ -220,8 +220,27 @@ try {
   await panel.getByRole('heading', { name: 'Personas (1)', exact: true }).waitFor();
   await page.locator('#tab-settings').click();
   assert.equal(await page.getByLabel('Writer concurrency (1-32)', { exact: true }).inputValue(), '4');
-  // A saved audience outlives this one: save it, start over, start from it, replace it by name, then delete it.
   await page.locator('#tab-audience').click();
+  // An analytics export changes nothing until its changes are applied, and a value it cannot map is listed, not guessed.
+  await panel.locator('.segment-options summary', { hasText: 'Real data' }).first().click();
+  const analytics = join(dir, 'export.csv');
+  writeFileSync(analytics, 'Country,Device category,Users\nGermany,mobile,3\nGreece,desktop,1\nAtlantis,desktop,1\n');
+  await panel.getByLabel('Analytics export for Everyday users', { exact: true }).setInputFiles(analytics);
+  const importing = page.getByRole('dialog', { name: 'Import this analytics file?' });
+  await importing.getByText('Everyday users: countries DE 75%, GR 25%', { exact: true }).waitFor();
+  await importing.getByText('Skipped country "Atlantis": 1 user.', { exact: true }).waitFor();
+  for (const width of [1100, 320]) {
+    await page.setViewportSize({ width, height: 960 });
+    await assertFits(page, `analytics preview overflow at ${width}`);
+    await page.screenshot({ path: join(shots, `audience-analytics-${width}.png`) });
+  }
+  await importing.getByRole('button', { name: 'Apply changes', exact: true }).click();
+  await panel.getByText('From analytics: DE 75%, GR 25%', { exact: true }).waitFor();
+  await assertFits(page, 'real data overflow at 320');
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await panel.getByRole('button', { name: 'Use the audience mix for Everyday users', exact: true }).click();
+  await panel.getByText('From analytics: DE 75%, GR 25%', { exact: true }).waitFor({ state: 'detached' });
+  // A saved audience outlives this one: save it, start over, start from it, replace it by name, then delete it.
   const segmentList = panel.getByRole('list', { name: 'Segments', exact: true }).locator(':scope > li');
   const segmentCount = await segmentList.count();
   await panel.getByRole('button', { name: 'Save to library', exact: true }).click();
@@ -247,6 +266,7 @@ try {
   await saveDialog.getByRole('button', { name: 'Replace saved audience', exact: true }).click();
   await panel.getByRole('status').filter({ hasText: 'Saved “Smoke audience”' }).waitFor();
   await panel.getByRole('button', { name: 'Start over', exact: true }).click();
+  await panel.getByRole('button', { name: 'Use Smoke audience', exact: true }).waitFor(); // the list loads after the page does
   assert.equal(await panel.getByRole('button', { name: 'Use Smoke audience', exact: true }).count(), 1, 'replacing does not add a second entry');
   await panel.getByRole('button', { name: 'Delete Smoke audience', exact: true }).click();
   await page.getByRole('dialog', { name: 'Delete saved audience?' }).getByRole('button', { name: 'Delete', exact: true }).click();

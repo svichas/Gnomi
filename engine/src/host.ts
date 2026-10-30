@@ -2,8 +2,11 @@
 // library, tech.md §16.2): the parent port is a global on `process`, and main hands over one
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
+import { applyAnalytics } from './audience/analytics.ts';
+import { sourceOf } from './audience/ground.ts';
 import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
 import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
@@ -339,6 +342,10 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   figma_previews: (params) => previews(figma(), params),
   figma_import: (params) => importFrames(figma(), current().blobs, params),
   propose_audience: () => writeSetup(() => proposeAudience(writer(project()))),
+  analytics_preview({ path, audience, segment_id }) {
+    const data = readFileSync(path);
+    return applyAnalytics(data.toString('utf8'), audience, { segment: segment_id, source: sourceOf(path, data) });
+  },
   generate_personas: () => writeSetup(async () => {
     const { config, audience } = withAudience();
     const progress = (value: PersonaProgress) => broadcast({ kind: 'progress', task: 'generate_personas', ...value });

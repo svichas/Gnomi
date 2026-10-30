@@ -67,6 +67,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 | Input | Provenance |
 | --- | --- |
 | Audience, segments, goals | Authored by the user or proposed by a model; synthetic input, not an observed human record. |
+| Analytics export (optional) | A CSV the team imports for a segment: counts become segment shares, phone shares, countries and languages, which sampling reads as usual. Values Gnomi cannot map are skipped and listed. The file is read once; its name and hash stay with the segment. |
 | Products, texts, designs | The user's own web app, pasted or uploaded text, Figma frames or images; hashes are stored with the run. |
 | Prices | A bundled price table for cost accounting (`llm/prices.ts`). |
 | Human reference data | None. No parameter is fitted to observed behaviour. |

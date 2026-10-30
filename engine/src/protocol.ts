@@ -1,4 +1,5 @@
 import type { AssetInfo } from '@gnomi/simulation/assets.ts';
+import type { AnalyticsResult } from './audience/analytics.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
@@ -75,6 +76,8 @@ export interface Api {
   check_session: { params: { role: string }; result: { ok: boolean; url: string; reason: string | null } };
   /** Proposes segments from the product sentence, the POI and the goal (persona_writer model). Not saved. */
   propose_audience: { params: Record<string, never>; result: { audience: Audience; cost_usd: number } };
+  /** Reads a local CSV export once and answers what it would change in `audience`. Nothing is saved or copied, and no model is called. */
+  analytics_preview: { params: { path: string; audience: Audience; segment_id: string }; result: AnalyticsResult };
   /** Brings the population in line with the saved audience: unchanged slots keep their persona, new or changed slots are sampled and written. Progress streams as 'progress' messages. */
   generate_personas: { params: Record<string, never>; result: { personas: Persona[]; diversity: DiversityReport; cost_usd: number } };
   /** A new seed for one persona: traits re-sampled and re-written. */
