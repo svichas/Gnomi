@@ -29,6 +29,8 @@ export const ARMS = {
   // Cost arms: what each saving does to the outcomes. A DeepSeek navigator never gets screenshots, so text_only needs --provider anthropic.
   text_only: { settings: { screenshots: false } },
   fewer_rounds: { settings: { rounds: 3 } },
+  // Stays off in DEFAULT_SETTINGS until this arm shows it helps.
+  finding_check: { settings: { finding_check: true } },
 } satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true }>;
 export type Arm = keyof typeof ARMS;
 

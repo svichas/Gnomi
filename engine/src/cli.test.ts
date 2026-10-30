@@ -78,6 +78,29 @@ test('with --json every line is an object and the last the result, for estimate,
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).personas.find((p: { id: string }) => p.id === edited.personas[0].id).background, 'Edited by hand.');
 });
 
+test('the evidence check runs when a run asks for it or rejudge --check does, and a rejudge without either drops the older check', () => {
+  const eventsOf = (out: string) => out.trim().split('\n').map((line) => JSON.parse(line)).filter((l) => l.kind === 'event').map((l) => l.type);
+  const report = (project: string) => JSON.parse(cli('report', project, '--run', 'r-0001', '--format', 'json', '--json')).report;
+  writeFileSync(join(dir, 'check.json'), JSON.stringify({ rounds: 1, finding_check: true }));
+  const asked = join(dir, 'asked');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'check.json'), '--goal', 'Pick a plan', '--project', asked);
+  assert.ok(report(asked).themes.some((t: { check?: { verdict: string } }) => t.check?.verdict === 'product'), 'the scripted check calls each theme product');
+
+  const off = join(dir, 'off');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', off);
+  assert.ok(report(off).themes.every((t: { check?: unknown }) => t.check === undefined));
+  const types = eventsOf(cli('rejudge', off, '--run', 'r-0001', '--check', '--json'));
+  assert.ok(types.indexOf('report.themes') < types.indexOf('report.checks') && types.indexOf('report.checks') < types.indexOf('report.suggestions'), types.join());
+  assert.ok(report(off).themes.some((t: { check?: unknown }) => t.check !== undefined));
+  assert.ok(!eventsOf(cli('rejudge', off, '--run', 'r-0001', '--json')).includes('report.checks'));
+  assert.ok(report(off).themes.every((t: { check?: unknown }) => t.check === undefined));
+
+  writeFileSync(join(dir, 'bad.json'), JSON.stringify({ check_model: { provider: 'nobody', model: 'x' } }));
+  const refused = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'estimate', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'bad.json')], { encoding: 'utf8' });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /"check_model" must be/);
+});
+
 test('rejudge records a new judge answer for an ended run, rewrites its report files and leaves the browsing alone', () => {
   const project = join(dir, 'rejudge');
   cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);

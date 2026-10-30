@@ -17,6 +17,12 @@ const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 /** A POI as the report names it: a competitor's site says so. */
 export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi.name} (competitor, observed only)` : poi.name);
 
+/** The name of a theme's POI, in a report with several. */
+export const themePoi = ({ poi_id }: ReportTheme, pois: Report['pois']) => {
+  const poi = pois.find(({ id }) => id === poi_id);
+  return pois.length > 1 && poi ? poiName(poi) : undefined;
+};
+
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
@@ -39,6 +45,7 @@ export function reportToMarkdown(report: Report): string {
     ...segmentLines(report),
     ...dimensionLines(report),
     ...themeLines(report),
+    ...setAsideLines(report),
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
@@ -167,12 +174,18 @@ export const TRUST_TEXT = {
   reported: 'a self-report only',
 } as const;
 
+/** Said wherever a set-aside theme is shown: the verdict is one model's reading, and the reader decides. */
+export const SET_ASIDE_TEXT = "A model reviewed the evidence behind these themes and judged that it points to a persona's mistake or the test setup rather than the product. This is a model's review, not a test of the product, so a real problem can be among them: read each reason. They are left out of the ranking and the friction rate, and their events stay in the log.";
+
+/** What a set-aside theme's verdict points to, in words. */
+export const setAsideCause = ({ check }: ReportTheme) => (check?.verdict === 'environment' ? 'the test setup' : "a persona's mistake");
+
 // Weak signals alone make no theme, so an empty section cannot say that nothing went wrong. The undersized-target audit leaves competitors out.
-const noThemes = (competitor?: true) => `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`;
+const noThemes = (aside: ReportTheme[] = [], competitor?: true) => (aside.length ? 'The evidence check set aside every theme here.' : `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`);
 
 function themeLines(report: Report): string[] {
   if (!report.themes) return [];
-  if (report.themes.length === 0) return ['', '## Themes', '', noThemes()];
+  if (report.themes.length === 0) return ['', '## Themes', '', noThemes(report.set_aside)];
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
@@ -180,9 +193,23 @@ function themeLines(report: Report): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', noThemes(poi.competitor)])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', noThemes(report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme))),
+  ];
+}
+
+function setAsideLines(report: Report): string[] {
+  if (!report.set_aside?.length) return [];
+  return [
+    '', '## Set aside by the evidence check', '',
+    '<details>', `<summary>${count(report.set_aside.length, 'theme')} set aside</summary>`, '',
+    SET_ASIDE_TEXT, '',
+    ...report.set_aside.map((t) => {
+      const poi = themePoi(t, report.pois);
+      return `- **${line(t.title)}**${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`;
+    }),
+    '', '</details>',
   ];
 }
 
@@ -366,7 +393,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
 }
 
 function methodsToMarkdown(m: ReportMethods): string[] {
-  const models = Object.entries(m.models).map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
+  const models = [...Object.entries(m.models), ...(m.check_model ? [['evidence check', m.check_model] as const] : [])].map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
   const blocked = m.blocked.map(
     (b) =>
       `- Blocked at step ${b.step_no}, persona ${b.persona_id} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,

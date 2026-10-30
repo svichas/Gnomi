@@ -6,6 +6,7 @@ import type { Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { EventPayloads, GnomiEvent, LlmRole, Persona, RunConfig, Segment } from '../types.ts';
 import { buildReport } from './build.ts';
+import { groupKey } from './friction.ts';
 import { reportToMarkdown } from './markdown.ts';
 import { JUDGE_POSTS, JUDGE_SYSTEM, runReportModels } from './models.ts';
 import { homogeneity } from './spread.ts';
@@ -148,6 +149,20 @@ test('first-hand personas had their own friction in the theme; second-hand ones 
   assert.deepEqual(home.second_hand, []);
   assert.deepEqual([...poi.first_hand].sort(), ['a1', 'b1']);
   assert.deepEqual(poi.second_hand, ['a2', 'b2', 'a3']);
+});
+
+test('a theme the check set aside leaves the per-theme list, but who met it is still first-hand for the POI', () => {
+  const { events, record } = socialRun();
+  record({ ...at(3, null), type: 'report.themes', payload: judged });
+  const keys = Object.fromEntries(frictionGroups(events, 'poi').map((g) => [g.id, groupKey(g.members[0])]));
+  record({ ...at(3, null), type: 'report.checks', payload: { poi_id: 'poi', checks: [{ theme_id: 'g2', verdict: 'environment', reason: 'The fixture has no jobs.' }], keys } });
+  const report = buildReport(events);
+  assert.deepEqual(report.set_aside?.map((t) => t.id), ['g2']);
+  const [poi] = report.spread!;
+  assert.deepEqual(poi.themes.map((t) => t.theme_id), ['g1']);
+  assert.deepEqual([...poi.first_hand].sort(), ['a1', 'b1']);
+  assert.deepEqual(poi.second_hand, ['a2', 'b2', 'a3']);
+  assert.ok(report.methods.limitations?.includes('The judge tagged unknown post or group ids (g9, nope); they were ignored.'), 'a tag on the set-aside theme is still a known id');
 });
 
 test("sentiment by round carries each persona's latest opinion forward; a theme counts only its own personas", () => {

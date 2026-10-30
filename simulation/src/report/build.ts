@@ -234,6 +234,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     const { role, provider, model } = call.payload;
     models[role] ??= routing?.[role] ?? { provider: provider as ProviderId, model };
   }
+  const checkCall = calls.find((e) => e.payload.purpose === 'report_check')?.payload;
 
   const end = events.findLast(
     (e): e is EventOf<'run.finished' | 'run.stopped'> => e.type === 'run.finished' || e.type === 'run.stopped',
@@ -280,6 +281,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     // A text-only navigator model gets no images (llm/gateway.ts), whatever the setting says.
     ...(webPois(pois).length && settings && (!settings.screenshots || !readsImages(settings.routing.navigator)) ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
     ...(discarded.length ? [`The run stopped in round ${discarded[0].round} before applying ${discarded.length} paid social answer${discarded.length === 1 ? '' : 's'}, so the feed and opinions miss ${discarded.length === 1 ? 'it' : 'them'}.`] : []),
+    ...(settings && [...analysis.themes, ...(analysis.set_aside ?? [])].some((t) => t.check) && !readsImages(settings.check_model ?? settings.routing.judge) ? ['The evidence check read text only, because its model takes no images, so it could not see what the pages looked like.'] : []),
   ];
 
   return {
@@ -296,10 +298,11 @@ export function buildReport(events: GnomiEvent[]): Report {
     steps: ofType(events, 'persona.step').length,
     frictions,
     themes: analysis.themes,
+    ...(analysis.set_aside ? { set_aside: analysis.set_aside } : {}),
     sentiment: competitors.size ? sentimentBySegment(ours, ctx) : analysis.sentiment,
     went_well: competitors.size ? wentWell(ours, ctx) : analysis.went_well,
     ...(comparisons.length ? { comparisons } : {}),
-    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
+    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name])), analysis.set_aside) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
@@ -315,6 +318,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       seed: audience?.seed ?? config.seed,
       roles,
       models,
+      ...(checkCall ? { check_model: { provider: checkCall.provider as ProviderId, model: checkCall.model } } : {}),
       // Runs before M2 ran one persona at a time and kept the cost budget at the top level.
       // shortcut: runs before M2 had no wall-clock budget; the default is shown so the field has a value
       budgets: {

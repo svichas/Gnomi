@@ -160,7 +160,7 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. Asked to map themes to defects, it maps none. */
+/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. Asked to map themes to defects, it maps none; asked to check themes, it calls each one product. */
 export const DEMO_JUDGE: Responder = (req) => {
   if (req.purpose === 'map_themes') {
     const { themes = [] } = requestJson(req) as { themes?: { id: string }[] };
@@ -174,6 +174,10 @@ export const DEMO_JUDGE: Responder = (req) => {
       criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, supported: true, reason })),
     };
     return { outcome: 'incomplete', reason, outcome_evidence: [], criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, assessment: 'unknown', basis: 'simulated_inference', summary: reason, evidence: [] })) };
+  }
+  if (req.purpose === 'report_check') {
+    const { themes = [] } = requestJson(req) as { themes?: { id: string }[] };
+    return { checks: themes.map((theme) => ({ theme_id: theme.id, verdict: 'product', reason: 'Scripted demo: no model reviewed this evidence.' })) };
   }
   const { groups = [], posts, likes } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[]; likes?: { id: string }[] };
   return {

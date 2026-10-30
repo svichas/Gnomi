@@ -320,7 +320,8 @@ test('a mapper names a provider and a model, runs with --evaluate only, and come
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 9);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 10);
+  assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,finding_check']).arms, ['baseline', 'finding_check']);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,text_only,fewer_rounds']).arms, ['baseline', 'text_only', 'fewer_rounds']);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'baseline,other']), /got other/);
@@ -385,6 +386,16 @@ test('a scripted evaluation of two replicates and two arms writes matched result
   assert.match(md, /Behavioural validity: NOT_RUN[\s\S]*primary_metrics[\s\S]*Mapped defect recall: n\/a \(NOT_RUN\)[\s\S]*Intervals: exploratory/);
   assert.match(md, /\| baseline \| 0 \| 0 \| 0 \|/);
   assert.match(md, /\| n\/a \(fewer than three pairs\) \| 2 \|/);
+});
+
+test('the finding_check arm runs the check on its own runs only', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline,finding_check', '--personas', '4', '--out', out]));
+  assert.equal(result.error, null);
+  const checks = (run: string) => (JSON.parse(readFileSync(join(out, run, 'events.json'), 'utf8')) as { type: string }[]).filter((e) => e.type === 'report.checks').length;
+  assert.deepEqual([checks('r1-baseline'), checks('r1-finding_check') > 0], [0, true]);
 });
 
 test('with a mapper, a scripted evaluation writes the model mapping, a short sample sheet and per-run scores', async (t) => {

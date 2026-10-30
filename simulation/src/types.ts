@@ -111,6 +111,8 @@ export interface RunSettings {
   rounds?: number; // R when social rounds are on, 1–10, default 5
   network_policy?: NetworkPolicy; // which follow graph (social/graph.ts); absent means 'legacy'
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
+  finding_check?: boolean; // review friction themes against their evidence before the author writes (report/models.ts); absent means off
+  check_model?: ModelChoice; // the model for that review, which may be another family; absent means the judge's route
 }
 
 // The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
@@ -438,6 +440,8 @@ export interface EventPayloads {
   'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
   // keys: each friction group's id → its grouping key when the judge ran, so a rebuild under changed grouping rules drops stale answers; absent in older logs
   'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[]; keys?: Record<string, string> }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
+  // keys: as in report.themes, when the check ran; a check older than the newest report.themes is not used
+  'report.checks': { poi_id: string; checks: ThemeCheck[]; keys: Record<string, string> }; // the evidence check's verdicts on friction themes
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
 }
@@ -474,6 +478,16 @@ export type JudgeLike = JudgeTheme;
 export interface JudgePostTag {
   post_id: string;
   group_ids: string[];
+}
+
+/** What a model's review of a theme's evidence points to: the product, the persona, the test setup, or nothing it can decide. */
+export type CheckVerdict = 'product' | 'agent_mistake' | 'environment' | 'unclear';
+
+/** The evidence check's answer on one theme (report/models.ts). */
+export interface ThemeCheck {
+  theme_id: string;
+  verdict: CheckVerdict;
+  reason: string;
 }
 
 export interface AuthorSuggestion {

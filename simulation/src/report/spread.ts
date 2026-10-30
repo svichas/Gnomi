@@ -69,7 +69,7 @@ function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<st
 }
 
 /** The opinion spread per POI with posts about it, and per theme the judge tagged posts with. */
-export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>): ReportSpread[] {
+export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>, setAside: ReportTheme[] = []): ReportSpread[] {
   const firstHandOf = (t: ReportTheme) => new Set(t.first_hand);
   const edges = influenceEdges(events).filter((e) => e.kind !== 'formed'); // a formed first opinion is not a shift
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
@@ -88,7 +88,9 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
     const own = themes.filter((t) => t.poi_id === poi_id);
     const about = opinions.filter((e) => e.payload.poi_id === poi_id);
     const poiEdges = edges.filter((e) => e.poi_id === poi_id);
-    const spread = statsOf(talk, new Set(own.flatMap((t) => [...firstHandOf(t)])), shown, poiEdges, sentimentByRound(about, rounds, null), ctx);
+    // A persona who met a theme the check set aside still met it first-hand, so its posts are not repeats.
+    const met = [...own, ...setAside.filter((t) => t.poi_id === poi_id)];
+    const spread = statsOf(talk, new Set(met.flatMap((t) => [...firstHandOf(t)])), shown, poiEdges, sentimentByRound(about, rounds, null), ctx);
     return {
       poi_id,
       name: names.get(poi_id) ?? poi_id,

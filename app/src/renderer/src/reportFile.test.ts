@@ -175,6 +175,30 @@ test('the share says who read about it first, trust shows its mix, and a competi
   assert.ok(html.includes('1 confirmed, 3 reported'));
 });
 
+test('with several POIs a set-aside theme names its POI, and a competitor\'s does not read as the team\'s own', async () => {
+  const report = fixture(1, 1);
+  report.pois.push({ id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  report.themes = [];
+  const aside = { id: 'g1', poi_id: 'rival', rank: 0, title: 'Aside', description: '', named_by: 'judge' as const, trust: 'reported' as const, severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'environment' as const, reason: 'Blocked.' } };
+  report.set_aside = [aside];
+  const theirs = await reportFile(report, 'html', thumbnails());
+  assert.ok(theirs.includes('1 persona, 1 report · Rival (competitor, observed only)'));
+  assert.ok(theirs.includes('No shared issues were reported in this run.'));
+  assert.ok(!theirs.includes('No shared issues are left.'));
+  report.set_aside = [{ ...aside, poi_id: 'poi-gym' }];
+  const ours = await reportFile(report, 'html', thumbnails());
+  assert.ok(ours.includes('1 persona, 1 report · Gym'));
+  assert.ok(ours.includes('No shared issues are left.'));
+});
+
+test('the methods name the model behind the evidence check', async () => {
+  const report = fixture(1, 1);
+  report.methods.models = { judge: { provider: 'deepseek', model: 'deepseek-v4-pro' } };
+  assert.ok(!(await reportFile(report, 'html', thumbnails())).includes('evidence check:'));
+  report.methods.check_model = { provider: 'openai', model: 'gpt-6.1-sol' };
+  assert.ok((await reportFile(report, 'html', thumbnails())).includes('evidence check: openai gpt-6.1-sol'));
+});
+
 test('comparison HTML leads with the scoped decision, compares every target and keeps valid denominators visible', async () => {
   const report = fixture(5, 1);
   report.comparison = comparisonFixture();
@@ -222,6 +246,19 @@ test('comparison text and evidence stay escaped, including target names, sources
   assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;'));
   assert.match(html, /Source: javascript:alert\(2\)/, 'the captured source is inert text');
   assert.doesNotMatch(html, /<[^>]+\b(?:src|href)="(?!data:|#)/);
+});
+
+test('themes the evidence check set aside fold into their own section, each with its reason, as a model\'s review', async () => {
+  const report = fixture(2, 1);
+  report.themes = [];
+  report.set_aside = [{ id: 'g1', poi_id: 'poi-gym', rank: 0, title: 'The <hiring manager> field', description: 'Rejected.', named_by: 'judge', trust: 'reported', severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'agent_mistake', reason: 'She typed her own name.' } }];
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Set aside by the evidence check (1)', 'The &lt;hiring manager&gt; field', 'The model’s review points to a persona&#x27;s mistake: She typed her own name.', 'A model reviewed the evidence behind these themes', 'No shared issues are left.']) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.doesNotMatch(html, /disprov/i);
+  assert.ok(!html.includes('1 report ·'), 'one POI needs no naming');
+  assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Set aside by the evidence check'));
 });
 
 test('the app comparison exposes transcript inspection while keeping the same decision and matrix as export', async () => {
