@@ -49,18 +49,24 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 | Item | Status | Verified | Left to do |
 |---|---|---|---|
 | 0. Results scoreboard | Steps 1–4 built, reviewer findings closed | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67. A person's corrections now change the numbers through `--rescore` | Step 5, the live baseline, which needs a spending decision |
-| 1. Noise cuts | Steps 1–3 built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6 | Step 4, the interference tag |
+| 1. Noise cuts | Built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6. The interference tag has unit tests on constructed logs only | The tag has never fired on a real run, because the Gym cannot show personas breaking each other's work |
 | 2. Finding check | Built, off by default | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision. No settings control in the app yet |
 | 3. Repeat-run reliability | Steps 1–6 built | Scripted tests, including a stopped set and the CLI path. `--evaluate` now reports stability per arm | Step 7, the trait-free run. Whether real findings repeat is unmeasured |
+| 6. Coverage and saturation | Built | Tests of curves, short runs, stopped runs, several POIs and old logs, and the report smoke test at 320 px | Its proof: the curve against known Gym defects across run sizes |
+| 7. Accessibility scan and perception limits | Built, off by default | On the real Gym with no model, the scan finds D10 and D24, and the control build has no violations at all. It does not find D06. `blurredVision` passed a pixel test on real text | Recall in the `accessibility` arm, and whether colour and low-vision personas notice D22 more. No settings control in the app yet |
+| 8. Which traits drive each issue | Built | Tests of each limit, and the report smoke test | Its proof: segment attribution on the Gym |
 | 10. Before/after comparison | Built | The M6 test passes on the real Gym with a scripted navigator: with D01, D14 and D16 switched off, exactly those three read as fixed. On the saved runs against the control build, all three themes read as fixed are real defects (D12, D13) | A live run. The 0.6 overlap for a duplicated run is unmeasured |
 | 15. Written summary | Built | Tests of ten report shapes, and the report smoke test | How it reads on real reports |
 | 16. Plain priority labels | Built | Tests of the rule, and the report smoke test | How the labels read on real reports |
 | 17. Drop-off flow | Built | Tests, plus the report smoke test at 320 px and in the HTML export | Usefulness on real logs is unmeasured |
 | 18. Findings on the screenshot | Built, for new runs | Real-browser tests put the box within 2 px of the element, on desktop, scrolled, on a phone, zoomed out and panned | Usefulness on real logs is unmeasured |
+| 20. Replay from step screenshots | Built | The report smoke test flips through steps by button and keyboard, at 320 px | Not tried with a real screen reader |
 | Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build, now marked as weak in comparisons |
 | Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
 
-Everything else has not started. All 1,138 tests pass on the branch, with typecheck and lint clean, and the Electron report and main smoke tests pass, though they do not reach the repeat count or the set-aside section. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
+Everything else has not started. All 1,214 tests pass on the branch, with typecheck and lint clean, and the Electron main, report, text and UI smoke tests pass. The report smoke test now reaches the set-aside section, the repeat count and "Appeared in 2 of 2 runs" on a real two-run set. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
+
+CI's smoke job runs the main smoke test, not the report one, so the 320 px checks in the report smoke test guard nothing there until it is added.
 
 ## What "better results" means
 
@@ -133,6 +139,8 @@ The persona's page text exists only inside the navigator's transcript, so the re
 
 Size: S. There is an immediate gain: pass the text to the author, as [tech.md §8.2](tech.md#82-pipeline) step 6 intended, so suggested changes can name the real page.
 
+These files hold page text as the page showed it. Key-pattern redaction happens in the model gateway, so it covers what is sent and not what is stored here. Anyone who copies a run folder copies that text.
+
 ### Block C: changes after a run has ended
 
 `rejudge` in [cli.ts](../engine/src/cli.ts) shows the pattern: append events to a finished run, rebuild with `buildReport`, rewrite the report files and record `report.generated` so an open app reloads. The app has no equivalent, because `Api` in [protocol.ts](../engine/src/protocol.ts) has no such method.
@@ -177,6 +185,8 @@ Size: S.
 **Proof.** Rebuilding the saved control report gives 4 themes, down from 6. The saved defect reports cannot show the precision gain, because their judge answers predate group keys and now name other groups, so their titles are unreliable. A fresh run has to confirm this.
 
 **Risk.** A real small-target problem is hidden unless a persona mentions it. The audit list covers only targets a persona tapped.
+
+**Built.** Step 4 tags a failed action as "possibly interference between personas" when its target has the name of something another persona changed on the same POI in the previous 60 seconds. It is a fold when the report is built, so a rebuild agrees. The window is frozen per run, so runs from before this have no tag. The tag removes nothing and does not change the rank. Names match whole, so a generic "Save" can match across pages, a renamed record cannot match, and a private draft counts as a change. Its precision is unmeasured.
 
 ### 2. Finding check
 
@@ -285,6 +295,8 @@ Keep the automatic stop off. With social rounds, personas run in shared slices, 
 
 **Proof.** Check the curve against known defects across run sizes on the Gym.
 
+**Built.** The curve shows as the first row of the methods section and in Markdown, per POI of the team's own. It counts friction themes only: objections are attitudes, and what the page scan found alone is no persona's. Under 10 personas it says the curve is too short to read. After a run that did not finish, a quiet last fifth is not read as saturation, because the last to start are the first cut off. A persona who reported a problem before the model stopped answering still counts. Thin pages are not capped, so a large exploratory run gives a long row. `gnomi report --format summary` carries neither coverage nor drivers: they are in the JSON, the Markdown and the app.
+
 ### 7. Accessibility scan and perception limits
 
 **Why.** Accessibility today is prompt text only: `ACCESSIBILITY` in [agent/prompt.ts](../simulation/src/agent/prompt.ts) asks the model to behave as if it had low vision. [tech.md](tech.md#24-known-weaknesses-of-llm-personas-and-what-the-evidence-says-works) concludes that fixes in code work and requests to the model are weak. Gym defects D06, D10 and D24 are the sort of thing a scanner should catch, which gives a direct recall test.
@@ -302,6 +314,27 @@ Keep the automatic stop off. With social rounds, personas run in shared slices, 
 
 **Risk.** `axe-core` is a new dependency, licensed MPL-2.0, so check how it combines with AGPL-3.0 and how it bundles in Electron. Test `page.evaluate` injection on pages with a strict content security policy. Stored screenshots will show the simulated vision, so label them in the inspector.
 
+**Built** behind `accessibility_checks`, off by default and set through settings JSON only, with an `accessibility` arm. With it off, a run behaves as before.
+
+The scan through the real page driver, on 12 Gym pages at desktop and phone widths, plus a failed job-form submit:
+
+| Build | Result |
+|---|---|
+| All defects | One serious `color-contrast` violation each on `/jobs/new` (D10), `/reviews/1` (D23) and `/settings/users` (D24). Nothing else, in any impact |
+| Control | No violations in any impact, on any page, so the scan adds no false theme |
+
+So the scan finds two of the three target defects. **It does not find D06**: those buttons contain the glyphs ✓ and ✕, which `axe-core` accepts as an accessible name. D23 was not a target, but it is a true finding. Its defect hints do not mention contrast, so the proxy score counts it against precision until a person maps it.
+
+- **Merging.** A scan's step is arbitrary, so the usual same-persona merge would confirm any complaint beside any violation. A scan confirms a complaint from any persona on the same page, and only when its words fit the rule's category. That word table is hand-written and recorded as assumed in [odd.md](odd.md).
+- **Counting.** A scan is about the page, not one persona. A theme the scan found alone is marked `scan_only`, with no persona count or share, and says it was found by the scan. The scan's persona adds nothing to first-hand counts, severity or trust weight.
+- **Page content.** Nothing from a scan reaches a model. Selectors are position paths, because `axe-core`'s normal selector can quote a short `value` attribute, including a password. Element HTML is never kept. Rule text comes from Node's own copy of `axe-core`, so a page cannot forge it.
+- **Vision.** `colour_blind` maps to `deuteranopia`, and `low_vision` to `blurredVision`, which passed on real text: edge contrast on 14 px text fell from 10.49 to 0.69. `motor` has no emulation. Screen-reader personas get no screenshots. The inspector labels simulated-vision screenshots, in its timeline and in the replay.
+- **Strict pages.** Injection worked under `default-src 'none'; script-src 'self'` and under Trusted Types. A page that blocks it fails the scan and nothing else, and a limitation counts the pages never scanned.
+- **Licence.** `axe-core`'s licence carries no "Incompatible With Secondary Licenses" notice, so MPL-2.0 §3.3 allows combining it with AGPL-3.0. That is a reading of the licence, not legal advice. The repo keeps no third-party notices file, and `axe-core`'s own licence files ship inside its package.
+- **Packaging.** The built host keeps the dynamic import, and a scripted rerun scanned inside it. `electron-builder` was not run, so a packaged build is inferred from how other dependencies reach it.
+
+Pages in iframes are not scanned, and scans per run have no cap. With `finding_check` on, a scan theme goes through the check like any other theme, which no real model has tried.
+
 ### 8. Which traits drive each issue
 
 **Why.** The report breaks a theme down by segment and a run by attribute, but not a theme by attribute. UXCascade shows which traits link to each failure, and this sharpens the segment attribution metric.
@@ -309,6 +342,8 @@ Keep the automatic stop off. With social rounds, personas run in shared slices, 
 **How.** Add a pure `themeDrivers` to [report/dimensions.ts](../simulation/src/report/dimensions.ts), called from `buildReport`. For each `report_dimension` attribute value, compare first-hand personas among those who reached the theme's pages with the rate for everyone else. Show a driver only when at least five personas hold that value. Say "more common among", never "caused by", and leave out p-values because connected personas are not independent ([new_simulation.md §9](new_simulation.md#9-scientific-evaluation-and-acceptance)). Start with single attributes and add pairs only if they prove useful.
 
 **Proof.** Segment attribution on the Gym, whose defects list their `affects` segments.
+
+**Built.** A finding shows at most two lines such as "More common among personas with region EMEA: 4 of 6 with it, against 1 of 9 others", in the app and in Markdown. A driver needs 5 holders, 2 with the theme and a gap of 0.25, all recorded as assumed in [odd.md](odd.md). Objections have no drivers, because only buyers are asked them and the report does not say who the buyers are. Competitors, set-aside themes and scan-only themes have none either. A persona the model stopped answering stays out of both sides of a rate, even if it met the theme.
 
 ### 9. Stop rule for stuck personas
 
@@ -349,6 +384,8 @@ Measured on the saved 16 October runs against the control build, with no model c
 - Keys on these rebuilt logs are unreliable, so treat this as a rough signal.
 
 Two limits remain. A theme on a page that exists only because of a defect, such as D03's 404, reads as `not_retested` once fixed, because nobody can reach that page. So a live M6 run with D03 among the three would not show exactly three. A new theme on a page the earlier run never reached still reads as new.
+
+Three smaller limits. `gnomi rerun` refuses while any run row says running. A rerun of one run from a repeat set gets the whole set's budget back, not that run's share. `gnomi estimate --base` ignores other flags.
 
 ### 11. CI gate
 
@@ -415,6 +452,10 @@ Add `finding.hidden` and `finding.edited` events through Block C, keyed by Block
 Versive and Maze sell session video. Gnomi already stores one screenshot per step, so a flipbook in [Inspector.tsx](../app/src/renderer/src/Inspector.tsx) gives most of the value with no new capture.
 
 Real video costs more than it looks. `recordVideo` needs Playwright's separate ffmpeg download (listed in `playwright-core/browsers.json`), while Gnomi prefers an installed Chrome with no download. It also writes one file per context, and social runs close and reopen the page between slices.
+
+**Built**, with no new capture and no dependency. It has Previous and Next buttons, a step counter, the step's action and page beside the image, and arrow keys when it has focus. Only the step on show and its two neighbours load. A step with no screenshot says so and keeps its place. There is no play button, and it always opens at step 1, even when the inspector was opened from a specific step.
+
+Building its smoke test turned up two real bugs, both fixed. A repeat set could stick on "2 of 2 runs finished so far", which real judge calls would have made more likely. And a screenshot's frame landed in the wrong place on long evidence.
 
 ## Later
 
