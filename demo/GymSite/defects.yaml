@@ -4,6 +4,7 @@
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new]
+  hints: [publishes, published instead, published immediately, went live, goes live]
   affects: [recruiter]
   visual_only: false
   toggle: D01
@@ -13,6 +14,7 @@
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new]
+  hints: [department, no error, not marked, required field]
   affects: [recruiter]
   visual_only: false
   toggle: D02
@@ -21,7 +23,8 @@
   poi: web        # web | text | design
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
-  pages: [dashboard, jobs, jobs/new, "jobs/:id", candidates, settings]
+  pages: [dashboard, job, jobs, jobs/new, "jobs/:id", candidates, settings]
+  hints: [404, page not found, jobs link, jobs navigation, broken link]
   affects: [recruiter]
   visual_only: false
   toggle: D03
@@ -31,6 +34,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new, settings/users]
+  hints: [hiring manager field, no user found, invite user, loses draft, lost draft, lost the draft, lost my draft]
   affects: [recruiter, admin]
   visual_only: false
   toggle: D04
@@ -40,6 +44,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: ["reviews/:id"]
+  hints: [below the resume, under the resume, past the resume, tall resume, long resume, narrow screen, below the fold]
   affects: [hiring_manager]
   visual_only: false
   toggle: D05
@@ -49,6 +54,7 @@
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
+  hints: [icon-only, icon only, unlabeled, unlabelled, accessible name, check and cross]
   affects: [hiring_manager]
   visual_only: false
   toggle: D06
@@ -58,6 +64,7 @@
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new, "jobs/:id"]
+  hints: [truncated, cut off, cut short, shortened, 200 characters]
   affects: [recruiter]
   visual_only: false
   toggle: D07
@@ -67,6 +74,7 @@
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/users]
+  hints: [already exists, already a user, duplicate, generic error, vague error, something went wrong]
   affects: [admin]
   visual_only: false
   toggle: D08
@@ -76,6 +84,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [candidates]
+  hints: [slow, loading, seconds, delay, long time]
   affects: [recruiter, hiring_manager]
   visual_only: false
   toggle: D09
@@ -85,6 +94,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [jobs/new]
+  hints: [contrast, light grey, light gray, faint, hard to read]
   affects: [recruiter]
   visual_only: true
   toggle: D10
@@ -94,6 +104,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [login, "reviews/:id"]
+  hints: [sign-in, sign in, signed in, log in, logged in, redirect]
   affects: [hiring_manager]
   visual_only: false
   toggle: D11
@@ -103,6 +114,7 @@
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings/approvals]
+  hints: [double negative, bypass, checkbox label, confusing checkbox]
   affects: [admin]
   visual_only: false
   toggle: D12
@@ -112,6 +124,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/users]
+  hints: [saves as recruiter, saved as recruiter, as a recruiter, wrong role, selected role, role saved, role is saved]
   affects: [admin]
   visual_only: false
   toggle: D13
@@ -121,6 +134,7 @@
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: ["reviews/:id"]
+  hints: [apostrophe, server error, error 500, feedback was lost, lost my feedback, lost the feedback]
   affects: [hiring_manager]
   visual_only: false
   toggle: D14
@@ -130,6 +144,7 @@
   type: performance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
+  hints: [slow, no progress, no spinner, delay, seconds, loading]
   affects: [hiring_manager]
   visual_only: false
   toggle: D15
@@ -139,6 +154,7 @@
   type: label        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings]
+  hints: [seats]
   affects: [admin]
   visual_only: false
   toggle: D16
@@ -148,6 +164,7 @@
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [dashboard]
+  hints: [live jobs figure, live jobs count, job count, jobs count, counts draft, includes draft, wrong count]
   affects: [recruiter]
   visual_only: false
   toggle: D17
@@ -157,6 +174,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [reviews]
+  hints: [wrong candidate, different candidate, wrong review, wrong person, wrong profile, next candidate]
   affects: [hiring_manager]
   visual_only: false
   toggle: D18
@@ -166,6 +184,7 @@
   type: error-handling        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [jobs/new]
+  hints: [employment type, description was lost, lost the description, lost its description, form cleared, cleared the form, re-enter, retype]
   affects: [recruiter]
   visual_only: false
   toggle: D19
@@ -175,6 +194,7 @@
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [reviews, dashboard]
+  hints: [still in the queue, still listed, still shows, already decided, already reviewed, not removed]
   affects: [hiring_manager]
   visual_only: false
   toggle: D20
@@ -184,6 +204,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs]
+  hints: [plus icon, plus button, plus sign, hover, create job button, no create]
   affects: [recruiter]
   visual_only: true
   toggle: D21
@@ -193,6 +214,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: low
   pages: [jobs]
+  hints: [coloured dot, colored dot, status dot, job status, status indicator]
   affects: [recruiter]
   visual_only: true
   toggle: D22
@@ -202,6 +224,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: ["reviews/:id"]
+  hints: [looks disabled, appears disabled, looks inactive, greyed out, grayed out]
   affects: [hiring_manager]
   visual_only: true
   toggle: D23
@@ -211,6 +234,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   pages: [settings/users]
+  hints: [contrast, pale blue, hard to read, hard to see, washed out]
   affects: [admin]
   visual_only: true
   toggle: D24
@@ -220,6 +244,7 @@
   type: visual        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [settings/approvals]
+  hints: [callout, covers the save, covered, overlap, obscured, hidden behind]
   affects: [admin]
   visual_only: true
   toggle: D25
@@ -231,6 +256,7 @@
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   frames: [checkout/4]
+  hints: [sign-in prompt, sign in, order confirmation, place order]
   affects: [shopper]
   visual_only: true
   toggle: D26
@@ -240,6 +266,7 @@
   type: affordance        # flow | label | affordance | error-handling | performance | visual | content
   severity: medium
   frames: [invite/2]
+  hints: [invite teammate, icon-only, icon only, abstract glyph, no label, no tooltip]
   affects: [team_admin]
   visual_only: true
   toggle: D27
@@ -249,6 +276,7 @@
   type: content        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [pricing]
+  hints: [single sign-on, sso, saml, business only, team plan]
   affects: [buyer]
   visual_only: false
   toggle: D28

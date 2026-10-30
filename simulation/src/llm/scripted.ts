@@ -160,8 +160,12 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
+/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. Asked to map themes to defects, it maps none. */
 export const DEMO_JUDGE: Responder = (req) => {
+  if (req.purpose === 'map_themes') {
+    const { themes = [] } = requestJson(req) as { themes?: { id: string }[] };
+    return { mappings: themes.map((theme) => ({ theme_id: theme.id, defect: null, reason: 'Scripted demo: no model mapped this theme.' })) };
+  }
   if (req.purpose === 'comparison_assessment' || req.purpose === 'comparison_verification') {
     const input = requestJson(req) as { criteria?: { id: string }[] };
     const reason = 'Scripted demo: no model assessed the comparison evidence. Run with a configured model to evaluate these criteria.';

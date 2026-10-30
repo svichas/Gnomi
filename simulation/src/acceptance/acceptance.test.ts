@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fixture, generic, germanProbe, gym, subset } from './fixture.ts';
-import { assess, createAllowance, defectScores, executionCriterion, observeAttempt, pairedDifference, parseOptions, t95, validateOptions } from './checks.ts';
+import { DEFECT_IDS } from '../../../demo/GymSite/server.ts';
+import { assess, createAllowance, defectScores, executionCriterion, mappingScores, observeAttempt, pairedDifference, parseOptions, t95, validateOptions, webDefects } from './checks.ts';
 import { runEvaluation } from './run.ts';
 import type { LlmAttempt } from '../seams.ts';
 import { profileBlock } from '../agent/prompt.ts';
@@ -126,21 +127,71 @@ test('the paired difference is the mean of per-replicate differences with a t in
   assert.deepEqual(pairedDifference([null], [3]), { n: 0, mean: null, lower: null, upper: null, note: 'no pairs' });
 });
 
-test('defect scores map themes to enabled web defects by the catalogue pages they reached; only confirmed or observed themes find one', () => {
-  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new]\n- id: D02\n  poi: web\n  pages: [dashboard, "jobs/:id"]\n- id: D03\n  poi: web\n  pages: [settings]\n- id: D28\n  poi: text\n  pages: [pricing]\n';
-  const theme = (rank: number, trust: ReportTheme['trust'], pages: string[]) => ({ rank, trust, pages }) as ReportTheme;
-  const themes = [theme(1, 'observed', ['localhost:1/jobs/new']), theme(2, 'reported', ['localhost:1/']), theme(3, 'confirmed', ['localhost:1/candidates'])];
-  assert.deepEqual(defectScores(themes, catalogue, ['D01', 'D02', 'D28']), { found: 1, defects: 2, recall: 0.5, matched: 2, top: 3, precision: 2 / 3 });
-  assert.deepEqual(defectScores([], catalogue, []), { found: 0, defects: 0, recall: null, matched: 0, top: 0, precision: null });
+const themeOf = (rank: number, trust: ReportTheme['trust'], pages: string[], title = 'Lost draft') => ({ rank, trust, pages, title, description: '', elements: [], evidence: [] }) as Partial<ReportTheme> as ReportTheme;
+
+test('defect scores map themes to enabled web defects by shared pages and hints; only confirmed or observed themes find one', () => {
+  const catalogue = '- id: D01\n  poi: web\n  severity: high\n  pages: [jobs/new]\n  hints: [lost draft]\n- id: D02\n  poi: web\n  severity: low\n  pages: [dashboard, "jobs/:id"]\n  hints: [lost draft, count]\n- id: D03\n  poi: web\n  severity: high\n  pages: [settings]\n  hints: [lost draft]\n- id: D28\n  poi: text\n  severity: high\n  pages: [pricing]\n  hints: [lost draft]\n';
+  const themes = [themeOf(1, 'observed', ['localhost:1/jobs/new']), themeOf(2, 'reported', ['localhost:1/']), themeOf(3, 'confirmed', ['localhost:1/candidates'])];
+  assert.deepEqual(defectScores(themes, catalogue, ['D01', 'D02', 'D28']), { found: 1, defects: 2, recall: 0.5, found_high: 1, defects_high: 1, recall_high: 1, matched: 2, top: 3, precision: 2 / 3 });
+  assert.deepEqual(defectScores([], catalogue, []), { found: 0, defects: 0, recall: null, found_high: 0, defects_high: 0, recall_high: null, matched: 0, top: 0, precision: null });
+});
+
+test('defect scores need a hint in the title, description, elements or evidence as well as a shared page', () => {
+  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new]\n  hints: [Save Draft]\n- id: D02\n  poi: web\n  pages: [jobs/new]\n';
+  const score = (extra: Partial<ReportTheme>) => defectScores([{ ...themeOf(1, 'observed', ['h/jobs/new'], 'A problem'), ...extra }], catalogue, ['D01', 'D02']).found;
+  assert.equal(score({}), 0, 'the page alone pairs nothing, and a defect with no hints never pairs');
+  assert.equal(score({ title: 'The save draft button' }), 1);
+  assert.equal(score({ description: 'Pressed SAVE DRAFT' }), 1);
+  assert.equal(score({ elements: ['button "Save draft"'] }), 1);
+  assert.equal(score({ evidence: [{ what: 'save draft did nothing', quote: '' }] as ReportTheme['evidence'] }), 1);
+  assert.equal(score({ evidence: [{ what: '', quote: 'I pressed save draft' }] as ReportTheme['evidence'] }), 1);
+  assert.equal(defectScores([themeOf(1, 'observed', ['h/settings'], 'save draft')], catalogue, ['D01']).found, 0, 'a hint on another page pairs nothing');
 });
 
 test('defect scores assign themes and defects one-to-one, so one theme on a shared page credits one defect', () => {
-  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new, jobs]\n- id: D04\n  poi: web\n  pages: [jobs/new]\n';
-  const theme = (rank: number, pages: string[]) => ({ rank, trust: 'observed', pages }) as ReportTheme;
-  assert.deepEqual(defectScores([theme(1, ['h/jobs/new'])], catalogue, ['D01', 'D04']), { found: 1, defects: 2, recall: 0.5, matched: 1, top: 1, precision: 1 });
+  const catalogue = '- id: D01\n  poi: web\n  pages: [jobs/new, jobs]\n  hints: [lost draft]\n- id: D04\n  poi: web\n  pages: [jobs/new]\n  hints: [lost draft]\n';
+  const theme = (rank: number, pages: string[]) => themeOf(rank, 'observed', pages);
+  assert.deepEqual(defectScores([theme(1, ['h/jobs/new'])], catalogue, ['D01', 'D04']), { found: 1, defects: 2, recall: 0.5, found_high: 0, defects_high: 0, recall_high: null, matched: 1, top: 1, precision: 1 });
   // The first theme takes D01, then gives it up for D04 so the second theme, which reaches only D01, is matched too.
   assert.equal(defectScores([theme(1, ['h/jobs/new']), theme(2, ['h/jobs'])], catalogue, ['D01', 'D04']).found, 2);
   assert.equal(defectScores([theme(1, ['h/jobs']), theme(2, ['h/jobs'])], catalogue, ['D01', 'D04']).precision, 0.5);
+});
+
+test('the Gym catalogue gives every web defect hints, and ten are high severity', () => {
+  const defects = webDefects(readFileSync(new URL('../../../demo/GymSite/defects.yaml', import.meta.url), 'utf8'), DEFECT_IDS);
+  assert.equal(defects.length, 25);
+  assert.equal(defects.filter((defect) => defect.high).length, 10);
+  for (const defect of defects) assert.ok(defect.hints.length && defect.hints.every((hint) => hint.length >= 3), defect.id);
+});
+
+test('mapping scores give each run high-severity recall and top-theme precision, and leave control runs out', () => {
+  const catalogue = '- id: D01\n  poi: web\n  severity: high\n  pages: [jobs]\n- id: D02\n  poi: web\n  severity: high\n  pages: [jobs]\n- id: D03\n  poi: web\n  severity: low\n  pages: [jobs]\n- id: D28\n  poi: text\n  severity: high\n  pages: [pricing]\n';
+  const item = (run: string, rank: number, trust: string, defect: string | null) => ({ run, rank, trust, defect });
+  const scores = mappingScores([
+    item('a', 1, 'confirmed', 'D01'), item('a', 2, 'observed', 'D01'), item('a', 3, 'reported', 'D02'), item('a', 4, 'observed', 'D03'), item('a', 5, 'observed', null), item('a', 6, 'observed', 'D99'), item('a', 7, 'observed', 'D28'),
+    item('a', 21, 'observed', 'D02'),
+    item('b', 1, 'reported', null),
+    item('control', 1, 'confirmed', 'D01'), item('r1-baseline-control', 1, 'confirmed', 'D01'),
+  ], catalogue, ['D01', 'D02', 'D03', 'D28']);
+  assert.deepEqual(Object.keys(scores), ['a', 'b']);
+  // D01 twice, a reported D02 that finds nothing and a low D03 are true positives; null, an unknown id and a defect that is not web are not. D02 is found at rank 21, below the precision cut.
+  assert.deepEqual(scores.a, { found: ['D01', 'D02'], defects_high: 2, recall_high: 1, matched: 4, top: 7, precision: 4 / 7 });
+  assert.deepEqual(scores.b, { found: [], defects_high: 2, recall_high: 0, matched: 0, top: 1, precision: 0 });
+  assert.deepEqual(mappingScores([], catalogue, []), {});
+});
+
+test('a mapper names a provider and a model, runs with --evaluate only, and comes from another provider than the navigator', () => {
+  assert.deepEqual(parseOptions(['--evaluate', '--mapper', 'deepseek:deepseek-v4-pro']).mapper, { provider: 'deepseek', model: 'deepseek-v4-pro' });
+  assert.deepEqual(parseOptions(['--evaluate', '--provider', 'deepseek', '--mapper', 'anthropic:claude:with-colon']).mapper, { provider: 'anthropic', model: 'claude:with-colon' });
+  assert.equal(parseOptions(['--evaluate']).mapper, undefined);
+  assert.throws(() => parseOptions(['--evaluate', '--mapper', 'anthropic:claude-sonnet-5-5']), /navigator/);
+  assert.throws(() => parseOptions(['--evaluate', '--provider', 'deepseek', '--mapper', 'deepseek:deepseek-v4-pro']), /navigator/);
+  for (const value of ['deepseek', 'deepseek:', ':model', 'other:model', 'constructor:model']) assert.throws(() => parseOptions(['--evaluate', '--mapper', value]), /provider:model/, value);
+  assert.throws(() => parseOptions(['--m3', '--mapper', 'deepseek:deepseek-v4-pro']), /--evaluate/);
+  const live = parseOptions(['--evaluate', '--live', '--allowance-usd', '1', '--mapper', 'deepseek:deepseek-v4-pro']);
+  assert.doesNotThrow(() => validateOptions(live, { ANTHROPIC_API_KEY: 'fixture-key', DEEPSEEK_API_KEY: 'fixture-key' }));
+  assert.throws(() => validateOptions(live, { ANTHROPIC_API_KEY: 'fixture-key' }), /DEEPSEEK_API_KEY/);
+  assert.throws(() => validateOptions({ ...live, mapper: { provider: 'deepseek', model: 'no-such-model' } }, { ANTHROPIC_API_KEY: 'fixture-key', DEEPSEEK_API_KEY: 'fixture-key' }), /no price/);
 });
 
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
@@ -181,7 +232,7 @@ test('a scripted evaluation of two replicates and two arms writes matched result
   assert.equal(result.error, null);
   assert.equal(result.status, 'NOT_RUN');
   assert.deepEqual(result.labels, { behavioural_validity: 'NOT_RUN', efficiency: 'NOT_RUN' });
-  assert.deepEqual([result.defect_metrics.recall, result.defect_metrics.precision, result.defect_metrics.status], [null, null, 'NOT_RUN']);
+  assert.deepEqual([result.defect_metrics.runs, result.defect_metrics.status], [null, 'NOT_RUN']);
   assert.ok(result.missing_benchmark.includes('human_reference_dataset'));
   assert.equal(result.recorded_cost_usd, 0);
   assert.deepEqual(result.replicates.map((r) => [r.seed - result.replicates[0].seed, [...r.order].sort()]), [[0, ['baseline', 'chronological_feed']], [1, ['baseline', 'chronological_feed']]]);
@@ -191,13 +242,42 @@ test('a scripted evaluation of two replicates and two arms writes matched result
   assert.equal(outcomes.personas, 4);
   assert.equal(outcomes.segments.reduce((sum, s) => sum + s.personas, 0), 4);
   assert.equal(outcomes.defect_proxy.defects, 25);
+  assert.deepEqual([outcomes.recall_high, outcomes.precision], [0, 0], 'scripted themes carry no hint');
+  assert.equal(outcomes.control_themes, 0, 'scripted frictions have no trusted signal on the control build');
+  assert.deepEqual(result.replicates[1].arms.chronological_feed!.control, { run_status: 'finished', evidence: 'r2-chronological_feed-control' });
   assert.equal(typeof outcomes.segment_modularity, 'number');
   assert.equal(result.means.baseline.completion_rate.n, 2);
+  assert.equal(result.means.baseline.control_themes.n, 2);
   assert.deepEqual(Object.keys(result.differences), ['chronological_feed']);
   assert.equal(result.differences.chronological_feed.llm_calls.n, 2);
-  assert.deepEqual(readdirSync(out).sort(), ['defects.yaml', 'fixture.json', 'manifest.json', 'price-table.ts', 'r1-baseline', 'r1-chronological_feed', 'r2-baseline', 'r2-chronological_feed', 'results.json', 'results.md']);
-  assert.equal(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).suite, 'evaluate');
+  assert.equal(result.differences.chronological_feed.control_themes.n, 2);
+  assert.deepEqual(readdirSync(out).sort(), ['defects.yaml', 'fixture.json', 'manifest.json', 'price-table.ts', 'r1-baseline', 'r1-baseline-control', 'r1-chronological_feed', 'r1-chronological_feed-control', 'r2-baseline', 'r2-baseline-control', 'r2-chronological_feed', 'r2-chronological_feed-control', 'results.json', 'results.md']);
+  const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.suite, 'evaluate');
+  assert.deepEqual(manifest.gym.control, []);
+  const control = JSON.parse(readFileSync(join(out, 'r1-baseline-control', 'report.json'), 'utf8'));
+  assert.equal(control.status, 'finished');
+  assert.equal(JSON.parse(readFileSync(join(out, 'r1-baseline-control', 'events.json'), 'utf8')).find((e: { type: string }) => e.type === 'run.started').payload.config.seed, result.replicates[0].seed, 'the control run keeps the seed');
   const md = readFileSync(join(out, 'results.md'), 'utf8');
-  assert.match(md, /Behavioural validity: NOT_RUN[\s\S]*primary_metrics[\s\S]*Defect recall: n\/a \(NOT_RUN\)[\s\S]*Intervals: exploratory/);
+  assert.match(md, /Behavioural validity: NOT_RUN[\s\S]*primary_metrics[\s\S]*Mapped defect recall: n\/a \(NOT_RUN\)[\s\S]*Intervals: exploratory/);
+  assert.match(md, /\| baseline \| 0 \| 0 \| 0 \|/);
   assert.match(md, /\| n\/a \(fewer than three pairs\) \| 2 \|/);
+});
+
+test('with a mapper, a scripted evaluation writes the model mapping, a short sample sheet and per-run scores', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline', '--personas', '4', '--mapper', 'deepseek:deepseek-v4-pro', '--out', out]));
+  assert.equal(result.error, null);
+  const sheet = JSON.parse(readFileSync(join(out, 'theme-mapping.json'), 'utf8'));
+  assert.deepEqual([sheet.status, sheet.catalogue, sheet.mapper], ['MAPPED_BY_MODEL', 'defects.yaml', { provider: 'deepseek', model: 'deepseek-v4-pro' }]);
+  assert.ok(sheet.items.length > 0 && sheet.items.every((item: { run: string; defect: null; notes: string }) => item.run === 'r1-baseline' && item.defect === null && /no model/.test(item.notes)), 'control runs are not mapped');
+  assert.deepEqual(result.defect_metrics.status, 'MAPPED_BY_MODEL');
+  assert.deepEqual(Object.keys(result.defect_metrics.runs!), ['r1-baseline']);
+  assert.equal(result.defect_metrics.runs!['r1-baseline'].recall_high, 0);
+  const attempts = readFileSync(join(out, 'attempts.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(attempts.map((a) => [a.payload.role, a.payload.purpose]), [['judge', 'map_themes']]);
+  assert.match(readFileSync(join(out, 'theme-mapping.md'), 'utf8'), /# Theme mapping sample[\s\S]*Mapped to no defect\. Scripted demo/);
+  assert.match(readFileSync(join(out, 'results.md'), 'utf8'), /\| r1-baseline \| 0 \| 0 \|/);
 });

@@ -390,6 +390,7 @@ Quality metrics (measured on the Gym, every release):
   type: flow        # flow | label | affordance | error-handling | performance | visual | content
   severity: high
   pages: [jobs/new, settings/users]
+  hints: [hiring manager field, invite user, lost the draft]   # words that identify the element or symptom
   affects: [recruiter, admin]
   visual_only: false
   toggle: FLAG_D07
