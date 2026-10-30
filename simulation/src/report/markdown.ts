@@ -381,6 +381,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
+    ...(m.undersized_targets ? [`- Undersized tap targets (an audit, not findings): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

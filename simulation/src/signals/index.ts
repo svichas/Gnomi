@@ -4,7 +4,7 @@ import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../typ
 // Objective friction signals (tech.md §8.1): pure rules over one persona's steps. The agent loop runs them right after each
 // step and writes what they find to the log, so a report cites what was detected under the run's frozen thresholds.
 
-export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 40 };
+export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 24 };
 
 export type Step = Pick<EventPayloads['persona.step'], 'step_no' | 'action' | 'target' | 'result' | 'snapshot_hash'>;
 type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target';

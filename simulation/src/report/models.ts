@@ -3,7 +3,7 @@ import type { LlmGateway, Recorder } from '../seams.ts';
 import type { AuthorSuggestion, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, RunConfig } from '../types.ts';
 import { english, ENGLISH } from '../llm/english.ts';
 import { buildReport } from './build.ts';
-import { groupKey, likeGroups } from './friction.ts';
+import { groupKey, isWeak, likeGroups } from './friction.ts';
 import { authorThemes, frictionGroups, judgeInput, postsAbout, TEXT_MAX } from './themes.ts';
 
 // Steps 4 and 7 of the report pipeline (tech.md §8.2): the judge merges and names friction groups, the author suggests
@@ -90,7 +90,7 @@ export async function runReportModels({ config, round, llm, record, events }: Re
   const log = events(); // the judge's input only; each POI's author call reads the log again, with that POI's themes
   const all = frictionGroups(log, project.pois[0]?.id ?? '');
   const allLikes = likeGroups(log);
-  const pois = [...new Set([...all.map((g) => g.poi_id), ...allLikes.map((g) => g.poi_id)])];
+  const pois = [...new Set([...all.filter((g) => !isWeak(g)).map((g) => g.poi_id), ...allLikes.map((g) => g.poi_id)])];
   record({ ...base, poi_id: null, type: 'report.started', payload: { pois } });
   await Promise.all(pois.map(async (poi_id) => {
     const { groups, posts, likes } = judgeInput(all.filter((g) => g.poi_id === poi_id), postsAbout(log, poi_id), undefined, undefined, allLikes.filter((g) => g.poi_id === poi_id));

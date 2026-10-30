@@ -181,12 +181,12 @@ test('validation_error: copy a click revealed along with new fields is not an er
   assert.equal(validationError(next, WIZARD, `${WIZARD}\n- generic [ref=e20]: Title is required`)?.payload.message, 'Title is required', 'no new field: wording still counts');
 });
 
-test('small_target: a mobile tap on an element under 40×40 CSS px; desktop taps and large targets never', () => {
+test('small_target: a mobile tap on an element under 24 CSS px either way; desktop taps and large targets never', () => {
   const tap = (box: [number, number, number, number] | null) => step(1, 'click', A, B, { target: { role: 'link', name: 'Jobs', box } });
   assert.deepEqual(smallTarget(tap([10, 20, 35, 23]), 'mobile', T), { type: 'signal.small_target', payload: { step_no: 1, url: A, ref: 'e1', box: [10, 20, 35, 23] } });
-  assert.equal(smallTarget(tap([10, 20, 120, 39]), 'mobile', T)?.type, 'signal.small_target', 'too short');
+  assert.equal(smallTarget(tap([10, 20, 120, 23]), 'mobile', T)?.type, 'signal.small_target', 'too short');
   assert.equal(smallTarget(tap([10, 20, 35, 23]), 'desktop', T), null);
-  assert.equal(smallTarget(tap([10, 20, 40, 40]), 'mobile', T), null);
+  assert.equal(smallTarget(tap([10, 20, 24, 24]), 'mobile', T), null);
   assert.equal(smallTarget(tap(null), 'mobile', T), null);
   assert.equal(smallTarget(tap([0, 0, 0, 0]), 'mobile', T), null, 'not laid out');
   assert.equal(smallTarget(step(1, 'type', A, A, { target: { role: 'textbox', name: 'Title', box: [0, 0, 30, 20] } }), 'mobile', T), null, 'typing is not a tap');

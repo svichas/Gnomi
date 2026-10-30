@@ -384,6 +384,41 @@ test('the methods appendix counts blocked requests per host, most first, ties A 
   ]);
 });
 
+const tapAt = (persona_id: string, step_no: number, name: string, box: [number, number, number, number]): Script => [
+  [1100, { ...who(persona_id), type: 'persona.step', payload: { ...stepPayload(step_no, 'A tap.', null), target: { role: 'link', name, box } } }],
+  [1101, { ...who(persona_id), type: 'signal.small_target', payload: { step_no, url: `${url}?token=s3cret`, ref: 'e1', box } }],
+];
+
+test('undersized targets are an audit in the methods, not findings: no theme and no friction rate', () => {
+  const report = buildReport(stored([
+    startedAt,
+    ...tapAt('p-001', 1, 'Terms', [0, 0, 18.4, 12.2]),
+    ...tapAt('p-001', 2, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-001', 3, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-002', 1, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-002', 2, ' ', [0, 0, 16, 16]),
+    [1900, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.methods.undersized_targets, [
+    { page: 'localhost:3001/jobs/new', element: 'link "Jobs"', width: 208, height: 21, personas: 2 },
+    { page: 'localhost:3001/jobs/new', element: 'link "Terms"', width: 18, height: 12, personas: 1 },
+    { page: 'localhost:3001/jobs/new', element: null, width: 16, height: 16, personas: 1 },
+  ]);
+  assert.deepEqual(report.themes, []);
+  assert.equal(report.weighted.with_friction, 0, 'nobody ran into friction');
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('- Undersized tap targets (an audit, not findings): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
+  assert.ok(!md.includes('s3cret') && !md.includes('Small tap targets'));
+});
+
+test('an older log keeps its frozen threshold, and a log without the signal builds without the audit', () => {
+  const frozen = { ...config, signals: { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 40 } };
+  const report = buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: frozen } }], ...tapAt('p-001', 1, 'Jobs', [0, 0, 120, 39])]));
+  assert.deepEqual(report.methods.undersized_targets?.map((t) => [t.width, t.height]), [[120, 39]], 'detected under 40, so listed under 40');
+  assert.equal(report.methods.signal_thresholds?.small_target_px, 40);
+  assert.ok(!('undersized_targets' in buildReport(stored(finishedRun())).methods));
+});
+
 test('allowed hosts start with the start page host and drop duplicates', () => {
   const withHosts: RunConfig = {
     ...config,

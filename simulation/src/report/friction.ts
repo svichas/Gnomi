@@ -11,6 +11,8 @@ export const SIGNAL_KINDS: SignalKind[] = ['failed_action', 'loop', 'backtrack',
 export const SIGNAL_SEVERITY: Record<SignalKind, number> = { failed_action: 2, loop: 2, backtrack: 1, error: 2, validation_error: 2, small_target: 2 };
 // Only a product failure corroborates a self-report: a loop, backtrack or small target is often the persona, a console line the page's noise.
 const CORROBORATES = new Set<SignalKind>(['failed_action', 'validation_error', 'error']);
+// Often the persona rather than the product, so alone they start no theme (tech.md §8.1); the log keeps them.
+const WEAK = new Set<CandidateKind>(['small_target', 'backtrack']);
 const ABANDON_SEVERITY = 3; // the persona gave up
 const SURVEY_SEVERITY = 2; // surveys before structured items asked for frictions, not their severity
 
@@ -54,6 +56,9 @@ export interface Group {
   kind: CandidateKind;
   members: Candidate[];
 }
+
+/** Only weak signals: no self-report, survey answer or other signal. Judged by every member, since a group's kind is its first member's. */
+export const isWeak = (group: Group) => group.members.every((m) => WEAK.has(m.kind));
 
 // Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
 const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;

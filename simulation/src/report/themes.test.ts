@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { analyseFrictions, applyJudge, applySuggestions, frictionGroups, judgeGroups, judgeInput, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -340,6 +340,78 @@ test('after a rejudge, suggestions older than the newest judge answer are not us
   const rejudged = analyseFrictions([...run, answer(99), suggested, answer(101)], ctx);
   assert.equal(rejudged.themes[0].suggestion, null);
   assert.ok(rejudged.limitations.includes('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).'));
+});
+
+const tiny = (step_no: number) => ({ step_no, url: JOBS, ref: 'e1', box: [0, 0, 208, 21] });
+const onLink = (step_no: number, name: string) => ({ ...step(step_no), target: { role: 'link', name, box: null } });
+// g1 and g3 are weak signals alone; g2 and g4 are self-reports.
+const mixed = log(
+  ['persona.step', 'a1', onLink(1, 'Tiny')],
+  ['signal.small_target', 'a1', tiny(1)],
+  ['persona.step', 'a1', onLink(2, 'Home')],
+  ['persona.friction_reported', 'a1', friction(2, 3, 'Home is empty')],
+  ['persona.step', 'a1', onLink(3, 'Back')],
+  ['signal.backtrack', 'a1', { step_no: 3, url: JOBS, ref: null, kind: 'revisit' }],
+  ['persona.step', 'a1', onLink(4, 'Next')],
+  ['persona.friction_reported', 'a1', friction(4, 2, 'Next is broken')],
+);
+
+test('weak signals alone make no theme and no note, and stay in the groups so ids hold', () => {
+  const weak = mixed.filter((e) => e.type !== 'persona.friction_reported');
+  const { themes, limitations } = analyseFrictions(weak, ctx);
+  assert.deepEqual(themes, []);
+  assert.deepEqual(limitations, ['No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".'], 'nothing about a judge that had nothing to name');
+  assert.deepEqual(frictionGroups(weak, 'poi').map((g) => [g.id, g.kind]), [['g1', 'small_target'], ['g2', 'backtrack']]);
+  assert.deepEqual(frictionGroups(mixed, 'poi').map((g) => g.id), ['g1', 'g2', 'g3', 'g4'], 'not renumbered around the weak ones');
+});
+
+test('a self-report or another signal on the same element keeps a weak signal in its theme, as before', () => {
+  const reported = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.small_target', 'a1', tiny(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+  );
+  const [theme] = analyseFrictions(reported, ctx).themes;
+  assert.deepEqual([theme.id, theme.frictions, theme.trust, theme.trust_counts], ['g1', 2, 'observed', { confirmed: 0, observed: 1, reported: 1 }]);
+  const failed = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.small_target', 'a1', tiny(1)],
+    ['signal.failed_action', 'a1', { step_no: 1, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' }],
+  );
+  assert.deepEqual(analyseFrictions(failed, ctx).themes.map((t) => [t.id, t.frictions]), [['g1', 2]]);
+});
+
+test('saved answers naming weak groups stay valid: their ids are known, and only themes with something else in them remain', () => {
+  const groups = groupCandidates(buildCandidates(mixed, 'poi'));
+  const keys = Object.fromEntries(groups.map((g) => [g.id, groupKey(g.members[0])]));
+  const post = log(['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'So tiny!', about_poi_id: 'poi' }]).map((e) => ({ ...e, seq: 50 }));
+  const answer = (themes: JudgeTheme[]) => ({ ...mixed[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes, posts: [{ post_id: 'p1', group_ids: ['g1'] }], keys } }) as GnomiEvent;
+  const suggest = (...ids: string[]) => ({ ...mixed[0], seq: 100, persona_id: null, type: 'report.suggestions', payload: { poi_id: 'poi', suggestions: ids.map((theme_id) => ({ theme_id, change: `Fix ${theme_id}.`, solution: 's' })) } }) as GnomiEvent;
+  const named = (title: string, ...group_ids: string[]) => ({ title, description: 'd', group_ids });
+  const noise = (limitations: string[]) => limitations.filter((l) => /unknown|did not fit|no longer match/.test(l));
+
+  const kept = analyseFrictions([...mixed, ...post, answer([named('Tiny link', 'g1'), named('Empty home', 'g2'), named('Next and back', 'g3', 'g4')]), suggest('g1', 'g2', 'g3+g4')], ctx);
+  assert.deepEqual(kept.themes.map((t) => [t.id, t.title, t.named_by, t.suggestion?.change]), [
+    ['g2', 'Empty home', 'judge', 'Fix g2.'],
+    ['g3+g4', 'Next and back', 'judge', 'Fix g3+g4.'],
+  ]);
+  assert.deepEqual(noise(kept.limitations), []);
+  const merged = analyseFrictions([...mixed, ...post, answer([named('Tiny and back', 'g1', 'g3')]), suggest('g1+g3')], ctx);
+  assert.deepEqual(merged.themes.map((t) => t.id), ['g2', 'g4'], 'a merge of weak groups is weak too');
+  assert.deepEqual(noise(merged.limitations), []);
+});
+
+test('the judge is not sent weak groups, and they never count as not fitting its input', () => {
+  assert.deepEqual(judgeInput(frictionGroups(mixed, 'poi'), []).groups.map((g) => g.id), ['g2', 'g4']);
+  assert.deepEqual(judgeGroups(frictionGroups(mixed.filter((e) => e.type !== 'persona.friction_reported'), 'poi')), []);
+  const answered = (events: GnomiEvent[]) => [...events, { ...events[0], seq: 9_999, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [] } } as GnomiEvent];
+  const unfit = (events: GnomiEvent[]) => analyseFrictions(answered(events), ctx).limitations.filter((l) => l.includes("did not fit the judge's input"));
+  assert.deepEqual(unfit(mixed), []);
+  const many = Array.from({ length: 500 }, (_, i): [EventType, string, object] => ['persona.friction_reported', 'a1', { ...friction(1, 2, `Problem ${i} `.repeat(30)), where: { url: `http://gym.test/p${i}`, ref: null } }]);
+  const crowded = log(...many, ['signal.small_target', 'a1', tiny(1)]);
+  const sent = judgeInput(frictionGroups(crowded, 'poi'), []).groups.length;
+  assert.ok(sent < 500);
+  assert.deepEqual(unfit(crowded), [`${500 - sent} friction groups did not fit the judge's input and stayed as their own themes.`], 'the 501st group is weak, so it is not one of them');
 });
 
 test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {

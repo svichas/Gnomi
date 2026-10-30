@@ -51,6 +51,40 @@ async function analyse(responders: Partial<Record<LlmRole, Responder>>, extra: N
   return { events, requests, types: events.slice(4 + extra.length).map((e) => e.type), report: buildReport(events) };
 }
 
+const tinyTap = { step_no: 2, url: JOBS, ref: 'e1', box: [0, 0, 208, 21] as [number, number, number, number] };
+
+test('the judge is not sent weak signals, group ids stay as they are and no note says they did not fit', async () => {
+  const { requests, events, report } = await analyse({ judge: () => judged, author: () => suggested }, [{ ...who, type: 'signal.small_target', payload: tinyTap }]);
+  assert.deepEqual(JSON.parse(requests[0].user).groups.map((g: { id: string }) => g.id), ['g1', 'g2']);
+  const answer = events.find((e) => e.type === 'report.themes');
+  assert.deepEqual(Object.keys(answer?.type === 'report.themes' ? answer.payload.keys ?? {} : {}), ['g1', 'g2', 'g3'], 'the answer still keys every group');
+  assert.deepEqual(report.themes?.map((t) => t.id), ['g1', 'g2']);
+  assert.ok(!report.methods.limitations?.some((l) => l.includes('did not fit')));
+  assert.equal(report.methods.undersized_targets?.length, 1);
+});
+
+test('a POI with only weak signals costs no judge or author call, and the report says nothing about them', async () => {
+  const events: GnomiEvent[] = [];
+  const record: Recorder = (event: NewEvent) => {
+    const stored = { ...event, seq: events.length + 1, ts: events.length } as GnomiEvent;
+    events.push(stored);
+    return stored;
+  };
+  record({ ...who, persona_id: null, poi_id: null, type: 'run.started', payload: { config } });
+  record({ ...who, type: 'persona.created', payload: { persona: BUILTIN_PERSONA } });
+  record({ ...who, type: 'signal.small_target', payload: tinyTap });
+  let calls = 0;
+  const count = () => {
+    calls += 1;
+    return judged;
+  };
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: count, author: count }, record), record, events: () => events });
+  assert.equal(calls, 0);
+  const report = buildReport(events);
+  assert.deepEqual([report.themes, report.methods.limitations], [[], []]);
+  assert.equal(report.methods.undersized_targets?.length, 1);
+});
+
 const FEW = 'Only 1 persona tried Gym, so every share has a wide range and the order of the problems is rough.';
 const judged = { themes: [{ title: 'Saving a job fails', description: 'Save does nothing.', group_ids: ['g1'] }] };
 const suggested = { suggestions: [{ theme_id: 'g1', change: 'Make Save save the job.', solution: 'Submit the form and show the saved job.' }] };

@@ -195,6 +195,7 @@ export interface ReportMethods {
   reset: { url: string; status: number | null; error: string | null } | null;
   concurrency_changes: { concurrency: number; reason: string }[];
   signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
+  undersized_targets?: { page: string; element: string | null; width: number; height: number; personas: number }[]; // an audit, not findings: small_target signals by page, element and size, most personas first; only in runs with one
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }
