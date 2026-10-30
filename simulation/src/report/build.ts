@@ -262,6 +262,19 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Each web POI's start page host comes first and is always allowed. One that does not parse adds none, so it cannot hide the rest of the report.
   const hosts = webPois(pois).flatMap((poi) => [URL.parse(poi.start_url)?.hostname ?? '', ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
+  const perTarget = new Map<string, Set<string>>();
+  for (const e of ofType(events, 'signal.small_target')) {
+    const { page, element } = atStep(e, e.payload.step_no, e.payload.url);
+    const [, , width, height] = e.payload.box.map(Math.round);
+    const key = JSON.stringify([page, element, width, height]);
+    perTarget.set(key, (perTarget.get(key) ?? new Set()).add(e.persona_id ?? ''));
+  }
+  const undersized_targets = [...perTarget]
+    .sort(([a, m], [b, n]) => n.size - m.size || (a < b ? -1 : 1))
+    .map(([key, ids]) => {
+      const [page, element, width, height] = JSON.parse(key) as [string, string | null, number, number];
+      return { page, element, width, height, personas: ids.size };
+    });
   const discarded = ofType(events, 'social.discarded');
   const runNotes = [
     // A text-only navigator model gets no images (llm/gateway.ts), whatever the setting says.
@@ -328,6 +341,7 @@ export function buildReport(events: GnomiEvent[]): Report {
         reason: e.payload.reason,
       })),
       signal_thresholds: config.signals ?? null,
+      ...(undersized_targets.length ? { undersized_targets } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },

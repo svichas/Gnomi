@@ -309,7 +309,7 @@ test('sentiment, what went well and the analysis appendix appear when the report
     assert.ok(md.includes(expected), expected);
   }
   const legacy = reportToMarkdown(report);
-  for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
+  for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Undersized', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
 });
 
 test('page and model text cannot add HTML, images or links to the export, and evidence pages lose their query strings', () => {
@@ -322,6 +322,8 @@ test('page and model text cannot add HTML, images or links to the export, and ev
   });
   assert.ok(md.includes('&lt;img src="https://t.example/p.gif"&gt; !\\[x\\](https://t.example/i.png) \\[Verify your account\\](https://phish) \\`x\\` \\\\\\['), 'shown as text');
   assert.doesNotMatch(md, /<img|(?<!\\)\]\(|(?<!\\)`x/);
+  const audit = reportToMarkdown({ ...report, methods: { ...report.methods, undersized_targets: [{ page: 'localhost:3001/[a](b)', element: hostile, width: 20, height: 20, personas: 1 }] } });
+  assert.doesNotMatch(audit, /<img|(?<!\\)\]\(|(?<!\\)`x/, 'an element name in the audit is the page\'s text too');
   assert.ok(md.includes('   - Page: http://localhost:3001/reset\n') && !md.includes('s3cret'), 'no token in the export');
 });
 

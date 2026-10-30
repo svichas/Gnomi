@@ -91,7 +91,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Episode outcomes (`report/build.ts`).** Each persona ends per POI as `done`, `abandoned`, `budget_exceeded`, `repeated_failure`, `model_failed` (three invalid model answers in a row), `blocked`, `incomplete` or `not_started` (the run never reached it); a persona is done only when it is done on every POI it was given, else it takes its worst. `not_started` and `model_failed` say nothing about the product, so they are left out of the completion and friction rates and counted apart.
 
-**Theme trust, ranking and prevalence (`report/themes.ts`).** A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
+**Theme trust, ranking and prevalence (`report/themes.ts`).** A theme made only of weak signals (`small_target`, `backtrack`) is left out of the report: it is not ranked and does not count towards the friction rate. The log and the group ids are unchanged, and undersized targets go to the methods appendix as an audit. A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
 
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
 
@@ -162,6 +162,13 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `influence` rule | prior opinion required | yes | A first view is not a changed view. | `social/influence.ts`, new_simulation.md §4 | assumed |
 | `formed` rule | no prior opinion | first opinion cites a post | Shown separately, not counted as influence. | `social/influence.ts` | assumed |
 | echo discount | `reported` frictions only | heard first leaves k | Browser signals cannot echo a post. | `report/themes.ts` | assumed |
+
+### Friction signals
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `small_target_px` | CSS pixels | 24 | A mobile tap under this in either direction is a `small_target` signal. Frozen per run, so older runs keep 40. Unlike WCAG, it does not exempt links inside a sentence. | `signals/index.ts`; the WCAG level AA minimum | assumed |
+| weak signals | signal kinds | `small_target`, `backtrack` | Often the persona rather than the product, so a theme made only of them is left out of the report. | `report/friction.ts`, `report/themes.ts`; the 16 October Gym run, a tiny sample | assumed |
 
 ### Rounds
 

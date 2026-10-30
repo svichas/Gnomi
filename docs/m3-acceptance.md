@@ -31,4 +31,6 @@ Start with `acceptance.json` and `manifest.json`. Each run has a folder (`seed-<
 | Evidence links (`evidence_links`) | Automatic and structural: every theme in a finished run has member events, and each is in that run's log. |
 | Export size (`export_size`) | Always `NOT_RUN` here; the HTML export is rendered by the app. |
 
+A theme made only of small-target or backtrack signals is left out of the report ([tech.md §8.1](tech.md#81-two-sources-combined)), so it counts in neither precision nor the control run, and it cannot find a defect for recall. Those signals stay in `events.json`, and undersized targets are listed in the report's methods appendix. Rebuilding an older report applies the same rule, so its theme count can drop.
+
 Statuses mean what they mean in M2. The mapping is a reviewer's judgment, so the overall status of a live run is `REVIEW_NEEDED` until it is recorded with its artifact paths in the roadmap.

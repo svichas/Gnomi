@@ -1,6 +1,6 @@
 import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
-import { buildCandidates, categoryOf, groupCandidates, groupKey, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
 // report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -77,9 +77,9 @@ export function summarise(group: Group): GroupSummary {
   };
 }
 
-/** The groups one judge call sees, most personas first, while they fit the cap; the others stay as their own themes. */
+/** The groups one judge call sees, most personas first, while they fit the cap; the others stay as their own themes. Weak groups never become one, so they are not sent. */
 export function judgeGroups(groups: Group[], cap = JUDGE_TOKEN_CAP): GroupSummary[] {
-  const order = groups.map(summarise).sort((a, b) => b.personas - a.personas || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
+  const order = groups.filter((g) => !isWeak(g)).map(summarise).sort((a, b) => b.personas - a.personas || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
   const sent: GroupSummary[] = [];
   let used = 0;
   for (const summary of order) {
@@ -532,6 +532,8 @@ export interface Analysis {
 export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const candidates = buildCandidates(events, ctx.poi_id);
   const groups = groupCandidates(candidates);
+  // Group ids are positions and saved answers name them, so weak groups stay grouped and drop out as drafts below.
+  const pois = [...new Set(groups.filter((g) => !isWeak(g)).map((g) => g.poi_id))];
   const likes = likeGroups(events);
   const reach = reachOf(events, candidates, ctx.poi_id);
   const names = poiNamesOf(events);
@@ -546,7 +548,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     rounds: new Map(events.map((e) => [e.seq, e.round])),
   };
 
-  for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
+  for (const poi_id of pois) {
     // Each POI says the same things, so with several each note names its POI.
     const note = (text: string) => limitations.push(names.size > 1 ? `${names.get(poi_id) ?? poi_id}: ${text}` : text);
     const own = groups.filter((g) => g.poi_id === poi_id);
@@ -566,8 +568,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       note('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
       if (talk.length > 0) note('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.');
     } else {
-      const sent = input.groups.length;
-      if (sent < own.length) note(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
+      const missed = own.filter((g) => !isWeak(g)).length - input.groups.length;
+      if (missed > 0) note(`${plural(missed, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
       if (input.posts.length < talk.length) note(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
       if (unknown.length > 0) note(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
       if (keys === undefined) note('This log predates group keys, so the judge\'s titles could not be checked against the current grouping and may name other groups.');
@@ -584,7 +586,10 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     const unseparated = 'Posts were not tagged to themes and the steps did not record which posts they were handed, so reports that repeat the feed could not be separated from first-hand ones.';
     if (!themeTags && echoes.heard.size === 0 && echoes.feeds.length > 0 && !limitations.includes(unseparated)) limitations.push(unseparated);
 
+    // Left out here, not before: a saved tag or suggestion that names a weak group is known, not an unknown id.
+    const weak = new Set(drafts.filter((d) => d.groups.every(isWeak)).map(idOf));
     const ranked = drafts
+      .filter((draft) => !weak.has(idOf(draft)))
       .map((draft): ReportTheme => {
         const members = draft.groups.flatMap((g) => g.members);
         const id = idOf(draft);
@@ -630,7 +635,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     if (dropped + unsuggested > 0) note(`The grouping rules changed after this run, so ${plural(dropped, 'judge answer')} and ${plural(unsuggested, 'suggested change')} naming groups that no longer match were dropped.`);
     if (!suggested) note('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
     else {
-      const { unknown: strays } = applySuggestions(ranked, suggestions ?? null);
+      const strays = applySuggestions(ranked, suggestions ?? null).unknown.filter((id) => !weak.has(id));
       const covered = ranked.filter((t) => t.suggestion).length;
       if (covered < ranked.length) note(`Suggested changes cover ${covered} of ${plural(ranked.length, 'theme')}.`);
       if (strays.length > 0) note(`The author named unknown theme ids (${strays.join(', ')}); they were ignored.`);
@@ -639,7 +644,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   }
 
   // Said once, after the judge's and author's notes: a small run is the likeliest reason a share looks off.
-  const small = [...new Set(groups.map((g) => g.poi_id))].map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
+  const small = pois.map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
   if (small.length > 0) {
     const few = Math.min(...small.map(({ n }) => n));
     const which = small.length === 1 ? (names.get(small[0].id) ?? 'it') : 'some of what was tested';

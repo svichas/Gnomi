@@ -94,6 +94,12 @@ export function Methods({ methods, personas }: { methods: ReportMethods; persona
     ...(methods.signal_thresholds === undefined ? [] : [['Signal thresholds', methods.signal_thresholds === null ? 'Not frozen in this run' : (
       <ul>{Object.entries(methods.signal_thresholds).map(([key, value]) => <li key={key}>{key.replaceAll('_', ' ')}: {JSON.stringify(value)}</li>)}</ul>
     )] as [string, ReactNode]]),
+    ...(methods.undersized_targets ? [['Undersized tap targets', (
+      <div className="space-y-1">
+        <p>An audit, not findings: mobile tap targets below the signal threshold.</p>
+        <ul>{methods.undersized_targets.map((target) => <li key={`${target.page}${target.element}${target.width}${target.height}`}>{target.page}: {target.element ?? 'unnamed element'}, {target.width}×{target.height} px, {count(target.personas, 'persona')}</li>)}</ul>
+      </div>
+    )] as [string, ReactNode]] : []),
     ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),
     ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];
