@@ -123,6 +123,7 @@ try {
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'detached' });
   const images = first.locator('.report-shot img');
+  await first.locator('.report-shot').last().scrollIntoViewIfNeeded(); // screenshots load as they come near the viewport
   await first.getByText('The screenshot could not be loaded.').waitFor();
   for (const i of [0, 1, 2]) await images.nth(i).waitFor();
   assert.equal(await first.locator('.report-shot-box').count(), 3);
