@@ -18,7 +18,7 @@ The resulting profile conditions an agent's actions and generated comments durin
 
 A team can add interview notes or support tickets to a segment, as `.md` or `.txt` files, in the app or with `audience sources`.
 
-1. **Redaction.** Code removes emails and phone numbers, in international and national formats, before any model call. Dates, ids and prices stay. Names and other details are **not** removed, and the redacted text goes to the team's model provider. The app and the CLI say so before the call.
+1. **Redaction.** Code removes emails and phone numbers, in international and national formats, before any model call. Dates, ids and prices stay, and so does a bare run of digits with no word for a phone beside it, because it cannot be told from an id. Names and other details are **not** removed, and the redacted text goes to the team's model provider. The app and the CLI say so before the call.
 2. **Digest.** One `persona_writer` call reads the redacted text, which is marked as untrusted, and returns at most 8 facts about the segment's goals, vocabulary, objections and tools, and at most 5 remarks. Its most possible cost is shown first, and a call that could cost more than its budget is refused.
 3. **Remarks must be real.** A remark is kept only if it is a word-for-word part of the redacted text, ignoring whitespace. The rest are dropped and counted, so a model that makes up a quote cannot put it in a persona's prompt.
 4. **What stays.** The digest stays on the segment, with each file's name and hash. The files are not copied into the project. A segment's digest replaces the one before it.

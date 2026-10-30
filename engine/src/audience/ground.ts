@@ -15,14 +15,14 @@ export const MAX_REMARKS = 5;
 export const MAX_REMARK_CHARS = 280; // a verbatim remark can be any length, and each one rides in the persona's cached prefix
 export const SOURCES_BUDGET_USD = 1; // what `audience sources` may spend without --budget
 
-const EMAIL = /[\p{L}\p{N}._%+'-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+const EMAIL = /[\p{L}\p{N}._%+'-]{1,64}@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu; // 64 is the longest local part, and it keeps a long run of letters from backtracking
 // Digit groups split by one separator, or after a closing bracket; ending where no digit or unit carries on. See isPhone for what counts.
-const PHONE = /(?<![\p{L}\p{N}\p{Sc}#/.,_-])(?:\+|00[ .-]?)?(?:\(\+?\d+\)|\d+)(?:(?:[ .-]|(?<=\)))(?:\(\d+\)|\d+))*(?![\p{L}\p{N}%/:]|[.,-]\d)/gu;
+const PHONE = /(?<![\p{L}\p{N}\p{Sc}#/._-])(?:\+|00[ .-]?)?(?:\(\+?\d+\)|\d+)(?:(?:[ .-]|(?<=\)))(?:\(\d+\)|\d+))*(?![\p{L}\p{N}%/:]|[.,-]\d)/gu;
 const DATE = /^(?:\d{4}[-./ ]\d{1,2}[-./ ]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]\d{2,4})(?: |$)/;
 const ID_BEFORE = /\b(?:id|ref|reference|order|invoice|ticket|case|account|acct|sku|serial|receipt)\b[\s:#.-]*(?:no\.?|nr\.?|number)?[\s:#.-]*$/i;
 const PHONE_BEFORE = /\b(?:phone|telephone|tel|mobile|cell|fax|whatsapp|sms|call(?: me)?)\b(?: (?:on|at|number|no\.?))*[\s:.#-]*$/i;
-const MONEY_BEFORE = /(?:\p{Sc}|\b[A-Z]{3})\s?[\d\s.,]*$/u;
-const MONEY_AFTER = /^\s?(?:\p{Sc}|[A-Z]{3}\b|kr\b|euros?\b|dollars?\b|pounds?\b)/u;
+const MONEY_BEFORE = /(?:\p{Sc}|\b(?:USD|EUR|GBP|CHF|SEK|JPY|INR|AUD|CAD|BRL))\s?[\d\s.,]*$/u;
+const MONEY_AFTER = /^\s?(?:\p{Sc}|(?:USD|EUR|GBP|CHF|SEK|JPY|INR|AUD|CAD|BRL|kr|euros?|dollars?|pounds?)\b)/u;
 
 /**
  * Whether a run of digits is a phone number: with a + or 00 prefix, yes; next to a word for an id, or to money, or as a date, no; otherwise
@@ -140,7 +140,7 @@ export async function groundSegment(segment: Segment, sources: Source[], deps: A
     const remarks = verbatimRemarks(object.remarks, sources);
     const others = (segment.grounding?.sources ?? []).filter((source) => !/\.(?:md|txt)$/i.test(source.name));
     return {
-      grounding: { facts: object.facts.slice(0, MAX_FACTS), remarks, sources: [...others, ...sources.map(({ name, sha256 }) => ({ name, sha256 }))] },
+      grounding: { facts: [...new Set(object.facts)].slice(0, MAX_FACTS), remarks, sources: [...others, ...sources.map(({ name, sha256 }) => ({ name, sha256 }))] },
       dropped: object.remarks.length - remarks.length,
       cost_usd,
     };

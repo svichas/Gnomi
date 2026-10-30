@@ -43,6 +43,10 @@ test('redaction removes emails and international and national phone numbers', ()
   for (const near of ['tel: 6912345678', 'call me on 6912345678', 'Mobile 6912345678', 'phone number: 6912345678']) assert.equal(redact(near).phones, 1, near);
   assert.deepEqual(redact('Write to ana.ruiz+jobs@acme-corp.co.uk or BOB@EXAMPLE.ORG.'), { text: 'Write to [email removed] or [email removed].', emails: 2, phones: 0 });
   assert.equal(redact('tel:+30-210-1234567').text, 'tel:[phone removed]');
+  assert.equal(redact('Ana,415-555-0100').text, 'Ana,[phone removed]');
+  assert.equal(redact('(415-555-0100)').text, '([phone removed])');
+  assert.equal(redact('Ask our CEO 415-555-0100 or the NYC desk').phones, 1, 'three capitals are not a currency');
+  assert.equal(redact('415-555-0100 NYC').phones, 1);
 });
 
 test('redaction leaves dates, ids and prices alone', () => {
@@ -52,6 +56,14 @@ test('redaction leaves dates, ids and prices alone', () => {
     'INV-2026-004512', 'ticket 123-456-7890', 'order #48213917', 'Case no. 415-555-0100', 'ref: 2024 5551 0023', '3f9a1c2e-1234-5678-9abc-def012345678', 'candidate 123456789012', 'v2.14.3', '12,000 users', '45% of 1,200', 'call on 2026-10-30',
   ];
   for (const text of kept) assert.deepEqual(redact(`Noted: ${text} today.`), { text: `Noted: ${text} today.`, emails: 0, phones: 0 }, text);
+});
+
+test('redaction stays fast on a file-sized run of letters or digits', () => {
+  const started = performance.now();
+  redact('a'.repeat(MAX_SOURCE_BYTES));
+  redact('1'.repeat(MAX_SOURCE_BYTES));
+  redact('1 '.repeat(MAX_SOURCE_BYTES / 2));
+  assert.ok(performance.now() - started < 2_000);
 });
 
 test('sources are read as .md or .txt within a named limit, and refused otherwise', () => {
