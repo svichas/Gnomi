@@ -15,7 +15,7 @@ export interface GateDecision {
   decision: GateResult;
   base: string[]; // the runs compared on each side
   run: string[];
-  failing: ThemeDiff[]; // new, and high severity in GATE_SIGHTINGS later runs tied by more than one shared key; with `reasons`, what would have failed
+  failing: ThemeDiff[]; // new, and high severity in GATE_SIGHTINGS later runs tied to each other by more than one shared key; with `reasons`, what would have failed
   warnings: ThemeDiff[]; // high severity, but too thin to fail: seen too rarely, or tied to an earlier theme by one shared key
   reasons: string[]; // why it could not decide
 }

@@ -220,6 +220,7 @@ export interface Report {
   goal: string;
   pois: { id: string; type: PoiType; name: string; start_url: string | null; competitor?: true }[]; // in the project's order; start_url for web POIs only; competitor: observe-only
   personas: ReportPersona[]; // in start order
+  personas_fingerprint?: string; // a hash of the frozen personas, every field: one written again keeps its id and name. Absent in a report file saved before it
   segments: ReportSegment[];
   dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values
   weighted: { completion: number | null; with_friction: number | null }; // Σ share × rate over segments: each segment counts by its share, not its persona count; null when none started

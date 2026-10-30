@@ -137,6 +137,16 @@ test('a finding the trait-free run also hit says so, keeps its place, and a weak
   assert.equal(weak.findings[0].trait_free, undefined, 'one shared key is often chance');
 });
 
+test('a theme only the scan found is no sign of the model: it gets no trait-free note and gives none', () => {
+  const contrast = (id: string) => theme(id, 'Low contrast on the plans page', ['contrast'], { scan_only: true });
+  const scanned = combineReports(withControl([[contrast('g1')], [contrast('g2')]], [contrast('g3')]));
+  assert.deepEqual([scanned.findings[0].seen_in, scanned.findings[0].trait_free], [2, undefined], 'the scan finds a rule whoever browses');
+  assert.equal(repeatNote(scanned, 'r-1', contrast('g1'))?.trait_free, null);
+  const reported = (id: string) => theme(id, 'Low contrast on the plans page', ['contrast']);
+  assert.equal(combineReports(withControl([[reported('g1')], [reported('g2')]], [contrast('g3')])).findings[0].trait_free, undefined, 'a control theme the scan alone found');
+  assert.equal(combineReports(withControl([[reported('g1')], [reported('g2')]], [reported('g3')])).findings[0].trait_free, true, 'what personas reported still matches');
+});
+
 test('a stopped trait-free run marks nothing and ends nothing, and a set of one still shows the note', () => {
   const save = theme('g1', 'Save does nothing', ['save']);
   const stopped = combineReports(withControl([[save], [save]], [save], { status: 'stopped' }));

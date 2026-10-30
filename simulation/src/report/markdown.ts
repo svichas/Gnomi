@@ -175,6 +175,11 @@ const GATE_HEADLINE: Record<GateResult, string> = {
   could_not_decide: 'The gate could not decide, so this is not a pass.',
 };
 
+/** A pass with warnings lists new high-severity themes from these same runs, so it cannot say there were none. */
+const gateHeadline = ({ decision, warnings }: GateDecision) => (decision === 'passed' && warnings.length
+  ? `No new high-severity theme clearly came back in at least ${GATE_SIGHTINGS} of these simulated runs. This does not show that people will not hit one.`
+  : GATE_HEADLINE[decision]);
+
 /** A gate's verdict, for `gnomi gate`. */
 export function gateToMarkdown(gate: GateDecision): string {
   const rows = (themes: ThemeDiff[]) => themes.map((theme) => {
@@ -186,7 +191,7 @@ export function gateToMarkdown(gate: GateDecision): string {
   return [
     `# Gnomi gate: ${gate.decision.replaceAll('_', ' ')}`, '',
     ...(gate.base.length ? [`Compared ${gate.base.map(line).join(', ')} to ${gate.run.map(line).join(', ')}.`, ''] : []),
-    `> ${GATE_HEADLINE[gate.decision]}`, '',
+    `> ${gateHeadline(gate)}`, '',
     ...(gate.reasons.length ? ['## Why it could not decide', '', ...gate.reasons.map((reason) => `- ${line(reason)}`), ''] : []),
     ...(gate.failing.length ? [`## ${gate.reasons.length ? 'Would have failed' : 'Failed on'} (${gate.failing.length})`, '', ...rows(gate.failing), ''] : []),
     ...(gate.warnings.length ? [`## Warnings (${gate.warnings.length})`, '', 'High severity, but too thin to fail on.', '', ...rows(gate.warnings), ''] : []),

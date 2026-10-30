@@ -57,7 +57,7 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   gate <project dir> --base <run id> --run <run id>
       for CI, from saved runs, with no model calls. A run stands for its repeat set, and each side needs 3 finished runs of one set.
       Exits 1 on a new theme of high severity (a severity that rounds to 3 or more of 4) in at least 2 later runs, 2 when it cannot
-      decide, as when the sides differ in model, personas or points of interest, and 0 otherwise. Exit 0 is no claim about real people.
+      decide, as when the sides differ in model, personas, goal or points of interest, and 0 otherwise. Exit 0 is no claim about real people.
   rejudge <project dir> [--run <run id>] [--budget <usd>] [--check] [--fake-llm]
       groups and names an ended run's themes again with the current judge, and writes their suggestions again; no browsing.
       It spends at most what is left of the run's cost budget, or --budget instead. --check also reviews the friction themes

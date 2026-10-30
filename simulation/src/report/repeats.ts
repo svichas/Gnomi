@@ -76,7 +76,9 @@ export function combineReports(reports: Report[], live = false): RepeatSet {
   const clusters = clusterThemes(compared).sort((a, b) => b.members.length - a.members.length || a.first.rank - b.first.rank);
   const control = reports.find((report) => isTraitFree(report) && report.status === 'finished');
   // One shared key is often chance, and this note must not lean on chance. Against each cluster's first theme, as clusterThemes matches runs: a miss only leaves the note out.
-  const alike = new Set(control && matchThemes(clusters.map(({ first }) => first), control.themes ?? []).pairs.filter(({ by }) => by !== 'shared_key').map(({ a }) => a));
+  // The scan finds a rule on a page whoever browses, so a scan-only theme on either side says nothing about the personas or the model.
+  const noted = (themes: ReportTheme[]) => themes.filter(({ scan_only }) => !scan_only);
+  const alike = new Set(control && matchThemes(noted(clusters.map(({ first }) => first)), noted(control.themes ?? [])).pairs.filter(({ by }) => by !== 'shared_key').map(({ a }) => a));
   return {
     group: repeat?.group ?? null,
     of,

@@ -47,7 +47,15 @@ test('seen in one later run it warns and passes', () => {
   const gate = decide(base(), set('later', [OLD, NEW], [OLD], [OLD]));
   assert.equal(gate.decision, 'passed');
   assert.deepEqual([gate.failing, titles(gate.warnings)], [[], [NEW.title]]);
-  assert.match(gateToMarkdown(gate), /## Warnings \(1\)[\s\S]*Checkout loses the cart/);
+  const text = gateToMarkdown(gate);
+  assert.match(text, /## Warnings \(1\)[\s\S]*Checkout loses the cart/);
+  assert.doesNotMatch(text, /Some of those runs/, 'one sighting has nothing to be loosely tied to');
+});
+
+test('a pass with warnings does not deny the new high-severity theme it lists', () => {
+  const text = gateToMarkdown(decide(base(), set('later', [OLD, NEW], [OLD], [OLD])));
+  assert.ok(text.includes('> No new high-severity theme clearly came back in at least 2 of these simulated runs. This does not show that people will not hit one.'));
+  assert.ok(!text.includes('No new high-severity theme in these simulated runs'));
 });
 
 test('below high severity a new theme neither fails nor warns, and high severity is the rounded tier, in any run order', () => {
@@ -69,13 +77,28 @@ test('runs tied by one shared key are not two sightings, and a weak tie to an ea
   const gate = decide(base(), set('later', [OLD, one], [OLD, other], [OLD]));
   assert.deepEqual(gate.failing, [], 'two problems at one link');
   assert.equal(gate.decision, 'passed');
-  assert.deepEqual(gate.warnings[0].sightings?.map(({ weak }) => weak), [undefined, true]);
+  assert.deepEqual(gate.warnings[0].sightings?.map(({ weak }) => weak), [true, true]);
   assert.match(gateToMarkdown(gate), /Some of those runs only share one place on a page/);
 
   const tied = decide(set('base', [one], [one], [one]), set('later', [other], [other], [other]));
   assert.equal(tied.decision, 'passed');
   assert.deepEqual([tied.warnings[0].status, tied.warnings[0].weak], ['unchanged', true]);
   assert.match(gateToMarkdown(tied), /may be different problems/);
+});
+
+/** Every order of a list. */
+const orders = <T>(items: T[]): T[][] => (items.length < 2 ? [items] : items.flatMap((item, i) => orders(items.toSpliced(i, 1)).map((rest) => [item, ...rest])));
+
+test('the verdict does not depend on which later run came first', () => {
+  const shared = (title: string, own: string, severity = 3) => theme(title, ['settings', `${own}-a`, `${own}-b`], severity);
+  const [real, other] = [shared('Invite form rejects the email', 'invite'), shared('Approval toggle does nothing', 'toggle')];
+  const verdicts = (runs: ReportTheme[][]) => new Set(orders(runs).map((order) => decide(base(), set('later', ...order.map((themes) => [OLD, ...themes]))).decision));
+  assert.deepEqual([...verdicts([[other], [real], [real]])], ['failed'], 'two strong sightings, whichever run shares one key with them');
+  assert.deepEqual([...verdicts([[other], [shared('Billing page is blank', 'billing')], [real]])], ['passed'], 'three loose sightings stay three problems');
+  assert.deepEqual([...verdicts([[other], [real], [shared('Invite form rejects the email', 'invite', 1)]])], ['passed'], 'the strong tie must be between two high-severity sightings');
+
+  const gate = decide(base(), set('later', [OLD, other], [OLD, real], [OLD, real]));
+  assert.deepEqual(gate.failing[0].sightings, [{ run_id: 'later-1', severity: 3, weak: true }, { run_id: 'later-2', severity: 3 }, { run_id: 'later-3', severity: 3 }], 'the first run is the one that is weak');
 });
 
 test('a theme that reads not retested does not fail', () => {
@@ -107,7 +130,7 @@ test('a side that was stopped cannot decide, even with enough finished runs', ()
   assert.equal(trait_free.decision, 'passed', 'a planned trait-free run is in no count');
 });
 
-test('sides that differ in model, personas or POIs cannot decide, and each says why', () => {
+test('sides that differ in model, personas, goal or POIs cannot decide, and each says why', () => {
   const later = () => set('later', [OLD], [OLD], [OLD]);
   const model = decide(base(), later().map((run) => ({ ...run, methods: { models: { navigator: { provider: 'deepseek' as const, model: 'deepseek-v4-pro' } } } as Report['methods'] })));
   assert.equal(model.decision, 'could_not_decide');
@@ -118,7 +141,19 @@ test('sides that differ in model, personas or POIs cannot decide, and each says 
   assert.match(personas.reasons.join(), /different personas/);
   const pois = decide(base(), later().map((run) => ({ ...run, pois: [{ id: 'other', name: 'Other' }] as Report['pois'] })));
   assert.match(pois.reasons.join(), /did not try Gym/);
-  assert.ok([alias, personas, pois].every(({ decision }) => decision === 'could_not_decide'));
+  const goal = decide(base().map((run) => ({ ...run, goal: 'Pick a plan' })), later().map((run) => ({ ...run, goal: 'Cancel my plan' })));
+  assert.deepEqual(goal.reasons, ['The two sides have different goals, so a change may come from what they tried rather than the build.']);
+  assert.ok([alias, personas, pois, goal].every(({ decision }) => decision === 'could_not_decide'));
+});
+
+test('personas with the same ids and names but other traits cannot decide, and an old report with no fingerprint is not held against it', () => {
+  const printed = (runs: Report[], personas_fingerprint: string) => runs.map((run) => ({ ...run, personas_fingerprint }));
+  const later = () => set('later', [OLD], [OLD], [OLD]);
+  const rewritten = decide(printed(base(), 'a'), printed(later(), 'b'));
+  assert.equal(rewritten.decision, 'could_not_decide');
+  assert.deepEqual(rewritten.reasons, ['The two sides have different personas, so a change may come from who tried it rather than the build.']);
+  assert.equal(decide(printed(base(), 'a'), printed(later(), 'a')).decision, 'passed');
+  assert.equal(decide(base(), printed(later(), 'b')).decision, 'passed');
 });
 
 test('a side no persona got through says nothing, so three silent runs are no pass', () => {

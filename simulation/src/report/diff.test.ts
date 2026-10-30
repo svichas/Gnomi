@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { EventPayloads, EventType, GnomiEvent, Outcome, ProjectConfig, Report, RunConfig } from '../types.ts';
+import type { EventPayloads, EventType, GnomiEvent, Outcome, Persona, ProjectConfig, Report, RunConfig } from '../types.ts';
 import { buildReport } from './build.ts';
 import { diffReports, RETEST_REACH, type ThemeDiff } from './diff.ts';
 import { groupKey, isWeak } from './friction.ts';
@@ -21,12 +21,13 @@ interface Visit { persona: string; page: string; friction?: string; element?: st
 const visitsTo = (page: string, count: number, friction?: string, element?: string): Visit[] => PERSONAS.slice(0, count).map((id) => ({ persona: id, page, friction, element }));
 
 /** A run where each visit is one persona's step, some with a friction report; the judge answers with one theme per group, named by its first report. */
-function run(run_id: string, host: string, visits: Visit[], over: { pois?: ProjectConfig['pois']; group?: RunConfig['repeat']; surveys?: { persona: string; frictions: string[] }[] } = {}): Report {
-  const config: RunConfig = { run_id, seed: 1, project: { ...project, ...(over.pois && { pois: over.pois }) }, personas: PERSONAS.map(persona), sessions: [], reset: false, pause_timeout_ms: 1000, app_version: '0', ...(over.group && { repeat: over.group }) };
+function run(run_id: string, host: string, visits: Visit[], over: { pois?: ProjectConfig['pois']; group?: RunConfig['repeat']; surveys?: { persona: string; frictions: string[] }[]; traits?: Partial<Persona>; goal?: string } = {}): Report {
+  const person = (id: string) => ({ ...persona(id), ...over.traits });
+  const config: RunConfig = { run_id, seed: 1, project: { ...project, ...(over.pois && { pois: over.pois }), ...(over.goal && { goal: over.goal }) }, personas: PERSONAS.map(person), sessions: [], reset: false, pause_timeout_ms: 1000, app_version: '0', ...(over.group && { repeat: over.group }) };
   const events: GnomiEvent[] = [];
   const log = <K extends EventType>(type: K, payload: EventPayloads[K], persona_id: string | null = null, poi_id: string | null = null) => events.push({ run_id, round: 1, persona_id, poi_id, type, payload, seq: events.length + 1, ts: events.length + 1 } as GnomiEvent);
   log('run.started', { config });
-  for (const id of PERSONAS) log('persona.created', { persona: persona(id) }, id);
+  for (const id of PERSONAS) log('persona.created', { persona: person(id) }, id);
   visits.forEach((visit, i) => {
     const url = `http://${host}${visit.page}`;
     log('persona.step', { step_no: i + 1, action: { type: 'click', ref: 'e1', text: null }, target: { role: 'button', name: visit.element ?? 'Save', box: null }, result: { ok: true, url_before: url, url_after: url, dom_changed: false, error: null }, thought: 'Trying it.', feeling: 0, snapshot_hash: `h${i}`, screenshot: null, duration_ms: 1, heard_post_ids: [] }, visit.persona, 'web');
@@ -246,6 +247,24 @@ test('the notes name what weakens a comparison: a model, a moved alias, the audi
   assert.ok(stopped.notes.some((note) => note.includes('r-2 stopped early (budget)')));
   const short = diffReports([before()], [{ ...after, repeat: { group: 'g', index: 1, of: 3 } }]);
   assert.ok(short.notes.some((note) => note.includes('Only 1 of the 3 runs of the later set')));
+});
+
+test('what a persona is counts, not its label, and a different goal is its own gap', () => {
+  const later = (over: Parameters<typeof run>[3]) => diffReports([before()], [run('r-2', 'localhost:2222', visitsTo('/jobs/new', 3, SAVE), over)]);
+  assert.deepEqual(later({}).gaps, [], 'one fold of the same personas gives the same fingerprint');
+  const rewritten = later({ traits: { background: 'Someone else entirely.', tech_skill: 1, patience: 5 } });
+  assert.deepEqual(rewritten.gaps.map(({ kind }) => kind), ['personas']);
+  assert.ok(rewritten.notes.some((note) => note.includes('different personas')), 'compare prints it too');
+  const goal = later({ goal: 'Cancel a job' });
+  assert.deepEqual(goal.gaps.map(({ kind }) => kind), ['goal']);
+  assert.ok(goal.notes.some((note) => note.includes('different goals')));
+});
+
+test('a report saved before the fingerprint falls back on its labels', () => {
+  const { personas_fingerprint: _, ...old } = before();
+  const rewritten = run('r-2', 'localhost:2222', visitsTo('/jobs/new', 3, SAVE), { traits: { background: 'Someone else entirely.' } });
+  assert.deepEqual(diffReports([old], [rewritten]).gaps, []);
+  assert.deepEqual(diffReports([old], [{ ...rewritten, personas: rewritten.personas.slice(1) }]).gaps.map(({ kind }) => kind), ['personas']);
 });
 
 test('competitor POIs stay out of the themes, the POI list and the spread', () => {

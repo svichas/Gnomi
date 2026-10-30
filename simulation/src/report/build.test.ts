@@ -166,6 +166,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         frictions: 2,
       },
     ],
+    personas_fingerprint: '5d864bf4b3484168',
     segments: [
       {
         id: null,

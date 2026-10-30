@@ -493,6 +493,28 @@ test('gate reads saved sets with no model calls, and each outcome has its exit c
   assert.equal(fails('compare', project, '--base', 'r-0001', '--run', 'r-0404'), 1, 'other commands are as they were');
 });
 
+test('gate refuses personas written again under the same ids and names, and a set with another goal, but a rerun of an audience passes', () => {
+  const [project, file, copy, pois, settings] = [join(dir, 'gate-audience'), join(dir, 'gate-audience.json'), join(dir, 'gate-audience-2.json'), join(dir, 'pois.json'), join(dir, 'settings.json')];
+  const gate = (at: string, base: string, run: string) => {
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'gate', at, '--base', base, '--run', run, '--json'], { encoding: 'utf8' });
+    return [result.status, JSON.parse(result.stdout.trim().split('\n').at(-1)!).reasons];
+  };
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', pois, '--count', '3');
+  cli('run', '--pois', pois, '--audience', file, '--settings', settings, '--project', project, '--repeats', '3');
+  cli('rerun', project, '--base', 'r-0001', '--repeats', '3');
+  assert.deepEqual(gate(project, 'r-0001', 'r-0004'), [0, []], 'a rerun keeps the frozen personas');
+
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(copy, JSON.stringify({ ...saved, personas: saved.personas.map((persona: object) => ({ ...persona, background: 'Someone else entirely.', job_title: 'Astronaut' })) }));
+  cli('run', '--pois', pois, '--audience', copy, '--settings', settings, '--project', project, '--repeats', '3');
+  assert.deepEqual(gate(project, 'r-0001', 'r-0007'), [2, ['The two sides have different personas, so a change may come from who tried it rather than the build.']]);
+
+  const goals = join(dir, 'gate-goals');
+  cli('run', '--pois', pois, '--goal', 'Pick a plan', '--settings', settings, '--project', goals, '--repeats', '3');
+  cli('run', '--pois', pois, '--goal', 'Cancel my plan', '--settings', settings, '--project', goals, '--repeats', '3');
+  assert.deepEqual(gate(goals, 'r-0001', 'r-0004'), [2, ['The two sides have different goals, so a change may come from what they tried rather than the build.']]);
+});
+
 test('--also-trait-free adds one run to a set, in its snapshot alone, and only a matching finding changes', () => {
   const project = join(dir, 'trait-free');
   const [file, pois, settings] = [join(dir, 'trait-free.json'), join(dir, 'pois.json'), join(dir, 'settings.json')];

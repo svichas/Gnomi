@@ -2,7 +2,7 @@ import { isUnrated } from '../types.ts';
 import type { Report, ReportSpread, ReportTheme } from '../types.ts';
 import { matchThemes, type ThemeMatch } from './match.ts';
 import { clusterThemes, plannedRuns, type ThemeCluster } from './repeats.ts';
-import { pathOf } from './themes.ts';
+import { isSevere, pathOf } from './themes.ts';
 
 // What changed between two builds (features_roadmap.md item 10). Each side is one report or the finished runs of a repeat set, so
 // there is one path, and it is computed when read, as a rejudge can change either side. Calling a live problem fixed is the worst
@@ -19,7 +19,7 @@ export interface Seen {
   of: number; // runs of the side
 }
 
-/** A later run's theme on a new row. `weak`: only one shared key ties it to the side's first sighting, so it may be another problem. */
+/** A later run's theme on a new row. `weak`: only one shared key ties it to the row's other sightings, so it may be another problem. */
 export interface Sighting {
   run_id: string;
   severity: number;
@@ -68,7 +68,7 @@ export interface SpreadDiff {
 
 /** A note that makes the two sides unlike, for a reader that must act on it rather than print it (report/gate.ts). */
 export interface DiffGap {
-  kind: 'model' | 'personas' | 'pois' | 'stopped' | 'unrated';
+  kind: 'model' | 'personas' | 'goal' | 'pois' | 'stopped' | 'unrated';
   text: string;
 }
 
@@ -115,6 +115,21 @@ function tie(a: ThemeCluster[], b: ThemeCluster[]): Link[] {
     else if (link.weak && !weak) Object.assign(link, { pair, grouped, weak });
   }
   return links;
+}
+
+/**
+ * Each later run's sighting of a new theme, tied to the row's other sightings rather than its first, as which run came first is chance.
+ * A high-severity one is tied to the other high-severity ones alone, as those are what the gate counts (report/gate.ts). Pure.
+ * shortcut: a row is still a cluster, so a run with two themes that each share one key with an earlier run's can push a sighting onto a
+ * row of its own, where it ties to nothing; split new clusters on `by: 'shared_key'` if that misleads.
+ */
+function sightingsOf({ members }: ThemeCluster): Sighting[] {
+  const severe = members.filter(({ theme }) => isSevere(theme.severity));
+  return members.map((member) => {
+    const others = (severe.includes(member) ? severe : members).filter((other) => other !== member);
+    const tied = others.some(({ theme }) => matchThemes([member.theme], [theme]).pairs.some(({ by }) => by !== 'shared_key'));
+    return { run_id: member.run.run_id, severity: member.theme.severity, ...(others.length && !tied ? { weak: true as const } : {}) };
+  });
 }
 
 const pagesOf = ({ members }: ThemeCluster) => [...new Set(members.flatMap(({ theme }) => theme.pages.map(pathOf)))];
@@ -197,6 +212,7 @@ function modelNotes(before: Report[], after: Report[]): string[] {
 
 function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
   const all = [...before, ...after];
+  const varied = (values: unknown[]) => new Set(values).size > 1;
   const audience = (run: Report) => JSON.stringify(run.personas.map((persona) => [persona.id, persona.name, persona.segment_id]).sort());
   const pois = (side: Report[]) => new Map(side.flatMap((run) => run.pois.filter((poi) => !poi.competitor).map((poi) => [poi.id, poi.name] as const)));
   const [was, now] = [pois(before), pois(after)];
@@ -208,7 +224,9 @@ function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
   const gaps = (kind: DiffGap['kind'], texts: string[]) => texts.map((text) => ({ kind, text }));
   return [
     ...gaps('model', modelNotes(before, after)),
-    ...gaps('personas', new Set(all.map(audience)).size > 1 ? ['The two sides have different personas, so a change may come from who tried it rather than the build.'] : []),
+    // An old report has no fingerprint, so only its labels are compared.
+    ...gaps('personas', varied(all.map(audience)) || varied(all.flatMap(({ personas_fingerprint }) => personas_fingerprint ?? [])) ? ['The two sides have different personas, so a change may come from who tried it rather than the build.'] : []),
+    ...gaps('goal', varied(all.map(({ goal }) => goal)) ? ['The two sides have different goals, so a change may come from what they tried rather than the build.'] : []),
     ...gaps('pois', [
       ...(missing(was, now).length ? [`The later run did not try ${listed(missing(was, now))}, so its themes read as not retested.`] : []),
       ...(missing(now, was).length ? [`The earlier run did not try ${listed(missing(now, was))}, so its themes read as new.`] : []),
@@ -262,9 +280,7 @@ export function diffReports(before: Report[], after: Report[]): ReportDiff {
     ...paired(asideLater, 'after'),
     ...paired(asideEarlier, 'before'),
     ...gone.filter((cluster) => !asideLater.some((link) => link.a === cluster)).map((cluster) => row((reachOn(after, cluster.first.poi_id, pagesOf(cluster)) ?? 0) >= RETEST_REACH ? 'fixed' : 'not_retested', cluster, null)),
-    ...added.filter((cluster) => !asideEarlier.some((link) => link.b === cluster)).map((cluster) => row('new', null, cluster, {
-      sightings: cluster.members.map(({ run, theme, by }) => ({ run_id: run.run_id, severity: theme.severity, ...(by === 'shared_key' ? { weak: true as const } : {}) })),
-    })),
+    ...added.filter((cluster) => !asideEarlier.some((link) => link.b === cluster)).map((cluster) => row('new', null, cluster, { sightings: sightingsOf(cluster) })),
   ];
   const gaps = gapsBetween(before, after);
   return {

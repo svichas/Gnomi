@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
@@ -325,6 +326,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     goal: config.project.goal,
     pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null, ...(poi.type === 'web' && poi.mode === 'observe_only' ? { competitor: true as const } : {}) })),
     personas,
+    personas_fingerprint: createHash('sha256').update(JSON.stringify(population.toSorted((a, b) => a.id.localeCompare(b.id)))).digest('hex').slice(0, 16),
     ...(dimensions ? { dimensions } : {}),
     segments,
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
