@@ -41,6 +41,16 @@ test('a theme one run split in two counts once for that run, and its other part 
   assert.equal(Object.keys(set.findings[0].themes).length, 3);
 });
 
+test('a set is over when its runs say so, however long the host holds it while the last report is written', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const done = combineReports([run(1, [save], { of: 2 }), run(2, [save], { of: 2 })], true);
+  assert.deepEqual([done.running, done.incomplete], [false, false], 'every run finished');
+  assert.match(repeatsToMarkdown(done), /2 runs compared\./);
+  const ended = combineReports([run(1, [save]), run(2, [], { status: 'stopped' })], true);
+  assert.deepEqual([ended.running, ended.incomplete], [false, true], 'a stopped run ends its set');
+  assert.match(repeatsToMarkdown(ended), /Incomplete set: 1 of 3 runs finished/);
+});
+
 test('a partial set compares the runs that finished and says so: a stopped run missing a theme says nothing about it', () => {
   const save = theme('g1', 'Save does nothing', ['save']);
   const stopped = combineReports([run(1, [save]), run(2, [save]), run(3, [], { status: 'stopped' })]);

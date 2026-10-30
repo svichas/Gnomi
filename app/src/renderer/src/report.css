@@ -43,7 +43,7 @@
 .report-suggestion p.report-suggestion-how { margin-top: 8px; color: var(--gnomi-text-muted); font-size: 12px; }
 .report-suggestion small { display: block; margin-top: 10px; color: var(--gnomi-text-muted); font-size: 11px; }
 .report-evidence-heading { display: flex; align-items: center; gap: 7px; color: var(--gnomi-text-muted); font-size: 12px; font-weight: 500; }
-.report-shot { position: relative; width: fit-content; max-width: 100%; }
+.report-shot { position: relative; width: fit-content; max-width: 100%; align-self: start; } /* never stretched to the text beside it: the frame is in percent of this box, which must be the image */
 .report-shot-box { display: none; position: absolute; outline: 2px solid var(--gnomi-error); outline-offset: 1px; box-shadow: 0 0 0 1px var(--gnomi-surface); }
 .report-shot:has(img) > .report-shot-box { display: block; }
 .report-flow { display: block; }
