@@ -15,8 +15,8 @@ const doc = (body: string) => `<!doctype html><html lang="en"><head><meta charse
 const lines = Array.from({ length: 30 }, (_, i) => `<p>Line ${i}: Senior Backend Engineer, Engineering, Remote (EU). Own the services behind our applicant pipeline.</p>`).join('');
 const pages: Record<string, { html: string; csp?: string }> = {
   '/broken': { html: doc(BROKEN) },
-  // Scrolled and focused by the test, with a list of its own that scrolls.
-  '/busy': { html: doc(`${BROKEN}<input id="field" aria-label="Field"><div id="list" tabindex="0" style="height:100px;overflow:auto"><div style="height:800px">Tall</div></div><div style="height:3000px"></div>`) },
+  // Scrolled and focused by the test, with a list of its own that scrolls, and sheets axe would fetch again if it were let.
+  '/busy': { html: doc(`<link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="http://127.0.0.1:9/other.css">${BROKEN}<input id="field" aria-label="Field"><div id="list" tabindex="0" style="height:100px;overflow:auto"><div style="height:800px">Tall</div></div><div style="height:3000px"></div>`) },
   '/strict': { html: doc(`${BROKEN}<script>document.title = 'scripts run'</script>`), csp: "default-src 'none'; script-src 'self'; object-src 'none'" },
   '/typed': { html: doc(BROKEN), csp: "script-src 'self'; require-trusted-types-for 'script'; trusted-types 'none'" },
   '/own-axe': { html: doc(`<script>window.axe = 'the page\\'s own'</script>${BROKEN}`) },

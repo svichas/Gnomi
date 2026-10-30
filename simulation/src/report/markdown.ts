@@ -390,7 +390,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     ...(repeats ? [`- Repeats: ${line(repeats.appeared)}${repeats.one_family ? `. ${line(repeats.one_family)}` : ''}`] : []),
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
-    `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
+    `- Severity ${t.severity} of 4, ${t.scan_only ? '' : `score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, `}${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     ...(t.scan_only ? [] : [`- Affected first-hand by segment: ${affected.join('; ') || 'none'}`]),
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
     ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),

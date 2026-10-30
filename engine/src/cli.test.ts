@@ -42,6 +42,26 @@ test('an audience file is written once and its personas are reused by runs until
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).personas, saved.personas, 'the file is never written by a run');
 });
 
+test('a theme only the scan found says so in the summary, and gives no count of personas', () => {
+  const project = join(dir, 'scanned');
+  const file = join(dir, 'scanned.json');
+  const pois = join(dir, 'pois.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', pois, '--count', '2');
+  cli('run', '--pois', pois, '--audience', file, '--settings', join(dir, 'settings.json'), '--project', project);
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  db.exec(`INSERT INTO event (run_id, seq, ts, round, persona_id, poi_id, type, payload_json)
+    SELECT run_id, (SELECT max(seq) + 1 FROM event), ts, round, persona_id, poi_id, 'signal.accessibility', json_object(
+      'step_no', json_extract(payload_json, '$.step_no'), 'url', json_extract(payload_json, '$.result.url_before'), 'ref', NULL, 'rule', 'color-contrast',
+      'impact', 'serious', 'category', 'color', 'help', 'Elements must meet minimum color contrast ratio thresholds', 'elements', 1, 'selectors', json_array('main > p'))
+    FROM event WHERE type = 'persona.step' LIMIT 1`);
+  db.close();
+  const { report } = JSON.parse(cli('report', project, '--json'));
+  const themes = report.pois[0].themes;
+  const theme = themes.find((t: { scan_only?: true }) => t.scan_only);
+  assert.deepEqual([theme.personas, theme.share, theme.evidence, theme.trust], [null, null, 'none', 'observed']);
+  assert.ok(themes.filter((t: object) => t !== theme).every((t: object) => !('scan_only' in t)));
+});
+
 test('with --json every line is an object and the last the result, for estimate, personas, run, runs, report and audience update', () => {
   const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
   const result = (...args: string[]) => lines(...args).at(-1);

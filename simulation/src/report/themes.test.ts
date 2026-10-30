@@ -579,9 +579,32 @@ test('a theme the judge merged from a scan and a complaint counts the persona, n
     ['persona.step', 'a1', step(1)],
     ['signal.accessibility', 'a1', scanned(1)],
     ['persona.step', 'a2', step(1)],
-    ['persona.friction_reported', 'a2', friction(1, 2, 'I could not make out the words')],
+    ['persona.friction_reported', 'a2', friction(1, 4, 'I could not make out the words')],
     ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Pale text', description: 'Words are pale.', group_ids: ['g1', 'g2'] }] }],
   );
   const [theme] = analyseFrictions(events, ctx).themes;
   assert.deepEqual([theme.id, theme.trust, theme.personas, theme.first_hand, theme.scan_only], ['g1+g2', 'observed', 1, ['a2'], undefined]);
+  assert.equal(theme.severity, 4, 'the one persona who met it, not the median with the scan\'s step');
+  assert.equal(theme.score, theme.prevalence!.low * 0.5, 'her reported trust alone');
+  assert.deepEqual(theme.trust_counts, { confirmed: 0, observed: 1, reported: 1 }, 'the scan still shows in the evidence');
+});
+
+test('a complaint only a scan confirmed can still repeat a post: the scan\'s step says nothing about what she read', () => {
+  const heardThenSaid = (...own: Parameters<typeof log>) => log(
+    ['persona.step', 'a3', step(1)],
+    ['persona.friction_reported', 'a3', friction(1, 2, 'Too faint to read')],
+    ['social.post', 'a3', { post_id: 'p1', parent_id: null, text: 'Too faint to read', about_poi_id: 'poi' }],
+    ['persona.step', 'a1', step(5)],
+    ['signal.accessibility', 'a1', scanned(5)],
+    ['persona.step', 'a2', { ...step(5), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(5, 2, 'The hints are too faint to read'), heard_post_ids: ['p1'] }],
+    ...own,
+  );
+  const [theme] = analyseFrictions(heardThenSaid(), ctx).themes;
+  assert.equal(theme.evidence.find((e) => e.persona_id === 'a2')?.trust, 'confirmed');
+  assert.deepEqual([theme.first_hand, theme.heard_first, theme.personas, theme.prevalence?.personas], [['a3'], 1, 2, 1]);
+
+  const failed = { step_no: 5, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const [own] = analyseFrictions(heardThenSaid(['signal.failed_action', 'a2', failed]), ctx).themes;
+  assert.deepEqual([own.first_hand, own.heard_first], [['a3', 'a2'], 0], 'a signal on her own step is hers, whatever else backs it');
 });

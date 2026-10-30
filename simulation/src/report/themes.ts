@@ -323,7 +323,10 @@ export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPo
  */
 export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id))) {
   const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
-  const affectedIds = new Set(members.map((m) => m.persona_id));
+  // A scan's persona counts only in a theme of nothing else, which still needs a severity and a trust.
+  const met = felt(members);
+  const counted = met.length > 0 ? met : members;
+  const affectedIds = new Set(counted.map((m) => m.persona_id));
   // Buyers and users answer different surveys, so a theme from one survey only is a share of those who were asked it.
   const buyers = members.every((m) => m.kind === 'objection' && reach.buyerSeqs.has(m.seqs[0]));
   const users = members.every((m) => m.step_no === null && !reach.buyerSeqs.has(m.seqs[0]));
@@ -342,11 +345,11 @@ export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, r
   const worst = new Map<string, number>();
   const best = new Map<string, number>();
   const trust_counts: Record<Trust, number> = { confirmed: 0, observed: 0, reported: 0 };
-  for (const m of members) {
+  for (const m of counted) {
     worst.set(m.persona_id, Math.max(worst.get(m.persona_id) ?? 0, m.severity));
     best.set(m.persona_id, Math.max(best.get(m.persona_id) ?? 0, TRUST_WEIGHT[m.trust]));
-    trust_counts[m.trust] += 1;
   }
+  for (const m of members) trust_counts[m.trust] += 1;
   const weight = [...best.values()].reduce((sum, w) => sum + w, 0) / best.size;
   const exposed = new Set([...ids.filter(reached), ...affectedIds]).size;
   const share = prevalence(firstHand.size, exposed);
@@ -361,7 +364,7 @@ interface Echoes {
 }
 
 /**
- * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal, or made before any feed
+ * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal on their own step, or made before any feed
  * showed them a post the judge tagged with the theme (when it tagged any), and not at a step that was handed a post by a persona
  * who met the theme at an earlier round and step.
  */
@@ -370,7 +373,7 @@ function firstHand(members: Candidate[], theme: string, tagged: Map<string, stri
   const at = (c: Candidate) => [echoes.rounds.get(c.seqs[0]) ?? 0, c.step_no ?? Infinity];
   const earlier = (a: Candidate, b: Candidate) => at(a)[0] < at(b)[0] || (at(a)[0] === at(b)[0] && at(a)[1] < at(b)[1]);
   const echo = (c: Candidate) => {
-    if (c.trust !== 'reported') return false; // a browser signal cannot repeat a post
+    if (c.signals.some((s) => s !== 'accessibility')) return false; // a browser signal cannot repeat a post; a scan's may be on anyone's step, so it says nothing here
     const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
     if (shown && shown.seq < c.seqs[0]) return true;
     return (echoes.heard.get(c.step_seq ?? -1) ?? []).some((id) => {

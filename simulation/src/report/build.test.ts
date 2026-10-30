@@ -467,6 +467,7 @@ test('moderate and minor scan results are an audit in the methods, not findings,
   assert.ok(md.includes('- Evidence: Found by the accessibility scan of the page, not by a persona.'));
   assert.ok(md.includes('- Accessibility scan: color-contrast, serious, 4 elements: main &gt; h3; main &gt; h4; main &gt; h5 and more. Found by the accessibility scan'));
   assert.ok(!md.includes('Affected first-hand by segment') && !md.includes('none, 0 of'), 'no share of personas');
+  assert.ok(md.includes('- Severity 2 of 4, 1 friction\n'), 'no count of personas or score');
   assert.ok(!md.includes('s3cret'));
 });
 
