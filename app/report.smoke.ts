@@ -48,6 +48,8 @@ const flow: ReportFlow = {
   moves: Array.from({ length: 7 }, (_, i) => ({ from: pageName(i), to: pageName(i + 1), personas: 6 - Math.floor(i / 2) })).concat({ from: pageName(3), to: pageName(0), personas: 2 }, { from: pageName(0), to: pageName(7), personas: 1 }),
 };
 report.flows = [flow];
+report.themes[0].drivers = [{ id: 'seniority', name: 'Seniority', value: 'Lead', holders: { affected: 4, reached: 6 }, others: { affected: 1, reached: 9 }, gap: 0.56 }];
+report.coverage![0].thin_pages.push({ page: pageName(1), personas: 2 }, { page: pageName(2), personas: 1 }); // as wide as real names get, for the check at 320 px
 const exportedFile = join(dir, 'report.html');
 /** Every frame on show sits on the same spot of its image, whatever size the image is drawn at. */
 async function assertMarks(page: Page, when: string) {
@@ -118,6 +120,7 @@ try {
   await page.keyboard.press('Enter');
   assert.ok(await first.getByText('Suggested change', { exact: true }).isVisible());
   assert.ok(await first.getByText('Behind this finding', { exact: true }).isVisible());
+  assert.ok(await first.getByText('More common among personas with Seniority Lead: 4 of 6 with it, against 1 of 9 others', { exact: true }).isVisible(), 'a finding says who met it more often, with its counts');
   await first.getByRole('button', { name: friction.persona_name, exact: true }).first().click();
   await page.getByRole('dialog').waitFor();
   await page.keyboard.press('Escape');
@@ -155,6 +158,11 @@ try {
   const singles = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Individual observations' }) });
   assert.equal(await singles.locator('.report-finding-summary').getByText('Later', { exact: true }).count(), 1, 'one self-report waits');
   assert.ok(await root.getByText('Recorded cost', { exact: true }).isVisible());
+  const coverage = root.getByText('With 6 personas the curve is too short to read.', { exact: true });
+  assert.ok(await coverage.isVisible(), 'the methods say how far to read the curve');
+  assert.ok(await root.getByText(/^New problems per persona, in the order they began: /).isVisible());
+  assert.ok(await root.getByText(/^Barely tested, reached by fewer than 3 personas: .*summary-2 \(1\)/).isVisible());
+  assert.ok(await root.getByText(/^"More common among" compares the simulated personas/).isVisible());
   const graph = root.getByRole('img', { name: /^Moves of 6 personas between 8 pages/ });
   assert.ok(await graph.isVisible());
   assert.equal(await graph.locator('.report-flow-move').count(), 9);
@@ -163,6 +171,8 @@ try {
   assert.ok(await root.getByRole('cell', { name: '3: 2 reached the goal, 1 got stuck' }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'all details fit a narrow viewport');
+  await coverage.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-coverage-320.png') });
   await graph.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-flow-320.png') });
   const overrun = await graph.evaluate((svg) => {
@@ -171,6 +181,7 @@ try {
   });
   assert.deepEqual(overrun, [], 'nothing in the graph is cut off at 320 px');
   await page.setViewportSize({ width: 1100, height: 1000 });
+  await assertFits(page, 'all details fit at desktop width');
   await page.getByRole('button', { name: 'Export report' }).click();
   await page.getByText(/^Report exported to/).waitFor();
   // The exported file itself, opened as a reader would and printed: no script runs in it, so the frames hold up by CSS alone.
@@ -253,7 +264,7 @@ try {
   await page.setViewportSize({ width: 1100, height: 1000 });
   await page.getByRole('button', { name: 'Run again', exact: true }).waitFor({ timeout: 30_000 });
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, keyboard toggles, evidence inspector, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, empty/legacy reports, compare and run again, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

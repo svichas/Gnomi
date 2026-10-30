@@ -180,6 +180,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     ],
     weighted: { completion: 1, with_friction: 1 },
     steps: 2,
+    coverage: [{ poi_id: 'poi-gym', curve: [1], last_fifth: { personas: 1, themes: 1 }, thin_pages: [{ page: 'localhost:3001/jobs/new', personas: 1 }], hint: 'With 1 persona the curve is too short to read.' }],
     flows: [{ poi_id: 'poi-gym', personas: 1, pages: [{ page: 'localhost:3001/jobs/new', reached: 1, ended: { done: 1 } }], moves: [], left_out: { pages: 0, ended: 0 } }],
     frictions: [
       {

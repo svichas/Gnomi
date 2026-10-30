@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
@@ -235,6 +235,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <div className="flex flex-wrap items-center gap-2"><EvidenceChip finding={theme} /><TrustBadge trust={theme.trust} counts={theme.trust_counts} /></div>
           <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}</p>
           <Affected theme={theme} />
+          {theme.drivers && <ul className="space-y-1 text-xs text-stone-600">{theme.drivers.map((driver) => <li key={`${driver.id}/${attributeKey(driver.value)}`}>{driverText(driver)}</li>)}</ul>}
           <ul className="space-y-3" aria-label={`Evidence for ${theme.title}`}>
             {theme.evidence.map((evidence, i) => <Evidence key={i} evidence={evidence} onInspect={onInspect} renderScreenshot={renderScreenshot} />)}
           </ul>
@@ -684,8 +685,9 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
               <SeverityLegend />
               <p className="text-xs text-stone-500">The judge model is asked to group what one concrete product change would fix. Findings are ordered by evidence strength, then severity and affected share. {EVIDENCE_LEVEL.strong.text}: {EVIDENCE_LEVEL.strong.plain}. {EVIDENCE_LEVEL.some.text}: {EVIDENCE_LEVEL.some.plain}. Ranges describe uncertainty within this simulation. {PRIORITY_NOTE}</p>
               <p className="text-xs text-stone-500">Confirmed: {TRUST_TEXT.confirmed}. Observed: {TRUST_TEXT.observed}. Reported: {TRUST_TEXT.reported}.</p>
+              {themes.some((theme) => theme.drivers) && <p className="text-xs text-stone-500">{DRIVER_NOTE}</p>}
             </>}
-            <Methods methods={report.methods} personas={report.personas} />
+            <Methods methods={report.methods} personas={report.personas} coverage={report.coverage} pois={report.pois} />
           </div>
         </Fold>
       </div>

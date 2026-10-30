@@ -1,7 +1,7 @@
 import { isUnrated } from '../types.ts';
-import type { Outcome, Prevalence, Report, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
+import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
 import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
-import { formatAttributeValue } from './dimensions.ts';
+import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
 import type { RepeatSet } from './repeats.ts';
 import { writtenSummary } from './summary.ts';
 import { priorityOf } from './themes.ts';
@@ -34,6 +34,19 @@ export const PRIORITY_NOTE = 'Fix now, Next and Later suggest where to look firs
 
 /** A finding's label; a competitor's has none, because its problems are not the team's to fix. */
 export const themePriority = (theme: ReportTheme, pois: Report['pois']) => (pois.find(({ id }) => id === theme.poi_id)?.competitor ? null : priorityOf(theme));
+
+/** "More common among personas with Region EMEA: 4 of 6 with it, against 1 of 9 others": counts within the run, never a cause. */
+export const driverText = ({ name, value, holders, others }: ReportDriver) => `More common among personas with ${name} ${formatAttributeValue(value)}: ${holders.affected} of ${holders.reached} with it, against ${others.affected} of ${count(others.reached, 'other')}`;
+
+/** Said wherever drivers are shown. */
+export const DRIVER_NOTE = `"More common among" compares the simulated personas who reached a finding's pages, or answered a survey for a finding with no pages. It shows only with at least ${DRIVER_HOLDERS} personas holding a value, ${DRIVER_AFFECTED} of them meeting the finding and a gap of ${Math.round(DRIVER_GAP * 100)} points. Connected personas are not independent, so read it as a place to look, within this run only.`;
+
+/** What a POI's coverage says, in the order it is shown: the hint, the curve, then what few personas reached. */
+export const coverageText = ({ hint, curve, thin_pages }: ReportCoverage) => [
+  hint,
+  ...(curve ? [`New problems per persona, in the order they began: ${curve.join(', ')}.`] : []),
+  ...(thin_pages.length ? [`Barely tested, reached by fewer than ${RETEST_REACH} personas: ${thin_pages.map(({ page, personas }) => `${page} (${personas})`).join(', ')}.`] : []),
+];
 
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
@@ -191,9 +204,15 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     '',
     '## Methods',
     '',
+    ...coverageLines(report),
     ...methodsToMarkdown(report.methods),
     '',
   ].join('\n');
+}
+
+function coverageLines({ coverage = [], pois }: Report): string[] {
+  const of = ({ poi_id }: ReportCoverage) => (pois.length > 1 ? ` of ${line(pois.find(({ id }) => id === poi_id)?.name ?? poi_id)}` : '');
+  return coverage.flatMap((poi) => coverageText(poi).map((text) => `- Coverage${of(poi)}: ${line(text)}`));
 }
 
 /** Comparison studies lead with decisions and scoped evidence, never pooled legacy completion. */
@@ -315,6 +334,7 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
     '', PRIORITY_NOTE,
+    ...(report.themes.some((t) => t.drivers) ? ['', DRIVER_NOTE] : []),
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
@@ -386,6 +406,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
     `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
     `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
+    ...(t.drivers ?? []).map((driver) => `- ${line(driverText(driver))}`),
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
     ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),
     `- Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`,
