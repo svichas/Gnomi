@@ -260,6 +260,72 @@ test('outcome records what a team found, refuses what is wrong, survives a rejud
   assert.deepEqual(unmatched_outcomes.map((o: { title: string }) => o.title), [gone.title], "an agent's summary lists what has no finding left");
 });
 
+test('audience analytics reports the changes, keeps the file on a dry run, and stores only the name and hash of the export', () => {
+  const file = join(dir, 'analytics.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');
+  const csv = join(dir, 'export.csv');
+  writeFileSync(csv, 'Country,Users\nGermany,3\nGreece,1\nAtlantis,1\n');
+  const before = readFileSync(file, 'utf8');
+  const dry = cli('audience', 'analytics', file, '--file', csv, '--segment', 'seg-1', '--dry-run', '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(dry.at(-1).changes, ['Everyone: countries DE 75%, GR 25%']);
+  assert.deepEqual(dry.at(-1).skipped, ['Skipped country "Atlantis": 1 user.']);
+  assert.equal(dry.at(-1).dry_run, true);
+  assert.equal(readFileSync(file, 'utf8'), before, 'a dry run writes nothing');
+  assert.match(cli('audience', 'analytics', file, '--file', csv, '--segment', 'seg-1'), /1 change saved to/);
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(saved.audience.segments[0].countries, { DE: 75, GR: 25 });
+  assert.equal(saved.audience.segments[0].grounding.sources[0].name, 'export.csv');
+  assert.match(saved.audience.segments[0].grounding.sources[0].sha256, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify(saved).includes('Atlantis'), false, 'no row of the file is kept');
+  const update = cli('audience', 'update', file, '--json').trim().split('\n').map((line) => JSON.parse(line)).at(-1);
+  assert.equal(update.kind, 'audience');
+  assert.ok(JSON.parse(readFileSync(file, 'utf8')).personas.every((p: { country: string }) => ['DE', 'GR'].includes(p.country)));
+});
+
+test('audience analytics counts the personas a share change would write, and audience update writes them', () => {
+  const file = join(dir, 'shares.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '12');
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  const [first] = saved.audience.segments;
+  saved.audience.segments = [{ ...first, share: 50 }, { ...first, id: 'seg-2', name: 'Admins', share: 50 }];
+  writeFileSync(file, JSON.stringify(saved));
+  cli('audience', 'update', file);
+  const csv = join(dir, 'shares.csv');
+  writeFileSync(csv, 'Segment,Users\nEveryone,90\nAdmins,10\n');
+  const last = (text: string) => JSON.parse(text.trim().split('\n').at(-1)!);
+  const dry = last(cli('audience', 'analytics', file, '--file', csv, '--dry-run', '--json'));
+  assert.deepEqual(dry.changes, ['Everyone: share 50% → 90%', 'Admins: share 50% → 10%']);
+  assert.equal(dry.stale, 3, 'nine and three instead of six and six');
+  assert.equal(last(cli('audience', 'analytics', file, '--file', csv, '--json')).stale, 3);
+  assert.equal(last(cli('audience', 'update', file, '--json')).written, 3);
+  assert.equal(last(cli('audience', 'analytics', file, '--file', csv, '--dry-run', '--json')).stale, 0, 'nothing is left to write');
+});
+
+test('audience sources warns first, keeps a digest and no source text, and a refusal leaves the file as it was', () => {
+  const file = join(dir, 'sources.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');
+  const notes = join(dir, 'ana-interview.md');
+  writeFileSync(notes, '# Interview\n\nI compare plans in a spreadsheet, ask ana@acme.io.\n\nA very private second line.');
+  const before = readFileSync(file, 'utf8');
+  const refused = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'audience', 'sources', file, '--segment', 'seg-1', '--file', notes, '--budget', '0.000001', '--fake-llm'], { encoding: 'utf8' });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /could cost up to .* budget/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+  for (const args of [['--segment', 'seg-9', '--file', notes], ['--segment', 'seg-1'], ['--segment', 'seg-1', '--file', notes, '--budget', '0'], ['--segment', 'seg-1', '--file', join(dir, 'pois.json')]]) {
+    assert.equal(spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'audience', 'sources', file, ...args, '--fake-llm'], { encoding: 'utf8' }).status, 1, args.join(' '));
+  }
+  const lines = cli('audience', 'sources', file, '--segment', 'seg-1', '--file', notes, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(lines[0].kind, 'note');
+  assert.match(lines[0].text, /Emails removed: 1\. Phone numbers removed: 0\. .*Names and other details are not removed, and the text goes to your model provider .*keep some interviews back for a study/);
+  const result = lines.at(-1);
+  assert.deepEqual([result.kind, result.segment, result.facts, result.remarks, result.dropped, result.stale], ['sources', 'seg-1', 1, 1, 0, 2]);
+  assert.deepEqual(result.sources.map((s: { name: string }) => s.name), ['ana-interview.md']);
+  const saved = readFileSync(file, 'utf8');
+  assert.match(saved, /I compare plans in a spreadsheet, ask \[email removed\]\./);
+  assert.equal(saved.includes('private second line') || saved.includes('ana@acme'), false, 'only the digest stays');
+  assert.equal(cli('audience', 'update', file, '--json').includes('"written":2'), true, 'a grounded segment is written again');
+});
+
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
   const settings = join(dir, 'navigator.json');
   writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));

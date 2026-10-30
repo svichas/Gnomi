@@ -151,7 +151,8 @@ export const postingPropensity = (seed: number) => Math.round(mulberry32(fnv1a(`
 
 /** The traits a seed gives in this segment and audience. Pure. */
 export function sampleTraits(segment: Segment, audience: Audience, seed: number): Traits {
-  validateCountries(audience.countries);
+  const countries = segment.countries ?? audience.countries;
+  validateCountries(countries);
   const next = mulberry32(fnv1a(`traits/${seed}`));
   // One draw per trait in a fixed order, so editing one distribution re-samples only that trait.
   const traits: Traits = {
@@ -160,7 +161,7 @@ export function sampleTraits(segment: Segment, audience: Audience, seed: number)
     patience: between(next(), segment.patience),
     tech_skill: between(next(), segment.tech_skill),
     familiarity_with_category: FAMILIARITY[segment.usage_frequency] ?? 'low',
-    language: pick(sorted(audience.languages), next(), 'en'),
+    language: pick(sorted(segment.languages ?? audience.languages), next(), 'en'),
     accessibility_needs: pick(sorted(audience.accessibility), next(), 'none'),
     pronouns: pick(PRONOUNS, next(), 'they'),
     company_size: companySize(next(), audience.company_size),
@@ -168,9 +169,9 @@ export function sampleTraits(segment: Segment, audience: Audience, seed: number)
     motivation: pick(MOTIVATION, next(), 3),
   };
   // Separate streams preserve every existing draw when these optional distributions are introduced or edited.
-  if (audience.countries) {
-    const largest = Math.max(...Object.values(audience.countries));
-    const choices = sorted(audience.countries).map(([code, weight]) => [code, weight / largest] as const);
+  if (countries) {
+    const largest = Math.max(...Object.values(countries));
+    const choices = sorted(countries).map(([code, weight]) => [code, weight / largest] as const);
     const code = pick(choices, mulberry32(fnv1a(`country/${seed}`))(), 'US');
     const location = COUNTRY_PROFILES.find((p) => p.code === code)!;
     Object.assign(traits, { country: code, city: location.city, timezone: location.timezone, languages: [...location.languages], language: location.languages[0] });

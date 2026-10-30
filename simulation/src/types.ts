@@ -144,6 +144,20 @@ export interface Segment {
   goal_override: string | null; // replaces the project goal for this segment
   employers?: string[]; // optional organisations to spread this segment's personas across
   kind?: 'user' | 'buyer'; // absent: 'user'. Buyers only perceive, so by default they see text and designs, not web apps (tech.md §7)
+  countries?: Record<string, number>; // as Audience.countries, for this segment alone (from an analytics export); replaces the audience's
+  languages?: Record<string, number>; // as Audience.languages, for this segment alone; replaces the audience's
+  grounding?: Grounding; // real data behind this segment; source files are read once and never kept
+}
+
+export interface GroundingSource {
+  name: string; // the file's basename
+  sha256: string; // of the file as read, so a team can tell which version was used
+}
+
+export interface Grounding {
+  facts: string[]; // the segment's goals, vocabulary, objections and tools, in general terms
+  remarks: string[]; // verbatim from the redacted sources; real people's words, shown to personas as quoted material
+  sources: GroundingSource[];
 }
 
 export interface Audience {

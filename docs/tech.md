@@ -479,9 +479,9 @@ The prompt has a stable prefix (cached across all of a persona's steps) and a vo
    "how to use this profile": the country sets what formats, prices and norms look normal;
    the prior tools are what the product gets compared with; the decision role sets what
    matters; the psychology dials set reactions to risk, price and novelty; the voice and
-   first language set how the thought reads. No national or cultural caricature. Plus two
-   or three short examples of how people in this segment talk about tools, when the team
-   has them. Employers come from the segment's employer list when the user gave one,
+   first language set how the thought reads. No national or cultural caricature. A segment
+   with a research digest adds up to three real remarks, picked by the persona's seed and
+   labelled as quoted words of real people, not the persona's memories. Employers come from the segment's employer list when the user gave one,
    otherwise they are invented from industry and company size.
 3. Behaviour rules derived from traits:
    - patience → "You will give up after about {budget} actions or sooner if annoyed."

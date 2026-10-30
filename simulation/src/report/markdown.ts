@@ -674,6 +674,12 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
   ].join('\n');
 }
 
+/** Said wherever a report names grounded segments, because real data makes personas look more credible whether or not they are more accurate. */
+export const GROUNDING_NOTE = 'Grounded personas are still fictional, and their findings are still hypotheses.';
+
+export const groundingText = ({ name, facts, remarks, sources }: NonNullable<ReportMethods['grounding']>[number]) =>
+  `${name}: ${count(sources.length, 'source')} (${sources.join(', ')}), ${count(facts, 'fact')}, ${count(remarks, 'remark')}`;
+
 function methodsToMarkdown(m: ReportMethods): string[] {
   const models = [...Object.entries(m.models), ...(m.check_model ? [['evidence check', m.check_model] as const] : [])].map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
   const blocked = m.blocked.map(
@@ -695,6 +701,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
     ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
     ...(m.accessibility_audit ? [`- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): ${m.accessibility_audit.map((a) => `${line(a.page)}, ${line(a.help)} (${line(scanText(a))})`).join('; ')}`] : []),
+    ...(m.grounding ? [`- Grounded segments: ${m.grounding.map((segment) => line(groundingText(segment))).join('; ')}. ${GROUNDING_NOTE}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

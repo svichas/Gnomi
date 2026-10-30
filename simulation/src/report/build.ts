@@ -130,6 +130,8 @@ export function buildReport(events: GnomiEvent[]): Report {
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
   const { pois } = withPois(config.project);
+  const grounding = (audience?.segments ?? []).flatMap(({ id, name, grounding: real }) => (real && config.personas?.some((persona) => persona.segment_id === id)
+    ? [{ segment_id: id, name, facts: real.facts.length, remarks: real.remarks.length, sources: real.sources.map((source) => source.name) }] : []));
   const comparison = buildComparison(events);
   // A competitor's site gets its own themes and comparisons; outcomes, frictions, feelings and sentiment describe the team's product.
   const competitors = competitorIds(pois);
@@ -386,6 +388,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       signal_thresholds: config.signals ?? null,
       ...(undersized_targets.length ? { undersized_targets } : {}),
       ...(accessibility_audit.length ? { accessibility_audit } : {}),
+      ...(grounding.length ? { grounding } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },

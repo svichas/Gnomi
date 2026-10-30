@@ -67,9 +67,12 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 | Input | Provenance |
 | --- | --- |
 | Audience, segments, goals | Authored by the user or proposed by a model; synthetic input, not an observed human record. |
+| Analytics export (optional) | A CSV the team imports for a segment: counts become segment shares, phone shares, countries and languages, which sampling reads as usual. Values Gnomi cannot map are skipped and listed. The file is read once; its name and hash stay with the segment. |
+| Research notes (optional) | Interview notes or support tickets the team adds for a segment. Emails and phone numbers are removed in code, then the `persona_writer` model condenses them into a digest of at most 8 facts and 5 remarks. A remark is kept only if it is word for word in the redacted text. The digest shapes the fictional personas of that segment, and each persona's prompt quotes up to three remarks, picked by its seed; nothing is fitted to their behaviour. The files are read once; their names and hashes stay with the segment. |
+| Which data shaped a run | A report's methods name each grounded segment with its file names and its counts of facts and remarks, as the run froze them. Grounded personas are still fictional, and their findings are still hypotheses. |
 | Products, texts, designs | The user's own web app, pasted or uploaded text, Figma frames or images; hashes are stored with the run. |
 | Prices | A bundled price table for cost accounting (`llm/prices.ts`). |
-| Human reference data | None. No parameter is fitted to observed behaviour. |
+| Human reference data | None for validation. Analytics and research notes shape personas when a team adds them, but no parameter is fitted to observed behaviour, and data used to write personas cannot also test them. |
 
 ## 7. Submodels
 
@@ -147,6 +150,10 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `motivation` | 1-5 | 10, 25, 35, 20, 10 percent | Most people meet a work tool as a chore. | `audience/sample.ts` | assumed |
 | `seniority` | junior, mid, senior, lead | 25, 40, 25, 10 percent | An organisation pyramid. | `audience/sample.ts` | assumed |
 | `pronouns` | she, he, they | 48, 48, 4 percent | No binary assumption in prompts. | `audience/sample.ts` | assumed |
+| `MAX_FACTS` | facts per segment | 8 | Enough for goals, vocabulary, objections and tools without crowding the writer's prompt. | `engine/src/audience/ground.ts` | assumed |
+| `MAX_REMARKS` | remarks per segment | 5 | A few voices, so three per persona still vary across a segment. | `engine/src/audience/ground.ts` | assumed |
+| `MAX_REMARK_CHARS` | characters | 280 | Longer verbatim passages are dropped, because each remark rides in the cached prefix. | `engine/src/audience/ground.ts` | assumed |
+| `REMARKS_SHOWN` | remarks per persona | 3 | Real examples of how a segment talks, picked by seed, not a script to follow. | `agent/prompt.ts` | assumed |
 
 ### Patience and step budgets
 

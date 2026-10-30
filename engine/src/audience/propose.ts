@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { ProjectConfig, Segment } from '@gnomi/simulation/types.ts';
 import { apportion } from '@gnomi/simulation/audience/sample.ts';
+import { groundingLines } from './ground.ts';
 
 // The line the demo writer reads the logins back from; keep it in step with DEMO_PERSONA_WRITER.
 export const LOGINS_LABEL = 'Recorded logins: ';
@@ -67,6 +68,7 @@ export function proposeUser(project: ProjectConfig, roles: string[]): string {
     `What will be tested: ${project.pois.map((poi) => poi.name).join(', ')}`,
     `The team's goal for the test: "${project.goal}"`,
     `${LOGINS_LABEL}${JSON.stringify(roles)}`,
+    ...(project.audience?.segments.flatMap(groundingLines) ?? []),
   ].join('\n');
 }
 

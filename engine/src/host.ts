@@ -2,8 +2,11 @@
 // library, tech.md §16.2): the parent port is a global on `process`, and main hands over one
 // MessagePort per extra client. Main and the renderer both speak protocol.ts.
 import { addPersona, diversityReport, proposeAudience, regeneratePersona, syncPersonas, type AudienceDeps } from './audience/index.ts';
-import { validateCountries } from '@gnomi/simulation/audience/locations.ts';
+import { applyAnalytics } from './audience/analytics.ts';
+import { digestCost, groundSegment, readSources, sourceOf, sourcesNotice } from './audience/ground.ts';
+import { validateAudienceCountries } from '@gnomi/simulation/audience/locations.ts';
 import { comparisonSessionPois, comparisonSessionTarget } from './comparison-sessions.ts';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runKey, SessionRuns } from './session-runs.ts';
 import { assetMime, assetPath, importLocalFile, importText } from '@gnomi/simulation/assets.ts';
@@ -319,7 +322,7 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   get_project: () => info(),
   save_project({ project }) {
     noSetup('saving project changes');
-    validateCountries(project.audience?.countries);
+    if (project.audience) validateAudienceCountries(project.audience);
     if (project.persona_schema !== undefined) validatePersonaSchema(project.persona_schema);
     checkComparison(project);
     current().store.saveProject(project);
@@ -343,6 +346,22 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   figma_previews: (params) => previews(figma(), params),
   figma_import: (params) => importFrames(figma(), current().blobs, params),
   propose_audience: () => writeSetup(() => proposeAudience(writer(project()))),
+  analytics_preview({ path, audience, segment_id }) {
+    const data = readFileSync(path);
+    return applyAnalytics(data.toString('utf8'), audience, { segment: segment_id, source: sourceOf(path, data) });
+  },
+  estimate_sources({ paths }) {
+    const sources = readSources(paths);
+    const model = project().settings.routing.persona_writer;
+    const total = (pick: (source: (typeof sources)[number]) => number) => sources.reduce((sum, source) => sum + pick(source), 0);
+    return { files: sources.map((source) => source.name), emails: total((s) => s.emails), phones: total((s) => s.phones), high_usd: digestCost(sources, model), notice: sourcesNotice(model) };
+  },
+  ground_segment: ({ segment, paths, budget_usd }) => writeSetup(async () => {
+    const deps = writer(project());
+    // A local model costs nothing, so there is nothing to cap.
+    const llm = budget_usd > 0 ? cappedGateway(deps.llm, budget_usd, setupTask!.stop.signal) : deps.llm;
+    return groundSegment(segment, readSources(paths), { ...deps, llm }, budget_usd);
+  }),
   generate_personas: () => writeSetup(async () => {
     const { config, audience } = withAudience();
     const progress = (value: PersonaProgress) => broadcast({ kind: 'progress', task: 'generate_personas', ...value });

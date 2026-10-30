@@ -18,7 +18,7 @@ export interface Options { mode: Mode; out: string; allowance_usd?: number; m5?:
 export interface Criterion { id: string; status: Status; live_required: boolean; detail: string }
 export const BILLING_CAVEAT = 'The allowance stops new work at recorded spend. Already-dispatched calls may still be billed; missing provider usage makes the final bill uncertain. This is not a provider billing cap.';
 
-/** Evaluation arms (new_simulation.md §9): run-settings overrides of the baseline, and the generic-persona control. */
+/** Evaluation arms (new_simulation.md §9): run-settings overrides of the baseline, the generic-persona control and grounded segments. */
 export const ARMS = {
   baseline: {},
   social_off: { settings: { social: false } },
@@ -33,7 +33,9 @@ export const ARMS = {
   // Stays off in DEFAULT_SETTINGS until this arm shows it helps.
   finding_check: { settings: { finding_check: true } },
   accessibility: { settings: { accessibility_checks: true } },
-} satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true }>;
+  // A stored digest of an invented pack: this shows the pipeline works, and cannot show greater realism, because the Gym has no real users.
+  grounded: { grounded: true },
+} satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true; grounded?: true }>;
 export type Arm = keyof typeof ARMS;
 
 /** `provider:model` for the mapping judge, which docs/roadmap.md's judge calibration wants from another model family than the navigator's. */

@@ -17,6 +17,8 @@ Personas are fictional profiles assembled from team-approved audience assumption
 
 Existing report fields named `evidence` contain **simulation records**. They make a run inspectable. A reproducible browser error can establish a technical defect under the tested conditions, but its impact on people still needs investigation. Several agents repeating a complaint is not independent corroboration: they can share model biases, and social rounds deliberately expose them to one another.
 
+A segment can be grounded in a team's analytics or research notes, and the report's methods then name those sources. Grounded personas are still fictional, and their findings are still hypotheses: real data can make a persona look more credible without making it more accurate. Data used to write personas cannot also test them.
+
 ## Read trust labels within the simulation
 
 - **Confirmed:** a generated self-report aligns with an observed signal under the report's matching rules. This means corroboration within the run, not confirmation by real participants.

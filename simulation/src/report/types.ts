@@ -295,6 +295,7 @@ export interface ReportMethods {
   signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
   undersized_targets?: { page: string; element: string | null; width: number; height: number; personas: number }[]; // an audit, not findings: the team's product's small_target signals, so only elements a mobile persona tapped, by page, element and size, most personas first; only in runs with one
   accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
+  grounding?: { segment_id: string; name: string; facts: number; remarks: number; sources: string[] }[]; // the segments in this run that real data shaped, as the run froze them; `sources` holds file names; only in runs with one
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }

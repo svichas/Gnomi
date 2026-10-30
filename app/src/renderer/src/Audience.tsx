@@ -275,10 +275,12 @@ export function AudienceTab(props: {
                 <SegmentCard
                   key={segment.id}
                   segment={segment}
+                  audience={audience}
                   index={index}
                   sessions={sessions}
                   several={several}
                   onChange={(next) => onAudience({ ...audience, segments: segments.map((s) => (s.id === segment.id ? next : s)) })}
+                  onAudience={onAudience}
                   onShare={(share) => onAudience(setShare(audience, segment.id, share))}
                   onRemove={() => onAudience(removeSegment(audience, segment.id))}
                 />

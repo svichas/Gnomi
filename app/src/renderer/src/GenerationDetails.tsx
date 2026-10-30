@@ -1,7 +1,7 @@
 import type { SetupCall } from '@gnomi/simulation/types.ts';
 import { usd } from './ui.tsx';
 
-const STAGES: Record<string, string> = { propose_audience: 'Audience', write_persona: 'Sketches', rename_persona: 'Names', expand_persona: 'Biography' };
+const STAGES: Record<string, string> = { propose_audience: 'Audience', ground_segment: 'Research digest', write_persona: 'Sketches', rename_persona: 'Names', expand_persona: 'Biography' };
 
 /** Persisted diagnostics of the latest setup task, available after a failure and after restarting. */
 export function GenerationDetails({ calls }: { calls: SetupCall[] }) {

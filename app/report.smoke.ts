@@ -55,6 +55,7 @@ report.themes.push({
   evidence: [{ ...friction, step_seq: null, trust: 'observed', what: `Accessibility scan: ${contrast.help} (color-contrast, serious, 12 elements)`, quote: '', screenshot: null, signals: ['accessibility'], scan: { ...contrast, selectors: [...contrast.selectors] } }],
 });
 report.methods.accessibility_audit = [{ page: 'app.example.com/dashboard', rule: 'heading-order', impact: 'moderate', help: 'Heading levels should only increase by one', elements: 2, selectors: ['main:nth-child(2) > div:nth-child(3) > section:nth-child(1) > h4:nth-child(1)'] }];
+report.methods.grounding = [{ segment_id: report.segments[0].id!, name: report.segments[0].name, facts: 8, remarks: 5, sources: ['a-very-long-file-name-for-interview-notes-from-the-spring-research-round.md', 'tickets.txt'] }];
 report.set_aside = [{ ...theme('A persona typed its own name as the hiring manager', 9), check: { verdict: 'agent_mistake', reason: 'The persona entered its own name, so the form was right to refuse it.' } }];
 report.went_well = [{ text: 'The job preview was easy to scan', personas: 4, count: 4, seqs: [] }];
 // A wide and a tall screenshot with a frame on each, a plain one, and one with no file: nothing to mark.
@@ -261,6 +262,8 @@ try {
   assert.ok(await scanned.getByText('color-contrast, serious, 12 elements: main:nth-child(2)', { exact: false }).isVisible());
   assert.equal(await scanned.getByText(/\d+ of \d+ persona|simulated users? experienced|Met it first-hand|None first-hand/).count(), 0, 'nothing reads as how many personas met it');
   assert.ok(await root.getByText('An audit, not findings: the moderate and minor rules the page scan flagged', { exact: false }).isVisible());
+  assert.ok(await root.getByText('Grounded personas are still fictional, and their findings are still hypotheses.', { exact: true }).isVisible(), 'the methods say what grounding does not change');
+  assert.ok(await root.getByText(/: 2 sources \(a-very-long-file-name/).isVisible());
   assert.ok(await root.getByText('Recorded cost', { exact: true }).isVisible());
   const coverage = root.getByText('With 6 personas the curve is too short to read.', { exact: true });
   assert.ok(await coverage.isVisible(), 'the methods say how far to read the curve');
