@@ -20,6 +20,7 @@ import type {
   ProviderId,
   Report,
   ReportFriction,
+  ReportMethods,
   ReportPersona,
   ReportSegment,
   Routing,
@@ -200,7 +201,8 @@ export function buildReport(events: GnomiEvent[]): Report {
   const analysis = analyseFrictions(events, ctx);
 
   // Ran into friction: any self-report, survey friction or signal in a friction theme of the team's product; objections are not friction.
-  const personaAt = new Map(events.map((e) => [e.seq, e.persona_id]));
+  // A scan's signal is about the page: its persona only reached it first.
+  const personaAt = new Map(events.filter((e) => e.type !== 'signal.accessibility').map((e) => [e.seq, e.persona_id]));
   const withFriction = new Set(analysis.themes.filter((t) => t.category !== 'objection' && !competitors.has(t.poi_id)).flatMap((t) => t.seqs.flatMap((seq) => personaAt.get(seq) ?? [])));
   const segments: ReportSegment[] = inRun.map((s) =>
     segmentOf(s.id, s.name, s.share, audience ? personas.filter((p) => p.segment_id === s.id) : personas, withFriction, ourPois.map((poi) => poi.id)),
@@ -282,12 +284,27 @@ export function buildReport(events: GnomiEvent[]): Report {
       const [page, element, width, height] = JSON.parse(key) as [string, string | null, number, number];
       return { page, element, width, height, personas: ids.size };
     });
+  // A rule on a page is one line, however many states of the page broke it. A page with one good scan counts as scanned.
+  const audited = new Map<string, NonNullable<ReportMethods['accessibility_audit']>[number]>();
+  const scans = ofType(ours, 'accessibility.scanned').map((e) => ({ e, page: atStep(e, e.payload.step_no, e.payload.url).page ?? e.payload.url }));
+  for (const { e, page } of scans) {
+    for (const { category: _, ...violation } of e.payload.audit) if (!audited.has(page + violation.rule)) audited.set(page + violation.rule, { page, ...violation });
+  }
+  const accessibility_audit = [...audited].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, row]) => row);
+  const scanned = new Set(scans.filter(({ e }) => e.payload.error === null).map(({ page }) => page));
+  const unscanned = new Set(scans.map(({ page }) => page).filter((page) => !scanned.has(page)));
+  const perceiving = new Map(ofType(ours, 'persona.episode_started').flatMap((e) => (e.payload.perception ? [[e.persona_id, e.payload.perception] as const] : [])));
+  const seeing = [...perceiving.values()].filter((perception) => perception !== 'screen_reader').length;
+  const reading = perceiving.size - seeing;
   const discarded = ofType(events, 'social.discarded');
   const runNotes = [
     // A text-only navigator model gets no images (llm/gateway.ts), whatever the setting says.
     ...(webPois(pois).length && settings && (!settings.screenshots || !readsImages(settings.routing.navigator)) ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
     ...(discarded.length ? [`The run stopped in round ${discarded[0].round} before applying ${discarded.length} paid social answer${discarded.length === 1 ? '' : 's'}, so the feed and opinions miss ${discarded.length === 1 ? 'it' : 'them'}.`] : []),
     ...(settings && [...analysis.themes, ...(analysis.set_aside ?? [])].some((t) => t.check) && !readsImages(settings.check_model ?? settings.routing.judge) ? ['The evidence check read text only, because its model takes no images, so it could not see what the pages looked like.'] : []),
+    ...(unscanned.size ? [`The accessibility scan failed on ${unscanned.size === 1 ? '1 page' : `${unscanned.size} pages`}, so nothing is known about ${unscanned.size === 1 ? 'it' : 'them'} from the scan.`] : []),
+    ...(seeing ? [`${seeing === 1 ? '1 persona' : `${seeing} personas`} browsed with simulated colour-blind or blurred vision, so the screenshots stored for them, here and in the inspector, show that rather than the page as designed.`] : []),
+    ...(reading ? [`${reading === 1 ? '1 screen-reader persona' : `${reading} screen-reader personas`} got the page as text without screenshots, so a screenshot stored for them is what the page looked like, not what they perceived.`] : []),
   ];
 
   return {
@@ -356,6 +373,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       })),
       signal_thresholds: config.signals ?? null,
       ...(undersized_targets.length ? { undersized_targets } : {}),
+      ...(accessibility_audit.length ? { accessibility_audit } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },

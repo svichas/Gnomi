@@ -57,6 +57,10 @@ export function describe(e: GnomiEvent): string {
       return `step ${e.payload.step_no}: "${e.payload.message}"`;
     case 'signal.small_target':
       return `step ${e.payload.step_no}: ${e.payload.box[2]}×${e.payload.box[3]} target`;
+    case 'signal.accessibility':
+      return `step ${e.payload.step_no}: ${e.payload.rule} (${e.payload.impact}) on ${e.payload.elements} element${e.payload.elements === 1 ? '' : 's'} of ${e.payload.url}`;
+    case 'accessibility.scanned':
+      return `step ${e.payload.step_no}: ${e.payload.url} ${e.payload.error ? `not scanned: ${e.payload.error}` : `scanned, ${e.payload.audit.length} moderate or minor`}`;
     case 'persona.survey':
       return `${e.payload.poi_id}: sentiment ${e.payload.sentiment}, ${e.payload.would_continue ? 'would' : 'would not'} continue: "${e.payload.reason}"`;
     case 'run.round_started':

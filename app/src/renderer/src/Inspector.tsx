@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, Perception, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
@@ -8,6 +8,13 @@ import { Button, Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
 import './results.css';
+
+// A stored screenshot is what a vision persona saw, not the page as designed, and a screen-reader persona was never shown it.
+const SHOT_LABEL: Record<Perception, string> = {
+  deuteranopia: 'Simulated red–green colour blindness: the colours here are not the page’s own.',
+  blurredVision: 'Simulated low vision: the blur here is not on the page.',
+  screen_reader: 'Not shown to this persona, who got the page as text.',
+};
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
@@ -38,6 +45,7 @@ export function Inspector(props: {
   }
 
   const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
+  const perception = events.find((event): event is EventOf<'persona.episode_started'> => event.type === 'persona.episode_started' && event.payload.perception !== undefined)?.payload.perception;
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
@@ -96,6 +104,7 @@ export function Inspector(props: {
                 {row.screenshot && (
                   <div className="mt-2">
                     <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} />
+                    {perception && <p className="mt-1 text-xs text-stone-500">{SHOT_LABEL[perception]}</p>}
                   </div>
                 )}
               </li>

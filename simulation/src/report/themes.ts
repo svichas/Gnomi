@@ -66,6 +66,9 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/** The members a persona met. A scan's sits on the step of whoever reached the page first, which says nothing about who met the problem. */
+const felt = (members: Candidate[]) => members.filter((m) => m.kind !== 'accessibility');
+
 function maxTrust(members: Candidate[]): Trust {
   return members.reduce<Trust>((best, m) => (TRUST_WEIGHT[m.trust] > TRUST_WEIGHT[best] ? m.trust : best), 'reported');
 }
@@ -79,7 +82,7 @@ export function summarise(group: Group): GroupSummary {
     page: group.page,
     element: group.element,
     kind: group.kind,
-    personas: new Set(group.members.map((m) => m.persona_id)).size,
+    personas: new Set(felt(group.members).map((m) => m.persona_id)).size,
     frictions: group.members.length,
     trust,
     severity: median(group.members.map((m) => m.severity)),
@@ -186,6 +189,7 @@ const KIND_TITLE: Record<CandidateKind, string> = {
   error: 'Errors',
   validation_error: 'Validation errors',
   small_target: 'Small tap targets',
+  accessibility: 'Accessibility problems',
 };
 
 export const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
@@ -202,7 +206,8 @@ function headline(text: string): string {
 export function rulesTitle(group: Group): string {
   if (group.kind === 'survey' || group.kind === 'objection') return headline(group.members[0].text);
   const where = group.page ? ` on ${pathOf(group.page)}` : '';
-  return group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
+  const scan = group.kind === 'accessibility' ? group.members[0].scan?.help : null;
+  return scan ? `${scan}${where}` : group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
 }
 
 const byEvidence = (a: Candidate, b: Candidate) => b.severity - a.severity || TRUST_WEIGHT[b.trust] - TRUST_WEIGHT[a.trust] || a.seqs[0] - b.seqs[0];
@@ -414,6 +419,7 @@ function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
     screenshot: c.screenshot,
     ...(c.box && { box: c.box }),
     signals: c.signals,
+    ...(c.scan && { scan: c.scan }),
     ...stepEvidence(c),
   };
 }
@@ -692,8 +698,9 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       .map((draft): ReportTheme => {
         const members = draft.groups.flatMap((g) => g.members);
         const id = idOf(draft);
-        const personas = new Set(members.map((m) => m.persona_id)).size;
-        const hand = firstHand(members, id, themeTags, echoes);
+        const met = felt(members);
+        const personas = new Set(met.map((m) => m.persona_id)).size;
+        const hand = firstHand(met, id, themeTags, echoes);
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
@@ -707,6 +714,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           prevalence: share,
           heard_first: personas - hand.size,
           first_hand: [...hand],
+          ...(met.length === 0 && { scan_only: true as const }),
           trust,
           trust_counts,
           severity,

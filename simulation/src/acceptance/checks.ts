@@ -32,6 +32,7 @@ export const ARMS = {
   fewer_rounds: { settings: { rounds: 3 } },
   // Stays off in DEFAULT_SETTINGS until this arm shows it helps.
   finding_check: { settings: { finding_check: true } },
+  accessibility: { settings: { accessibility_checks: true } },
 } satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true }>;
 export type Arm = keyof typeof ARMS;
 

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Action, ActionResult, ActionTarget } from '../types.ts';
-import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, smallTarget, validationError, type Step } from './index.ts';
+import type { PageDriver } from '../seams.ts';
+import type { AccessibilityViolation, Action, ActionResult, ActionTarget, PageSnapshot } from '../types.ts';
+import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, pageAudits, smallTarget, validationError, type Step } from './index.ts';
 
 const T = DEFAULT_SIGNALS;
 const A = 'https://app.test/a';
@@ -210,4 +211,55 @@ test('detectSignals: page errors become signal.error on the step; a done step re
   const done = step(3, 'done', A, A, { ref: null, target: null, result: { dom_changed: false } });
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: [], before: null, after: null, thresholds: T }), []);
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: errors.slice(1), before: null, after: null, thresholds: T }).map((s) => s.type), ['signal.error']);
+});
+
+const violation = (rule: string, impact: AccessibilityViolation['impact']): AccessibilityViolation => ({ rule, impact, category: 'color', help: `${rule} help`, elements: 2, selectors: ['main > p'] });
+const shot = (hash: string, url = 'https://app.test/jobs/1'): PageSnapshot => ({ url, title: 'App', text: '', hash });
+const scanning = (audit: PageDriver['audit']) => ({ audit }) as PageDriver;
+const rules = (found: AccessibilityViolation[] = []) => found.map((v) => v.rule);
+
+test('pageAudits: critical and serious become signals, each rule once per page pattern; moderate and minor stay out of them', async () => {
+  const audit = pageAudits();
+  const page = scanning(async () => [violation('color-contrast', 'serious'), violation('button-name', 'critical'), violation('region', 'moderate'), violation('heading-order', 'minor')]);
+  const first = await audit(page, shot('a'));
+  assert.deepEqual([rules(first?.signals), rules(first?.audit), first?.error], [['color-contrast', 'button-name'], ['region', 'heading-order'], null]);
+  const sameTemplate = await audit(page, shot('b', 'https://app.test/jobs/2?tab=notes'));
+  assert.deepEqual([rules(sameTemplate?.signals), rules(sameTemplate?.audit)], [[], ['region', 'heading-order']], 'another state of the page, another record: no second signal');
+  assert.deepEqual(rules((await audit(page, shot('c', 'https://app.test/settings')))?.signals), ['color-contrast', 'button-name'], 'another page signals on its own');
+});
+
+test('pageAudits: one scan per snapshot across personas reaching it at once', async () => {
+  const audit = pageAudits();
+  let scans = 0;
+  let finish = (_: AccessibilityViolation[]) => {};
+  const page = scanning(() => { scans++; return new Promise((resolve) => { finish = resolve; }); });
+  const first = audit(page, shot('a'));
+  assert.equal(await audit(page, shot('a')), null, 'the second persona carries on while the first scan runs');
+  finish([violation('color-contrast', 'serious')]);
+  assert.deepEqual(rules((await first)?.signals), ['color-contrast']);
+  assert.equal(await audit(page, shot('a')), null);
+  assert.equal(scans, 1);
+});
+
+test('pageAudits: a scan that fails says why and is not repeated, and a page with nothing to scan is passed by', async () => {
+  const audit = pageAudits();
+  let scans = 0;
+  const failing = scanning(async () => {
+    scans++;
+    throw new Error('page.evaluate: axe would not load\n    at somewhere');
+  });
+  assert.deepEqual(await audit(failing, shot('a')), { audit: [], error: 'page.evaluate: axe would not load', signals: [] });
+  assert.equal(await audit(failing, shot('a')), null);
+  assert.equal(scans, 1);
+  assert.equal(await audit({} as PageDriver, shot('b')), null, 'a driver without audit');
+  assert.equal(await audit(failing, shot('c', 'chrome-error://chromewebdata/')), null, 'the browser\'s own error page');
+  assert.equal(scans, 1);
+});
+
+test('detectSignals: a scan\'s violations are about the page, not the step\'s element, even on a done step', () => {
+  const found = violation('color-contrast', 'serious');
+  const done = step(3, 'done', A, A, { ref: 'e7', target: null, result: { dom_changed: false } });
+  assert.deepEqual(detectSignals({ history: [], step: done, device: 'desktop', errors: [], before: null, after: null, thresholds: T, violations: [found] }).map((s) => [s.type, s.payload]), [
+    ['signal.accessibility', { step_no: 3, url: A, ref: null, ...found }],
+  ]);
 });

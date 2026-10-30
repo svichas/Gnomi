@@ -223,6 +223,7 @@ test('detected signals read as sentences and have their own category', () => {
     event(5, 'signal.error', { ...base, kind: 'http', status: 404, message: 'GET http://gym.test/job' }),
     event(6, 'signal.validation_error', { ...base, message: 'Enter a job title' }),
     event(7, 'signal.small_target', { ...base, box: [0, 0, 35.4, 23] }),
+    event(8, 'signal.accessibility', { ...base, ref: null, rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 2, selectors: ['main > p'] }),
   ];
   assert.deepEqual(
     toRows(signals).reverse().map((row) => [row.label, row.title, row.detail]),
@@ -234,9 +235,10 @@ test('detected signals read as sentences and have their own category', () => {
       ['Step 3', 'Detected: the site answered HTTP 404', 'GET http://gym.test/job'],
       ['Step 3', 'Detected: an error message appeared after submitting', 'Enter a job title'],
       ['Step 3', 'Detected: tapped a small target, 35×23 px', base.url],
+      ['Step 3', 'Page scan: Elements must meet minimum color contrast ratio thresholds', base.url],
     ],
   );
-  assert.equal(filterEvents([...signals, blocked(8)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
+  assert.equal(filterEvents([...signals, blocked(9)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
 });
 
 test('a step error reads in words, and what covered the target as something in the way', () => {

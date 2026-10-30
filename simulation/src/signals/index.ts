@@ -1,5 +1,6 @@
-import type { PageError } from '../seams.ts';
-import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../types.ts';
+import { pagePattern } from '../report/friction.ts';
+import type { PageDriver, PageError } from '../seams.ts';
+import type { AccessibilityViolation, Device, EventPayloads, PageSnapshot, SignalBase, SignalThresholds } from '../types.ts';
 
 // Objective friction signals (tech.md §8.1): pure rules over one persona's steps. The agent loop runs them right after each
 // step and writes what they find to the log, so a report cites what was detected under the run's frozen thresholds.
@@ -7,7 +8,7 @@ import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../typ
 export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 24 };
 
 export type Step = Pick<EventPayloads['persona.step'], 'step_no' | 'action' | 'target' | 'result' | 'snapshot_hash'>;
-type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target';
+type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target' | 'signal.accessibility';
 export type Signal = { [K in Detected]: { type: K; payload: EventPayloads[K] } }[Detected];
 type SignalOf<K extends Detected> = Extract<Signal, { type: K }>;
 
@@ -94,17 +95,50 @@ export function smallTarget(step: Step, device: Device, t: SignalThresholds): Si
   return width > 0 && height > 0 && Math.min(width, height) < t.small_target_px ? { type: 'signal.small_target', payload: { ...base(step), box } } : null;
 }
 
+/** What one scan adds to the log, or null when there was nothing to scan. */
+export type PageAudit = Pick<EventPayloads['accessibility.scanned'], 'audit' | 'error'> & { signals: AccessibilityViolation[] };
+
+// Weak signals that became themes are the report's main noise, so only these signal; the rest go to the methods appendix.
+const SIGNALLED = new Set<AccessibilityViolation['impact']>(['critical', 'serious']);
+
+/**
+ * One run's accessibility scans, shared by its personas. Each page state is scanned once, as the result is the same for everyone, and
+ * each rule signals once per page pattern, however many states of the page break it. Each is claimed with no await after its check,
+ * so personas reaching a page together scan it once. A scan that fails is reported, not thrown: it costs the persona nothing.
+ */
+export function pageAudits() {
+  const scanned = new Set<string>(); // snapshot hashes
+  const raised = new Set<string>(); // rule and page pattern of each signal so far
+  return async (page: PageDriver, { hash, url }: PageSnapshot): Promise<PageAudit | null> => {
+    if (!page.audit || !/^https?:/.test(url) || scanned.has(hash)) return null; // a browser's own error page is not the product's
+    scanned.add(hash);
+    try {
+      const found = await page.audit();
+      const signals = found.filter(({ rule, impact }) => {
+        const key = JSON.stringify([rule, pagePattern(url)]);
+        if (!SIGNALLED.has(impact) || raised.has(key)) return false;
+        raised.add(key);
+        return true;
+      });
+      return { audit: found.filter(({ impact }) => !SIGNALLED.has(impact)), error: null, signals };
+    } catch (err) {
+      return { audit: [], error: (err instanceof Error ? err.message : String(err)).split('\n')[0].slice(0, 200), signals: [] };
+    }
+  };
+}
+
 /**
  * Every signal one step raises. `history` is the episode's earlier steps; `errors` what the page captured since the last step;
- * `before`/`after` the snapshot texts around a submit (after is null for other actions). A done or abandon step did nothing
- * on the page, so only errors captured meanwhile count.
+ * `before`/`after` the snapshot texts around a submit (after is null for other actions); `violations` what a scan of the page found.
+ * A done or abandon step did nothing on the page, so only errors captured meanwhile, and what the scan saw, count.
  */
-export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds }): Signal[] {
-  const { history, step, device, errors, before, after, thresholds: t } = input;
+export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds; violations?: AccessibilityViolation[] }): Signal[] {
+  const { history, step, device, errors, before, after, thresholds: t, violations = [] } = input;
   const ended = step.action.type === 'done' || step.action.type === 'abandon';
   const found: (Signal | null)[] = ended ? [] : [failedAction(step, history.at(-1)), loop(history, step, t), backtrack(history, step, t)];
   // An error belongs to the page it happened on: after a navigation, the one the step landed on.
   for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), url: step.result.url_after, ...error } });
   if (!ended) found.push(validationError(step, before, after), smallTarget(step, device, t));
+  for (const violation of violations) found.push({ type: 'signal.accessibility', payload: { ...base(step), ref: null, ...violation } });
   return found.filter((signal): signal is Signal => signal !== null);
 }

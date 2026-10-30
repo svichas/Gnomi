@@ -9,9 +9,10 @@ import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { targetIn } from './loop.ts';
 import { createRecorder, newRunConfig, startRun } from '../run.ts';
-import type { BrowserPool, PageDriver, PageOptions, Responder, SessionStore } from '../seams.ts';
+import { getPersonaSchema } from '../profile/schema.ts';
+import type { BrowserPool, LlmRequest, PageDriver, PageOptions, Responder, SessionStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, EventOf, EventType, GnomiEvent, Persona, ProjectConfig, RunSettings, SessionInfo } from '../types.ts';
+import type { AccessibilityViolation, Audience, EventOf, EventType, GnomiEvent, Persona, ProjectConfig, RunSettings, SessionInfo, WebPoi } from '../types.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'gnomi-loop-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -202,4 +203,118 @@ test('a timed-out model call is a failed step, as an invalid answer is, and the 
   assert.equal(report.status, 'finished', report.stop_reason ?? '');
   assert.deepEqual(of(events, 'persona.step').map((e) => e.payload.result.error), ['invalid_output', null]);
   assert.equal(report.personas[0].outcome, 'done');
+});
+
+const needing = (...needs: Persona['accessibility_needs'][]) => personas(needs.length).map((persona, i) => ({ ...persona, accessibility_needs: needs[i] }));
+const violation = (rule: string, impact: AccessibilityViolation['impact'] = 'serious'): AccessibilityViolation => ({ rule, impact, category: 'color', help: `${rule} help`, elements: 2, selectors: ['main > p'] });
+const shown = (req: LlmRequest<unknown>) => req.user.some((part) => part.type === 'image');
+
+test('with accessibility_checks off nothing changes: no scan, no emulation, and a screen-reader persona gets its screenshots', async () => {
+  let scans = 0;
+  const { browsers, pages } = fakeBrowsers(() => ({ audit: async () => { scans++; return [violation('color-contrast')]; } }));
+  const images: boolean[] = [];
+  const { report, events } = await runWeb('checks-off', {
+    personas: needing('screen_reader', 'colour_blind', 'low_vision'), browsers,
+    navigator(req) {
+      images.push(shown(req));
+      return step('done', null, 'Posted');
+    },
+  });
+  assert.equal(scans, 0);
+  assert.ok(pages.every((page) => !('vision' in page.options)));
+  assert.deepEqual(images, [true, true, true]);
+  assert.equal(of(events, 'accessibility.scanned').length + of(events, 'signal.accessibility').length, 0);
+  assert.ok(of(events, 'persona.episode_started').every((e) => !('perception' in e.payload)));
+  assert.ok(!report.methods.limitations?.some((l) => /accessibility|screen-reader|simulated/.test(l)));
+});
+
+test('accessibility_checks sets what each need can perceive, and only those with a real emulation', async () => {
+  const { browsers, pages } = fakeBrowsers();
+  const images = new Map<string, boolean>();
+  const { events } = await runWeb('needs', {
+    personas: needing('colour_blind', 'low_vision', 'screen_reader', 'motor', 'none'), browsers, settings: { accessibility_checks: true, concurrency: 1 },
+    navigator(req) {
+      images.set(req.persona_id!, shown(req));
+      return step('done', null, 'Posted');
+    },
+  });
+  const started = of(events, 'persona.episode_started');
+  const of_ = (i: number) => started.findIndex((e) => e.persona_id === `p-${i}`);
+  assert.deepEqual([0, 1, 2, 3, 4].map((i) => pages[of_(i)].options.vision), ['deuteranopia', 'blurredVision', undefined, undefined, undefined]);
+  assert.deepEqual([0, 1, 2, 3, 4].map((i) => started[of_(i)].payload.perception), ['deuteranopia', 'blurredVision', 'screen_reader', undefined, undefined]);
+  assert.deepEqual([0, 1, 2, 3, 4].map((i) => images.get(`p-${i}`)), [true, true, false, true, true], 'the screen-reader persona alone gets the page as text');
+  assert.ok(of(events, 'persona.step').every((e) => e.payload.screenshot), 'its screenshots are still stored as evidence');
+});
+
+test('a need the project keeps out of its prompts changes nothing in code either', async () => {
+  const persona_schema = getPersonaSchema();
+  persona_schema.attributes.find((a) => a.id === 'accessibility_needs')!.use_in_prompt = false;
+  const { browsers, pages } = fakeBrowsers();
+  await runWeb('need-off', { personas: needing('colour_blind'), browsers, settings: { accessibility_checks: true }, project: { persona_schema }, navigator: () => step('done', null, 'Posted') });
+  assert.ok(!('vision' in pages[0].options));
+});
+
+test('personas reaching one page at once scan it once; the signal sits on one step and adds none', async () => {
+  let scans = 0;
+  const { browsers } = fakeBrowsers(() => ({
+    async audit() {
+      scans++;
+      await new Promise((done) => setTimeout(done, 30));
+      return [violation('color-contrast'), violation('region', 'moderate')];
+    },
+  }));
+  const { report, events } = await runWeb('scan-once', {
+    personas: personas(4), browsers, settings: { accessibility_checks: true, concurrency: 4 },
+    navigator: () => step('done', null, 'Posted'),
+  });
+  assert.equal(scans, 1);
+  const [signal, ...others] = of(events, 'signal.accessibility');
+  assert.deepEqual([others.length, signal.payload.rule, signal.payload.ref], [0, 'color-contrast', null]);
+  assert.equal(of(events, 'accessibility.scanned').length, 1);
+  assert.deepEqual(of(events, 'accessibility.scanned')[0].payload.audit.map((v) => v.rule), ['region']);
+  assert.equal(of(events, 'persona.step').length, 4, 'one step each: a scan is no step');
+  assert.deepEqual(report.personas.map((p) => p.outcome), ['done', 'done', 'done', 'done']);
+  const theme = report.themes!.find((t) => t.scan_only)!;
+  assert.deepEqual([theme.trust, theme.personas, theme.evidence[0].persona_id], ['observed', 0, signal.persona_id]);
+  assert.deepEqual(report.methods.accessibility_audit?.map((row) => row.rule), ['region']);
+});
+
+test('a page state seen again is not scanned again, and a new state of the same page adds no second signal', async () => {
+  let scans = 0;
+  let look = 0;
+  const hashes = ['a', 'a', 'b', 'a'];
+  const { browsers } = fakeBrowsers(() => ({
+    snapshot: async () => ({ url: 'http://gym.test/jobs/new', title: 'Gym', text: '- link "Jobs" [ref=e1]', hash: hashes[look++] }),
+    audit: async () => { scans++; return [violation('color-contrast')]; },
+  }));
+  const { events } = await runWeb('scan-states', {
+    personas: personas(1), browsers, settings: { accessibility_checks: true },
+    navigator: (req) => (/Step 4\./.test(JSON.stringify(req.user)) ? step('done', null, 'Posted') : step('scroll', null, 'down')),
+  });
+  assert.equal(scans, 2);
+  assert.equal(of(events, 'signal.accessibility').length, 1);
+  assert.deepEqual(of(events, 'accessibility.scanned').map((e) => e.payload.snapshot_hash), ['a', 'b']);
+});
+
+test('a scan that fails costs the persona nothing and the report says how many pages went unscanned', async () => {
+  const { browsers } = fakeBrowsers(() => ({ audit: async () => { throw new Error('page.evaluate: refused'); } }));
+  let steps = 0;
+  const { report, events } = await runWeb('scan-fails', {
+    personas: personas(1), browsers, settings: { accessibility_checks: true },
+    navigator: () => (++steps === 2 ? step('done', null, 'Posted') : step('click', 'e1')),
+  });
+  assert.equal(report.status, 'finished', report.stop_reason ?? '');
+  assert.equal(report.personas[0].outcome, 'done');
+  assert.deepEqual(of(events, 'accessibility.scanned').map((e) => e.payload.error), ['page.evaluate: refused', 'page.evaluate: refused']);
+  assert.ok(report.methods.limitations?.includes('The accessibility scan failed on 2 pages, so nothing is known about them from the scan.'), JSON.stringify(report.methods.limitations));
+});
+
+test('a competitor\'s site is not scanned', async () => {
+  const urls: string[] = [];
+  const { browsers } = fakeBrowsers((page) => ({ audit: async () => { urls.push(page.gotos.at(-1)!); return []; } }));
+  const product: WebPoi = { id: 'poi-1', type: 'web', name: 'Gym ATS', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: ['gym.com'], reset_hook_url: null, mode: 'full', segments: null };
+  const rival: WebPoi = { ...product, id: 'poi-2', name: 'Rival', start_url: 'http://rival.test/', production_domains: [], mode: 'observe_only' };
+  const { events } = await runWeb('scan-rival', { personas: personas(1), browsers, settings: { accessibility_checks: true }, project: { pois: [product, rival] }, navigator: () => step('done', null, 'Done') });
+  assert.deepEqual(of(events, 'persona.step').map((e) => e.poi_id), ['poi-1', 'poi-2'], 'it browsed both');
+  assert.deepEqual(urls, ['http://gym.test/']);
 });

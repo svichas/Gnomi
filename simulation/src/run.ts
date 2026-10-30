@@ -3,7 +3,7 @@ import { admits, effectiveComparisonPois, inScenario, validateComparison } from 
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, perceptionOf, type HeardPost } from './agent/prompt.ts';
 import { socialParts, socialSchema, socialSystemPrompt } from './agent/social.ts';
 import { surveyedName, surveyFacts, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
 import { personaEnvironment } from './audience/locations.ts';
@@ -20,7 +20,7 @@ import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import { socialRounds } from './settings.ts';
-import { DEFAULT_SIGNALS } from './signals/index.ts';
+import { DEFAULT_SIGNALS, pageAudits } from './signals/index.ts';
 import { readBoard, selectFeed, type FeedPost } from './social/feed.ts';
 import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
@@ -245,9 +245,11 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const observe = observeOptions(hard.signal); // robots.txt once per run and observe-only POI
+  const audit = settings.accessibility_checks ? pageAudits() : undefined;
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
   const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi, state?: StorageState) => {
     const login = poi.mode === 'full' ? role : null;
+    const perception = target ? undefined : perceptionOf(project, persona); // a comparison's own loop has no such step (comparison/runtime.ts)
     const saved = login ? await sessions?.load(login) : null;
     if (target && saved && saved.info.target_id !== target.id) throw new ComparisonEnvironmentError(`The recorded session is not bound to ${target.name}; record its own test account.`);
     const observing = await observe(poi);
@@ -258,6 +260,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return browsers.newPage({
       device: persona.device,
       ...personaEnvironment(persona),
+      ...(perception && perception !== 'screen_reader' && { vision: perception }),
       allowedHosts: allowedHosts(poi),
       blockedDomains: poi.production_domains,
       storageState: state ?? saved?.state ?? null,
@@ -400,6 +403,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         waitForResume: waitForResume(persona.id),
         round: () => base.round,
         slice: rounds ? { steps: slice, next: between(persona.id, poi.id) } : undefined,
+        audit,
       });
       const last = end === 'stopped' || i === pois.length - 1;
       if (last) ends.set(persona.id, end);

@@ -6,6 +6,9 @@ export type Device = 'desktop' | 'mobile';
 
 export type AccessibilityNeed = 'none' | 'low_vision' | 'colour_blind' | 'screen_reader' | 'motor';
 
+/** What code limits about what a persona perceives (agent/prompt.ts perceptionOf): a Chromium vision emulation, or no screenshots. */
+export type Perception = 'deuteranopia' | 'blurredVision' | 'screen_reader';
+
 export type AttributeValue = string | number | boolean | string[];
 export type ProfileGroup = 'identity' | 'work' | 'capability' | 'context' | 'psychology' | 'intent' | 'voice' | 'biography';
 export type AttributeSamplingRule =
@@ -113,6 +116,7 @@ export interface RunSettings {
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
   finding_check?: boolean; // review friction themes against their evidence before the author writes (report/models.ts); absent means off
   check_model?: ModelChoice; // the model for that review, which may be another family; absent means the judge's route
+  accessibility_checks?: boolean; // the page scan, and what accessibility needs do in code: vision emulation and no screenshots for screen readers; absent means off
 }
 
 // The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
@@ -337,6 +341,16 @@ export interface SignalBase {
   ref: string | null; // the step's target element, if any
 }
 
+/** What axe-core reports for one rule on a page. It holds no page text: the rule's own wording, and elements by tag and position. */
+export interface AccessibilityViolation {
+  rule: string; // axe's rule id, e.g. color-contrast
+  impact: 'critical' | 'serious' | 'moderate' | 'minor';
+  category: string; // axe's category of the rule, e.g. color
+  help: string; // axe's one-line statement of the rule
+  elements: number; // how many elements on the page break it
+  selectors: string[]; // the first few of them
+}
+
 /** Where a step or friction happened on a POI without pages: the frame of a design, the passage of a text. */
 export interface StepEvidence {
   frame?: number; // design POIs: the frame's index in DesignPoi.frames
@@ -357,7 +371,7 @@ export interface EventPayloads {
   'run.round_ended': Record<string, never>;
   'run.concurrency_changed': { concurrency: number; reason: string }; // e.g. backing off after a provider's rate limit
   'persona.created': { persona: Persona; follows?: string[] }; // follows: persona ids from the run's follow graph (M4)
-  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[] };
+  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[]; perception?: Perception };
   'persona.step': {
     step_no: number;
     action: Action;
@@ -407,6 +421,10 @@ export interface EventPayloads {
   'signal.error': SignalBase & { kind: 'console' | 'exception' | 'http'; status: number | null; message: string };
   'signal.validation_error': SignalBase & { message: string };
   'signal.small_target': SignalBase & { box: [x: number, y: number, width: number, height: number] };
+  // About the page, not the persona: on the step of whoever reached that page state first, at most once per rule and page pattern (signals/index.ts).
+  'signal.accessibility': SignalBase & AccessibilityViolation;
+  // One per page state per run. audit: its moderate and minor violations, which are no signals; error: why that state went unscanned.
+  'accessibility.scanned': { step_no: number; url: string; snapshot_hash: string; audit: AccessibilityViolation[]; error: string | null };
   // End-of-episode survey per POI (tech.md §8.2); `reason` renders like a think-aloud line.
   'persona.survey': {
     poi_id: string;
@@ -521,4 +539,4 @@ export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failu
 /** Neither says anything about the product, so the completion and friction rates leave them out. */
 export const isUnrated = (outcome: Outcome) => outcome === 'not_started' || outcome === 'model_failed';
 
-export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target';
+export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target' | 'accessibility';

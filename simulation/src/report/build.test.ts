@@ -435,6 +435,55 @@ test('an older log keeps its frozen threshold, and a log without the signal buil
   assert.ok(!('undersized_targets' in buildReport(stored(finishedRun())).methods));
 });
 
+const violation = (rule: string, impact: 'serious' | 'moderate' | 'minor' = 'moderate'): Omit<EventPayloads['signal.accessibility'], keyof EventPayloads['signal.loop']> & { rule: string } => ({ rule, impact, category: 'structure', help: `${rule} help`, elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] });
+const scannedAt = (persona_id: string, step_no: number, page: string, audit: ReturnType<typeof violation>[], error: string | null = null): Script => [
+  [1100, { ...who(persona_id), type: 'persona.step', payload: stepPayload(step_no, 'A look.', `shots/${step_no}.jpg`) }],
+  [1101, { ...who(persona_id), type: 'accessibility.scanned', payload: { step_no, url: `${page}?token=s3cret`, snapshot_hash: `h${step_no}`, audit, error } }],
+];
+
+test('moderate and minor scan results are an audit in the methods, not findings, and a page the scan never got through is counted', () => {
+  const signal: [number, NewEvent] = [1102, { ...who('p-001'), type: 'signal.accessibility', payload: { step_no: 1, url, ref: null, ...violation('color-contrast', 'serious') } }];
+  const report = buildReport(stored([
+    startedAt,
+    ...scannedAt('p-001', 1, url, [violation('heading-order'), violation('region', 'minor')]),
+    signal,
+    ...scannedAt('p-002', 2, 'http://localhost:3001/jobs/new', [violation('region', 'minor')]),
+    ...scannedAt('p-002', 3, 'http://localhost:3001/settings', [], 'page.evaluate: no'),
+    ...scannedAt('p-002', 4, 'http://localhost:3001/billing', [], 'no result in 10000 ms'),
+    ...scannedAt('p-001', 5, 'http://localhost:3001/billing', []),
+    [1900, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.methods.accessibility_audit, [
+    { page: 'localhost:3001/jobs/new', rule: 'heading-order', impact: 'moderate', help: 'heading-order help', elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] },
+    { page: 'localhost:3001/jobs/new', rule: 'region', impact: 'minor', help: 'region help', elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] },
+  ]);
+  assert.ok(report.methods.limitations?.includes('The accessibility scan failed on 1 page, so nothing is known about it from the scan.'), 'settings: billing was scanned on another try');
+  const [theme] = report.themes!;
+  assert.ok(theme.scan_only);
+  assert.equal(report.weighted.with_friction, 0, 'the scan\'s step is not a persona running into friction');
+  assert.equal(report.frictions.length, 0);
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): localhost:3001/jobs/new, heading-order help (heading-order, moderate, 4 elements: main &gt; h3; main &gt; h4; main &gt; h5 and more); '));
+  assert.ok(md.includes('- Evidence: Found by the accessibility scan of the page, not by a persona.'));
+  assert.ok(md.includes('- Accessibility scan: color-contrast, serious, 4 elements: main &gt; h3; main &gt; h4; main &gt; h5 and more. Found by the accessibility scan'));
+  assert.ok(!md.includes('Affected first-hand by segment') && !md.includes('none, 0 of'), 'no share of personas');
+  assert.ok(!md.includes('s3cret'));
+});
+
+test('a run says which personas had what code limits about perception, and its screenshots are read accordingly', () => {
+  const started = (persona_id: string, perception?: 'deuteranopia' | 'blurredVision' | 'screen_reader'): [number, NewEvent] => [1050, { ...who(persona_id), type: 'persona.episode_started', payload: { poi_id: 'poi-gym', device: 'desktop', start_url: startUrl, ...(perception && { perception }) } }];
+  const { limitations } = buildReport(stored([startedAt, started('p-001', 'deuteranopia'), started('p-002', 'blurredVision'), started('p-003', 'screen_reader'), started('p-004')])).methods;
+  assert.ok(limitations?.includes('2 personas browsed with simulated colour-blind or blurred vision, so the screenshots stored for them, here and in the inspector, show that rather than the page as designed.'));
+  assert.ok(limitations?.includes('1 screen-reader persona got the page as text without screenshots, so a screenshot stored for them is what the page looked like, not what they perceived.'));
+});
+
+test('a log from before the scan builds without any of it', () => {
+  const report = buildReport(stored(finishedRun()));
+  assert.ok(!('accessibility_audit' in report.methods));
+  assert.ok(!report.themes?.some((t) => 'scan_only' in t));
+  assert.ok(!report.methods.limitations?.some((l) => /accessibility|screen-reader|simulated/.test(l)));
+});
+
 test('allowed hosts start with the start page host and drop duplicates', () => {
   const withHosts: RunConfig = {
     ...config,

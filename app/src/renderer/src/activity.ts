@@ -228,6 +228,8 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
       const [, , width, height] = event.payload.box;
       return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: place(event.payload.url) };
     }
+    case 'signal.accessibility':
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Page scan: ${event.payload.help}`, detail: place(event.payload.url) };
     case 'llm.call':
       return event.payload.status === 'ok'
         ? null
@@ -403,6 +405,7 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'signal.error': 'signals',
   'signal.validation_error': 'signals',
   'signal.small_target': 'signals',
+  'signal.accessibility': 'signals',
   'persona.opinion_changed': 'opinions',
   'persona.survey': 'opinions',
   'social.feed_viewed': 'social',

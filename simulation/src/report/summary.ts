@@ -17,6 +17,7 @@ function exposed(theme: ReportTheme, poi?: Report['pois'][number]) {
 
 function reach(theme: ReportTheme, verb: 'met' | 'raised', poi?: Report['pois'][number]) {
   const share = theme.prevalence;
+  if (theme.scan_only) return 'found by the accessibility scan, which says nothing about how many personas met it';
   if (!share) return `${verb} by ${count(theme.personas, 'persona')}`; // older reports have no denominator
   if (share.personas === 0) return `which no persona ${verb} first-hand: ${count(theme.personas, 'persona')} reported it only after reading about it in the feed`;
   return `${verb} by ${share.personas} of ${count(share.exposed, 'persona')} ${exposed(theme, poi)}`;
