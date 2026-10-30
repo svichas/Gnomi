@@ -412,6 +412,7 @@ function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
     what: c.text,
     quote: c.quote,
     screenshot: c.screenshot,
+    ...(c.box && { box: c.box }),
     signals: c.signals,
     ...stepEvidence(c),
   };

@@ -7,6 +7,7 @@ import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_SOCIALISER, DEMO_S
 import { createFsBlobStore } from '../log/blobs.ts';
 import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
+import { targetIn } from './loop.ts';
 import { createRecorder, newRunConfig, startRun } from '../run.ts';
 import type { BrowserPool, PageDriver, PageOptions, Responder, SessionStore } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
@@ -77,6 +78,31 @@ async function runWeb(name: string, opts: { personas: Persona[]; navigator: Resp
   store.close();
   return { report, events };
 }
+
+test('a target read from the page text keeps its box: the marks are still there, and an element without one has none', () => {
+  const text = '- link "Jobs" [ref=e1] [box=8,16,100,20]\n- button "Save" [ref=e2]\n- button [ref=e3] [box=1,2,3,4]';
+  assert.deepEqual(targetIn(text, 'e1'), { role: 'link', name: 'Jobs', box: [8, 16, 100, 20] });
+  assert.deepEqual(targetIn(text, 'e2'), { role: 'button', name: 'Save', box: null });
+  assert.equal(targetIn(text, 'e3'), null, 'nothing to call it by');
+  assert.equal(targetIn(text, 'e4'), null);
+});
+
+test('each step records what its screenshot spans, and a friction carries its element as this step\'s screenshot shows it', async () => {
+  const page = (y: number) => `- button "Save" [ref=e1] [box=8,${y},100,20]`;
+  const texts = [page(10), page(300), page(300), '- link "Other" [ref=e1] [box=1,2,3,4]'];
+  let look = 0;
+  const { browsers } = fakeBrowsers(() => ({
+    snapshot: async () => ({ url: 'http://gym.test/', title: 'Gym', text: texts[look++], hash: `h${look}`, viewport: [0, 0, 1280, 800] }),
+    act: async (action) => ({ ok: false, url_before: 'http://gym.test/', url_after: 'http://gym.test/', dom_changed: false, error: 'timeout', target: action.ref ? { role: 'button', name: 'Save', box: [8, 10, 100, 20] } : null, text: null }),
+  }));
+  const said = (what: string, about_ref: string | null) => ({ severity: 2, what, expected: 'Saved', about_ref });
+  const answers = [step('click', 'e1'), { ...step('hover', 'e1'), friction: said('Save moved away', null) }, { ...step('click', 'e1'), friction: said('Save is here', 'e1') }, { ...step('done'), friction: said('Save is gone', null) }];
+  let asked = 0;
+  const { events } = await runWeb('marks', { personas: personas(1), browsers, navigator: () => answers[asked++] });
+  assert.deepEqual(of(events, 'persona.step')[0].payload.viewport, [0, 0, 1280, 800]);
+  const about = of(events, 'persona.friction_reported').map((e) => [e.payload.what, e.payload.about?.box]);
+  assert.deepEqual(about, [['Save moved away', [8, 300, 100, 20]], ['Save is here', [8, 300, 100, 20]], ['Save is gone', null]], 'the failed target where it now stands, the one named, then none: the ref names something else on this page');
+});
 
 test('each step keeps the page text the model saw, identical pages share one file, and the author reads it back', async () => {
   const text = '- textbox "Password" [ref=e1] [password: filled]\n- button "Save" [ref=e2]';

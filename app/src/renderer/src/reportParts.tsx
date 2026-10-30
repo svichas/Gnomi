@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
+import type { Outcome } from '@gnomi/simulation/types.ts';
 import { Icon } from './Icon.tsx';
 
 // Tones are styled in styles.css; a tone always sits beside its label, never stands in for it (brand.md §5).
@@ -7,6 +8,17 @@ export type Tone = 'good' | 'warn' | 'high' | 'bad' | 'neutral';
 type IconName = Parameters<typeof Icon>[0]['name'];
 
 export type Inspect = (personaId: string, seq?: number) => void;
+
+export const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
+  done: { text: 'Reached the goal', tone: 'good' },
+  abandoned: { text: 'Gave up', tone: 'warn' },
+  budget_exceeded: { text: 'Ran out of steps', tone: 'warn' },
+  repeated_failure: { text: 'Got stuck', tone: 'warn' },
+  model_failed: { text: 'Model failed to answer', tone: 'neutral' },
+  blocked: { text: 'Blocked', tone: 'bad' },
+  incomplete: { text: 'Did not finish', tone: 'neutral' },
+  not_started: { text: 'Did not start', tone: 'neutral' },
+};
 
 /** True while the report is drawn into an exported file, which has no inspector to open and prints every fold open. */
 export const InFile = createContext(false);

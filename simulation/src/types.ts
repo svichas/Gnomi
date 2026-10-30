@@ -1,6 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportEvidence, ReportTheme, ReportReach, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportTheme, ReportReach, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -297,6 +297,9 @@ export interface ActionTarget {
   box: [x: number, y: number, width: number, height: number] | null;
 }
 
+/** What a screenshot spans, in the CSS pixels of an ActionTarget's box: not always the image's size, as a phone zooms out to fit a page with no viewport tag. */
+export type Viewport = [x: number, y: number, width: number, height: number];
+
 export interface ActionResult {
   ok: boolean;
   url_before: string;
@@ -316,6 +319,7 @@ export interface PageSnapshot {
   title: string;
   text: string; // pruned accessibility snapshot, one node per line, with [ref=eN]
   hash: string;
+  viewport?: Viewport;
 }
 
 /** The persona's self-reported view of one POI, distinct from a momentary step feeling. */
@@ -363,6 +367,7 @@ export interface EventPayloads {
     feeling: number; // −2…+2
     snapshot_hash: string;
     screenshot: string | null; // blob path, relative to the project folder
+    viewport?: Viewport; // what the screenshot spans; absent in older logs and on texts and designs
     duration_ms: number;
     heard_post_ids: string[]; // the feed posts handed to this step's prompt; empty when none
   } & StepEvidence;

@@ -1,5 +1,5 @@
 import { assetPlaces, placeName, runPois } from '../poi/pois.ts';
-import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, SignalKind, StepEvidence, Trust } from '../types.ts';
+import type { ActionTarget, EventOf, EventPayloads, GnomiEvent, ReportBox, SignalKind, StepEvidence, Trust, Viewport } from '../types.ts';
 
 // Steps 1–3 of the report pipeline (tech.md §8.2): candidates, trust and deterministic grouping. Pure folds over the log.
 
@@ -44,6 +44,7 @@ export type Candidate = StepEvidence & {
   text: string;
   quote: string;
   screenshot: string | null;
+  box?: ReportBox; // what it is about on that screenshot
   seqs: number[]; // the self-report first, then its signals
   signals: SignalKind[];
 };
@@ -95,6 +96,24 @@ const stepKey = (persona_id: string, step_no: number) => `${persona_id}\u0000${s
 type SignalEvent = EventOf<`signal.${SignalKind}`>;
 const isSignal = (e: GnomiEvent): e is SignalEvent => e.type.startsWith('signal.') && SIGNAL_KINDS.includes(e.type.slice(7) as SignalKind);
 
+/** The part of `target` a screenshot spanning `viewport` shows, if any. A frame's boxes start at its own corner, not the page's, so an element in one gets none. */
+function boxOn(target: ActionTarget | null | undefined, ref: string | null, viewport: Viewport | undefined): ReportBox | undefined {
+  if (!target?.box || !viewport || ref?.startsWith('f')) return undefined;
+  const [x, y, width, height] = target.box;
+  const [left, top, wide, tall] = viewport;
+  const [from, to] = [Math.max(x, left), Math.min(x + width, left + wide)];
+  const [above, below] = [Math.max(y, top), Math.min(y + height, top + tall)];
+  if (to <= from || below <= above) return undefined;
+  return { left: ((from - left) / wide) * 100, top: ((above - top) / tall) * 100, width: ((to - from) / wide) * 100, height: ((below - above) / tall) * 100, element: elementOf(target) ?? target.role };
+}
+
+/** The box for event `e` on its step's own screenshot: the element a friction names, else the target of an action that failed. On any other evidence it could mark the wrong element. */
+function markOf(e: GnomiEvent, step: EventPayloads['persona.step']): ReportBox | undefined {
+  const failed = e.type === 'signal.failed_action' || (e.type === 'persona.friction_reported' && !e.payload.about && e.payload.where.ref === step.action.ref && !step.result.ok);
+  if (failed) return boxOn(step.target, step.action.ref, step.viewport);
+  return e.type === 'persona.friction_reported' ? boxOn(e.payload.about, e.payload.where.ref, step.viewport) : undefined;
+}
+
 /** A candidate for event `e` at its persona's step `step_no`: the step's page, element, thought and screenshot, with defaults. */
 export function stepReader(events: GnomiEvent[], defaultPoi: string): (e: GnomiEvent, step_no: number, url: string | null) => Candidate {
   const places = placesOf(events);
@@ -110,6 +129,7 @@ export function stepReader(events: GnomiEvent[], defaultPoi: string): (e: GnomiE
     const after = isSignal(e) && (e.type === 'signal.validation_error' || url !== step?.payload.result.url_before);
     const next = after ? steps.get(stepKey(persona_id, step_no + 1)) : undefined;
     const shot = after ? (next?.poi_id === e.poi_id ? next?.payload.screenshot : null) : step?.payload.screenshot;
+    const box = step && !after ? markOf(e, step.payload) : undefined;
     return {
       poi_id: e.poi_id ?? defaultPoi,
       persona_id,
@@ -124,6 +144,7 @@ export function stepReader(events: GnomiEvent[], defaultPoi: string): (e: GnomiE
       text: '',
       quote: step?.payload.thought ?? '',
       screenshot: shot ?? null,
+      ...(box && { box }),
       seqs: [e.seq],
       signals: [],
       ...stepEvidence(step?.payload),

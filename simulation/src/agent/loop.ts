@@ -1,6 +1,7 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
+import { boxIn } from '../browser/prune.ts';
 import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
@@ -17,11 +18,17 @@ export function stepBudget(persona: Persona): number {
   return [12, 20, 30, 45, 60][persona.patience - 1] ?? 30;
 }
 
-/** The role and name of the element with this ref in a snapshot (browser/prune.ts lines), or null when it is not there. */
+/** The role, name and box of the element with this ref in a snapshot (browser/prune.ts lines), or null when it is not there. */
 export function targetIn(snapshot: string, ref: string): ActionTarget | null {
   const line = snapshot.split('\n').find((l) => l.includes(`[ref=${ref}]`));
   const m = line && /- (\S+) "((?:[^"\\]|\\.)*)"/.exec(line);
-  return m ? { role: m[1], name: m[2], box: null } : null;
+  return m ? { role: m[1], name: m[2], box: boxIn(line) } : null;
+}
+
+/** An earlier step's target with its box in this snapshot, as this step's screenshot shows it. No box once it is gone: on a new page its ref can name something else. */
+function targetNow(snapshot: string, { action: { ref }, target }: Step): ActionTarget | null {
+  const now = ref ? targetIn(snapshot, ref) : null;
+  return target && { ...target, box: now?.role === target.role && now.name === target.name ? now.box : null };
 }
 
 /** What a POI runner (poi/index.ts) gets for one persona's episode on one POI. */
@@ -234,7 +241,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
           : await page.act(action);
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
-      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started, heard_post_ids });
+      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, ...(snapshot.viewport && { viewport: snapshot.viewport }), duration_ms: Date.now() - started, heard_post_ids });
       // Objective signals right after their step (tech.md §8.1); a submit needs one more look to see what it made appear.
       const step: Step = { step_no, action, target, result, snapshot_hash: snapshot.hash };
       const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
@@ -250,7 +257,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         // What it is about: the element the persona names, else the last action when it failed or did nothing, else the next action's.
         const prev = history.at(-2);
         const about: { ref: string | null; target: ActionTarget | null } = about_ref ? { ref: about_ref, target: targetIn(snapshot.text, about_ref) }
-          : prev && (!prev.result.ok || failedAction(prev, history.at(-3))) ? { ref: prev.action.ref, target: prev.target } : { ref: action.ref, target: null };
+          : prev && (!prev.result.ok || failedAction(prev, history.at(-3))) ? { ref: prev.action.ref, target: targetNow(snapshot.text, prev) } : { ref: action.ref, target: null };
         emit('persona.friction_reported', { step_no, ...report, where: { url: snapshot.url, ref: about.ref }, heard_post_ids, ...(about.target && { about: about.target }) });
       }
 

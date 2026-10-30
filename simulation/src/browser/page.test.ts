@@ -3,7 +3,9 @@ import http from 'node:http';
 import { after, before, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { BrowserPool, PageDriver } from '../seams.ts';
-import type { Action, ActionOutcome, Device } from '../types.ts';
+import type { Action, ActionOutcome, Device, EventPayloads, GnomiEvent } from '../types.ts';
+import { targetIn } from '../agent/loop.ts';
+import { buildCandidates } from '../report/friction.ts';
 import { DEFAULT_SIGNALS, failedAction, smallTarget, validationError } from '../signals/index.ts';
 import { launchBrowserPool } from './pool.ts';
 import { listen } from './server.fixture.ts';
@@ -11,6 +13,9 @@ import { listen } from './server.fixture.ts';
 const SECRET = 'hunter2-secret';
 const head = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
 const items = Array.from({ length: 40 }, (_, i) => `<li><a href="/job/${i}">Backend engineer ${i}</a></li>`).join('');
+
+// A red button on white on a page wider than a phone, 120×60 wherever it sits.
+const mark = (place: string, tag = head) => `<!doctype html>${tag}<body style="margin:0;width:1000px;height:3000px"><button style="all:unset;position:absolute;${place};width:120px;height:60px;background:#f00">Mark</button>`;
 
 const pages: Record<string, string> = {
   '/': `<!doctype html><html lang="en"><head>${head}<title>Gnomi fixture</title></head><body>
@@ -36,6 +41,11 @@ const pages: Record<string, string> = {
   '/shared-label': `<!doctype html>${head}<label>Credentials<input aria-label="Username"><input aria-label="Password" type="password" value="${SECRET}"></label>`,
   '/long': `<!doctype html><html><head>${head}<title>Long page</title></head><body><main><h1>Long page</h1>
 <p>${'Lorem ipsum dolor sit amet. '.repeat(150)}</p><div style="height:1500px"></div><ul>${items}</ul><div style="height:3000px"></div><button>Bottom button</button></main></body></html>`,
+  '/mark': mark('left:40px;top:100px'),
+  '/mark-scrolled': `${mark('left:40px;top:900px')}<script>scrollTo(0, 700)</script>`,
+  '/mark-no-tag': mark('left:40px;top:100px', ''),
+  '/mark-far': mark('left:800px;top:100px'),
+  '/mark-frame': `<!doctype html>${head}<body style="margin:0"><iframe title="Embedded" style="position:absolute;left:50px;top:200px;width:300px;height:200px;border:0" srcdoc="<!doctype html><body style='margin:0'><button style='all:unset;position:absolute;left:10px;top:20px;width:100px;height:40px;background:#f00'>Mark</button>"></iframe>`,
   // A custom drop-down closed with opacity 0, as a real vendor pricing page builds it, and a native checkbox under a custom skin.
   '/custom-select': `<!doctype html><html><head>${head}<title>Custom select</title></head><body>
 <div role="combobox" aria-label="Dropdown"><button type="button" onclick="this.nextElementSibling.style.opacity = '1'; this.nextElementSibling.style.pointerEvents = 'auto'">1 - 20 employees</button>
@@ -235,12 +245,32 @@ let pool: BrowserPool;
 let server: http.Server;
 let origin: string;
 let posts = 0; // form POSTs /create received
+let shot: Uint8Array = new Uint8Array(); // the JPEG /red reads
 
 before(async () => {
   server = http.createServer((req, res) => {
     const url = new URL(req.url!, 'http://localhost');
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    if (url.pathname === '/shot') {
+    if (url.pathname === '/last.jpg') {
+      res.setHeader('content-type', 'image/jpeg');
+      res.end(shot);
+    } else if (url.pathname === '/red') {
+      // The red pixels of a screenshot, read by the browser itself: the test's own JPEG decoder, as the heading's text.
+      res.end(`<!doctype html><h1>reading</h1><img id="shot" src="/last.jpg"><script>addEventListener('load', () => {
+        const canvas = document.createElement('canvas');
+        const { naturalWidth: w, naturalHeight: h } = document.getElementById('shot');
+        Object.assign(canvas, { width: w, height: h });
+        const context = canvas.getContext('2d');
+        context.drawImage(document.getElementById('shot'), 0, 0);
+        const { data } = context.getImageData(0, 0, w, h);
+        let [left, top, right, bottom] = [w, h, -1, -1];
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (data[i] > 180 && data[i + 1] < 90 && data[i + 2] < 90) [left, top, right, bottom] = [Math.min(left, x), Math.min(top, y), Math.max(right, x), Math.max(bottom, y)];
+        }
+        document.querySelector('h1').textContent = 'red ' + [left, top, right + 1 - left, bottom + 1 - top, w, h].join(' ');
+      })</script>`);
+    } else if (url.pathname === '/shot') {
       // Two inputs whose values come from the query, to compare screenshots of different values.
       const { password = '', text = '' } = Object.fromEntries(url.searchParams);
       res.end(`<!doctype html><title>shot</title><body style="margin:20px"><input type="password" value="${password}" style="width:200px;height:30px"> <input value="${text}" style="width:200px;height:30px"></body>`);
@@ -1080,4 +1110,58 @@ test('errors() drains console errors, uncaught exceptions and 4xx/5xx on allowed
   assert.deepEqual(page.errors(), [], 'drained');
   await act(page, 'click', refOf((await page.snapshot()).text, /link "Broken link" \[ref=(\w+)\]/));
   assert.deepEqual(page.errors(), [{ kind: 'http', status: 404, message: `GET ${origin}/status/404` }], 'a broken link, without Chromium\'s duplicate console line');
+});
+
+/** The box the report draws for the button on this look, in pixels of the image, and the red pixels the image really holds. */
+async function marked(t: TestContext, page: PageDriver, line = /button "Mark" \[ref=(e\d+)\]/) {
+  const snapshot = await page.snapshot();
+  shot = await page.screenshot();
+  const ref = refOf(snapshot.text, line);
+  const step = { step_no: 1, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: snapshot.url, url_after: snapshot.url, dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: 'h', screenshot: 'shot.jpg', viewport: snapshot.viewport, duration_ms: 1, heard_post_ids: [] } as EventPayloads['persona.step'];
+  const friction = { step_no: 1, severity: 2, what: 'It looks wrong', expected: '', where: { url: snapshot.url, ref }, heard_post_ids: [], about: targetIn(snapshot.text, ref)! } as EventPayloads['persona.friction_reported'];
+  const log = [['persona.step', step], ['persona.friction_reported', friction]].map(([type, payload], seq) => ({ run_id: 'r', round: 1, persona_id: 'p', poi_id: 'poi', type, payload, seq, ts: 0 })) as GnomiEvent[];
+  const reader = await open(t, '/red');
+  const read = /red (-?\d+) (-?\d+) (-?\d+) (-?\d+) (\d+) (\d+)/.exec((await reader.snapshot()).text)!.slice(1).map(Number);
+  const [, , , , width, height] = read;
+  const box = buildCandidates(log, 'poi')[0].box;
+  return { red: read.slice(0, 4), box: box && [(box.left / 100) * width, (box.top / 100) * height, (box.width / 100) * width, (box.height / 100) * height], element: box?.element, size: [width, height] };
+}
+
+const near = (actual: number[] | undefined, expected: number[], what: string) => {
+  assert.ok(actual, `${what}: a box`);
+  actual.forEach((n, i) => assert.ok(Math.abs(n - expected[i]) <= 2, `${what}: ${actual} is ${expected} within 2 px`));
+};
+
+test('a box lands on its element in the JPEG: both are in the CSS pixels of the screen as it stood, scrolled or not', async (t) => {
+  const desktop = await marked(t, await open(t, '/mark'));
+  assert.deepEqual(desktop.size, [1280, 800]);
+  assert.deepEqual(desktop.red, [40, 100, 120, 60]);
+  near(desktop.box, desktop.red, 'desktop');
+  assert.equal(desktop.element, 'button "Mark"');
+  const scrolled = await marked(t, await open(t, '/mark-scrolled'));
+  assert.deepEqual(scrolled.red, [40, 200, 120, 60], 'the screenshot is the screen, not the page');
+  near(scrolled.box, scrolled.red, 'scrolled');
+});
+
+test('on a phone the image is one pixel per CSS pixel, a page with no viewport tag is zoomed out in it, and a panned page shifts it', async (t) => {
+  const phone = await marked(t, await open(t, '/mark', 'mobile'));
+  assert.deepEqual(phone.size, [393, 659], 'not three times that');
+  near(phone.box, phone.red, 'phone');
+  const zoomed = await marked(t, await open(t, '/mark-no-tag', 'mobile'));
+  assert.ok(zoomed.red[2] < 60, `the phone shows a page laid out at 980 px, so the 120 px button is ${zoomed.red[2]} px wide`);
+  near(zoomed.box, zoomed.red, 'zoomed out');
+  const page = await open(t, '/mark-far', 'mobile');
+  const beside = await marked(t, page);
+  assert.equal(beside.box, undefined, 'beside the screen, so off the image');
+  assert.equal(beside.red[2] <= 0, true, 'and the image holds none of it');
+  await act(page, 'scroll', refOf((await page.snapshot()).text, /button "Mark" \[ref=(e\d+)\]/));
+  const panned = await marked(t, page);
+  assert.ok(panned.red[2] > 0, 'scrolling to it brought it on screen');
+  near(panned.box, panned.red, 'panned');
+});
+
+test("what a frame holds has a ref of its own kind and a box from the frame's corner, so it is left unmarked", async (t) => {
+  const inFrame = await marked(t, await open(t, '/mark-frame'), /button "Mark" \[ref=(f\d+e\d+)\]/);
+  assert.deepEqual(inFrame.red, [60, 220, 100, 40]);
+  assert.equal(inFrame.box, undefined);
 });

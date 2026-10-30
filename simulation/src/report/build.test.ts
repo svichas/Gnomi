@@ -7,6 +7,7 @@ import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type {
+  ActionTarget,
   Audience,
   EventPayloads,
   GnomiEvent,
@@ -179,6 +180,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     ],
     weighted: { completion: 1, with_friction: 1 },
     steps: 2,
+    flows: [{ poi_id: 'poi-gym', personas: 1, pages: [{ page: 'localhost:3001/jobs/new', reached: 1, ended: { done: 1 } }], moves: [], left_out: { pages: 0, ended: 0 } }],
     frictions: [
       {
         seq: 3,
@@ -810,4 +812,19 @@ test('personas the model never answered are counted apart and left out of the co
   const [segment] = report.segments;
   assert.deepEqual([segment.personas, segment.outcomes.model_failed, segment.completion], [3, 1, 0.5], 'Ben is out of the denominator, not a failure');
   assert.equal(report.weighted.completion, 0.5);
+});
+
+test('a theme\'s evidence carries the box of what it is about and Markdown names the element, while a log from before viewports has neither', () => {
+  const about: ActionTarget = { role: 'button', name: 'Save', box: [128, 80, 128, 80] };
+  const shot = stepPayload(1, 'Trying.', 'runs/r-0001/shots/p-001-0001.jpg');
+  const log = (step: EventPayloads['persona.step']) => stored([startedAt, [1100, { ...env, type: 'persona.step', payload: step }], [1200, { ...env, type: 'persona.friction_reported', payload: { ...friction(1, 'Save is hidden'), about } }]]);
+  const report = buildReport(log({ ...shot, viewport: [0, 0, 1280, 800] }));
+  assert.deepEqual(report.themes?.[0].evidence[0].box, { left: 10, top: 10, width: 10, height: 10, element: 'button "Save"' });
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('   - About: button "Save"'));
+  assert.ok(!md.includes('Marked'), 'the file named in the Markdown has no mark on it; only the HTML overlay draws one');
+  const old = buildReport(log(shot));
+  assert.ok(!('box' in old.themes![0].evidence[0]));
+  assert.equal(old.themes?.[0].evidence[0].screenshot, shot.screenshot, 'the plain screenshot stays');
+  assert.ok(!reportToMarkdown(old).includes('   - About: '));
 });

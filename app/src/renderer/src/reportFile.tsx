@@ -25,7 +25,7 @@ const PRINT = `@media print {
   .overflow-auto, .overflow-x-auto { overflow: visible; max-height: none; }
   .shadow-sm { box-shadow: none; }
   h1, h2, h3, h4 { break-after: avoid; }
-  li, tr, img, blockquote, dl > div { break-inside: avoid; }
+  li, tr, img, svg, blockquote, dl > div { break-inside: avoid; }
   img { max-height: 3in; }
   .comparison-matrix { min-width: 0 !important; font-size: 10px; overflow-wrap: anywhere; }
   .comparison-matrix th:first-child { width: 20%; }

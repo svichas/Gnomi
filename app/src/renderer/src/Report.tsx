@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
-import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
+import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
 import { COST_SCOPE_TEXT, missingUsageText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
@@ -12,8 +12,9 @@ import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
 import type { ProfileFilter } from './activity.ts';
 import { Icon, PersonaAvatar } from './Icon.tsx';
 import { Note, usd } from './ui.tsx';
-import { count, Fold, heading, InFile, PersonaLink, pct, SectionHeading, signed, Th, Tile } from './reportParts.tsx';
+import { count, Fold, heading, InFile, OUTCOMES, PersonaLink, pct, SectionHeading, signed, Th, Tile } from './reportParts.tsx';
 import type { Inspect, Tone } from './reportParts.tsx';
+import { Flow } from './ReportFlow.tsx';
 import { Methods } from './ReportMethods.tsx';
 import { Spread } from './ReportSpread.tsx';
 
@@ -22,17 +23,6 @@ function duration(ms: number | null) {
   const seconds = Math.round(ms / 1000);
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
-
-const OUTCOMES: Record<Outcome, { text: string; tone: Tone }> = {
-  done: { text: 'Reached the goal', tone: 'good' },
-  abandoned: { text: 'Gave up', tone: 'warn' },
-  budget_exceeded: { text: 'Ran out of steps', tone: 'warn' },
-  repeated_failure: { text: 'Got stuck', tone: 'warn' },
-  model_failed: { text: 'Model failed to answer', tone: 'neutral' },
-  blocked: { text: 'Blocked', tone: 'bad' },
-  incomplete: { text: 'Did not finish', tone: 'neutral' },
-  not_started: { text: 'Did not start', tone: 'neutral' },
-};
 
 function OutcomeChip({ outcome }: { outcome: Outcome }) {
   return <span data-tone={OUTCOMES[outcome].tone} className="tone-chip">{OUTCOMES[outcome].text}</span>;
@@ -180,6 +170,12 @@ function Affected({ theme }: { theme: ReportTheme }) {
   );
 }
 
+/** A frame over the element, in percent of the screenshot, so it scales with the image with no script. It shows only beside a loaded image (report.css). */
+function Marked({ box: { left, top, width, height, element } }: { box: ReportBox }) {
+  const label = `Marked on the screenshot: ${element}`;
+  return <span role="img" aria-label={label} title={label} className="report-shot-box" style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }} />;
+}
+
 function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportEvidence; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const at = [
     evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`,
@@ -189,7 +185,7 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
   const shot = evidence.screenshot && renderScreenshot(evidence.screenshot, `The page at ${at}, as ${evidence.persona_name} saw it`);
   return (
     <li className={`grid gap-3 border-t border-stone-100 pt-3 ${shot ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
-      {shot && <div>{shot}</div>}
+      {shot && <div className="report-shot">{shot}{evidence.box && <Marked box={evidence.box} />}</div>}
       <div className="min-w-0 space-y-1">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
           <PersonaLink id={evidence.persona_id} name={evidence.persona_name} seq={evidence.step_seq ?? evidence.seq} onInspect={onInspect} />
@@ -665,6 +661,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         <SectionHeading title="Explore the details" hint="A closer look, whenever you need it." />
         {!report.comparison && <>
           {report.went_well && report.went_well.length > 0 && <Fold id="positive-title" title="What went well" hint="What users liked about the experience" icon="check"><WentWell likes={report.went_well} /></Fold>}
+          {report.flows && <Fold id="flow-title" title="Where personas went" hint="The pages they reached and where their episodes ended" icon="activity"><Flow flows={report.flows} pois={report.pois} /></Fold>}
           <Fold id="audience-results-title" title="Audience breakdown" hint="Results by segment and profile" icon="people"><div className="space-y-6"><SegmentTable report={report} />{dimension && <DimensionTable dimension={dimension} selected={filter.value} />}</div></Fold>
           {report.buyers && report.buyers.length > 0 && <Fold id="buying-details-title" title="Buying intent" hint="Pricing, objections, and willingness to buy" icon="message"><BuyerSurvey rows={report.buyers} pois={report.pois} /></Fold>}
           {report.comparisons && report.comparisons.length > 0 && <Fold id="comparisons-title" title="Product comparisons" hint="Preferences across the products tested" icon="globe"><div className="space-y-6">{report.comparisons.map((comparison) => <Comparison key={comparison.poi_id} comparison={comparison} pois={report.pois} />)}</div></Fold>}
