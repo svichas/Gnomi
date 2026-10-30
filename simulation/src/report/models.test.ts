@@ -91,7 +91,7 @@ test('a POI with only weak signals costs no judge or author call, and the report
     calls += 1;
     return judged;
   };
-  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: count, author: count }, record), record, events: () => events });
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: count, author: count }, record), blobs: files(), record, events: () => events });
   assert.equal(calls, 0);
   const report = buildReport(events);
   assert.deepEqual([report.themes, report.methods.limitations], [[], []]);
