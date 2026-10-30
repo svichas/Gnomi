@@ -25,6 +25,8 @@ A team can add interview notes or support tickets to a segment, as `.md` or `.tx
 
 The digest goes to the writer with the instruction that personas stay fictional and must not copy a real person's name, employer, contact details or life story. Adding one rewrites only that segment's personas, and personas of other segments stay current.
 
+During a run each persona also carries up to three of the segment's remarks in its prompt, picked from its seed so they never change between steps or rebuilds. They are labelled as things real people in this segment have said, not the persona's own memories, and quoted so that one that reads like an instruction is not obeyed.
+
 Data used to write personas cannot also test them, so keep some interviews back for a study. A report's methods list the source names, so a team can check which were used. Grounded personas look more credible whether or not they are more accurate: they are still fictional, and their findings are still hypotheses.
 
 Generated biographies, quotes, opinions and findings remain synthetic. Use them to formulate questions for real participants, not as participant testimony or evidence of customer needs. See [Interpreting simulations](interpreting-simulations.md) for report terminology and validation.
