@@ -51,11 +51,14 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 | 0. Results scoreboard | Steps 1–4 built, reviewer findings closed | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67. A person's corrections now change the numbers through `--rescore` | Step 5, the live baseline, which needs a spending decision |
 | 1. Noise cuts | Built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6. The interference tag has unit tests on constructed logs only | The tag has never fired on a real run, because the Gym cannot show personas breaking each other's work |
 | 2. Finding check | Built, off by default | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision. No settings control in the app yet |
-| 3. Repeat-run reliability | Steps 1–6 built | Scripted tests, including a stopped set and the CLI path. `--evaluate` now reports stability per arm | Step 7, the trait-free run. Whether real findings repeat is unmeasured |
+| 3. Repeat-run reliability | Built | Scripted tests, including a stopped set, the CLI path and a trait-free run. `--evaluate` now reports stability per arm | Whether real findings repeat, and what the trait-free run shows on a real audience, are unmeasured |
+| 4. Personas grounded in real data | All three stages built | Scripted tests, and a `--fake-llm` run through audience create, analytics, sources, update and run named both files in its report. The audience smoke test covers the import preview and the notes dialog at 320 px | A live extraction, including how much of a real digest survives the word-for-word rule. Its proof needs item 5 and real data |
+| 5. Real-user validation loop | Steps 1–3 built, and the top-five count | Scripted tests, including that outcomes change no simulated number and reach no model. The report smoke test records a plan and an outcome on a real report at 320 px and in the export | No real model has written a plan. No team has recorded an outcome, so `TRUST_WEIGHT` and `BENCHMARK` stay as they are |
 | 6. Coverage and saturation | Built | Tests of curves, short runs, stopped runs, several POIs and old logs, and the report smoke test at 320 px | Its proof: the curve against known Gym defects across run sizes |
 | 7. Accessibility scan and perception limits | Built, off by default | On the real Gym with no model, the scan finds D10 and D24, and the control build has no violations at all. It does not find D06. `blurredVision` passed a pixel test on real text | Recall in the `accessibility` arm, and whether colour and low-vision personas notice D22 more. No settings control in the app yet |
 | 8. Which traits drive each issue | Built | Tests of each limit, and the report smoke test | Its proof: segment attribution on the Gym |
 | 10. Before/after comparison | Built | The M6 test passes on the real Gym with a scripted navigator: with D01, D14 and D16 switched off, exactly those three read as fixed. On the saved runs against the control build, all three themes read as fixed are real defects (D12, D13) | A live run. The 0.6 overlap for a duplicated run is unmeasured |
+| 11. CI gate | Built | Tests of every decision, each exit code through the real CLI, and the guide's commands run locally on `--fake-llm` | Neither GitHub workflow has run on GitHub. Two limits from theme clustering remain, listed under item 11 |
 | 15. Written summary | Built | Tests of ten report shapes, and the report smoke test | How it reads on real reports |
 | 16. Plain priority labels | Built | Tests of the rule, and the report smoke test | How the labels read on real reports |
 | 17. Drop-off flow | Built | Tests, plus the report smoke test at 320 px and in the HTML export | Usefulness on real logs is unmeasured |
@@ -63,10 +66,9 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 | 20. Replay from step screenshots | Built | The report smoke test flips through steps by button and keyboard, at 320 px | Not tried with a real screen reader |
 | Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build, now marked as weak in comparisons |
 | Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
+| Block C: changes after a run has ended | Built | Scripted tests of each refusal, and `rejudge` behaves as before | None |
 
-Everything else has not started. All 1,214 tests pass on the branch, with typecheck and lint clean, and the Electron main, report, text and UI smoke tests pass. The report smoke test now reaches the set-aside section, the repeat count and "Appeared in 2 of 2 runs" on a real two-run set. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally.
-
-CI's smoke job runs the main smoke test, not the report one, so the 320 px checks in the report smoke test guard nothing there until it is added.
+Items 9, 12, 13, 14 and 19 have not started. All 1,325 tests pass on the branch, with typecheck and lint clean, and the Electron main, report, audience, text and UI smoke tests pass. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally. CI's smoke job now runs the report smoke test too, but that change has not run on Linux or GitHub.
 
 ## What "better results" means
 
@@ -148,6 +150,8 @@ These files hold page text as the page showed it. Key-pattern redaction happens 
 Move that sequence into one function in [workspace.ts](../engine/src/workspace.ts), then call it from the CLI and a new `Api` method in [host.ts](../engine/src/host.ts). Items 5, 14 and 19 use it. Any event that refers to a theme stores its Block A keys, because theme ids change after a rejudge.
 
 Size: S.
+
+**Built** as `rewriteReport` in [workspace.ts](../engine/src/workspace.ts). `endedRun` holds the refusals, judged from the log and not the row, and `modelRun` adds the checks for work that calls a model. An app with the run open reloads when its own process does the work, but it does not hear a `gnomi rejudge` from another process, and it never did.
 
 ## Rank 0: measure first
 
@@ -237,6 +241,8 @@ The app has no control for it yet, so it can only be set through settings JSON. 
 
 `--evaluate` reports stability, but the second half of the proof, precision by how often a theme repeated, needs mapped defects and is not measured. Pairs on one shared key can overstate how often a theme appeared. The report shows each run's title, so a reader can spot one.
 
+Step 7 is `gnomi run --also-trait-free`, one more run of the same persona ids and seeds with every trait stripped to the segment. The stripped personas exist only in that run's snapshot, and it is in no count. A finding it also hit reads "Personas with no traits hit this too, so it may say more about the model than this audience", which removes nothing and changes no rank. A scan finding never gets this note, since no persona met it. That run also drops any digest, because each seed quotes its own remarks and would set stripped personas apart again. `gnomi report`, `rejudge` and `study` pass it over unless it is named with `--run`, `gnomi study` refuses it even then, and it cannot be run again.
+
 ### 4. Personas grounded in real data
 
 **Why.** This is the strongest evidence available. Interview-grounded agents reached 86% of people's own test–retest consistency against 74% for demographics-only personas ([tech.md §2.1](tech.md#21-llm-agent-social-simulation)). Grounding in real behaviour also beats hand-written directives ([tech.md §2.4](tech.md#24-known-weaknesses-of-llm-personas-and-what-the-evidence-says-works)). The prompt design in [tech.md §6.1](tech.md#61-one-persona-one-agent-one-prompt-layout) already promises real remarks per segment, but nothing implements that. Those studies did not test product use, so the gain for Gnomi is unproven ([new_simulation.md §9](new_simulation.md#9-scientific-evaluation-and-acceptance)).
@@ -245,8 +251,8 @@ The app has no control for it yet, so it can only be set through settings JSON. 
 
 **How, in three stages that each ship alone:**
 
-1. **Numbers from analytics, no model.** Map an analytics export onto existing `Audience` and `Segment` fields: `share`, `mobile_share`, `countries`, `languages`. Sampling stays in code. Add `.csv` to `ASSET_TYPES` and its `ID` pattern.
-2. **Segment digests.** Add an `audience sources` step for interview notes and support tickets as `.md` or `.txt`. A new `engine/src/audience/ground.ts` extracts each segment's goals, vocabulary, objections and tools into `Segment.grounding?: { facts: string[]; remarks: string[]; sources: string[] }`. Pass it to `proposeUser` and `writerUser`.
+1. **Numbers from analytics, no model.** Map an analytics export onto existing `Audience` and `Segment` fields: `share`, `mobile_share`, `countries`, `languages`. Sampling stays in code.
+2. **Segment digests.** Add an `audience sources` step for interview notes and support tickets as `.md` or `.txt`. A new `engine/src/audience/ground.ts` extracts each segment's goals, vocabulary, objections and tools into `Segment.grounding?: { facts: string[]; remarks: string[]; sources: { name: string; sha256: string }[] }`. Pass it to `proposeUser` and `writerUser`.
 3. **Real remarks in the persona prompt.** Add up to three remarks in `profileBlock`. Every prompt built on `personaSection` gets them, so steps, social turns and surveys all pick them up in the cached prefix.
 
 **Details to get right.**
@@ -261,6 +267,18 @@ The app has no control for it yet, so it can only be set through settings JSON. 
 **Proof.** A `grounded` arm with a research pack written for the Gym can show that the pipeline works and that findings shift to the right segments. It cannot show greater realism, because the Gym has no real users. Only item 5 can.
 
 **Risk.** Grounded personas look more credible whether or not they are more accurate, which raises the over-trust risk in [idea.md](idea.md).
+
+**Built**, all three stages, with `gnomi audience analytics` and `gnomi audience sources` and a matching control on each segment in the app. Differences from the plan above and limits to know:
+
+- **Source files are never stored.** The plan was to add `.csv` to `ASSET_TYPES`, but project copies carry `assets/` unredacted. So a file is read once and only the result stays, with each source's name and hash. Source file names are not sent to the model either, because a name such as `ana-ruiz-interview.md` identifies someone.
+- **A remark must be real.** It is kept only if it appears word for word in the redacted source, up to 280 characters. The limits are 8 facts and 5 remarks per segment, 256 KB of sources in total, and a default budget of $1.
+- **Redaction is a rule of thumb.** Emails and phone numbers go, and a review tried many national formats and separators. Names, addresses and spelled-out numbers stay, as the user is told before the call. Some number shapes go wrong in each direction, for example `100 200 300` is removed and `12 34 56 78 90` stays. Both are pinned in a test.
+- **Nothing from a failed extraction is stored.** A model's rejected answer can quote the source, so the setup record keeps a neutral error line and no transcript. That also means a failed extraction can be diagnosed only at the moment it fails.
+- **Comparison studies quote no remarks**, as they already drop segment context.
+- **"Propose segments again" drops a digest**, as it does hand edits, and the money spent on it is not returned.
+- **Segments can now hold their own `countries` and `languages`.** The plan assumed they already did. A languages column has no effect while a country mix applies, because each country sets its own languages. That is reported as skipped.
+
+The `grounded` arm joins the default `--evaluate` list, so a default live evaluation now costs one more arm per replicate. It shows that the pipeline works on an invented pack in `demo/GymSite/research/`. It cannot show greater realism.
 
 ### 5. Real-user validation loop
 
@@ -278,6 +296,17 @@ The app has no control for it yet, so it can only be set through settings JSON. 
 **Proof.** The feature works when a team can go from a report to a recorded outcome. The result it delivers is the first human agreement figure.
 
 **Risk.** Teams may not run the studies. Keep recording an outcome to a few clicks, and count `unresolved` as a valid answer.
+
+**Built**, except the second half of step 4: there are no outcomes yet to set `TRUST_WEIGHT` or fill `BENCHMARK` from. `gnomi study` and the app's Plan a study make one call on the run's author model and write `runs/<id>/study-plan.md`, a file a researcher can use without the findings. `gnomi outcome` and a control on each finding record a result, and readers see the words "study outcome".
+
+- **The quote rule is enforced in code.** A task or screener entry sharing four or more consecutive words with a finding is dropped and counted. A paraphrase can still lead a participant, so the docs tell a reader to check the plan. How often the rule drops good entries is unmeasured, and four is an assumed number.
+- **What a plan covers.** The top five friction themes of the team's own product. Objections, competitors, set-aside themes and scan-only themes are left out, and the plan says how many. A plan older than the newest judge answer stands, and says so, but `study-plan.md` is a snapshot and does not.
+- **An outcome is shown, never dropped.** The latest for a theme wins, and one that no longer has a free theme after a rejudge moves to a separate list. A team can record an outcome on a set-aside theme, but it does not count in the top five.
+- **An outcome belongs to its run.** Repeat sets and comparisons do not carry it across.
+- **A note is permanent.** It is the first free text about real people Gnomi stores, and the log is append-only, so a correction does not remove a name. The form and CLI usage warn against names and contact details.
+- **The cost is an estimate with a cap.** The stated maximum assumes two billed attempts and about 10k tokens of input. Segment descriptions are not capped, so one very long one could pass it.
+
+On this machine, `node <script>` with one argument over about 1,000 characters is killed before the script starts, even a one-line script, while `node -e` is not. So the 2,000-character note limit is tested through `recordOutcome` and not through the CLI. It is unclear whether this also happens outside the agents' sandbox.
 
 ## Tier 2: fewer missed problems
 
@@ -392,6 +421,19 @@ Three smaller limits. `gnomi rerun` refuses while any run row says running. A re
 **How.** Add `gnomi gate <dir> --base <run> --run <run>`, which exits non-zero on a new high-severity theme from `diffReports`. Require a repeat set, as the [regression plan](roadmap.md#evaluation-plan) needs a rolling window over three runs. Document one GitHub Actions example. Some competitors also offer an MCP server, but the CLI's `--json` output and [the skill](../.claude/skills/gnomi/SKILL.md) already give agents a way in, so skip that for now.
 
 This moves CI out of the "deferred until after 1.0" list in [roadmap.md](roadmap.md#deliberately-deferred). The cost is low now because the CLI exists.
+
+**Built**, with the guide in [ci-gate.md](ci-gate.md). Exit 0 is passed, 1 is failed and 2 is could not decide, and any error also exits 2, so a CI job cannot read a bad flag as a regression. High severity is the code's existing rule, `isSevere`.
+
+A theme fails when it is new and high severity in at least two later runs tied by more than a chance shared key. Seen once, it warns. A new objection only warns, however often it comes back, because an objection is an attitude and not a fix. The gate refuses to pass when the sides differ in model, goal or POIs, or when a persona's fields differ even if its id and name match. It also refuses when a side was cut short, or when a run had no persona get a valid answer, which would otherwise turn a dead API key into a pass.
+
+Two limits remain, both from how item 10 clusters themes, and [ci-gate.md](ci-gate.md) states them:
+
+- A new theme that shares one key with a theme already on the earlier side joins that row and reads as unchanged, so it cannot fail. This is a false pass.
+- With three unrelated themes that share one key, the order of the later runs can still change the verdict.
+
+Fixing either means clusters must stop joining on one shared key, which changes the row counts and the stability metric from items 3 and 10. That change waits for live runs that show how often single-key pairs are chance.
+
+Neither GitHub workflow in the guide has run on GitHub, and its cache limits were not checked against GitHub's current docs.
 
 ### 12. Returning personas
 
