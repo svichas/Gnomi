@@ -8,6 +8,7 @@ import { comparisonFixture } from './comparisonReport.fixture.ts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { PRIORITY_NOTE, reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { WHAT_IF_NOTE } from '@gnomi/simulation/report/repeats.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -387,6 +388,24 @@ test('owner studies label the focal tool and action owner; legacy comparison vot
   assert.match(legacy, /Legacy comparison:/);
   assert.match(legacy, /At a glance/);
   assert.doesNotMatch(legacy, /Side-by-side comparison/);
+});
+
+test('a what-if set shows its differences and their limits in the app and the exports, and each run says which side it is', async () => {
+  const report = fixture(1, 0);
+  const what_if = { pair: 2, post: false, text: 'Saving <is> broken', round: 3, poi_id: 'poi-gym' };
+  report.repeat = { group: 'set-a', index: 3, of: 6, what_if };
+  const number = (id: 'posted' | 'opinion', label: string, mean: number, lower: number | null, upper: number | null, note: string | null) => ({ id, label, n: 3, mean, lower, upper, note });
+  const whatIf = { post: what_if.text, round: 3, pairs: 3, of: 3, note: WHAT_IF_NOTE, numbers: [number('posted', 'People who posted', 1.5, -0.25, 3.25, null), number('opinion', 'Mean opinion at the end, -2 to +2', 0, null, null, 'no variation')] };
+  const repeats = { group: 'set-a', of: 3, compared: 3, running: false, incomplete: false, families: ['anthropic'], findings: [], what_if: whatIf };
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const page = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 3 of 6 in a repeat set, pair 2, without the added post.', 'What-if post', WHAT_IF_NOTE, 'Saving &lt;is&gt; broken', 'Added by your team in round 3', '3 of 3 pairs finished', 'People who posted', '+1.50', '-0.25 to +3.25', 'no variation', 'The runs with the added post are in no count here.']) assert.ok(page.includes(text), text);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes(WHAT_IF_NOTE));
+  const markdown = await reportFile(report, 'md', thumbnails(), repeats);
+  assert.ok(markdown.includes(`> ${WHAT_IF_NOTE}`) && markdown.includes('| People who posted | +1.50 | -0.25 to +3.25 | 3 |'));
+  assert.ok(!renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} })).includes('What-if post'), 'no set read, no section');
+  const added = { ...report, repeat: { ...report.repeat, index: 4, what_if: { ...what_if, post: true } } };
+  assert.ok(renderToStaticMarkup(createElement(Report, { report: added, repeats, onInspect: () => {} })).includes('Run 4 of 6 in a repeat set, pair 2, with the post your team added.'));
 });
 
 test('a finding personas with no traits also hit says so in the app and the exports, and a trait-free run says what it is', async () => {

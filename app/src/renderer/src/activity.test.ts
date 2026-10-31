@@ -76,7 +76,7 @@ test('rounds, feeds, posts, replies, reactions and feed-driven opinions read as 
     ['Feed', 'Found nothing new in the feed'],
     ['Post', 'Posted in the feed'],
     ['Reply', 'Replied to post inj-r1-1'],
-    ['Post', 'Posted in the feed (put there by the test harness)'],
+    ['Post', 'Posted in the feed (added by your team)'],
     ['Reaction', 'Disagreed with post r1-p-002'],
     ['Opinion', 'Sentiment -1; self-reported confidence 50%, after reading a post'],
     ['Round 2', 'Round 2 ended'],

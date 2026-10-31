@@ -3,7 +3,7 @@ import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportE
 import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
 import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
 import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
-import { isTraitFree, type RepeatSet } from './repeats.ts';
+import { MIN_PAIRS, uncounted, type RepeatSet, type WhatIfNumber, type WhatIfResult } from './repeats.ts';
 import { HIDDEN_ALL, writtenSummary } from './summary.ts';
 import { priorityOf } from './themes.ts';
 
@@ -139,7 +139,38 @@ export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only'
 /** "2 runs compared." and what a repeat means, or that the set is still going, or that it ended early. */
 export function setNote(set: RepeatSet): string {
   const state = set.running ? `${set.compared} of ${set.of} runs finished so far.` : set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`;
-  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.${set.trait_free ? ' One more run, of personas with no traits, is in no count here.' : ''}`;
+  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.${set.trait_free ? ' One more run, of personas with no traits, is in no count here.' : ''}${set.what_if ? ' The runs with the added post are in no count here.' : ''}`;
+}
+
+/** What sets a run apart in its set, for the line that places it there. */
+export function repeatLabel(run: Parameters<typeof uncounted>[0]): string {
+  const what_if = run.repeat?.what_if;
+  if (what_if) return `, pair ${what_if.pair}, ${what_if.post ? 'with the post your team added' : 'without the added post'}`;
+  return uncounted(run) === 'trait_free' ? ', of personas with no traits' : '';
+}
+
+/** Said before a what-if starts with too few pairs for an interval; null with enough. */
+export const fewPairsText = (pairs: number) => (pairs < MIN_PAIRS ? `${count(pairs, 'pair')} ${pairs === 1 ? 'gives' : 'give'} no interval, only a mean difference. Use at least ${MIN_PAIRS}.` : null);
+
+export const WHAT_IF_COLUMNS = ['Number', 'Mean difference, with the post minus without', '95% interval', 'Pairs'];
+
+/** A what-if's row after its label: the interval, or why there is none. */
+export const whatIfCells = ({ mean, lower, upper, note, n }: WhatIfNumber) => [mean === null ? '-' : signed(mean), lower === null || upper === null ? note! : `${signed(lower)} to ${signed(upper)}`, String(n)];
+
+/** Where the post stood and how many pairs count. */
+export const whatIfText = ({ round, pairs, of }: WhatIfResult) => `Added by your team in round ${round}, shown to the others as one persona's post, which it never wrote. ${pairs} of ${count(of, 'pair')} finished; a pair with a run still going or stopped is left out.`;
+
+function whatIfLines(whatIf: WhatIfResult): string[] {
+  return [
+    '## What-if post', '',
+    `> ${whatIf.note}`, '',
+    `"${line(whatIf.post)}"`, '',
+    whatIfText(whatIf), '',
+    `| ${WHAT_IF_COLUMNS.join(' | ')} |`,
+    '| --- | --- | --- | --- |',
+    ...whatIf.numbers.map((number) => `| ${cell(number.label)} | ${whatIfCells(number).join(' | ')} |`),
+    '',
+  ];
 }
 
 /** On a finding that the set's run of personas with no traits matched. It removes nothing and changes no rank. */
@@ -163,6 +194,7 @@ export function repeatsToMarkdown(set: RepeatSet): string {
     `# Gnomi repeat set ${set.group ?? ''}`.trimEnd(), '',
     `> ${setNote(set)}`, '',
     ...(set.prior ? [`> ${priorNotice(set.prior)}`, ''] : []),
+    ...(set.what_if ? whatIfLines(set.what_if) : []),
     `Model families: ${set.families.map(line).join(', ') || 'none'}.`, '',
     '| Finding | Appeared in | Model families | Also named |',
     '| --- | --- | --- | --- |',
@@ -297,9 +329,10 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
-    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}${isTraitFree(report) ? ', of personas with no traits' : ''}`] : []),
+    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}${repeatLabel(report)}`] : []),
     ...(set ? [`- ${setNote(set)}`] : []),
     '',
+    ...(set?.what_if ? whatIfLines(set.what_if) : []),
     '## Segments',
     '',
     ...segmentLines(report),
@@ -664,7 +697,7 @@ function spreadToMarkdown(s: SpreadStats, name: (id: string) => string): string[
   const crossed = s.segments.filter((g) => !g.seed).length;
   return [
     `- ${count(s.posts, 'post')}; first-hand: ${count(s.first_hand.length, 'persona')}; second-hand: ${count(s.second_hand.length, 'persona')}${s.second_hand.length > 0 ? ` (${s.second_hand.map(name).join(', ')})` : ''}`,
-    ...s.seeds.map((p) => `- Seed post by ${line(p.persona_name)}, round ${p.round}${p.injected ? ', injected by the test harness' : ''}: "${line(p.text)}" (#${p.seq})`),
+    ...s.seeds.map((p) => `- ${p.injected ? `Post added by your team, shown as ${line(p.persona_name)}'s` : `Seed post by ${line(p.persona_name)}`}, round ${p.round}: "${line(p.text)}" (#${p.seq})`),
     ...(s.posters ? [`- Posted: ${count(s.posters.length, 'persona')}; reached: ${count(s.readers?.length ?? 0, 'persona')}`] : []),
     `- Segments reached: ${s.segments.map((g) => `${line(g.name)} ${g.personas}${g.seed ? ' (seed)' : ''}`).join(', ') || 'none'}; crossed into ${count(crossed, 'other segment')}`,
     `- Influence: ${s.influence.map((e) => `${name(e.from)} → ${name(e.to)} (round ${e.round}, ${signed(e.delta)}, #${e.seq})`).join('; ') || 'none'}`,

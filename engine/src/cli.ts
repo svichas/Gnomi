@@ -10,7 +10,7 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type AddedPost, type Secrets } from './workspace.ts';
 import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
@@ -25,9 +25,9 @@ import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts'
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, EDIT_WARNING, forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
 import { gateDecision, type GateDecision } from '@gnomi/simulation/report/gate.ts';
-import { diffToMarkdown, gateToMarkdown, priorNotice, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { diffToMarkdown, fewPairsText, gateToMarkdown, priorNotice, repeatLabel, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
-import { combineReports, isTraitFree } from '@gnomi/simulation/report/repeats.ts';
+import { combineReports, uncounted, WHAT_IF_POST_MAX } from '@gnomi/simulation/report/repeats.ts';
 import { NOTE_WARNING } from '@gnomi/simulation/report/study.ts';
 import { createRecorder, roleOf, type RunHandle } from '@gnomi/simulation/run.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS, readsImages } from '@gnomi/simulation/settings.ts';
@@ -48,16 +48,19 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       are removed first; names and other details are not, and the text goes to your model provider. The files are not kept.
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
-      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
+      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free] [--what-if "<post text>" [--what-if-round <n>]]
   estimate <project dir> --base <run id> [--repeats <n>] [--returning]
       what rerun would cost, on that run's frozen settings and personas. --returning counts the memory each prompt carries.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
-      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
+      [--repeats <n>] [--also-model <provider:model>] [--also-trait-free] [--what-if "<post text>" [--what-if-round <n>]]
       --repeats makes n runs one after another, each with its own report and its share of the cost budget. --also-model adds one
       more run with the navigator and socialiser on that model. --also-trait-free adds one more of the same personas with every
       trait stripped to their segment, which no count of the set includes: a finding it matches may say more about the model than
       the audience. It needs --audience, and takes a share of the budget. A run that stops ends the set.
+      --what-if makes --repeats pairs instead, so twice as many runs: one audience and seed, one run with this post of at most
+      ${WHAT_IF_POST_MAX} characters added to the feed in round --what-if-round (the first by default), one without. It needs social rounds and two
+      personas. The runs with the post are in no count, and report --repeat gives the differences. They stay inside the simulator.
   runs <project dir>
   report <project dir> [--run <run id> | --repeat <group>] [--format summary|md|json] [--for-sharing]
       --repeat compares the runs of a repeat set; each run keeps its own report. --for-sharing gives one run's copy for sharing, as
@@ -123,6 +126,8 @@ const OPTIONS = {
   'also-model': { type: 'string' },
   'also-trait-free': { type: 'boolean', default: false },
   returning: { type: 'boolean', default: false },
+  'what-if': { type: 'string' },
+  'what-if-round': { type: 'string' },
   repeat: { type: 'string' },
   budget: { type: 'string' },
   file: { type: 'string', multiple: true },
@@ -199,6 +204,19 @@ function alsoModel(v: Values, settings: RunSettings): ModelChoice | undefined {
   // agent/loop.ts sends screenshots only to a navigator that reads images, so a problem only visible on screen would look like model bias.
   if (settings.screenshots && readsImages(choice) !== readsImages(settings.routing.navigator)) note(`Only ${readsImages(choice) ? `the ${model} run reads` : `the runs other than ${model} read`} screenshots, so the runs differ in images as well as model: a finding only one family produced may come from what it could see.`);
   return choice;
+}
+
+/** --what-if and its round. repeatRuns refuses what cannot be done, so a run and its estimate refuse alike. */
+function whatIfFrom(v: Values): AddedPost | undefined {
+  if (v['what-if'] === undefined && v['what-if-round'] !== undefined) throw new Error('--what-if-round needs --what-if.');
+  if (v['what-if'] === undefined) return undefined;
+  return { text: v['what-if'], ...(v['what-if-round'] === undefined ? {} : { round: Number(v['what-if-round']) }) };
+}
+
+/** Before a what-if that can give no interval, so nobody pays to find out. */
+function warnFewPairs(whatIf: AddedPost | undefined, pairs: number) {
+  const few = whatIf && fewPairsText(pairs);
+  if (few) note(few);
 }
 
 /** Fails early with the variable to set, rather than on the first model call. `choice` is for a call on the role's behalf that names its own model. */
@@ -469,12 +487,13 @@ function listPersonas(v: Values, path: string | undefined): void {
 
 /** What `rerun` would cost: the project may have moved on since, so only what the run froze counts. */
 function estimateRerun(v: Values, dir: string | undefined): void {
+  if (v['what-if'] !== undefined) throw new Error('--what-if is for run: rerun repeats what a run froze.');
   const store = existingProject(dir);
   try {
     const from = finishedRun(store, v.base!);
     const { config } = rerunProject(from);
     const repeats = Number(v.repeats ?? 1);
-    const e = estimateFor(config, from.personas, repeats, undefined, false, v.returning ? returningPrior(store, from) : undefined);
+    const e = estimateFor(config, from.personas, repeats, undefined, false, undefined, v.returning ? returningPrior(store, from) : undefined);
     const budget = config.settings.cost_budget_usd;
     out(`${from.personas.length} personas${repeats > 1 ? `, ${repeats} runs` : ''}: ${estimateText(e)}; ${budgetText(e, budget)}`, { kind: 'estimate', personas: from.personas.length, runs: repeats, stale: 0, ...e, budget_usd: budget });
   } finally {
@@ -492,8 +511,10 @@ async function estimate(v: Values): Promise<void> {
     const stale = file ? personas.filter((p) => !personaProfileIsCurrent(p, config)).length : 0;
     const repeats = Number(v.repeats ?? 1);
     const also = alsoModel(v, settings);
-    const e = estimateFor(config, personas, repeats, also, v['also-trait-free']);
-    const runs = repeats + (also ? 1 : 0) + (v['also-trait-free'] ? 1 : 0);
+    const whatIf = whatIfFrom(v);
+    const e = estimateFor(config, personas, repeats, also, v['also-trait-free'], whatIf);
+    const runs = whatIf ? repeats * 2 : repeats + (also ? 1 : 0) + (v['also-trait-free'] ? 1 : 0);
+    warnFewPairs(whatIf, repeats);
     out(
       `${personas.length} personas${runs > 1 ? `, ${runs} runs` : ''}: ${estimateText(e)}; ${budgetText(e, settings.cost_budget_usd)}${stale ? `. ${stale} personas would be written again first, which this leaves out` : ''}`,
       { kind: 'estimate', personas: personas.length, runs, stale, ...e, budget_usd: settings.cost_budget_usd },
@@ -563,8 +584,8 @@ async function runSimulation(v: Values): Promise<void> {
   const blobs = createFsBlobStore(dir);
   try {
     const config = configFor(v, file, await poisFrom(v, blobs), settings);
-    const [repeats, also] = [Number(v.repeats ?? 1), alsoModel(v, settings)];
-    const planned = repeatRuns(config, repeats, also, v['also-trait-free']);
+    const [repeats, also, whatIf] = [Number(v.repeats ?? 1), alsoModel(v, settings), whatIfFrom(v)];
+    const planned = repeatRuns(config, repeats, also, v['also-trait-free'], whatIf);
     // Before any persona is written again, which costs model calls; checkRun repeats this with the app's wording.
     requireKeys(planned, settings, fake);
     store.saveProject(config);
@@ -579,7 +600,8 @@ async function runSimulation(v: Values): Promise<void> {
       store.replacePersonas(personas, file.audience.persona_count);
     }
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
-    const estimated = estimateFor(config, personas, repeats, also, v['also-trait-free']);
+    const estimated = estimateFor(config, personas, repeats, also, v['also-trait-free'], whatIf);
+    warnFewPairs(whatIf, repeats);
     note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, settings.cost_budget_usd)}`);
     await runPlanned(dir, store, record, planned, personas, v);
   } finally {
@@ -599,7 +621,7 @@ function urlsFrom(v: Values): Record<string, string> {
 /** A finished run again on its frozen config and personas, with run's guards: every key before anything starts, the estimate, the budget. */
 async function rerun(v: Values, dir: string | undefined): Promise<void> {
   if (!v.base) throw new Error(`rerun needs --base <run id>.\n\n${USAGE}`);
-  if (v['also-trait-free']) throw new Error('--also-trait-free is for run: rerun repeats what a run froze.');
+  if (v['also-trait-free'] || v['what-if'] !== undefined) throw new Error(`--${v['also-trait-free'] ? 'also-trait-free' : 'what-if'} is for run: rerun repeats what a run froze.`);
   const fake = v['fake-llm'];
   // Beside an app that may have a run live: this leaves it running, and refuses to start a second one.
   const store = existingProject(dir, { recover: false });
@@ -614,7 +636,7 @@ async function rerun(v: Values, dir: string | undefined): Promise<void> {
     const active = store.listRuns().find((run) => run.status === 'running');
     if (active) throw new Error(`${active.run_id} is still running in this project, so another run cannot start. If its process was killed, opening the project in the app clears it.`);
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets, personas: from.personas }))[0]!;
-    const estimated = estimateFor(config, personas, repeats, undefined, false, prior);
+    const estimated = estimateFor(config, personas, repeats, undefined, false, undefined, prior);
     note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, config.settings.cost_budget_usd)}`);
     await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from, prior);
   } finally {
@@ -633,18 +655,18 @@ function listRuns(dir: string | undefined): void {
   const store = existingProject(dir);
   try {
     const runs = store.listRuns().map((r) => ({ run_id: r.run_id, status: r.status, stop_reason: r.stop_reason, cost_usd: r.cost_usd, started_at: new Date(r.started_at).toISOString(), goal: r.config.project.goal, repeat: r.config.repeat ?? null }));
-    for (const r of runs) out(`${r.run_id}  ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ''}, $${r.cost_usd.toFixed(4)}, ${r.started_at}: "${r.goal}"${r.repeat ? `, repeat ${r.repeat.index} of ${r.repeat.of} in set ${r.repeat.group}${isTraitFree(r) ? ', with no persona traits' : ''}` : ''}`, { kind: 'run_row', ...r });
+    for (const r of runs) out(`${r.run_id}  ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ''}, $${r.cost_usd.toFixed(4)}, ${r.started_at}: "${r.goal}"${r.repeat ? `, repeat ${r.repeat.index} of ${r.repeat.of} in set ${r.repeat.group}${uncounted(r) === 'trait_free' ? ', with no persona traits' : repeatLabel(r)}` : ''}`, { kind: 'run_row', ...r });
     out(`${runs.length} run${runs.length === 1 ? '' : 's'} in ${resolve(dir!)}, newest first`, { kind: 'runs', project: resolve(dir!), runs: runs.length });
   } finally {
     store.close();
   }
 }
 
-/** --run, or the newest run that is not a set's trait-free control, which only a named run reaches: it is no report on the audience. */
+/** --run, or the newest run in the counts: a set's trait-free control or what-if run is no report on the audience, so only a named run reaches it. */
 function pickRun(store: ProjectStore, v: Values, dir: string | undefined): RunRow {
   const runs = store.listRuns(); // newest first
-  const run = v.run ? runs.find((r) => r.run_id === v.run) : (runs.find((r) => !isTraitFree(r.config)) ?? runs[0]);
-  if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
+  const run = runs.find((r) => (v.run ? r.run_id === v.run : !uncounted(r.config)));
+  if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : runs.length ? `${dir} has no run in the counts: name one with --run.` : `${dir} has no runs yet.`);
   return run;
 }
 

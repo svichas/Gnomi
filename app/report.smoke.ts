@@ -623,8 +623,33 @@ try {
   returned.close();
   assert.equal(frozen.run_id, 'r-0003');
   assert.match(prompts, /remembered imperfectly/, 'the prompts carry the memory');
+  // A what-if set of three pairs, seeded so the pairs differ: the runs without the post lose some of its posts. The real engine compares them.
+  const posted = events.flatMap((event) => (event.type === 'social.post' ? [event.seq] : []));
+  for (const index of [1, 2, 3, 4, 5, 6]) {
+    const [pair, post] = [Math.ceil(index / 2), index % 2 === 0];
+    seedFinishedRun(projectDir, { ...synthetic, repeat: { group: 'what-if', index, of: 6, what_if: { pair, post, text: 'Salary bands are on every job page now.', round: 1, poi_id: report.pois[0].id } } }, post ? events : events.filter((event) => !posted.slice(0, pair).includes(event.seq)));
+  }
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.reload();
+  await openReport();
+  await root.getByText('Run 6 of 6 in a repeat set, pair 3, with the post your team added.', { exact: false }).waitFor();
+  const whatIf = root.getByRole('region', { name: 'What-if post' });
+  await whatIf.getByText('Inside the simulator, adding this post moved these numbers.', { exact: false }).waitFor();
+  await whatIf.getByText('3 of 3 pairs finished', { exact: false }).waitFor();
+  await whatIf.getByRole('cell', { name: /^[-+]\d+\.\d+ to [-+]\d+\.\d+$/ }).first().waitFor();
+  await whatIf.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'what-if-pairs.png') });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the what-if table fits a narrow viewport');
+  await page.screenshot({ path: join(shots, 'what-if-pairs-320.png') });
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.locator('#tab-runs').click();
+  const picker = page.locator('#panel-runs').getByLabel('Later run');
+  const offered = await picker.locator('option').allTextContents();
+  assert.ok(offered.some((option) => option.startsWith('r-0013')) && !offered.some((option) => option.startsWith('r-0014')), 'a run with the post is no side of a comparison');
+  await page.getByRole('button', { name: 'r-0014', exact: false }).first().getByText('repeat 6 of 6, pair 3, with the post your team added', { exact: false }).waitFor();
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan, a study outcome, edits for sharing and questions to a persona on a real report, returning personas, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a what-if set, a study plan, a study outcome, edits for sharing and questions to a persona on a real report, returning personas, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
 import { interviewContext, QUESTION_MAX, runInterview } from '@gnomi/simulation/agent/interview.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
+import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
 import { createGateway } from '@gnomi/simulation/llm/gateway.ts';
@@ -19,13 +20,13 @@ import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
 import { reportToMarkdown, studyPlanToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { priorOf } from '@gnomi/simulation/report/prior.ts';
-import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
+import { uncounted, WHAT_IF_POST_MAX } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, isCalendarDate, localDate, NOTE_MAX, runStudyPlan, topFindings } from '@gnomi/simulation/report/study.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
 import type { BlobStore, LlmGateway, ProjectStore, Recorder, SecretName } from '@gnomi/simulation/seams.ts';
 import { socialRounds } from '@gnomi/simulation/settings.ts';
 import { STUDY_STATUSES } from '@gnomi/simulation/types.ts';
-import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings, SessionInfo, StudyStatus } from '@gnomi/simulation/types.ts';
+import type { LlmRole, ModelChoice, Persona, PersonaProgress, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings, SessionInfo, StudyStatus, WhatIf } from '@gnomi/simulation/types.ts';
 
 export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: SecretName; label: string }> = {
   anthropic: { secret: 'anthropic_api_key', label: 'an Anthropic' },
@@ -35,6 +36,9 @@ export const KEYS: Record<Exclude<ProviderId, 'openai_compatible'>, { secret: Se
 };
 
 export type Secrets = (name: SecretName) => string | null;
+
+/** What a person asks of a what-if; the round defaults to the first. */
+export interface AddedPost { text: string; round?: number }
 
 /** What a provider needs before any call: the local endpoint for openai_compatible, else its key. */
 export const credential = (provider: ProviderId, localBaseUrl: string | null | undefined, secrets: Secrets) =>
@@ -109,26 +113,45 @@ export function checkComparison(config: ProjectConfig) {
 /** A trait-free run's project. Each seed quotes its own remarks, so they would set stripped personas apart again, and a finding they caused would read as the model's. */
 const ungrounded = (config: ProjectConfig): ProjectConfig => ({ ...config, audience: { ...config.audience!, segments: config.audience!.segments.map(({ grounding: _, ...segment }) => segment) } });
 
+/** The post a what-if asks for, as its runs freeze it. Refuses before anything is paid for what could not differ in the post alone, or would reach nobody. */
+function whatIfPost(config: ProjectConfig, { text, round = 1 }: AddedPost, others: boolean): Pick<WhatIf, 'text' | 'round' | 'poi_id'> {
+  if (others) throw new Error('A what-if changes one thing, the post, so it cannot run with --also-model or --also-trait-free.');
+  if (config.comparison) throw new Error('A comparison study has no social rounds, so it cannot take a what-if post.');
+  const rounds = socialRounds(config.settings, config.audience);
+  if (!rounds) throw new Error('A what-if post goes in a social round, and this project has social rounds off.');
+  if ((config.audience?.persona_count ?? 1) < 2) throw new Error('A what-if needs at least two personas: nobody else would read the post.');
+  const post = text.trim();
+  if (!post) throw new Error('A what-if needs the text of its post.');
+  if (post.length > WHAT_IF_POST_MAX) throw new Error(`The post has ${post.length} characters, and the limit is ${WHAT_IF_POST_MAX}.`);
+  if (!Number.isInteger(round) || round < 1 || round > rounds) throw new Error(`The post's round must be a whole number from 1 to ${rounds}.`);
+  // About the team's own product: a post about a competitor's site is not the question here.
+  const poi = config.pois.find((candidate) => candidate.type !== 'web' || candidate.mode !== 'observe_only') ?? config.pois[0]!;
+  return { text: post, round, poi_id: poi.id };
+}
+
 /**
  * The runs of a set, each with its share of the cost budget. `also` adds one more with the navigator and socialiser on that model,
- * and `withTraitFree` a last one of personas with no traits (runPersonas). One run is a lone run, with no repeat. The audience seed
- * stays, so personas and the follow graph are the same in every run.
+ * and `withTraitFree` a last one of personas with no traits (runPersonas). `whatIf` makes matched pairs instead: `repeats` pairs of
+ * one run with the post and one without, in an order the seed picks per pair, so no number leans on which ran second. One run is a
+ * lone run, with no repeat. The audience seed stays, so personas and the follow graph are the same in every run.
  */
-export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoice, withTraitFree = false): { config: ProjectConfig; repeat?: RunConfig['repeat'] }[] {
+export function repeatRuns(config: ProjectConfig, repeats = 1, also?: ModelChoice, withTraitFree = false, whatIf?: AddedPost): { config: ProjectConfig; repeat?: RunConfig['repeat'] }[] {
   if (!Number.isInteger(repeats) || repeats < 1) throw new Error('The number of repeats must be a whole number of at least 1.');
   if (withTraitFree && !config.audience) throw new Error('A trait-free run strips personas to their segments, so it needs an audience.');
-  const of = repeats + (also ? 1 : 0) + (withTraitFree ? 1 : 0);
+  const post = whatIf && whatIfPost(config, whatIf, !!also || withTraitFree);
+  const of = post ? repeats * 2 : repeats + (also ? 1 : 0) + (withTraitFree ? 1 : 0);
   if (of === 1) return [{ config }];
   const group = randomUUID().slice(0, 8);
   const { routing, cost_budget_usd } = config.settings;
+  const paired = (i: number, pair = Math.floor(i / 2) + 1) => ({ what_if: { ...post!, pair, post: (i + fnv1a(`what-if-order/${config.audience!.seed}/${pair}`)) % 2 === 1 } });
   return Array.from({ length: of }, (_, i) => ({
     config: { ...(withTraitFree && i === of - 1 ? ungrounded(config) : config), settings: { ...config.settings, cost_budget_usd: cost_budget_usd / of, routing: also && i === repeats ? { ...routing, navigator: also, socialiser: also } : routing } },
-    repeat: { group, index: i + 1, of, ...(withTraitFree ? { trait_free: of } : {}) },
+    repeat: { group, index: i + 1, of, ...(withTraitFree ? { trait_free: of } : {}), ...(post ? paired(i) : {}) },
   }));
 }
 
 /** Who a planned run runs. A set's trait-free run has them only in its own snapshot: the audience and the project stay as they are. */
-export const runPersonas = (run: ReturnType<typeof repeatRuns>[number], personas: Persona[]) => (isTraitFree(run) ? traitFree(personas, run.config) : personas);
+export const runPersonas = (run: ReturnType<typeof repeatRuns>[number], personas: Persona[]) => (uncounted(run) === 'trait_free' ? traitFree(personas, run.config) : personas);
 
 /**
  * Runs a set one after another, as a project has one active run. A run that does not finish ends the set, and so does `stopped`: a stop
@@ -155,14 +178,18 @@ export const repeatReports = (store: ProjectStore, group: string): Report[] => s
   .sort((a, b) => a.config.repeat!.index - b.config.repeat!.index)
   .map((run) => rowReport(store, run));
 
-/** One side of a comparison: the run, or the finished runs of its set, as a stopped run missing a theme says nothing about it. A trait-free run is a control, not a sample of the audience. */
+/** What a run in no count is, for the refusals that name it. */
+const UNCOUNTED = { trait_free: "is a set's trait-free run, whose personas have no traits", what_if: 'is a what-if run, with a post your team added' };
+
+/** One side of a comparison: the run, or the finished runs of its set, as a stopped run missing a theme says nothing about it. A trait-free run is a control, and a what-if run has the team's post, so neither samples the audience. */
 function comparedSide(store: ProjectStore, run_id: string): Report[] {
   const run = store.listRuns().find((row) => row.run_id === run_id);
   if (!run) throw new Error(`There is no run ${run_id} in this project.`);
   if (run.status === 'running') throw new Error(`${run_id} is still running, so there is nothing to compare yet.`);
   if (run.config.project.comparison) throw new Error(`${run_id} is a comparison study, which compares tools rather than builds.`);
+  if (uncounted(run.config) === 'what_if') throw new Error(`${run_id} ${UNCOUNTED.what_if}: compare one of the others.`);
   const group = run.config.repeat?.group;
-  const finished = group ? repeatReports(store, group).filter((report) => report.status === 'finished' && !isTraitFree(report)) : [];
+  const finished = group ? repeatReports(store, group).filter((report) => report.status === 'finished' && !uncounted(report)) : [];
   return finished.length ? finished : [rowReport(store, run)];
 }
 
@@ -208,7 +235,8 @@ export async function rewriteReport({ store, blobs, record }: RunPlace, run_id: 
 
 /** A study plan for an ended run: one author call, then the report again. A failed call adds no plan, so an earlier one stays. */
 export async function planStudy(place: RunPlace, { run_id, config }: RunRow, llm: LlmGateway): Promise<Report> {
-  if (isTraitFree(config)) throw new Error(`${run_id} is a set's trait-free run, whose personas have no traits: plan a study from one of the others.`);
+  const left = uncounted(config);
+  if (left) throw new Error(`${run_id} ${UNCOUNTED[left]}: plan a study from one of the others.`);
   const { store, blobs, record } = place;
   const log = store.events(run_id);
   const before = buildReport(log);
@@ -300,7 +328,8 @@ export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
   const run = store.listRuns().find((row) => row.run_id === run_id);
   if (!run) throw new Error(`There is no run ${run_id} in this project.`);
   if (run.status !== 'finished') throw new Error(`${run_id} is ${run.status}, and only a finished run can be run again.`);
-  if (isTraitFree(run.config)) throw new Error(`${run_id} is a set's trait-free run, whose personas have no traits: run one of the others again.`);
+  const left = uncounted(run.config);
+  if (left) throw new Error(`${run_id} ${UNCOUNTED[left]}: run one of the others again.`);
   return run.config;
 }
 
@@ -347,8 +376,8 @@ export function rerunProject(from: RunConfig, urls: Record<string, string> = {})
  * The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too.
  * Each run stops at its share, so a total within the budget can hide a run over its share: `run_high_usd` is the dearest run's high estimate.
  */
-export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice, withTraitFree = false, prior?: RunConfig['prior']): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
-  const runs = repeatRuns(config, repeats, also, withTraitFree);
+export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice, withTraitFree = false, whatIf?: AddedPost, prior?: RunConfig['prior']): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
+  const runs = repeatRuns(config, repeats, also, withTraitFree, whatIf);
   const each = runs.map((run) => estimateRun({ personas: runPersonas(run, personas), settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison, prior }));
   const sum = (pick: (estimate: RunEstimate) => number) => each.reduce((total, estimate) => total + pick(estimate), 0);
   return {

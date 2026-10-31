@@ -286,6 +286,7 @@ export interface Report {
   went_well?: ReportLike[];
   comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
+  end_opinions?: Record<string, number>; // POI id → mean opinion at the end, whether or not anyone posted; only in the runs of a what-if set
   buyers?: ReportBuyers[]; // M5 buying survey per POI and segment; only in runs where a buyer answered one
   flows?: ReportFlow[]; // the team's own web POIs with a step; absent in older reports
   study_plan?: ReportStudyPlan; // the newest plan; only once one was made
@@ -346,7 +347,7 @@ export interface ReportPost {
   segment_id: string | null;
   round: number;
   text: string;
-  injected: boolean; // put in the persona's name by the test harness, not written by a model
+  injected: boolean; // added by the team in the persona's name, not written by a model
 }
 
 /** How talk about a POI, or one of its themes, travelled on the feed (tech.md §8.2 step 7, §6.6). */

@@ -380,7 +380,8 @@ export function echoesOf(events: GnomiEvent[]): Echoes {
   return {
     feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
     heard: new Map(events.flatMap((e) => ((e.type === 'persona.step' || e.type === 'persona.friction_reported') && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
-    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
+    // A post the team added says nothing of what the persona in whose name it stands met.
+    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id && !e.payload.injected ? [[e.payload.post_id, e.persona_id] as const] : []))),
     rounds: new Map(events.map((e) => [e.seq, e.round])),
     remembered: new Map(Object.entries(config?.prior?.memories ?? {}).map(([id, { pois: visited }]) => [id, new Set(Object.values(visited).flatMap(({ frictions }) => frictions.map(({ key }) => key)))])),
   };

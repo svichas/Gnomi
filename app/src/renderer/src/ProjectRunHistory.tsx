@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { repeatLabel } from '@gnomi/simulation/report/markdown.ts';
+import { uncounted } from '@gnomi/simulation/report/repeats.ts';
 import type { RunRow } from '@gnomi/simulation/types.ts';
 import { runSetup } from './activity.ts';
 import { Icon } from './Icon.tsx';
@@ -9,9 +11,9 @@ const STATUS = { running: 'Running', finished: 'Completed', stopped: 'Stopped', 
 
 type ListedRun = RunRow & { project_id?: string; project_name?: string };
 
-/** Picks two ended runs of the project, the newest two to begin with, for RunCompare. A comparison study compares tools, not builds. */
+/** Picks two ended runs of the project, the newest two to begin with, for RunCompare. A comparison study compares tools, not builds, and a what-if run has the team's post. */
 function CompareRuns({ runs, onCompare }: { runs: RunRow[]; onCompare(base: string, run: string): void }) {
-  const choices = runs.filter((run) => run.status !== 'running' && !run.config.project.comparison);
+  const choices = runs.filter((run) => run.status !== 'running' && !run.config.project.comparison && uncounted(run.config) !== 'what_if');
   const [picked, setPicked] = useState<{ base?: string; run?: string }>({});
   if (choices.length < 2) return null;
   const { base = choices[1].run_id, run = choices[0].run_id } = picked;
@@ -33,7 +35,7 @@ export function ProjectRunHistory<Run extends ListedRun>({ runs, selected, onSel
       return <li key={`${run.project_id ?? ''}/${run.run_id}`}><button type="button" className="project-history-run" aria-current={selected === run.run_id ? 'true' : undefined} onClick={() => onSelect(run)}>
         <span className="project-history-run-top"><span className="project-history-status" data-status={run.status}><Icon name={run.status === 'finished' ? 'check' : run.status === 'running' ? 'activity' : run.status === 'interrupted' ? 'alert' : 'clock'} size={13} />{STATUS[run.status]}</span><span>{when(run.started_at)}</span></span>
         <strong>{run.config.project.goal || 'Simulation'}</strong>
-        <span className="project-history-run-bottom"><span>{run.project_name && <>{run.project_name} · </>}{run.run_id} · {people} {people === 1 ? 'person' : 'people'}{run.config.repeat && ` · repeat ${run.config.repeat.index} of ${run.config.repeat.of}`}</span><span>{selected === run.run_id ? 'Last viewed' : run.status === 'running' ? 'View simulation' : 'View report'}<Icon name="arrow" size={13} /></span></span>
+        <span className="project-history-run-bottom"><span>{run.project_name && <>{run.project_name} · </>}{run.run_id} · {people} {people === 1 ? 'person' : 'people'}{run.config.repeat && ` · repeat ${run.config.repeat.index} of ${run.config.repeat.of}${repeatLabel(run.config)}`}</span><span>{selected === run.run_id ? 'Last viewed' : run.status === 'running' ? 'View simulation' : 'View report'}<Icon name="arrow" size={13} /></span></span>
       </button></li>;
     })}
   </ul></>;

@@ -251,7 +251,7 @@ export function Inspector(props: {
                   <ul className="mt-1 max-h-48 space-y-2 overflow-y-auto">
                     {posts.map(({ seq, persona_id, round, payload }) => (
                       <li key={seq} className="break-words">
-                        <span className="text-xs text-stone-500">{names.get(persona_id ?? '') ?? persona_id}, round {round}{payload.parent_id ? ', a reply' : ''}{payload.injected ? ', injected by the test harness' : ''}: </span>
+                        <span className="text-xs text-stone-500">{names.get(persona_id ?? '') ?? persona_id}, round {round}{payload.parent_id ? ', a reply' : ''}{payload.injected ? ', added by your team' : ''}: </span>
                         {payload.text}
                       </li>
                     ))}

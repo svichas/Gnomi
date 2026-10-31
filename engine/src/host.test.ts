@@ -611,6 +611,32 @@ test('each repeat resets staging and checks its logins again, and a repeat that 
   await call('open_project', { dir });
 });
 
+test('a what-if starts as matched pairs on the app\'s path, reads back with its result, and its post run cannot run again', async () => {
+  await call('open_project', { dir: join(dir, 'what-if') });
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'pricing.md' });
+  const pois = [{ id: 'poi-text', type: 'text' as const, name: 'Pricing', asset: id, segments: null }];
+  await call('save_project', { project: project({}, { pois, audience: audience([segment('seg-1')], 3), settings: { ...DEFAULT_SETTINGS, rounds: 1, cost_budget_usd: 4 } }) });
+  await call('generate_personas', {});
+  const what_if = { text: 'Starter is cheaper than it looks.' };
+  assert.equal((await call('estimate_run', { repeats: 2, what_if })).calls, (await call('estimate_run', {})).calls * 4);
+  await assert.rejects(call('estimate_run', { what_if: { text: ' ' } }), /needs the text of its post/);
+  await assert.rejects(call('start_run', { reset: false, what_if: { ...what_if, round: 2 } }), /whole number from 1 to 1/);
+
+  const { run_id } = await call('start_run', { reset: false, repeats: 1, what_if });
+  const { group } = (await call('get_project', {})).runs.find((run) => run.run_id === run_id)!.config.repeat!;
+  await until(async () => (await call('get_session_runs', {})).filter((run) => run.project_dir === join(dir, 'what-if') && run.status === 'finished').length === 2);
+  const runs = await inSet(group);
+  assert.deepEqual(runs.map((run) => run.config.project.settings.cost_budget_usd), [2, 2]);
+  const set = await call('get_repeats', { group });
+  assert.deepEqual([set.of, set.compared, set.what_if?.post, set.what_if?.pairs], [1, 1, what_if.text, 1]);
+  const [added, plain] = runs[0].config.repeat!.what_if!.post ? runs : [...runs].reverse();
+  assert.equal(added.config.injected_posts?.length, 1);
+  assert.equal(plain.config.injected_posts, undefined);
+  await assert.rejects(call('duplicate_run', { run_id: added.run_id, reset: false }), /is a what-if run/);
+  await assert.rejects(call('estimate_run', { run_id: added.run_id }), /is a what-if run/);
+  await assert.rejects(call('compare_runs', { base: added.run_id, run: plain.run_id }), /is a what-if run/);
+});
+
 test('duplicate_run reruns a finished run on its frozen config and personas, and compare_runs reads the two', async (t) => {
   await call('open_project', { dir: join(dir, 'rerun') });
   const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'pricing.md' });

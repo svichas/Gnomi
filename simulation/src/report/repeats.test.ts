@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { repeatNote, repeatsToMarkdown, TRAIT_FREE_TEXT } from './markdown.ts';
-import { combineReports, isTraitFree } from './repeats.ts';
-import type { ModelChoice, Report, ReportTheme } from '../types.ts';
+import { fewPairsText, repeatLabel, repeatNote, repeatsToMarkdown, TRAIT_FREE_TEXT } from './markdown.ts';
+import { combineReports, plannedRuns, uncounted, WHAT_IF_NOTE } from './repeats.ts';
+import type { ModelChoice, Report, ReportSpread, ReportTheme } from '../types.ts';
 
 const key = (name: string) => JSON.stringify(['web', `gym.test/${name}`, 'element', `button "${name}"`]);
 const theme = (id: string, title: string, keys: string[], over: Partial<ReportTheme> = {}): ReportTheme => ({
@@ -110,7 +110,7 @@ test('a trait-free run is left out of every count of its set, and the set says s
   const save = theme('g1', 'Save does nothing', ['save']);
   const price = theme('g2', 'Prices are hidden', ['price'], { rank: 2 });
   const reports = withControl([[save, price], [save]], [theme('g5', 'Only the control saw this', ['other'])], { methods: { models: { navigator: DEEPSEEK } } as Report['methods'] });
-  assert.deepEqual(reports.map(isTraitFree), [false, false, true]);
+  assert.deepEqual(reports.map(uncounted), [null, null, 'trait_free']);
   const set = combineReports(reports);
   assert.deepEqual([set.of, set.compared, set.running, set.incomplete, set.families, set.trait_free], [2, 2, false, false, ['anthropic'], 'r-3']);
   assert.deepEqual(seen(set), [['Save does nothing', 2, 2], ['Prices are hidden', 1, 2]], 'the control\'s own theme adds no finding');
@@ -161,9 +161,9 @@ test('a stopped trait-free run marks nothing and ends nothing, and a set of one 
 
 test('a run marked with no trait-free index is an ordinary run, on old logs and new', () => {
   const old = run(1, []);
-  assert.equal(isTraitFree(old), false);
-  assert.equal(isTraitFree({ repeat: undefined }), false);
-  assert.equal(isTraitFree({ repeat: null }), false);
+  assert.equal(uncounted(old), null);
+  assert.equal(uncounted({ repeat: undefined }), null);
+  assert.equal(uncounted({ repeat: null }), null);
   const save = theme('g1', 'Save does nothing', ['save']);
   assert.deepEqual(Object.keys(combineReports([run(1, [save], { of: 1 })])).sort(), ['compared', 'families', 'findings', 'group', 'incomplete', 'of', 'running'], 'a set without it has no new field');
   assert.equal('trait_free' in combineReports([run(1, [save], { of: 1 })]).findings[0], false);
@@ -178,4 +178,122 @@ test('a returning set names the run its personas remember, in Markdown and JSON,
   const plain = combineReports([run(1, [theme('g1', 'Save does nothing', ['save'])])]);
   assert.equal('prior' in plain, false);
   assert.doesNotMatch(repeatsToMarkdown(plain), /used the product before/);
+});
+
+const POST = 'The team post about saving a job.';
+const figures = (posted: number, second_hand: number, opinion: number | null, abandoned = 0) => ({ posted, second_hand, opinion, abandoned });
+/** One run of a pair in a what-if set of `pairs` pairs, with the numbers the comparison reads. The post is about POI `web`. */
+function side(pair: number, post: boolean, pairs: number, { posted, second_hand, opinion, abandoned }: ReturnType<typeof figures>, themes: ReportTheme[] = [], over: Partial<Report> = {}) {
+  const index = (pair - 1) * 2 + (post ? 2 : 1);
+  const spread = [
+    { poi_id: 'other', posters: ['x'], second_hand: ['x'] },
+    { poi_id: 'web', posters: Array.from({ length: posted }, (_, i) => `p${i}`), second_hand: Array.from({ length: second_hand }, (_, i) => `p${i}`) },
+  ] as unknown as ReportSpread[];
+  return run(index, themes, {
+    repeat: { group: 'set-a', index, of: pairs * 2, what_if: { pair, post, text: POST, round: 2, poi_id: 'web' } },
+    spread, end_opinions: { other: 2, ...(opinion === null ? {} : { web: opinion }) }, personas: Array.from({ length: 4 }, (_, i) => ({ outcome: i < abandoned ? 'abandoned' : 'done' })) as Report['personas'], ...over,
+  });
+}
+/** Pairs as [without, with]. */
+const whatIfSet = (pairs: [ReturnType<typeof figures>, ReturnType<typeof figures>][]) => pairs.flatMap(([without, added], i) => [side(i + 1, false, pairs.length, without), side(i + 1, true, pairs.length, added)]);
+const numbers = (set: ReturnType<typeof combineReports>) => Object.fromEntries(set.what_if!.numbers.map(({ id, ...rest }) => [id, rest]));
+
+test('the runs with an added post are in no count: the runs without it are an ordinary repeat set', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const reports = [
+    side(1, false, 2, figures(1, 0, 0), [save]), side(1, true, 2, figures(2, 1, 1), [save, theme('g5', 'Only the post run saw this', ['other'])]),
+    side(2, true, 2, figures(2, 1, 1), [save]), side(2, false, 2, figures(1, 0, 0), [save]),
+  ];
+  assert.deepEqual(reports.map(uncounted), [null, 'what_if', 'what_if', null]);
+  assert.equal(plannedRuns(reports[0].repeat!), 2, 'a set of four runs plans two that count');
+  const set = combineReports(reports);
+  assert.deepEqual([set.of, set.compared, set.running, set.incomplete], [2, 2, false, false]);
+  assert.deepEqual(seen(set), [['Save does nothing', 2, 2]], 'the post run\'s own theme adds no finding');
+  assert.ok(set.findings.every((finding) => !('r-2' in finding.themes) && !('r-4' in finding.themes)));
+  assert.match(repeatsToMarkdown(set), /2 runs compared\.[^\n]*The runs with the added post are in no count here\./);
+  assert.equal(repeatNote(set, 'r-2', save), null, 'a post run has no line of its own');
+  assert.equal(repeatLabel(reports[1]), ', pair 1, with the post your team added');
+  assert.equal(repeatLabel(reports[0]), ', pair 1, without the added post');
+});
+
+test('two pairs give the mean difference and the existing note, with no interval', () => {
+  const set = combineReports(whatIfSet([[figures(1, 0, 0, 1), figures(3, 1, 1, 1)], [figures(2, 0, -1, 2), figures(2, 2, 0, 1)]]));
+  const { posted, second_hand, opinion, abandoned } = numbers(set);
+  assert.deepEqual([set.what_if!.pairs, set.what_if!.of, set.what_if!.post, set.what_if!.round], [2, 2, POST, 2]);
+  assert.deepEqual([posted.mean, second_hand.mean, opinion.mean, abandoned.mean], [1, 1.5, 1, -0.5], 'with the post minus without, on the post\'s POI');
+  assert.ok(Object.values(numbers(set)).every((number) => number.n === 2 && number.lower === null && number.upper === null && number.note === 'fewer than three pairs'));
+  assert.match(repeatsToMarkdown(set), /\| People who posted \| \+1\.00 \| fewer than three pairs \| 2 \|/);
+});
+
+test('three pairs give an interval, and differences that never vary give the note instead of a false certainty', () => {
+  const set = combineReports(whatIfSet([[figures(1, 0, 0), figures(2, 0, 1)], [figures(1, 0, 0), figures(3, 0, 1)], [figures(1, 0, 0), figures(4, 0, 1)]]));
+  const { posted, second_hand, opinion } = numbers(set);
+  assert.deepEqual([posted.n, posted.mean, posted.note], [3, 2, null]);
+  assert.ok(Math.abs(posted.lower! - (2 - 4.303 / Math.sqrt(3))) < 1e-9 && Math.abs(posted.upper! - (2 + 4.303 / Math.sqrt(3))) < 1e-9, 'a t interval over pairs');
+  assert.deepEqual([opinion.mean, opinion.lower, opinion.upper, opinion.note], [1, null, null, 'no variation']);
+  assert.deepEqual([second_hand.mean, second_hand.note], [0, 'no variation']);
+  assert.match(repeatsToMarkdown(set), /\| People who posted \| \+2\.00 \| -0\.48 to \+4\.48 \| 3 \|/);
+  assert.match(repeatsToMarkdown(set), /\| Mean opinion at the end, -2 to \+2 \| \+1\.00 \| no variation \| 3 \|/);
+});
+
+test('a stopped run drops its pair, a run nobody posted in counts as nobody, and its opinion still counts', () => {
+  const reports = whatIfSet([[figures(1, 0, 0), figures(2, 0, 1)], [figures(1, 0, 0), figures(9, 9, 9)], [figures(1, 0, 0), figures(3, 0, 1)]]);
+  const stopped = reports.map((report) => (report.run_id === 'r-4' ? { ...report, status: 'stopped' as const } : report));
+  const set = combineReports(stopped);
+  assert.deepEqual([set.what_if!.pairs, set.what_if!.of, numbers(set).posted.n, numbers(set).posted.mean], [2, 3, 2, 1.5], 'the pair without its other half says nothing');
+  assert.deepEqual([set.compared, set.of, set.incomplete], [3, 3, false], 'its ordinary run still counts');
+  assert.match(repeatsToMarkdown(set), /2 of 3 pairs finished; a pair with a run still going or stopped is left out\./);
+
+  const none = combineReports(reports.slice(0, 1));
+  assert.deepEqual([none.what_if!.pairs, numbers(none).posted.mean, numbers(none).posted.note], [0, null, 'no pairs']);
+
+  // The post itself gives its run a spread, so reading opinions there would keep only the pairs whose baseline swarm talked.
+  const silent = combineReports([{ ...side(1, false, 1, figures(0, 0, -1)), spread: undefined }, side(1, true, 1, figures(2, 1, 1))]);
+  assert.deepEqual([numbers(silent).posted.mean, numbers(silent).second_hand.mean, numbers(silent).opinion.n, numbers(silent).opinion.mean], [2, 1, 1, 2]);
+
+  const unformed = combineReports([side(1, false, 1, figures(0, 0, null)), side(1, true, 1, figures(2, 1, 1))]);
+  assert.deepEqual([numbers(unformed).opinion.n, numbers(unformed).opinion.note], [0, 'no pairs'], 'only a run where nobody holds an opinion has none');
+});
+
+test('a what-if set is going while any of its runs is, the runs with the post too, though they are in no count', () => {
+  const without = (pair: number) => side(pair, false, 2, figures(1, 0, 0));
+  const added = (pair: number, over: Partial<Report> = {}) => side(pair, true, 2, figures(2, 0, 1), [], over);
+  const state = (set: ReturnType<typeof combineReports>) => [set.compared, set.running, set.incomplete];
+  const running = { status: 'running' as const };
+  for (const live of [false, true]) {
+    // The seed puts the post first in about half the pairs, so a run with it is often the one in flight.
+    const inFlight = combineReports([without(1), added(1), added(2, running)], live);
+    assert.deepEqual(state(inFlight), [1, true, false]);
+    assert.match(repeatsToMarkdown(inFlight), /1 of 2 runs finished so far\./);
+    const last = combineReports([without(1), added(1), without(2), added(2, running)], live);
+    assert.deepEqual(state(last), [2, true, false], 'its counted runs are done, the set is not');
+    assert.match(repeatsToMarkdown(last), /2 of 2 runs finished so far\..*1 of 2 pairs finished; a pair with a run still going or stopped is left out\./s);
+    assert.deepEqual(state(combineReports([without(1), added(1), without(2), added(2)], live)), [2, false, false], 'over');
+  }
+  assert.deepEqual(state(combineReports([without(1), added(1), without(2)], true)), [2, true, false], 'the holder bridges the gap before a last run with the post');
+  assert.deepEqual(state(combineReports([without(1), added(1, { status: 'stopped' })], true)), [1, false, true], 'a run that stops ends the set, even one in no count');
+});
+
+test('the result carries its limits every time, in every form, and promises nothing', () => {
+  assert.equal(WHAT_IF_NOTE, 'Inside the simulator, adding this post moved these numbers. That does not establish a real-world effect. Spread is relative and uncalibrated.');
+  const sets = [[], [[figures(1, 0, 0), figures(2, 0, 1)]], [[figures(1, 0, 0), figures(2, 0, 1)], [figures(1, 0, 0), figures(3, 0, 1)], [figures(1, 0, 0), figures(4, 0, 1)]]] as Parameters<typeof whatIfSet>[0][];
+  for (const pairs of sets) {
+    const set = combineReports(pairs.length ? whatIfSet(pairs) : [side(1, false, 3, figures(1, 0, 0), [], { status: 'stopped' })]);
+    for (const form of [repeatsToMarkdown(set), JSON.stringify(set)]) {
+      assert.ok(form.includes(WHAT_IF_NOTE), 'said wherever the numbers are');
+      assert.doesNotMatch(form, /validated|confidence|users said|will increase|caused|lift\b/i);
+    }
+  }
+  assert.equal(fewPairsText(1), '1 pair gives no interval, only a mean difference. Use at least 3.');
+  assert.equal(fewPairsText(2), '2 pairs give no interval, only a mean difference. Use at least 3.');
+  assert.equal(fewPairsText(3), null);
+});
+
+test('a set with no what-if has no what-if field, and its runs count as before', () => {
+  const save = theme('g1', 'Save does nothing', ['save']);
+  const set = combineReports([run(1, [save], { of: 2 }), run(2, [save], { of: 2 })]);
+  assert.equal('what_if' in set, false);
+  assert.doesNotMatch(repeatsToMarkdown(set), /What-if|added post/);
+  assert.equal(plannedRuns({ group: 'g', index: 1, of: 3, trait_free: 3 }), 2);
+  assert.equal(plannedRuns({ group: 'g', index: 1, of: 3 }), 3);
 });

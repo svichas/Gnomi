@@ -708,3 +708,17 @@ test('a complaint only a scan confirmed can still repeat a post: the scan\'s ste
   const [own] = analyseFrictions(heardThenSaid(['signal.failed_action', 'a2', failed]), ctx).themes;
   assert.deepEqual([own.first_hand, own.heard_first], [['a3', 'a2'], 0], 'a signal on her own step is hers, whatever else backs it');
 });
+
+test('a post the team added says nothing of what the persona named on it met, so a reader handed it stays first-hand', () => {
+  const heard = (injected: boolean) => log(
+    ['persona.step', 'a3', step(1)],
+    ['persona.friction_reported', 'a3', friction(1, 2, 'Too faint to read')],
+    ['social.post', 'a3', { post_id: 'p1', parent_id: null, text: 'Too faint to read', about_poi_id: 'poi', ...(injected && { injected }) }],
+    ['persona.step', 'a2', { ...step(5), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(5, 2, 'The hints are too faint to read'), heard_post_ids: ['p1'] }],
+  );
+  const [own] = analyseFrictions(heard(false), ctx).themes;
+  assert.deepEqual([own.first_hand, own.heard_first], [['a3'], 1], 'her own post is a repeat of what she met');
+  const [added] = analyseFrictions(heard(true), ctx).themes;
+  assert.deepEqual([added.first_hand, added.heard_first, added.trust, added.personas], [['a3', 'a2'], 0, own.trust, own.personas], 'the team\'s is not');
+});

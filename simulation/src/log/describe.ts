@@ -69,7 +69,7 @@ export function describe(e: GnomiEvent): string {
     case 'social.feed_viewed':
       return `${e.payload.post_ids.length} posts`;
     case 'social.post':
-      return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (injected)' : ''}: "${e.payload.text}"`;
+      return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (added by the team)' : ''}: "${e.payload.text}"`;
     case 'social.reaction':
       return `${e.payload.kind} ${e.payload.post_id}`;
     case 'social.discarded':

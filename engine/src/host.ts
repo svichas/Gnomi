@@ -398,19 +398,19 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     current().store.putPersona({ ...old, name, job_title, background, context_of_use, goal_interpretation, voice });
     return null;
   },
-  estimate_run({ repeats, run_id, returning }) {
+  estimate_run({ repeats, run_id, returning, what_if }) {
     if (run_id !== undefined) {
       const { store } = current();
       const from = finishedRun(store, run_id);
-      return estimateFor(rerunProject(from).config, from.personas, repeats, undefined, false, returning ? returningPrior(store, from) : undefined);
+      return estimateFor(rerunProject(from).config, from.personas, repeats, undefined, false, undefined, returning ? returningPrior(store, from) : undefined);
     }
     const config = project();
-    return estimateFor(config, population(current().store, config), repeats);
+    return estimateFor(config, population(current().store, config), repeats, undefined, false, what_if);
   },
-  async start_run({ reset, repeats }) {
+  async start_run({ reset, repeats, what_if }) {
     noSetup('starting a run');
     const { store } = current();
-    const planned = repeatRuns(project(), repeats); // frozen, as personas are, against edits made while a set runs
+    const planned = repeatRuns(project(), repeats, undefined, false, what_if); // frozen, as personas are, against edits made while a set runs
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
     return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret }), reset);
   },

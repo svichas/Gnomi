@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { askPersona, cappedGateway, checkRun, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { askPersona, cappedGateway, checkRun, compareRuns, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runSet } from './workspace.ts';
 import { QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
@@ -15,7 +15,8 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
-import { createRecorder } from '@gnomi/simulation/run.ts';
+import { combineReports, WHAT_IF_POST_MAX } from '@gnomi/simulation/report/repeats.ts';
+import { createRecorder, newRunConfig } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
 import type { LlmRole, ModelChoice, Persona, Poi, ProjectConfig, Report, RunConfig, RunSettings, WebPoi } from '@gnomi/simulation/types.ts';
@@ -448,4 +449,94 @@ test('a run with no friction of its own has nothing to plan, and no call is made
   const unused = createScriptedGateway({}, place.record);
   await assert.rejects(planStudy(none, quiet, unused), /has no friction finding of your own product/);
   assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0);
+});
+
+const POST = { text: 'Saving a job fails for everyone.' };
+const socialConfig = (over: Partial<RunSettings> = {}): ProjectConfig => ({ ...gym, audience: { ...defaultAudience({ name: 'Gym', role: null, goal: 'Post a job' }), persona_count: 4 }, settings: { ...gym.settings, social: true, rounds: 3, ...over } });
+const fourPeople = ({ audience }: ProjectConfig): Persona[] => [0, 1, 2, 3].map((i) => ({ ...BUILTIN_PERSONA, id: `p-${i}`, segment_id: audience!.segments[0].id }));
+
+test('a what-if plans matched pairs: one audience and seed each, only the post differs, and it is off by default', () => {
+  const config = socialConfig();
+  const people = fourPeople(config);
+  const runs = repeatRuns(config, 3, undefined, false, POST);
+  const { group } = runs[0].repeat!;
+  assert.equal(runs.length, 6);
+  assert.deepEqual(runs.map((run) => run.repeat!.what_if!.pair), [1, 1, 2, 2, 3, 3]);
+  assert.deepEqual(runs.map((run) => [run.repeat!.group, run.repeat!.index, run.repeat!.of]), [1, 2, 3, 4, 5, 6].map((index) => [group, index, 6]));
+  assert.deepEqual(runs.map((run) => run.config.settings.cost_budget_usd), [1, 1, 1, 1, 1, 1], 'each run an equal share');
+  assert.ok(runs.every((run) => run.config.settings.routing === config.settings.routing));
+  const planned = runs.map((run) => newRunConfig(run.config, { personas: runPersonas(run, people), sessions: [], reset: false, repeat: run.repeat }));
+  assert.deepEqual([...new Set(planned.map((run) => run.seed))], [config.audience!.seed], 'one seed, so one follow graph');
+  assert.ok(planned.every((run) => run.personas.length === 4 && JSON.stringify(run.personas) === JSON.stringify(planned[0].personas)), 'one audience');
+  for (const pair of [1, 2, 3]) {
+    const [a, b] = planned.filter((run) => run.repeat!.what_if!.pair === pair);
+    assert.notEqual(a.repeat!.what_if!.post, b.repeat!.what_if!.post, 'one run of each pair has the post');
+    assert.deepEqual({ ...a.project }, { ...b.project }, 'and nothing else in the design differs');
+    const [added, plain] = a.repeat!.what_if!.post ? [a, b] : [b, a];
+    assert.deepEqual([added.injected_posts?.map((p) => [p.text, p.round, p.poi_id]), plain.injected_posts], [[[POST.text, 1, 'poi-1']], undefined]);
+  }
+  const leading = repeatRuns(config, 8, undefined, false, POST).filter((run) => run.repeat!.index % 2 === 1).map((run) => run.repeat!.what_if!.post);
+  assert.equal(new Set(leading).size, 2, 'the seed orders each pair, so neither side always runs second');
+  assert.deepEqual(repeatRuns(config, 3).map((run) => run.repeat!.what_if), [undefined, undefined, undefined], 'off unless asked for');
+  assert.equal(repeatRuns(config, 1, undefined, false, POST).length, 2, 'one pair is two runs, not a lone run');
+  assert.equal(repeatRuns(config, 1, undefined, false, { text: '  padded  ', round: 3 })[0].repeat!.what_if!.text, 'padded');
+  const competitor: WebPoi = { ...poi, id: 'poi-0', mode: 'observe_only' };
+  assert.equal(repeatRuns({ ...config, pois: [competitor, poi] }, 1, undefined, false, POST)[0].repeat!.what_if!.poi_id, 'poi-1', 'about the team\'s own product');
+});
+
+test('the estimate of a what-if is every run together, before anything starts', () => {
+  const config = socialConfig();
+  const people = fourPeople(config);
+  const one = estimateFor(config, people);
+  const whole = estimateFor(config, people, 3, undefined, false, POST);
+  assert.equal(whole.calls, one.calls * 6);
+  assert.ok(Math.abs(whole.cost_usd[1] - one.cost_usd[1] * 6) < 1e-9);
+  assert.ok(Math.abs(whole.minutes[1] - one.minutes[1] * 6) < 1e-9);
+  assert.equal(whole.run_budget_usd, 1);
+});
+
+test('a what-if is refused where the post could reach nobody, or would not be the only change', () => {
+  const config = socialConfig();
+  const plan = (project: ProjectConfig, whatIf: { text: string; round?: number } = POST, also?: ModelChoice, withTraitFree = false) => () => repeatRuns(project, 2, also, withTraitFree, whatIf);
+  assert.throws(plan(socialConfig({ social: false })), /social rounds off/);
+  assert.throws(plan(gym), /social rounds off/, 'a project with no audience has none');
+  assert.throws(plan({ ...config, audience: { ...config.audience!, persona_count: 1 } }), /at least two personas/);
+  assert.throws(plan({ ...config, comparison: {} as ProjectConfig['comparison'] }), /comparison study/);
+  assert.throws(plan(config, POST, deepseek), /--also-model or --also-trait-free/);
+  assert.throws(plan(config, POST, undefined, true), /--also-model or --also-trait-free/);
+  assert.throws(plan(config, { text: '   ' }), /needs the text of its post/);
+  assert.throws(plan(config, { text: 'x'.repeat(WHAT_IF_POST_MAX + 1) }), /The post has 501 characters, and the limit is 500\./);
+  assert.equal(plan(config, { text: 'x'.repeat(WHAT_IF_POST_MAX) })().length, 4);
+  for (const round of [0, 4, 1.5, Number.NaN]) assert.throws(plan(config, { ...POST, round }), /whole number from 1 to 3/);
+  assert.equal(plan(config, { ...POST, round: 3 })()[0].repeat!.what_if!.round, 3);
+  assert.throws(() => estimateFor(socialConfig({ social: false }), fourPeople(config), 2, undefined, false, POST), /social rounds off/, 'the estimate refuses as the run does');
+});
+
+test('what-if runs stay out of a comparison, a study and a rerun, whichever run is named, and the runs without the post stand for the set', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-workspace-'));
+  const store = openProject(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const config = socialConfig();
+  const record = createRecorder(store, () => {});
+  const seeded = (run: ReturnType<typeof repeatRuns>[number]) => {
+    const { run_id, ...frozen } = store.createRun(newRunConfig(run.config, { personas: fourPeople(config), sessions: [], reset: false, repeat: run.repeat }));
+    record({ run_id, round: 1, persona_id: null, poi_id: null, type: 'run.started', payload: { config: { run_id, ...frozen } } });
+    record({ run_id, round: 1, persona_id: null, poi_id: null, type: 'run.finished', payload: {} });
+    store.finishRun(run_id, 'finished', null, 0);
+    return run_id;
+  };
+  const planned = [...repeatRuns(config, 2, undefined, false, POST), ...repeatRuns(config, 2)];
+  const ids = planned.map(seeded);
+  const added = ids.filter((_, i) => planned[i].repeat!.what_if?.post);
+  const [plain, other] = [ids.find((id) => !added.includes(id))!, ids.at(-1)!];
+  assert.deepEqual(compareRuns(store, plain, other).before, ids.filter((id, i) => !added.includes(id) && planned[i].repeat!.what_if), 'the two runs without the post');
+  assert.throws(() => compareRuns(store, added[0], other), new RegExp(`${added[0]} is a what-if run, with a post your team added: compare one of the others`));
+  assert.throws(() => compareRuns(store, other, added[0]), /is a what-if run/);
+  assert.throws(() => finishedRun(store, added[0]), new RegExp(`${added[0]} is a what-if run, with a post your team added: run one of the others again`));
+  assert.equal(rerunProject(finishedRun(store, plain)).config.settings.cost_budget_usd, 6, 'a run without the post runs again, on the whole budget');
+  const blobs = createFsBlobStore(dir);
+  const llm = createScriptedGateway({ author: DEMO_AUTHOR }, record);
+  await assert.rejects(planStudy({ store, blobs, record }, store.listRuns().find((run) => run.run_id === added[0])!, llm), /is a what-if run, with a post your team added: plan a study from one of the others/);
+  const set = combineReports(repeatReports(store, planned[0].repeat!.group));
+  assert.deepEqual([set.of, set.compared, set.what_if?.pairs, set.what_if?.of], [2, 2, 2, 2]);
 });

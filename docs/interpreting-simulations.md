@@ -15,6 +15,7 @@ Personas are fictional profiles assembled from team-approved audience assumption
 | An answer from a question after the run | A new generation from that persona's log, for exploring what the log shows | A memory of why the persona acted, or a reason anyone held |
 | Ranked friction theme or suggested change | A candidate problem or intervention worth investigating | A validated user problem or an effective solution |
 | Segment counts, sentiment and social spread | Outcomes within the configured simulation | Market proportions, real-world incidence, independent human agreement or word-of-mouth reach |
+| What-if differences between matched runs | How one post the team added moved numbers inside the simulator | That the post would do anything among real people, or by how much |
 
 Existing report fields named `evidence` contain **simulation records**. They make a run inspectable. A reproducible browser error can establish a technical defect under the tested conditions, but its impact on people still needs investigation. Several agents repeating a complaint is not independent corroboration: they can share model biases, and social rounds deliberately expose them to one another.
 
@@ -47,8 +48,16 @@ Keep human observations and simulation outputs separately attributed in reports 
 
 **A question after the run** (`gnomi ask`, or the inspector) gets a new answer from the model, written from that persona's log. It is not a memory of why the persona acted: the persona had no reasons to remember, and a plausible answer can be pure invention even when the log says nothing. The prompt asks the model to say it does not know when the log does not show a reason, but it may not. So use an answer to explore where to look in the steps and screenshots, never as evidence for a finding. Every answer is labelled "Generated after the run. This is a new answer from the model, not a memory of why this persona acted." Answers stay in the inspector, out of findings, counts, the written summary, study plans and every report file and export, as a reader of a file could take one for a finding. Each question stands alone, so asking again gets another generation, not a persona thinking further. A question costs money, and it makes no finding more correct. Keep names and contact details out of a question: it goes to the model and stays in the project's log.
 
+## What-if results
+
+A what-if (`gnomi run --what-if`, or What-if post before a run) compares matched runs with and without one post your team wrote, and it is the easiest result here to over-read. Spread is relative and uncalibrated, so the differences say what the simulator did with the post, and a difference inside the simulator does not establish a real-world effect ([new_simulation.md §4](new_simulation.md#4-population-and-behavioral-model)). The personas read the post as one persona's, picked by the seed, but it is your team's text, and the report says so. It is never that persona's report, so it stays out of first-hand counts, themes and trust.
+
+Report the mean difference with its interval, or with the note that says why there is none, and with the number of pairs. Do not turn a difference into a percentage, a forecast or a cause: say "moved inside the simulator", never "will increase", "caused" or "lift". Fewer than three pairs give no interval, and an interval that excludes zero still describes the simulator. Test a post that matters with real people.
+
 ## Wording to reuse
 
 > Gnomi samples traits from the audience settings you define, then uses a language model to write fictional profiles for review. These personas encode assumptions about an audience; they are not a representative sample of real users.
 
 > Simulated findings are hypotheses, not evidence about real users. Screenshots and logs show what happened in the simulation; quotes and opinions are generated. Use the report to choose what to investigate with real people.
+
+> Inside the simulator, adding this post moved these numbers. That does not establish a real-world effect. Spread is relative and uncalibrated.
