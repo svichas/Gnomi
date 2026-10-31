@@ -14,24 +14,25 @@ export function RunAgain({ run, running, onClose, onStarted }: { run: RunRow; ru
   const [urls, setUrls] = useState<Record<string, string>>(() => Object.fromEntries(pois.map((poi) => [poi.id, poi.start_url])));
   const [repeats, setRepeats] = useState(1);
   const [reset, setReset] = useState(false);
+  const [returning, setReturning] = useState(false);
   const [estimate, setEstimate] = useState<RunEstimate | { error: string } | null>(null);
   const { busy, outcome, run: act } = useAction();
   useEffect(() => {
     let current = true;
-    call('estimate_run', { run_id: run.run_id, repeats }).then(
+    call('estimate_run', { run_id: run.run_id, repeats, returning }).then(
       (result) => current && setEstimate(result),
       (err) => current && setEstimate({ error: errorText(err) }),
     );
     return () => {
       current = false;
     };
-  }, [run.run_id, repeats]);
+  }, [run.run_id, repeats, returning]);
   const budget = (runSetup(run.config).costBudget ?? 0) * (repeat?.of ?? 1); // a run of a set froze its share
   const unpriced = estimate && !('error' in estimate) ? unpricedText(estimate) : null;
   const start = () =>
     act(async () => {
       const moved = pois.filter((poi) => urls[poi.id] !== poi.start_url).map((poi) => [poi.id, urls[poi.id]]);
-      const { run_id } = await call('duplicate_run', { run_id: run.run_id, reset, repeats, urls: Object.fromEntries(moved) });
+      const { run_id } = await call('duplicate_run', { run_id: run.run_id, reset, repeats, urls: Object.fromEntries(moved), returning });
       onStarted(run_id);
       return null;
     });
@@ -41,6 +42,7 @@ export function RunAgain({ run, running, onClose, onStarted }: { run: RunRow; ru
       {pois.map((poi) => <Field key={poi.id} label={`Address of ${poi.name}`} hint="A new host joins this run's allowed hosts."><input className={inputClass} value={urls[poi.id]} onChange={(e) => setUrls({ ...urls, [poi.id]: e.target.value })} /></Field>)}
       {!project.comparison && <Field label="Repeat runs"><NumberInput label="Repeat runs" value={repeats} onChange={setRepeats} min={1} max={10} step={1} /></Field>}
       {pois.some((poi) => poi.reset_hook_url !== null) && <Check checked={reset} onChange={setReset}>Reset staging before {repeats > 1 ? 'each run' : 'the run'}</Check>}
+      {!project.comparison && <Check checked={returning} onChange={setReturning}>Personas remember {run.run_id}, though prior knowledge can hide first-use problems</Check>}
       <p className="text-sm text-stone-700">{estimate === null ? 'Working out the estimate…' : 'error' in estimate ? `No estimate: ${estimate.error}` : unpriced ? 'No estimate until every model has a price.' : `${estimateText(estimate)}, with a cost limit of ${usd(budget)}${repeats > 1 ? ` shared across ${repeats} runs` : ''}.`}</p>
       {estimate && !('error' in estimate) && estimate.cost_usd[1] > budget && <Note tone="info">The estimate may be more than the cost limit, so the run could stop early.</Note>}
       {unpriced && <Note tone="error">{`${unpriced} This run froze its models, so it cannot start again until they have a price.`}</Note>}

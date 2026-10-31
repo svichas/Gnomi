@@ -1,13 +1,13 @@
 // The static-design prompt of tech.md §7: the expectation loop. Each screen asks what the persona sees, what they would do and
 // what they expect next; the next screen asks whether it matched. Same third-person persona and question form as the web steps.
 import { z } from 'zod';
-import { ACCESSIBILITY, firstName, heardLines, languageRules, patienceRule, personaSection, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { ACCESSIBILITY, firstName, heardLines, languageRules, patienceRule, personaSection, priorLines, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
-import type { DesignPoi, Opinion, Persona, ProjectConfig, Segment } from '../types.ts';
+import type { DesignPoi, Opinion, Persona, PriorPoi, ProjectConfig, Segment } from '../types.ts';
 
 /** One answer per screen. `matched` is null on the first screen, or when the persona had no expectation of this one. */
 export const designSchema = z.object({
@@ -82,6 +82,7 @@ export function designParts(opts: {
   previous: { image: UserPart; said: DesignOutput | null } | null; // said: null when that screen's answer was unusable
   opinion: Opinion | null;
   heard?: HeardPost[]; // what the persona read in the feed just before this screen
+  prior?: PriorPoi; // a returning persona's earlier visit to this design
 }): UserPart[] {
   const { persona, poi, index, previous } = opts;
   const p = firstName(persona);
@@ -107,6 +108,7 @@ export function designParts(opts: {
     {
       type: 'text',
       text: [
+        ...priorLines(p, opts.prior),
         ...(opts.opinion ? [`Current opinion (self-reported, from earlier screens): ${JSON.stringify(opts.opinion)}`] : []),
         ...heardLines(p, opts.heard),
         previous

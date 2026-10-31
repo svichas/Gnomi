@@ -1,5 +1,5 @@
 import { similarity } from './similarity.ts';
-import { pathOf } from './themes.ts';
+import { hostless } from './themes.ts';
 import type { ReportTheme } from './types.ts';
 
 // Which themes of two runs are the same problem (tech.md §8.2). Theme ids are positions, so they mean nothing outside one run.
@@ -29,15 +29,6 @@ export interface ThemeMatches {
   pairs: ThemeMatch[];
   only_a: ReportTheme[];
   only_b: ReportTheme[];
-}
-
-/**
- * A group key without its page's host: a Gym's port changes with every start, and a PR preview has its own host.
- * shortcut: two hosts of one POI with the same path count as one page, keep the host if a POI ever spans sites.
- */
-function hostless(key: string): string {
-  const [poi_id, page, ...rest] = JSON.parse(key) as [string, string | null, ...string[]];
-  return JSON.stringify([poi_id, page && pathOf(page), ...rest]);
 }
 
 /** Shared keys over all keys: the judge may merge groups differently in each run, so the share counts, not the number. */

@@ -27,6 +27,7 @@ import type {
   PageFlags,
   PageSnapshot,
   Persona,
+  PriorPoi,
   ProjectConfig,
   RunConfig,
   RunSettings,
@@ -267,6 +268,43 @@ function begin(respond: Respond | unknown[], opts: Options = {}) {
 }
 
 // —— One persona, as in M0 and M1 ——
+
+const OPINION = { sentiment: -1, confidence: 0.4, likes: ['Clear menu'], frictions: ['Save does nothing'] };
+const visit = (what: string): PriorPoi => ({ outcome: 'abandoned', pages: ['/jobs'], frictions: [{ key: 'k', what }], survey: null, opinion: OPINION });
+const remembering = { prior: { run_id: 'r-0001', memories: { keeps: { pois: { 'poi-1': visit('Save does nothing') } } } } };
+const promptsOf = (transcripts: ReturnType<typeof begin>['transcripts'], id: string) => transcripts.filter((t) => t.persona_id === id).map((t) => JSON.parse(t.request_json).user.map((part: { text?: string }) => part.text ?? '').join('\n') as string);
+
+test('a returning run carries each persona its own memory at every step and starts its opinion there; one with none starts fresh', async () => {
+  const { run, events, transcripts } = begin(() => step('done', null, 'Done.'), { personas: [persona('keeps'), persona('new')], config: remembering });
+  const report = await run.done;
+  const [own, fresh] = [promptsOf(transcripts, 'keeps'), promptsOf(transcripts, 'new')];
+  assert.match(own[0], /own earlier visit, remembered imperfectly[\s\S]*complained: "Save does nothing"/);
+  assert.match(own[0], /Current opinion[^\n]*Save does nothing/, 'the first step already holds the opinion it left with');
+  assert.ok(fresh.length > 0 && fresh.every((prompt) => !/remembered imperfectly|Save does nothing/.test(prompt)), 'nothing reaches the persona with no memory');
+  assert.match(fresh[0], /first look at the product/);
+  const seed = of(events, 'persona.opinion_changed');
+  assert.deepEqual(seed.map((e) => [e.persona_id, e.poi_id, e.payload.after, e.payload.cause]), [['keeps', 'poi-1', OPINION, { step_ids: [], post_ids: [] }]]);
+  assert.equal(influenceEdges(events).length, 0, 'starting from an earlier opinion is no one\'s influence');
+  assert.deepEqual(report.methods.prior, { run_id: 'r-0001', fresh: 1 });
+  assert.deepEqual(of(events, 'run.started')[0].payload.config.prior, remembering.prior, 'frozen in the run, so the report needs no other log');
+});
+
+test('the seeded opinion is what a later change starts from, in the step and in the survey', async () => {
+  const later = { ...OPINION, sentiment: 1 };
+  const { run, events, transcripts } = begin([{ ...step('scroll', null, 'down'), opinion: later }, step('done', null, 'Done.')], { personas: [persona('keeps')], config: remembering });
+  await run.done;
+  const [, change] = of(events, 'persona.opinion_changed');
+  assert.deepEqual([change.payload.before, change.payload.after.sentiment], [OPINION, 1]);
+  assert.match(promptsOf(transcripts, 'keeps').at(-1)!, /"sentiment":1/, 'the survey reads the opinion it holds now');
+});
+
+test('a run with no prior has no such field, no opinion before its first step and no line in its methods', async () => {
+  assert.equal('prior' in newRunConfig(project, { personas: [BUILTIN_PERSONA], sessions: [], reset: false }), false);
+  const { run, events } = begin(() => step('done', null, 'Done.'));
+  const report = await run.done;
+  assert.equal(of(events, 'persona.opinion_changed').length, 0);
+  assert.equal('prior' in report.methods, false);
+});
 
 test('opinion changes cite each persona’s own recorded step, retain prior values and add no model calls', async () => {
   const initial = { sentiment: -1, confidence: 0.5, likes: [], frictions: ['Missing confirmation'] };

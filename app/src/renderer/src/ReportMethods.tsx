@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Report, ReportCoverage, ReportHomogeneity, ReportMethods, ReportPersona } from '@gnomi/simulation/types.ts';
-import { BLOCK_REASON_TEXT, coverageText, GROUNDING_NOTE, groundingText, scanText } from '@gnomi/simulation/report/markdown.ts';
+import { BLOCK_REASON_TEXT, coverageText, GROUNDING_NOTE, groundingText, priorNotice, scanText } from '@gnomi/simulation/report/markdown.ts';
 import { resetOutcome } from './activity.ts';
 import { usd } from './ui.tsx';
 import { count } from './reportParts.tsx';
@@ -122,6 +122,7 @@ export function Methods({ methods, personas, coverage, pois }: { methods: Report
         <p>{GROUNDING_NOTE}</p>
       </div>
     )] as [string, ReactNode]] : []),
+    ...(methods.prior ? [['Earlier visit', priorNotice(methods.prior)] as [string, ReactNode]] : []),
     ...(methods.homogeneity ? [['Homogeneity', <Homogeneity value={methods.homogeneity} />] as [string, ReactNode]] : []),
     ...(methods.limitations === undefined ? [] : [['Limitations', methods.limitations.length === 0 ? none : <ul className="list-disc pl-4">{methods.limitations.map((text) => <li key={text}>{text}</li>)}</ul>] as [string, ReactNode]]),
   ];

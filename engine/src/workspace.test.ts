@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { cappedGateway, checkRun, credential, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runSet } from './workspace.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -257,6 +257,18 @@ test('work after a run refuses one that has not ended, from the log and not its 
   assert.throws(() => endedRun(store, 'r-9999'), /There is no run r-9999/);
   end();
   assert.equal(endedRun(store, run_id).run_id, run_id, 'the row may still say running: a stopped run has its end in the log');
+});
+
+test('a returning run freezes the named run\'s memories, and a comparison study has nobody to return', (t) => {
+  const study = loggedRun(t, { ...gym, comparison: { targets: [] } as unknown as ProjectConfig['comparison'] });
+  study.end();
+  assert.throws(() => returningPrior(study.store, study.store.listRuns()[0].config), /comparison study, whose personas assess tools rather than use a product/);
+  const plain = loggedRun(t);
+  plain.place.record({ run_id: plain.run_id, round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: 'poi-1', type: 'persona.goal_done', payload: { step_no: 2, summary: 'Saved.' } });
+  plain.end();
+  const prior = returningPrior(plain.store, plain.row().config);
+  assert.equal(prior.run_id, plain.run_id);
+  assert.deepEqual(prior.memories[BUILTIN_PERSONA.id].pois['poi-1'].frictions.map(({ what }) => what), ['Save on /jobs does nothing', 'Save on /users does nothing']);
 });
 
 test('a comparison study has no themes to act on, and a run with no routing cannot start model work', (t) => {

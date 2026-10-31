@@ -262,6 +262,27 @@ export interface RunConfig {
   signals?: SignalThresholds; // frozen per run, so an older run keeps its own (small_target_px was 40). Absent only on logs older than the detectors, which hold no signals
   injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
   repeat?: { group: string; index: number; of: number; trait_free?: number }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set
+  prior?: { run_id: string; memories: Record<string, PriorVisit> }; // a returning run (report/prior.ts): what each persona id remembers of run_id, frozen here so the run never reads that log; absent on every other run
+}
+
+/** One complaint a persona keeps of an earlier visit. */
+export interface PriorFriction {
+  key: string; // its group key without the host (report/themes.ts hostless), which decides whether a later report repeats it
+  what: string;
+}
+
+/** What a persona keeps of one POI of an earlier visit: short, and its own. */
+export interface PriorPoi {
+  outcome: Outcome;
+  pages: string[]; // without their host, which a new build may change
+  frictions: PriorFriction[]; // worst first
+  survey: { sentiment: number; would_continue: boolean; reason: string; likes: string[] } | null;
+  opinion: Opinion | null; // what the run starts from
+}
+
+/** A persona's own earlier visit: only the team's POIs it used, by id. Competitor POIs are not remembered. */
+export interface PriorVisit {
+  pois: Record<string, PriorPoi>;
 }
 
 /** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */

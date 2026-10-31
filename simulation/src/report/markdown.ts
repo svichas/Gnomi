@@ -280,6 +280,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     '',
     `> ${report.banner}`,
     '',
+    ...(report.methods.prior ? [`> ${priorNotice(report.methods.prior)}`, ''] : []),
     ...(summary ? [line(summary), ''] : []),
     ...(report.study_count ? [`**From your team's studies, not the simulation:** ${studyCountText(report.study_count)}`, ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
@@ -529,7 +530,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
     ...outcomeLines(t),
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
-    ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
+    ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}${t.remembered ? `; ${t.remembered} more reported it after remembering it from an earlier visit` : ''}`] : []),
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
     ...(repeats ? [`- Repeats: ${[repeats.appeared, repeats.one_family, repeats.trait_free].filter((text) => text !== null).map(line).join('. ')}`] : []),
     ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
@@ -712,6 +713,10 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
 /** Said wherever a report names grounded segments, because real data makes personas look more credible whether or not they are more accurate. */
 export const GROUNDING_NOTE = 'Grounded personas are still fictional, and their findings are still hypotheses.';
 
+/** The notice on a returning run: how the report and the app say what its personas knew, and who had nothing to remember. */
+export const priorNotice = ({ run_id, fresh }: NonNullable<ReportMethods['prior']>) =>
+  `These personas used the product before, in ${run_id}, so this run says little about first use.${fresh ? ` ${count(fresh, 'persona')} had no earlier visit to remember and started fresh.` : ''}`;
+
 export const groundingText = ({ name, facts, remarks, sources }: NonNullable<ReportMethods['grounding']>[number]) =>
   `${name}: ${count(sources.length, 'source')} (${sources.join(', ')}), ${count(facts, 'fact')}, ${count(remarks, 'remark')}`;
 
@@ -737,6 +742,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
     ...(m.accessibility_audit ? [`- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): ${m.accessibility_audit.map((a) => `${line(a.page)}, ${line(a.help)} (${line(scanText(a))})`).join('; ')}`] : []),
     ...(m.grounding ? [`- Grounded segments: ${m.grounding.map((segment) => line(groundingText(segment))).join('; ')}. ${GROUNDING_NOTE}`] : []),
+    ...(m.prior ? [`- Earlier visit: ${priorNotice(m.prior)}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

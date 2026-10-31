@@ -35,7 +35,9 @@ export const ARMS = {
   accessibility: { settings: { accessibility_checks: true } },
   // A stored digest of an invented pack: this shows the pipeline works, and cannot show greater realism, because the Gym has no real users.
   grounded: { grounded: true },
-} satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true; grounded?: true }>;
+  // A first visit, then the same personas again with its memory. This shows the pipeline works: prompts carry the memory, opinions start from it and repeats leave first-hand counts. It cannot show that they behave like people who came back.
+  returning: { returning: true },
+} satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true; grounded?: true; returning?: true }>;
 export type Arm = keyof typeof ARMS;
 
 /** `provider:model` for the mapping judge, which docs/roadmap.md's judge calibration wants from another model family than the navigator's. */

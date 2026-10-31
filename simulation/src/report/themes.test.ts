@@ -603,6 +603,79 @@ test('a theme the judge merged from a scan and a complaint counts the persona, n
   assert.deepEqual(theme.trust_counts, { confirmed: 0, observed: 1, reported: 1 }, 'the scan still shows in the evidence');
 });
 
+/** A returning run's log: its first event freezes which complaints each persona remembers, on whichever host. */
+const returning = (remembered: Record<string, string[]>, ...entries: Parameters<typeof log>) => {
+  const memories = Object.fromEntries(Object.entries(remembered).map(([id, keys]) => [id, { pois: { poi: { outcome: 'done', pages: [], frictions: keys.map((key) => ({ key, what: 'Said before.' })), survey: null, opinion: null } } }]));
+  return log(['run.started', null, { config: { project: {}, prior: { run_id: 'r-1', memories } } }], ...entries);
+};
+const SAVE = JSON.stringify(['poi', '/jobs/new', 'element', 'button "save"']); // as a memory stores it, without the host
+
+test('a report repeating what the persona complained of on an earlier visit is not first-hand; one it never made is', () => {
+  const events = returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.friction_reported', 'a2', friction(1, 3)],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first, theme.personas, theme.prevalence?.personas], [['a2'], 1, 0, 2, 1], 'a real first report beside a remembered one');
+  assert.deepEqual(theme.affected.map((a) => a.affected), [1, 0], 'the segment rows count first-hand personas only');
+  assert.equal(theme.frictions, 2, 'the report stays in the theme, as a heard one does');
+
+  const elsewhere = returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1, 'http://preview.acme.io/jobs/new')],
+    ['persona.friction_reported', 'a1', { ...friction(1, 3), where: { url: 'http://preview.acme.io/jobs/new', ref: 'e1' } }],
+  );
+  assert.deepEqual(analyseFrictions(elsewhere, ctx).themes[0].first_hand, [], 'a new build on another host is the same complaint');
+});
+
+test('a persona with one remembered report and one new complaint in a theme counts first-hand, and each persona remembers only its own', () => {
+  const judged = (events: GnomiEvent[]) => [...events, { ...events[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Saving', description: 'd', group_ids: ['g1', 'g2'] }] } } as GnomiEvent];
+  const other = { ...step(2), target: { role: 'button', name: 'Publish', box: null } };
+  const { themes: [theme] } = analyseFrictions(judged(returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['persona.step', 'a1', other],
+    ['persona.friction_reported', 'a1', friction(2, 3, 'Publish is greyed out')],
+  )), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first], [['a1'], undefined, 0]);
+  const stranger = analyseFrictions(returning({ a2: [SAVE] }, ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)]), ctx).themes[0];
+  assert.deepEqual([stranger.first_hand, stranger.remembered], [['a1'], undefined], "another persona's memory says nothing about a1");
+});
+
+test('a browser signal on the persona\'s own step keeps a remembered complaint first-hand, as it does a heard one', () => {
+  const failed = { step_no: 1, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const { themes: [theme] } = analyseFrictions(returning({ a1: [SAVE] }, ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)], ['signal.failed_action', 'a1', failed]), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.trust], [['a1'], undefined, 'confirmed']);
+});
+
+test('a survey answer repeats a memory by the part of the product it names', () => {
+  const item = { kind: 'friction', where: 'Jobs page', what: 'Hard to find', severity: 2 };
+  const key = JSON.stringify(['poi', null, 'survey', 'where jobs page']);
+  const { themes: [theme] } = analyseFrictions(returning({ a1: [key] }, ['persona.step', 'a1', step(1)], ['persona.survey', 'a1', { ...survey([], []), items: [item] }]), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered], [[], 1]);
+});
+
+test('a persona who both remembered a complaint and read about it counts once, under its memory', () => {
+  const events = returning({ a2: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['persona.step', 'a2', { ...step(2), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+    ['persona.step', 'a3', { ...step(2), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a3', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first, theme.personas], [['a1'], 1, 1, 3], 'a2 once, a3 by the feed: 1 + 1 + 1 = 3');
+});
+
+test('a log with no prior counts as it always did, and has no remembered field to show', () => {
+  const plain = log(['run.started', null, { config: { project: {} } }], ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)]);
+  const { themes: [theme] } = analyseFrictions(plain, ctx);
+  assert.deepEqual([theme.first_hand, theme.heard_first, 'remembered' in theme], [['a1'], 0, false]);
+});
+
 test('a complaint only a scan confirmed can still repeat a post: the scan\'s step says nothing about what she read', () => {
   const heardThenSaid = (...own: Parameters<typeof log>) => log(
     ['persona.step', 'a3', step(1)],

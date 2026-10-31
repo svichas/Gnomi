@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { stepBudget } from '../agent/loop.ts';
+import { firstName, priorLines } from '../agent/prompt.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, ModelChoice, Persona, RunSettings } from '../types.ts';
+import type { Audience, ModelChoice, Persona, Poi, PriorPoi, RunConfig, RunSettings } from '../types.ts';
 import { DIGEST_OUTPUT_TOKENS, estimateDigest, estimateReport, estimateRun } from './estimate.ts';
+import { costUsd } from './prices.ts';
 import { draftComparison } from '../comparison/config.ts';
 
 const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
@@ -116,6 +119,24 @@ test('the finding check adds its calls when on, priced on check_model when one i
   const odd = estimateReport({ personas: [persona(3)], settings: { ...on, check_model: { provider: 'openai', model: 'gpt-9-mystery' } } });
   assert.deepEqual(odd.unpriced, ['gpt-9-mystery']);
   close(odd.cost_usd[1], REPORT.cost[1]);
+});
+
+test('a returning run costs what its memory adds to each step: on the persona who has one, the POI it remembers, and nowhere else', () => {
+  const pois: Poi[] = [{ id: 'app', type: 'web', name: 'App', start_url: 'http://gym.test/', allowed_hosts: [], production_domains: [], reset_hook_url: null, mode: 'full', segments: null }];
+  const visit: PriorPoi = { outcome: 'done', pages: ['/jobs'], frictions: [{ key: 'k', what: 'x'.repeat(200) }], survey: null, opinion: null };
+  const settings = { ...DEFAULT_SETTINGS, screenshots: false };
+  const estimate = (prior?: RunConfig['prior']) => estimateRun({ personas: [BUILTIN_PERSONA], settings, pois, prior });
+  const plain = estimate();
+  const remembered = estimate({ run_id: 'r-1', memories: { [BUILTIN_PERSONA.id]: { pois: { app: visit } } } });
+  assert.ok(remembered.cost_usd[0] > plain.cost_usd[0] && remembered.cost_usd[1] > plain.cost_usd[1], `${remembered.cost_usd} over ${plain.cost_usd}`);
+  assert.deepEqual([remembered.calls, remembered.minutes], [plain.calls, plain.minutes], 'more input, no more calls');
+  // Every step of its budget pays for the memory's characters at four a token, uncached, and the low end for 40% of the steps.
+  const tokens = (priorLines(firstName(BUILTIN_PERSONA), visit).join('\n').length + 'null'.length) / 4;
+  const input = costUsd(settings.routing.navigator, { input_tokens: stepBudget(BUILTIN_PERSONA) * tokens, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 });
+  close(remembered.cost_usd[1] - plain.cost_usd[1], input);
+  close(remembered.cost_usd[0] - plain.cost_usd[0], 0.4 * input);
+  assert.deepEqual(estimate({ run_id: 'r-1', memories: {} }).cost_usd, plain.cost_usd, 'nobody remembers anything');
+  assert.deepEqual(estimate({ run_id: 'r-1', memories: { [BUILTIN_PERSONA.id]: { pois: { other: visit } } } }).cost_usd, plain.cost_usd, 'a POI it is not given');
 });
 
 test('no personas, no estimate', () => {

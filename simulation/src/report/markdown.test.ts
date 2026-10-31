@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { Report, ReportTheme } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
 import type { RepeatSet } from './repeats.ts';
-import { missingUsageText, reportToMarkdown } from './markdown.ts';
+import { missingUsageText, priorNotice, reportToMarkdown } from './markdown.ts';
 
 const url = 'http://localhost:3001/jobs/new';
 
@@ -289,6 +289,20 @@ test('themes carry rank, trust, affected share, evidence with event links and la
   const mixed = reportToMarkdown({ ...report, themes: [{ ...theme, trust_counts: { confirmed: 1, observed: 0, reported: 3 } }] });
   assert.ok(mixed.includes('- Trust: 1 confirmed, 3 reported\n'), 'the trust mix, not the best member');
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
+});
+
+test('a returning run says so at the top and in the methods, with the base run, and a remembered complaint sits beside the share', () => {
+  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
+  const back = (fresh: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first: 1, remembered: 2 }], methods: { ...report.methods, prior: { run_id: 'r-0001', fresh } } });
+  const md = back(0);
+  const notice = 'These personas used the product before, in r-0001, so this run says little about first use.';
+  assert.ok(md.indexOf(`> ${notice}`) > md.indexOf(`> ${report.banner}`) && md.indexOf(`> ${notice}`) < md.indexOf('## Segments'), 'a notice under the banner, which still calls the findings hypotheses');
+  assert.ok(md.includes(`- Earlier visit: ${notice}`), 'and a line in the methods');
+  assert.ok(md.includes('; 1 more reported it only after reading about it in the feed; 2 more reported it after remembering it from an earlier visit'));
+  assert.ok(back(3).includes(`${notice} 3 personas had no earlier visit to remember and started fresh.`));
+  assert.ok(!back(0).includes('started fresh'));
+  assert.ok(!reportToMarkdown(report).includes('earlier visit'), 'a first-use report says none of it');
+  assert.doesNotMatch(priorNotice({ run_id: 'r-1', fresh: 1 }), /validated|confidence|users? said/i);
 });
 
 test('a tagged theme and its evidence say possibly interference between personas; an old report says nothing', () => {

@@ -69,7 +69,7 @@ export interface SpreadDiff {
 
 /** A note that makes the two sides unlike, for a reader that must act on it rather than print it (report/gate.ts). */
 export interface DiffGap {
-  kind: 'model' | 'personas' | 'goal' | 'pois' | 'stopped' | 'unrated';
+  kind: 'model' | 'personas' | 'goal' | 'pois' | 'stopped' | 'unrated' | 'returning';
   text: string;
 }
 
@@ -223,6 +223,7 @@ function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
     return side.length < of ? [`Only ${side.length} of the ${of} runs of the ${which} set are compared: the others did not finish.`] : [];
   };
   const gaps = (kind: DiffGap['kind'], texts: string[]) => texts.map((text) => ({ kind, text }));
+  const remembers = (run: Report) => run.methods.prior?.run_id ?? null; // what its personas came back from: first use has no such run
   return [
     ...gaps('model', modelNotes(before, after)),
     // An old report has no fingerprint, so only its labels are compared.
@@ -238,6 +239,7 @@ function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
       ...unfinished(after, 'later'),
     ]),
     ...gaps('unrated', all.filter((run) => run.personas.every((persona) => isUnrated(persona.outcome))).map((run) => `No persona in ${run.run_id} got a valid answer from the model, so it says nothing about the build.`)),
+    ...gaps('returning', varied(all.map(remembers)) ? [`${all.every(remembers) ? 'The two sides remember different earlier runs' : "One side's personas had used the product before and the other's had not"}, so a change may come from what they remember rather than the build.`] : []),
   ];
 }
 

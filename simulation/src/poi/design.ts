@@ -76,7 +76,7 @@ export const design: PoiRunner<DesignPoi> = {
       try {
         const [previous, current] = await Promise.all([index > 0 ? modelFrame(blobs, poi, index - 1) : null, modelFrame(blobs, poi, index)]);
         if (signal.aborted) return 'stopped';
-        const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion, heard });
+        const user = designParts({ persona, poi, index, current, previous: previous && { image: previous, said }, opinion, heard, prior: deps.prior });
         heard = [];
         output = (await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'design', poi_id: poi.id, system, user, schema: designSchema, signal })).object;
       } catch (err) {
