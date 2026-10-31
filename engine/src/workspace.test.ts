@@ -272,6 +272,10 @@ test('a returning run freezes the named run\'s memories, and a comparison study 
   const prior = returningPrior(plain.store, plain.row().config);
   assert.equal(prior.run_id, plain.run_id);
   assert.deepEqual(prior.memories[BUILTIN_PERSONA.id].pois['poi-1'].frictions.map(({ what }) => what), ['Save on /jobs does nothing', 'Save on /users does nothing']);
+  const failed = loggedRun(t);
+  failed.place.record({ run_id: failed.run_id, round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: 'poi-1', type: 'signal.repeated_failure', payload: { step_no: 2, action: 'wait', error: 'invalid_output' } });
+  failed.end();
+  assert.throws(() => returningPrior(failed.store, failed.row().config), /left no persona a visit to remember/, 'the notice would say these personas used the product before');
 });
 
 test('a comparison study has no themes to act on, and a run with no routing cannot start model work', (t) => {

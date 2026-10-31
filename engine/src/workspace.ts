@@ -336,7 +336,9 @@ export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
 /** What a returning run freezes, from a run finishedRun let through: read once here, so each run of a set remembers the same visit and none reads that log. */
 export function returningPrior(store: ProjectStore, from: RunConfig): NonNullable<RunConfig['prior']> {
   if (from.project.comparison) throw new Error(`${from.run_id} is a comparison study, whose personas assess tools rather than use a product, so nobody can return to it.`);
-  return priorOf(store.events(from.run_id));
+  const prior = priorOf(store.events(from.run_id));
+  if (!Object.keys(prior.memories).length) throw new Error(`${from.run_id} left no persona a visit to remember, so a returning run would be a first use under a notice saying otherwise.`);
+  return prior;
 }
 
 /** `url` on the old address's origin, moved to the new one; anywhere else it stays. */

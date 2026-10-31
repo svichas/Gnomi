@@ -147,7 +147,7 @@ test('a second plan for a run is refused while the first is written, so leaving 
   assert.equal(plans(), 2, 'the refusal ends with the plan');
 });
 
-test('a question costs at most its estimate, one at a time per run, and its answer reaches the app as an event', async () => {
+test('a question has an estimate, runs one at a time per run, and its answer reaches the app as an event', async () => {
   const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'ask.md' });
   await call('save_project', { project: project({}, { pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
   const { run_id } = await call('start_run', { reset: false });
