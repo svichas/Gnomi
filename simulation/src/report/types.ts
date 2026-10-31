@@ -319,7 +319,7 @@ export interface ReportPost {
   segment_id: string | null;
   round: number;
   text: string;
-  injected: boolean; // put in the persona's name by the test harness, not written by a model
+  injected: boolean; // added by the team in the persona's name, not written by a model
 }
 
 /** How talk about a POI, or one of its themes, travelled on the feed (tech.md §8.2 step 7, §6.6). */

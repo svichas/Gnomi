@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { mean, sampleVariance } from 'simple-statistics';
+import { mean } from 'simple-statistics';
 import { isPriced } from '../llm/prices.ts';
 import { escapeRegExp } from '../poi/text.ts';
 import { matchThemes } from '../report/match.ts';
@@ -241,21 +241,4 @@ export function topOverlap(runs: ReportTheme[][]): number | null {
     return all ? [shared / all] : []; // two runs with no themes say nothing either way
   }));
   return overlaps.length ? mean(overlaps) : null;
-}
-
-/** Two-sided 95% Student t quantiles for 1 to 30 degrees of freedom. */
-export const T95 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11, 2.101, 2.093, 2.086, 2.08, 2.074, 2.069, 2.064, 2.06, 2.056, 2.052, 2.048, 2.045, 2.042];
-// Above 30 degrees of freedom the normal 1.96 stands in for t: at most 4% narrower, and the gap shrinks as replicates grow.
-export const t95 = (df: number) => T95[df - 1] ?? 1.96;
-
-/** The paired mean difference (arm − baseline) over replicates where both measured, with a 95% t interval; whole replicates are the unit. */
-export function pairedDifference(arm: (number | null)[], baseline: (number | null)[]) {
-  const d = arm.flatMap((value, i) => value === null || baseline[i] === null || baseline[i] === undefined ? [] : [value - baseline[i]]);
-  if (!d.length) return { n: 0, mean: null, lower: null, upper: null, note: 'no pairs' };
-  const m = mean(d);
-  if (d.length < 3) return { n: d.length, mean: m, lower: null, upper: null, note: 'fewer than three pairs' };
-  // Identical differences are not certainty: a zero-width interval would claim it.
-  if (d.every((x) => x === d[0])) return { n: d.length, mean: m, lower: null, upper: null, note: 'no variation' };
-  const half = t95(d.length - 1) * Math.sqrt(sampleVariance(d) / d.length);
-  return { n: d.length, mean: m, lower: m - half, upper: m + half, note: null };
 }

@@ -138,6 +138,8 @@ test('a side that was stopped cannot decide, even with enough finished runs', ()
   assert.match(lone.reasons.join(), /r-9 stopped early \(cost_budget\)/);
   const trait_free = decide(base(), set('later', [OLD], [OLD], [OLD]).map((run) => ({ ...run, repeat: { ...run.repeat!, of: 4, trait_free: 4 } })));
   assert.equal(trait_free.decision, 'passed', 'a planned trait-free run is in no count');
+  const pairs = decide(base(), set('later', [OLD], [OLD], [OLD]).map((run, i) => ({ ...run, repeat: { ...run.repeat!, of: 6, what_if: { pair: i + 1, post: false, text: 'A post.', round: 1, poi_id: 'poi' } } })));
+  assert.equal(pairs.decision, 'passed', 'nor are a what-if set\'s runs with the post');
 });
 
 test('sides that differ in model, personas, goal or POIs cannot decide, and each says why', () => {

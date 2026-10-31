@@ -260,11 +260,20 @@ export interface RunConfig {
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
   signals?: SignalThresholds; // frozen per run, so an older run keeps its own (small_target_px was 40). Absent only on logs older than the detectors, which hold no signals
-  injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
-  repeat?: { group: string; index: number; of: number; trait_free?: number }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set
+  injected_posts?: InjectedPost[]; // posted in a persona's name before that round's social phase
+  repeat?: { group: string; index: number; of: number; trait_free?: number; what_if?: WhatIf }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set. what_if: on every run of a what-if set
 }
 
-/** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */
+/** One run of a what-if set: `of` runs in `of / 2` matched pairs, which differ only in the post. */
+export interface WhatIf {
+  pair: number; // from 1
+  post: boolean; // whether this run of the pair has the post
+  text: string;
+  round: number;
+  poi_id: string; // what the post is about, and whose numbers the pairs compare
+}
+
+/** A post no model wrote, in a persona's name: a what-if run's, or the seeded complaint of the M4 spread acceptance. */
 export interface InjectedPost {
   round: number;
   persona_id: string;
@@ -420,7 +429,7 @@ export interface EventPayloads {
   'persona.abandoned': { step_no: number; reason: string };
   'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
   'persona.resumed': { step_no: number };
-  // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a harness post, not a model's.
+  // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a post the team added, not a model's.
   'social.feed_viewed': { post_ids: string[]; parent_ids?: string[] }; // in the order shown: a post's feed position is its index here; parent_ids: the replies' parents it quoted, absent in older logs
   'social.discarded': { call_seq: number | null }; // a paid social answer a hard stop left unapplied; call_seq: its llm.call
   'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };

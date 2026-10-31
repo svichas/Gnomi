@@ -170,7 +170,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
     }
     case 'social.post': {
       const { post_id, parent_id, text, injected } = event.payload;
-      const title = `${parent_id ? `Replied to post ${parent_id}` : 'Posted in the feed'}${injected ? ' (put there by the test harness)' : ''}`;
+      const title = `${parent_id ? `Replied to post ${parent_id}` : 'Posted in the feed'}${injected ? ' (added by your team)' : ''}`;
       return { seq, label: parent_id ? 'Reply' : 'Post', tone: 'plain', title, detail: `Post ${post_id}`, quote: text };
     }
     case 'social.reaction':

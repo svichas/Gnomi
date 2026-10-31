@@ -25,7 +25,7 @@ import { readBoard, selectFeed, type FeedPost } from './social/feed.ts';
 import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 
-import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
+import type { EventPayloads, GnomiEvent, InjectedPost, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi, WhatIf } from './types.ts';
 
 const MODEL_TIMEOUT_MS = 180_000; // the whole call, retries included; as long as the report's calls get
 
@@ -75,10 +75,18 @@ export function roleOf(persona: Persona, project: ProjectConfig): string | null 
   return persona.segment_id === null ? project.role : (segment?.role ?? null);
 }
 
+/** A feed shows a post by its author, so the team's post needs one: the seed picks who, per pair, and the report says whose text it is. */
+function addedPost({ pair, round, poi_id, text }: WhatIf, personas: Persona[], seed: number): InjectedPost {
+  const pick = mulberry32(fnv1a(`what-if/${seed}/${pair}`))();
+  return { round, persona_id: personas[Math.floor(pick * personas.length)].id, poi_id, text };
+}
+
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
 export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat'] }): Omit<RunConfig, 'run_id'> {
+  const seed = project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31);
+  const what_if = opts.repeat?.what_if;
   return {
-    seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
+    seed,
     project: structuredClone({ ...project, persona_schema: getPersonaSchema(project.persona_schema) }),
     personas: structuredClone(opts.personas),
     sessions: structuredClone(opts.sessions),
@@ -87,6 +95,7 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
     signals: { ...DEFAULT_SIGNALS },
     ...(opts.repeat ? { repeat: opts.repeat } : {}),
+    ...(what_if?.post ? { injected_posts: [addedPost(what_if, opts.personas, seed)] } : {}),
   };
 }
 
@@ -450,7 +459,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
           frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [{ what: e.payload.what, quote: e.payload.passage?.text ?? null }] : [])),
           thoughts: steps.slice(-2).flatMap((e) => (e.type === 'persona.step' && e.payload.thought ? [e.payload.thought] : [])),
           pois: pois.map((poi) => ({ name: poi.name, opinion: opinionOf(poi.id) })),
-          posted: own.flatMap((e) => (e.type === 'social.post' ? [e.payload.text] : [])),
+          posted: own.flatMap((e) => (e.type === 'social.post' && !e.payload.injected ? [e.payload.text] : [])), // a post the team added was never this persona's
           feed: feed.map((p) => {
             const { post_id, author, text, agree, disagree, parent_id } = p;
             const parent = parent_id ? posts.get(parent_id) : undefined;
@@ -516,7 +525,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const socialPhase = async (round: number) => {
-    // Harness posts go in first, under ids no model post can have, so this round's feeds can show them.
+    // Injected posts go in first, under ids no model post can have, so this round's feeds can show them.
     injectedIn(round).forEach((p, i) => {
       record({ ...base, persona_id: p.persona_id, poi_id: p.poi_id, type: 'social.post', payload: { post_id: `inj-r${round}-${i + 1}`, parent_id: null, text: p.text, about_poi_id: p.poi_id, injected: true } });
     });
@@ -585,7 +594,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     try {
       for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
         const using = config.personas.filter((p) => !ends.has(p.id));
-        if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
+        // A post still to come keeps the rounds going: a quiet swarm would otherwise end before it, and the run would not differ from its pair.
+        if (!using.length && !(config.injected_posts ?? []).some((p) => p.round >= round) && !planPhase(round).due.size) break;
         if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
         base.round = round;
         record({ ...base, type: 'run.round_started', payload: {} });

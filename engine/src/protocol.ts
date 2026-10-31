@@ -3,7 +3,7 @@ import type { AnalyticsResult } from './audience/analytics.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
-import type { StudyOutcome } from './workspace.ts';
+import type { AddedPost, StudyOutcome } from './workspace.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
@@ -93,14 +93,15 @@ export interface Api {
   remove_persona: { params: { id: string }; result: null };
   /** Saves hand edits to a persona's written fields; sampled traits stay as they were. */
   edit_persona: { params: { persona: Persona }; result: null };
-  /** With `repeats`, the whole set: the estimate of every run together. With `run_id`, of running that finished run again. */
-  estimate_run: { params: { repeats?: number; run_id?: string }; result: RunEstimate };
+  /** With `repeats`, the whole set: the estimate of every run together, and with `what_if` of `repeats` pairs. With `run_id`, of running that finished run again. */
+  estimate_run: { params: { repeats?: number; run_id?: string; what_if?: AddedPost }; result: RunEstimate };
   /**
    * Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use.
    * With `repeats` it answers with the first run; the rest of the set follow one after another, each with its logins checked again and
-   * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'.
+   * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'. With `what_if` the set
+   * is `repeats` matched pairs of runs with and without that post, refused where the post could not reach anyone or differ alone.
    */
-  start_run: { params: { reset: boolean; repeats?: number }; result: { run_id: string } };
+  start_run: { params: { reset: boolean; repeats?: number; what_if?: AddedPost }; result: { run_id: string } };
   /**
    * Runs a finished run again with its frozen config and personas and a new run id, through start_run's path and refusals. `urls` moves
    * web POIs to a new address by POI id, and each new host joins that POI's allowed hosts. Refuses a run that did not finish.

@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { droppedText, leftOutText, NO_SCREENER, NO_TASKS, OUTCOME_NOTE, outcomeDetails, outcomeText, OUTDATED_PLAN, STUDY_WARNING, studyCountText, studyPlanToMarkdown, UNMATCHED_NOTE } from '@gnomi/simulation/report/markdown.ts';
-import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
+import { uncounted } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, localDate, NOTE_MAX, NOTE_WARNING, topFindings } from '@gnomi/simulation/report/study.ts';
 import { STUDY_STATUSES } from '@gnomi/simulation/types.ts';
 import type { Report as ReportData, ReportStudyPlan, ReportTheme, RunEstimate, StudyStatus, ThemeValidation } from '@gnomi/simulation/types.ts';
@@ -146,7 +146,7 @@ function PlanButton({ runId, again }: { runId: string; again: boolean }) {
 export function Study({ report }: { report: ReportData }) {
   const inFile = useContext(InFile);
   const { study_plan: plan, study_count: tally, unmatched_outcomes: unmatched = [] } = report;
-  const findings = isTraitFree(report) ? 0 : topFindings(report.themes ?? [], competitorsOf(report)).length; // a control is no sample to plan a study from
+  const findings = uncounted(report) ? 0 : topFindings(report.themes ?? [], competitorsOf(report)).length; // a control or a what-if run is no sample to plan a study from
   if (!plan && !tally && unmatched.length === 0 && (inFile || findings === 0)) return null;
   return (
     <section aria-labelledby="study-title" className="report-study">

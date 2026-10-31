@@ -282,3 +282,24 @@ test('a parent quoted above a reply in the feed reaches its reader too', () => {
   const home = buildReport(events).spread![0].themes[1];
   assert.deepEqual(home.readers, ['a2', 'a3']); // Abe was shown a feed before Ari was
 });
+
+test('a post the team added is named as such, in any round, and counts for nobody: not as a post, a repeat or a theme of the persona named on it', () => {
+  const build = (added: boolean) => {
+    const { events, record } = recorder();
+    record({ ...at(1, null), poi_id: null, type: 'run.started', payload: { config } });
+    for (const p of POPULATION) record({ ...at(1, p.id), type: 'persona.created', payload: { persona: p } });
+    record({ ...at(1, 'a1'), type: 'persona.friction_reported', payload: friction('Save does nothing', JOBS) });
+    record({ ...at(1, 'b1'), type: 'social.post', payload: post('own', 'Mine.') });
+    if (added) record({ ...at(2, 'a2'), type: 'social.post', payload: post('inj-r2-1', 'Saving a job fails for everyone.', 'poi', true) });
+    record({ ...at(2, 'b2'), type: 'social.feed_viewed', payload: { post_ids: added ? ['own', 'inj-r2-1'] : ['own'], parent_ids: [] } });
+    return buildReport(events);
+  };
+  const [without, withPost] = [build(false), build(true)];
+  const [spread] = withPost.spread!;
+  assert.deepEqual(spread.seeds.map((p) => [p.post_id, p.persona_id, p.round, p.injected]), [['inj-r2-1', 'a2', 2, true], ['own', 'b1', 1, false]], 'named though it is not of the first round');
+  assert.deepEqual([spread.posters, spread.second_hand, spread.first_hand], [without.spread![0].posters, without.spread![0].second_hand, without.spread![0].first_hand]);
+  assert.ok(!spread.posters!.includes('a2'));
+  assert.deepEqual(withPost.themes, without.themes, 'themes, first-hand counts and trust are the same');
+  assert.deepEqual(withPost.personas, without.personas);
+  assert.match(reportToMarkdown(withPost), /- Post added by your team, shown as Abe's, round 2: "Saving a job fails for everyone\." \(#\d+\)/);
+});

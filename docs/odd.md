@@ -33,12 +33,12 @@ For each round `1..R` (`run.ts`, `schedule`):
 
 1. **Usage slice.** Every persona still using a POI takes up to `ceil(sum of its POI budgets / R)` steps, personas in parallel up to `concurrency`, steps within a persona sequential. Personas start in a seeded order that mixes segments (`order/<seed>/<persona>`), so a stop part-way does not cut the population by segment. A persona that heard posts gets them in its next step prompt only.
 2. **Social phase.**
-   1. Harness-injected posts are recorded first.
+   1. Injected posts, a what-if run's or the evaluation harness's complaint, are recorded first.
    2. One snapshot of the log is folded into the board (posts, reactions, per-persona seen sets). Nothing written in this phase is visible in it.
    3. Each persona with more than one persona in the run is *due* if its feed is non-empty, or if it took a step since it last read the feed and a later round remains. Everyone else is skipped.
    4. Due personas make one independent `socialiser` call concurrently.
    5. After every call has settled, validated answers are applied **in population order**, so response speed cannot decide whose post is newest. After a stop, late answers are logged as `llm.call` but not applied.
-3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. Before each usage slice and social phase, or once at the start of a run without social rounds, the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
+3. The loop ends early when nobody is using a POI, no injected post is still to come and nobody is due. Before each usage slice and social phase, or once at the start of a run without social rounds, the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
 
 A persona writes at most one post per round. Silence is a valid action; a failed call is a different outcome.
 
@@ -51,7 +51,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 - **Interaction.** Posts, replies and agree/disagree reactions through the feed. No private messages.
 - **Decision.** One structured model response per step or social turn, validated against a schema. The engine, not the prompt, enforces budgets.
 - **Opinion.** The model proposes a full opinion snapshot; code records it only when it differs from the previous one. Popularity is never converted into belief and convergence is not forced.
-- **Stochasticity.** Application randomness comes from named streams (`fnv1a` of a key, then `mulberry32`): `follows/<seed>`, `rewire/<seed>`, `<policy>/<seed>`, `posting/<seed>`, `traits/<seed>`, `feed/<seed>/<persona>/<round>`. Model sampling is the declared temperature and, where supported, a provider seed (section 8).
+- **Stochasticity.** Application randomness comes from named streams (`fnv1a` of a key, then `mulberry32`): `follows/<seed>`, `rewire/<seed>`, `<policy>/<seed>`, `posting/<seed>`, `traits/<seed>`, `feed/<seed>/<persona>/<round>`, `what-if/<seed>/<pair>`, `what-if-order/<seed>/<pair>`. Model sampling is the declared temperature and, where supported, a provider seed (section 8).
 - **Observation.** Every action, exposure, opinion change and model call (with temperature, seed and the model the provider reports) is an event.
 
 ## 5. Initialization
@@ -59,7 +59,7 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 - **Population.** Personas come from the frozen audience: traits from `sampleTraits` (`audience/sample.ts`), one draw per trait in a fixed order; `patience` is uniform over the segment's integer range, clamped to 1-5; `posting_propensity` is `round(u^3, 2)` from its own stream, so it is mostly low (the median draw is 0.13).
 - **Graph.** Built once from `networkGraph(policy, personas, seed)` before round 1 (`social/graph.ts`) and a function of the seed and population order only.
 - **Opinions.** None at the start; a first opinion after reading counts as `formed`, not `influence`.
-- **Board.** Empty, plus harness-injected posts at their round.
+- **Board.** Empty, plus injected posts at their round.
 - **Randomness.** Streams are allocated by stable identity (above), not consumed in completion order.
 
 ## 6. Input data
@@ -83,6 +83,8 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 **Feed (`selectFeed`).** Posts the persona has not seen and did not write. `ranked`: posts by followed personas first rank (relevance to the persona's own POIs, then reactions `agree + disagree` descending, then a seeded per-persona, per-round shuffle), the top 10 are kept; then 2 trending posts ranked the same way from anyone, followed or not. At most 12 posts and about 2,500 tokens, estimated as `ceil((chars + 100) / 4)`; a post that does not fit is skipped and a smaller later one may still fit. `chronological`: followed posts in event order, up to 12 and the same token cap, no ranking and no trending. Order of the list is the position shown and is logged. Ties never fall back to event sequence.
 
 **Posting.** The model decides `nothing`, `post`, `reply` or `react` each turn. `posting_propensity` does not gate an action in code: it picks one of four sentences in the system prompt (below 0.15 "almost never posts", below 0.35 "rarely", below 0.6 "now and then", else "more readily than most"). The prompt states that doing nothing is the usual answer. Personas written before the field existed use 0.2.
+
+**What-if posts (`repeatRuns`, `newRunConfig`, `report/repeats.ts`).** A what-if set is n matched pairs of runs on one audience and seed, one run of each pair with one post the team wrote, in a round it chose, about its first own POI. Each run gets an equal share of the budget, and the seed orders each pair. Feeds show a post by its author, so a persona the seed picks per pair stands as the author: the others read the post as that persona's, that persona gets it neither in its feed nor among its own posts, though a reply can quote it, and it counts for nobody as a post, a repeat or a first-hand report. Runs with the post are in no count of the set. The result is the paired mean difference, with the post minus without, over pairs where both runs finished, of people who posted, second-hand reach, mean opinion at the end and people who abandoned. It describes the simulator only: spread is relative and uncalibrated.
 
 **Step budgets (`stepBudget`, `poiBudget`).** Patience 1 to 5 gives 12, 20, 30, 45 or 60 steps; outside the range 30. Web POIs use the budget as is; text POIs use `ceil(budget / 15)` (1-4 parts); design POIs use `min(budget, frames)`; every POI gets at least 1. Exhaustion ends the episode with `signal.budget_exceeded` and is reported, not silent.
 
@@ -186,6 +188,9 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `GATE_RUNS` | finished runs per side | 3 | The regression plan's rolling window over three runs. | `report/gate.ts`; roadmap.md, evaluation plan | assumed |
 | `GATE_SIGHTINGS` | later runs | 2 | How many a new theme must be high severity in before the gate fails. One run is one sample of a noisy model. | `report/gate.ts` | assumed |
 | high severity | rounded severity | 3 or more of 4 | The priority labels' rule, so a median of 2.5 counts. | `report/themes.ts` (`isSevere`) | assumed |
+| `WHAT_IF_POST_MAX` | characters | 500 | As long as a persona's own post, so the team's reads like one and fits the feed's token cap. | `report/repeats.ts`, `agent/social.ts` | assumed |
+| `MIN_PAIRS` | pairs | 3 | Fewer give no interval, as with the evaluation's replicates; the run still starts, after saying so. | `report/repeats.ts` (`pairedDifference`); new_simulation.md §9 | assumed |
+| what-if numbers | named list | people who posted, second-hand reach, mean opinion at the end, people who abandoned | Numbers each report already has for the post's POI. Themes are left out, because the two runs of a pair name them apart. | `report/repeats.ts` | assumed |
 | trait-free match | how a run of personas with no traits ties to a finding | keys or title, never one shared key alone, against the finding's first theme | One shared key is often chance. A theme matching only a later run's wording shows no note, which only leaves the note out. | `report/repeats.ts`; features_roadmap.md item 3 | assumed |
 
 ### Reading one run

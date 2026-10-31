@@ -9,7 +9,7 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { DEFAULT_SETTINGS } from '@gnomi/simulation/settings.ts';
 import type { Segment } from '@gnomi/simulation/types.ts';
 import { gymAssets } from '../demo/GymSite/assets.ts';
-import { collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, shots } from './electron.fixture.ts';
 
 const dir = scratch('text');
 const projectDir = join(dir, 'text.gnomi');
@@ -33,7 +33,7 @@ store.replacePersonas([
 store.close();
 
 const app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
-deadline('Text smoke timed out.', 180_000);
+deadline('Text smoke timed out.', 300_000);
 let passed = false;
 try {
   const page = await app.firstWindow();
@@ -102,11 +102,42 @@ try {
   await page.getByRole('dialog', { name: 'Persona details' }).getByRole('region', { name: 'Timeline', exact: true }).getByText('Started reading Pricing page', { exact: true }).waitFor();
   await page.keyboard.press('Escape');
 
+  // A what-if from the Review step: off until asked for, held until it has a post, then a real scripted pair and its result on the set's page.
+  await page.locator('#tab-review').click();
+  const ask = review.getByRole('checkbox', { name: 'Compare runs with and without a post in the feed' });
+  const start = review.getByRole('button', { name: 'Start run', exact: true });
+  await ask.waitFor();
+  assert.equal(await ask.isChecked(), false);
+  await ask.check();
+  await review.getByText('No estimate: A what-if needs the text of its post.', { exact: true }).waitFor();
+  assert.ok(await start.isDisabled(), 'no post, no start');
+  await review.getByLabel('Post text').fill('Single sign-on comes with the Team plan, I checked.');
+  await review.getByText('1 matched pair, so 2 runs one after another', { exact: false }).waitFor();
+  await review.getByText('1 pair gives no interval, only a mean difference. Use at least 3.', { exact: false }).waitFor();
+  await review.getByText(/^About \$/).first().waitFor();
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the what-if option fits a narrow viewport');
+  await ask.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'review-what-if-320.png') });
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await start.click();
+  await page.getByRole('tab', { name: 'Report', exact: true }).click({ timeout: 120_000 });
+  const whatIf = report.getByRole('region', { name: 'What-if post' });
+  await whatIf.getByText('1 of 1 pair finished', { exact: false }).waitFor({ timeout: 120_000 });
+  await whatIf.getByText('Inside the simulator, adding this post moved these numbers. That does not establish a real-world effect. Spread is relative and uncalibrated.', { exact: true }).waitFor();
+  await whatIf.getByRole('cell', { name: 'fewer than three pairs' }).first().waitFor();
+  await report.getByText('The runs with the added post are in no count here.', { exact: false }).waitFor();
+  await page.screenshot({ path: join(shots, 'what-if.png'), fullPage: true });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the what-if result fits a narrow viewport');
+  await whatIf.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'what-if-320.png') });
+
   const assets = join(projectDir, 'assets');
   assert.ok(existsSync(assets), 'the pasted text is in the project folder');
   assert.deepEqual(errors, []);
   passed = true;
-  console.log('ok    a text POI added from a .md file, a buyer segment and a scripted run report the buying survey and quoted passages');
+  console.log('ok    a text POI added from a .md file, a buyer segment and a scripted run report the buying survey and quoted passages, and a what-if pair from the Review step shows its result');
 } finally {
   await app.close();
   rmSync(dir, { recursive: true, force: true });

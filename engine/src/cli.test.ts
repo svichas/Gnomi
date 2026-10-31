@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
+import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
@@ -658,6 +659,82 @@ test('gate refuses personas written again under the same ids and names, and a se
   cli('run', '--pois', pois, '--goal', 'Pick a plan', '--settings', settings, '--project', goals, '--repeats', '3');
   cli('run', '--pois', pois, '--goal', 'Cancel my plan', '--settings', settings, '--project', goals, '--repeats', '3');
   assert.deepEqual(gate(goals, 'r-0001', 'r-0004'), [2, ['The two sides have different goals, so a change may come from what they tried rather than the build.']]);
+});
+
+test('--what-if runs matched pairs: the post reaches feeds in one run of each, and those runs stay out of every count', () => {
+  const project = join(dir, 'what-if');
+  const [file, pois, settings] = [join(dir, 'what-if.json'), join(dir, 'pois.json'), join(dir, 'settings.json')];
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--product', 'A pricing page.', '--goal', 'Pick a plan', '--pois', pois, '--count', '4');
+  const base = ['--pois', pois, '--audience', file, '--settings', settings];
+  const post = 'Starter is cheaper than it looks.';
+  const plan = ['--what-if', post, '--what-if-round', '1'];
+
+  const plain = lines('estimate', ...base, '--repeats', '2').at(-1);
+  const estimated = lines('estimate', ...base, '--repeats', '2', ...plan);
+  const whole = estimated.at(-1);
+  assert.deepEqual([plain.runs, whole.runs, plain.run_budget_usd / whole.run_budget_usd], [2, 4, 2], 'twice the runs, each with half the share');
+  assert.ok(Math.abs(whole.cost_usd[1] - plain.cost_usd[1] * 2) < 1e-9);
+  assert.ok(estimated.some((line) => line.kind === 'note' && line.text === '2 pairs give no interval, only a mean difference. Use at least 3.'), 'said before anything starts');
+  assert.ok(!lines('estimate', ...base, '--repeats', '3', ...plan).some((line) => line.kind === 'note'), 'three pairs have nothing to warn of');
+
+  // The pair order comes from the seed: this many pairs ends on a run with the post, which pickRun must pass over.
+  const pairs = [1, 2, 3, 4].find((n) => fnv1a(`what-if-order/1/${n}`) % 2 === 0)!;
+  const out = lines('run', ...base, '--project', project, '--repeats', String(pairs), ...plan);
+  const done = out.at(-1);
+  assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.run_ids.length], ['repeats', pairs, pairs, false, pairs * 2]);
+  assert.deepEqual([done.what_if.post, done.what_if.round, done.what_if.pairs, done.what_if.of, done.what_if.numbers.map((n: { id: string }) => n.id)], [post, 1, pairs, pairs, ['posted', 'second_hand', 'opinion', 'abandoned']]);
+  assert.match(done.what_if.note, /does not establish a real-world effect/);
+  assert.ok(out.some((line) => line.kind === 'note' && /Estimate for 4 personas in \d+ runs/.test(line.text)));
+  assert.ok(pairs >= 3 || out.some((line) => line.kind === 'note' && /no interval/.test(line.text)));
+
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  const started = (run_id: string) => JSON.parse((db.prepare(`SELECT payload_json FROM event WHERE run_id = ? AND type = 'run.started'`).get(run_id) as { payload_json: string }).payload_json).config;
+  const read = (run_id: string) => (db.prepare(`SELECT payload_json FROM event WHERE run_id = ? AND type = 'social.feed_viewed'`).all(run_id) as { payload_json: string }[]).flatMap((row) => JSON.parse(row.payload_json).post_ids as string[]);
+  const runs = (done.run_ids as string[]).map((run_id) => ({ run_id, config: started(run_id) }));
+  assert.equal(runs.at(-1)!.config.repeat.what_if.post, true);
+  for (const { run_id, config } of runs) {
+    const { what_if } = config.repeat;
+    assert.deepEqual([config.seed, what_if.text, what_if.round, config.injected_posts?.length], [1, post, 1, what_if.post ? 1 : undefined], 'frozen in the snapshot');
+    assert.equal(read(run_id).includes('inj-r1-1'), what_if.post, 'the post reaches feeds only in its run of the pair');
+  }
+  const posted = db.prepare(`SELECT payload_json FROM event WHERE run_id = ? AND type = 'social.post' AND json_extract(payload_json, '$.injected') = 1`).all(runs.at(-1)!.run_id) as { payload_json: string }[];
+  assert.equal(posted.length, 1);
+  db.close();
+
+  const counted = runs.filter(({ config }) => !config.repeat.what_if.post).map(({ run_id }) => run_id);
+  const added = runs.filter(({ config }) => config.repeat.what_if.post).map(({ run_id }) => run_id);
+  const newestCounted = counted.at(-1)!;
+  assert.equal(JSON.parse(cli('report', project, '--json')).report.run_id, newestCounted, 'with no --run the newest run has the post, so it is passed over');
+  assert.match(cli('runs', project), new RegExp(`^${added.at(-1)} .*, pair ${pairs}, with the post your team added$`, 'm'));
+  const set = cli('report', project, '--repeat', done.group, '--format', 'md');
+  assert.match(set, /## What-if post\n\n> Inside the simulator, adding this post moved these numbers\. That does not establish a real-world effect\. Spread is relative and uncalibrated\./);
+  assert.match(set, /\| People who posted \| /);
+  assert.match(set, /The runs with the added post are in no count here\./);
+  assert.ok(done.findings.every((finding: { themes: object }) => added.every((run_id) => !(run_id in finding.themes))));
+  assert.match(cli('report', project, '--run', added[0], '--format', 'md'), /in set \S+, pair \d+, with the post your team added/);
+  assert.match(cli('report', project, '--run', added[0], '--format', 'md'), /- Post added by your team, shown as [^,]+'s, round 1: "Starter is cheaper than it looks\."/);
+
+  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' });
+  assert.match(cli('study', project), new RegExp(`${newestCounted} study plan: `), 'study passes it over too');
+  assert.match(cli('rejudge', project), new RegExp(`${newestCounted} judged again`), 'and so does rejudge');
+  assert.match(refused('study', project, '--run', added[0]).stderr, /is a what-if run, with a post your team added/);
+  assert.match(refused('rerun', project, '--base', added[0]).stderr, /is a what-if run, with a post your team added/);
+  assert.match(refused('compare', project, '--base', added[0], '--run', counted[0]).stderr, /is a what-if run, with a post your team added/);
+  assert.equal(refused('gate', project, '--base', added[0], '--run', counted[0]).status, 2, 'a gate cannot decide on it');
+
+  assert.match(refused('rerun', project, '--base', counted[0], '--what-if', post).stderr, /--what-if is for run/);
+  assert.match(refused('estimate', project, '--base', counted[0], '--what-if', post).stderr, /--what-if is for run/);
+  assert.match(refused('estimate', ...base, '--what-if-round', '2').stderr, /--what-if-round needs --what-if/);
+  assert.match(refused('estimate', ...base, ...plan, '--also-trait-free').stderr, /--also-model or --also-trait-free/);
+  assert.match(refused('estimate', ...base, ...plan, '--also-model', 'deepseek:deepseek-flash').stderr, /--also-model or --also-trait-free/);
+  assert.match(refused('estimate', ...base, '--what-if', post, '--what-if-round', '2').stderr, /whole number from 1 to 1/);
+  assert.match(refused('estimate', '--pois', pois, '--goal', 'Pick a plan', ...plan).stderr, /social rounds off/);
+  const off = join(dir, 'social-off.json');
+  writeFileSync(off, JSON.stringify({ social: false }));
+  const empty = join(dir, 'what-if-none');
+  assert.match(refused('run', '--pois', pois, '--audience', file, '--settings', off, '--project', empty, ...plan).stderr, /social rounds off/);
+  assert.ok(!existsSync(join(empty, 'runs')), 'before any run starts');
 });
 
 test('--also-trait-free adds one run to a set, in its snapshot alone, and only a matching finding changes', () => {

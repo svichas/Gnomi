@@ -9,6 +9,9 @@ import { postsAbout, type Context, type Post } from './themes.ts';
 
 const SEEDS = 3;
 
+/** A post the team added stands in a persona's name so feeds can show it: it is no report of that persona's. */
+const ownPost = (p: Post) => !p.payload.injected;
+
 type Opinion = EventOf<'persona.opinion_changed'>;
 
 function segmentOf(id: string, ctx: Context) {
@@ -30,8 +33,8 @@ export function sentimentByRound(opinions: Opinion[], rounds: number, who: Set<s
 /** Seeds, first- and second-hand personas, posters, readers and the segments they are in, influence and sentiment for one set of posts. */
 function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<string>>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
   const firstRound = Math.min(...talk.map((p) => p.round));
-  const seeds: ReportPost[] = talk
-    .filter((p) => p.round === firstRound)
+  // A post the team added is always named, whichever round it went in.
+  const seeds: ReportPost[] = [...talk.filter((p) => p.payload.injected), ...talk.filter((p) => p.round === firstRound && !p.payload.injected)]
     .slice(0, SEEDS)
     .map((p) => ({
       seq: p.seq,
@@ -43,7 +46,7 @@ function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<st
       text: p.payload.text,
       injected: p.payload.injected === true,
     }));
-  const posters = [...new Set(talk.map((p) => p.persona_id))];
+  const posters = [...new Set(talk.filter(ownPost).map((p) => p.persona_id))];
   const ids = new Set(talk.map((p) => p.payload.post_id));
   const readers = [...shown].filter(([, posts]) => [...posts].some((id) => ids.has(id))).map(([id]) => id);
   const seedSegments = new Set(seeds.map((s) => s.segment_id));
@@ -101,7 +104,7 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
         const ids = new Set(posts.map((p) => p.payload.post_id));
         const themeEdges = poiEdges.filter((e) => ids.has(e.post_id));
         const firstHand = firstHandOf(t);
-        const who = new Set([...firstHand, ...posts.map((p) => p.persona_id), ...themeEdges.filter((e) => e.kind === 'influence').map((e) => e.to)]);
+        const who = new Set([...firstHand, ...posts.filter(ownPost).map((p) => p.persona_id), ...themeEdges.filter((e) => e.kind === 'influence').map((e) => e.to)]);
         return [{ theme_id: t.id, rank: t.rank, title: t.title, ...statsOf(posts, firstHand, shown, themeEdges, sentimentByRound(about, rounds, who), ctx) }];
       }),
     };

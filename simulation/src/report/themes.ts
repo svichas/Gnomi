@@ -656,7 +656,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const echoes: Echoes = {
     feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
     heard: new Map(events.flatMap((e) => (e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
-    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
+    // A post the team added says nothing of what the persona in whose name it stands met.
+    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id && !e.payload.injected ? [[e.payload.post_id, e.persona_id] as const] : []))),
     rounds: new Map(events.map((e) => [e.seq, e.round])),
   };
 

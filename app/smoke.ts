@@ -707,7 +707,7 @@ try {
     await page.locator('summary').filter({ hasText: 'Audience conversations' }).click();
     const feed = page.getByRole('region', { name: 'Feed' });
     await feed.getByRole('heading', { name: `Feed (${feedThreads(logged).length} threads)` }).waitFor();
-    assert.ok(await feed.getByText('Injected by the test harness').count() >= 1, 'the injected post is labelled');
+    assert.ok(await feed.getByText('Added by your team').count() >= 1, 'the injected post is labelled');
     await page.screenshot({ path: join(shots, 'swarm.png') });
 
     // Scrub the map to round 1; the optional conversation archive retains the full run.
