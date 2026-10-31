@@ -124,6 +124,10 @@ export interface Api {
   record_outcome: { params: StudyOutcome; result: null };
   /** Hides a finding from exports or rewords it there, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
   edit_finding: { params: FindingEdit; result: null };
+  /** What ask_persona would cost: one call on the run's own navigator model. `cost_usd[1]` is the most it can spend. */
+  estimate_interview: { params: { run_id: string }; result: RunEstimate };
+  /** Spends money, so only a person's click calls it, for at most estimate_interview's high end, and one question at a time per run. The answer reaches clients as a persona.interviewed event. */
+  ask_persona: { params: { run_id: string; persona_id: string; question: string }; result: null };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }

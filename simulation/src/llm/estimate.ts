@@ -5,6 +5,7 @@ import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
 import { admits, inScenario } from '../comparison/config.ts';
+import { INTERVIEW_CONTEXT_MAX, INTERVIEW_OUTPUT_TOKENS } from '../agent/interview.ts';
 import { STUDY_OUTPUT_TOKENS } from '../report/study.ts';
 import { costUsd, isPriced } from './prices.ts';
 
@@ -33,6 +34,12 @@ const CHECK_OUTPUT = [500, 2_000] as const;
 const STUDY_INPUT = [1_500, 10_000] as const; // findings capped at 8k tokens, plus the product, segments and prompt
 const STUDY_OUTPUT = [1_000, STUDY_OUTPUT_TOKENS] as const;
 const STUDY_ATTEMPTS = 2;
+// A question to a persona (agent/interview.ts): one navigator call on a run that has ended, with room for one retry of an invalid answer.
+const INTERVIEW_PROMPT_TOKENS = 3_000; // the persona's profile, the rules and the question
+const INTERVIEW_CONTEXT_CHARS_PER_TOKEN = [4, 2] as const; // as for a digest: few texts get near 2, so the high figure works as a ceiling
+const INTERVIEW_INPUT = [1_000, INTERVIEW_PROMPT_TOKENS + INTERVIEW_CONTEXT_MAX / INTERVIEW_CONTEXT_CHARS_PER_TOKEN[1]] as const; // the low end: a short session
+const INTERVIEW_OUTPUT = [200, INTERVIEW_OUTPUT_TOKENS] as const;
+const INTERVIEW_ATTEMPTS = 2;
 
 // A digest of a segment's research files (engine/src/audience/ground.ts): one persona_writer call, and one retry after an invalid output.
 export const DIGEST_OUTPUT_TOKENS = 2_048;
@@ -141,6 +148,17 @@ export function estimateReport({ personas, settings, pois = 1, at = new Date() }
   const unpriced = models.filter((m) => !isPriced(m)).map((m) => m.model);
   const calls = pois * (REPORT_CALLS.length + (checker ? Math.round((CHECK_CALLS[0] + CHECK_CALLS[1]) / 2) : 0));
   return { calls, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
+}
+
+/** What one question to a persona costs, on its own and not part of a run. The high end is a ceiling: the context and output have hard limits, and a call has at most two attempts. */
+export function estimateInterview({ settings, at = new Date() }: { settings: RunSettings; at?: Date }): RunEstimate {
+  const model = settings.routing.navigator;
+  return {
+    calls: 1,
+    cost_usd: [price(model, INTERVIEW_INPUT[0], INTERVIEW_OUTPUT[0], at), INTERVIEW_ATTEMPTS * price(model, INTERVIEW_INPUT[1], INTERVIEW_OUTPUT[1], at)],
+    minutes: [0.1, 1],
+    unpriced: isPriced(model) ? [] : [model.model],
+  };
 }
 
 /** What a study plan costs, on its own and not part of a run. The high end is a ceiling: output has a hard limit, and a call has at most two attempts. */

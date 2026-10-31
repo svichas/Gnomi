@@ -304,6 +304,57 @@ test('edit hides and rewords for sharing only: report and its files keep what th
   assert.deepEqual(report('--for-sharing').themes, before.themes, 'back as it was');
 });
 
+test('ask answers from the log under rejudge\'s budget rule, says what the answer is, and stays out of every report', () => {
+  const project = join(dir, 'ask');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const persona = JSON.parse(cli('report', project, '--format', 'json', '--json')).report.personas[0].id;
+  const ask = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'ask', project, '--fake-llm', ...args], { encoding: 'utf8' });
+  const good = ['--run', 'r-0001', '--persona', persona, '--question', 'Why did you stop?'];
+
+  assert.match(ask('--run', 'r-0001').stderr, /ask needs --run, --persona and --question/);
+  assert.match(ask('--run', 'r-0009', '--persona', persona, '--question', 'Why?').stderr, /There is no run r-0009/);
+  assert.match(ask('--run', 'r-0001', '--persona', 'nobody', '--question', 'Why?').stderr, /r-0001 has no persona nobody/);
+  assert.match(ask('--run', 'r-0001', '--persona', persona, '--question', ' ').stderr, /Write a question first/);
+
+  const lines = ask(...good, '--json').stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.match(lines.find((l) => l.kind === 'note').text, /One call to .*about \$.*with \$5\.00 to spend/, 'what it will cost, before it runs');
+  assert.deepEqual(lines.filter((l) => l.kind === 'event').map((l) => l.type), ['llm.call', 'persona.interviewed', 'report.generated']);
+  const done = lines.at(-1);
+  assert.deepEqual([done.kind, done.persona_id, done.question], ['ask', persona, 'Why did you stop?']);
+  assert.match(done.answer, /Scripted demo answer/);
+  assert.match(done.label, /^Generated after the run\. This is a new answer from the model, not a memory of why this persona acted\.$/);
+  assert.match(ask(...good).stdout, /Generated after the run\./, 'a person reads the label too');
+
+  const files = ['json', 'md'].map((format) => readFileSync(join(project, `runs/r-0001/report.${format}`), 'utf8'));
+  assert.ok(files.every((file) => !file.includes('Why did you stop') && !file.includes('Scripted demo answer')), 'report.json and report.md hold no interview');
+  assert.ok(!cli('report', project, '--format', 'md', '--for-sharing').includes('Why did you stop'));
+
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.cost_usd', 5) WHERE type = 'llm.call'`); // the run spent its $5 budget
+    const spent = ask(...good);
+    assert.equal(spent.status, 1);
+    assert.match(spent.stderr, /has spent its \$5\.00 budget; pass --budget <usd> to let ask spend more/);
+    assert.match(ask(...good, '--budget', 'nothing').stderr, /--budget must be a positive amount/);
+    assert.equal(ask(...good, '--budget', '0.5').status, 0);
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.provider', 'anthropic') WHERE type = 'llm.call'`);
+    assert.match(ask(...good, '--budget', '0.5').stderr, /analysed by real models/);
+    db.exec(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
+    assert.match(ask(...good, '--budget', '0.5').stderr, /has not ended/);
+  } finally {
+    db.close();
+  }
+});
+
+test('ask names the key it needs, and calls nothing without it', () => {
+  const project = join(dir, 'ask-key');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const { ANTHROPIC_API_KEY: _, ...env } = process.env;
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'ask', project, '--run', 'r-0001', '--persona', 'p', '--question', 'Why?'], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set ANTHROPIC_API_KEY \(the navigator runs on anthropic\)/);
+});
+
 test('audience analytics reports the changes, keeps the file on a dry run, and stores only the name and hash of the export', () => {
   const file = join(dir, 'analytics.json');
   cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');

@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Segment } from '@gnomi/simulation/types.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, personaProgress, shotLabels, stateWord, toRows, TONE_CLASSES } from './activity.ts';
 import type { PersonaState, Row } from './activity.ts';
-import { Button, Screenshot } from './ui.tsx';
+import { call } from './engine.ts';
+import { Button, Field, inputClass, OutcomeNote, Screenshot, useAction } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
+import { useCallCost } from './ReportStudy.tsx';
 import './results.css';
 
 /**
@@ -50,16 +53,37 @@ function Replay({ steps, name, shotLabel }: { steps: Row[]; name: string; shotLa
   );
 }
 
+/** A question to one persona after the run. It spends money, so it says how much at most and waits for a click. */
+function AskPersona({ runId, persona, name }: { runId: string; persona: Persona; name: string }) {
+  const [question, setQuestion] = useState('');
+  const { cost, ready } = useCallCost('estimate_interview', runId);
+  const { busy, outcome, run } = useAction();
+  const ask = () =>
+    run(async () => {
+      await call('ask_persona', { run_id: runId, persona_id: persona.id, question }); // the answer arrives with the log, as persona.interviewed
+      setQuestion('');
+      return { ok: true, text: 'The answer is below.' };
+    });
+  return (
+    <div className="space-y-2">
+      <Field label={`Ask ${name} about this run`} hint={cost}><textarea className={inputClass} rows={2} maxLength={QUESTION_MAX} value={question} onChange={(e) => setQuestion(e.target.value)} /></Field>
+      <Button small onClick={() => void ask()} loading={busy} disabled={!ready || !question.trim()}>Ask</Button>
+      <OutcomeNote outcome={outcome} />
+    </div>
+  );
+}
+
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
   runId: string; persona: Persona; schema?: PersonaSchema; pois?: Poi[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  askable: boolean; // an ended run that a question can go to: a comparison study has no such thing
   state: PersonaState; // the run's own status for her: her events alone miss the run's end and a comparison's rules
   events: GnomiEvent[]; // hers only, in order
   social: SocialMemory | null; // null: the run had no social rounds
   names: Map<string, string>;
   onClose(): void;
 }) {
-  const { runId, persona, schema, pois, segment, focusSeq, ended, state, events, social, names, onClose } = props;
+  const { runId, persona, schema, pois, segment, focusSeq, ended, askable, state, events, social, names, onClose } = props;
   const poiName = (id: string) => pois?.find((poi) => poi.id === id)?.name ?? id;
   const name = personaLabel(persona, schema);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -85,6 +109,7 @@ export function Inspector(props: {
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
+  const answers = events.filter((event): event is EventOf<'persona.interviewed'> => event.run_id === runId && event.type === 'persona.interviewed').toReversed();
   const highlighted = evidenceSeq ?? focusSeq;
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
@@ -107,6 +132,7 @@ export function Inspector(props: {
         {replayable && <button type="button" onClick={() => jumpTo('inspector-replay')}><Icon name="play" size={15} />Replay</button>}
         <button type="button" onClick={() => jumpTo('inspector-timeline')}><Icon name="activity" size={15} />Journey<span>{rows.length}</span></button>
         <button type="button" onClick={() => jumpTo('inspector-opinions')}><Icon name="message" size={15} />Opinions</button>
+        {(askable || answers.length > 0) && <button type="button" onClick={() => jumpTo('inspector-ask')}><Icon name="spark" size={15} />Ask</button>}
         <button type="button" onClick={() => jumpTo('inspector-profile')}><Icon name="people" size={15} />Profile</button>
       </nav>
 
@@ -174,6 +200,16 @@ export function Inspector(props: {
             </div>
           </div>)}
         </section>
+
+        {(askable || answers.length > 0) && <section aria-label="Questions after the run" id="inspector-ask" tabIndex={-1} className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Questions after the run</h3>
+          {askable && <AskPersona runId={runId} persona={persona} name={name} />}
+          {answers.map(({ seq, payload: { question, answer } }) => <article key={seq} className="space-y-1 rounded-lg border border-stone-200 px-4 py-3 text-sm">
+            <p className="inspector-synthetic-label">{INTERVIEW_LABEL}</p>
+            <p className="break-words font-medium text-stone-900">{question}</p>
+            <p className="break-words text-stone-700">{answer}</p>
+          </article>)}
+        </section>}
 
         <details aria-label="Survey" className="inspector-fold" open={surveys.length > 0}>
           <summary><h3>End-of-episode survey</h3><span>{surveys.length || 'Not recorded'}</span></summary>

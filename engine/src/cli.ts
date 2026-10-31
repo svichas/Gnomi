@@ -10,11 +10,12 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
-import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
+import { estimateInterview, estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
 import { describe } from '@gnomi/simulation/log/describe.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -87,6 +88,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       changes a finding for sharing only: runs/<run id>/report.json and report.md, "report" and every model keep the original. --hide
       leaves it out of exports and --show puts it back. --title (up to ${EDIT_TITLE_MAX} characters) and --description (up to ${EDIT_DESCRIPTION_MAX}) reword it there, blank
       going back to the original, and --reset puts both back. No model call. Numbers from the run cannot be edited.
+  ask <project dir> --run <run id> --persona <persona id> --question "<text>" [--budget <usd>] [--fake-llm]
+      asks one persona of an ended run one question of up to ${QUESTION_MAX} characters, with one text-only call on the run's navigator model,
+      under rejudge's budget rule. The context comes from that persona's log, and earlier answers are not sent back. It stays in the log,
+      apart from every report, export and later model call. ${INTERVIEW_LABEL}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -128,6 +133,8 @@ const OPTIONS = {
   title: { type: 'string' },
   description: { type: 'string' },
   reset: { type: 'boolean', default: false },
+  persona: { type: 'string' },
+  question: { type: 'string' },
   format: { type: 'string', default: 'summary' },
   'for-sharing': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
@@ -792,6 +799,31 @@ async function outcome(v: Values, dir: string | undefined): Promise<void> {
   }
 }
 
+/** One navigator call on an ended run, under rejudge's refusals and budget rule. The other refusals are the app's too, so they live in askPersona. */
+async function ask(v: Values, dir: string | undefined): Promise<void> {
+  if (!v.run || !v.persona || v.question === undefined) throw new Error(`ask needs --run, --persona and --question.\n\n${USAGE}`);
+  // Writes new events, beside a run the app may have live.
+  const store = existingProject(dir, { recover: false });
+  try {
+    const fake = v['fake-llm'];
+    const run = modelRun(store, v.run, fake, 'asked about');
+    const { run_id, config } = run;
+    const settings = config.project.settings;
+    requireKey(settings, 'navigator', fake);
+    const log = store.events(run_id);
+    const budget = spendable(log, run_id, settings, v, 'ask');
+    const { cost_usd: [low, high] } = estimateInterview({ settings });
+    note(`One call to ${settings.routing.navigator.model}: about $${low.toFixed(2)}–${high.toFixed(2)}, with $${budget.toFixed(2)} to spend.`);
+    const record = timeline(store);
+    const llm = cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stopOnSigint());
+    const answer = await askPersona({ store, blobs: createFsBlobStore(dir!), record }, run, v.persona, v.question, llm);
+    const cost_usd = spent(store.events(run_id).slice(log.length));
+    out(`${answer}\n\n${INTERVIEW_LABEL} ($${cost_usd.toFixed(4)})`, { kind: 'ask', run_id, persona_id: v.persona, question: v.question, answer, label: INTERVIEW_LABEL, cost_usd });
+  } finally {
+    store.close();
+  }
+}
+
 /** The refusals are the app's too, so they live in editFinding. */
 async function edit(v: Values, dir: string | undefined): Promise<void> {
   const changes = [v.hide, v.show, v.title !== undefined, v.description !== undefined, v.reset].filter(Boolean).length;
@@ -825,6 +857,7 @@ async function main(): Promise<void> {
   if (command === 'study') return study(values, sub);
   if (command === 'outcome') return outcome(values, sub);
   if (command === 'edit') return edit(values, sub);
+  if (command === 'ask') return ask(values, sub);
   if (command === 'rerun') return rerun(values, sub);
   if (command === 'compare') return compare(values, sub);
   if (command === 'gate') return gate(values, sub);

@@ -121,6 +121,7 @@ export const DEMO_NAVIGATOR: Responder = (() => {
     if (req.purpose === 'read_text') return DEMO_READ(req);
     if (req.purpose === 'survey') return DEMO_SURVEY;
     if (req.purpose === 'design') return DEMO_DESIGNER(req);
+    if (req.purpose === 'interview') return { answer: 'Scripted demo answer: no model read this question, so it says nothing about why this persona acted.' };
     const key = `${req.run_id}/${req.persona_id}`;
     const n = calls.get(key) ?? 0;
     calls.set(key, n + 1);

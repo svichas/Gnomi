@@ -284,6 +284,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          askable={ended && !log.comparison}
           state={states.get(inspected.id) ?? 'waiting'}
           events={inspectedEvents}
           social={social}

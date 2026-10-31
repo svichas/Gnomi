@@ -20,8 +20,8 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
-import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
+import { askPersona, audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
+import { estimateInterview, estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
 import { createRecorder, roleOf, segmentOf, type RunHandle } from '@gnomi/simulation/run.ts';
@@ -51,6 +51,7 @@ const secrets = new Map<SecretName, string>();
 const runs = new Map<string, RunHandle>();
 const sets = new Map<string, LiveSet>(); // by project dir: a repeat set from its first run's start to its last's end, gaps included
 const planning = new Set<string>(); // by runKey: the renderer's busy state ends with the report tab, and each plan has its own cap
+const asking = new Set<string>(); // by runKey, for the same reason: closing the inspector ends its busy state, and each question has its own cap
 let closing = false; // no repeat starts once shutdown has begun
 const quitting = new AbortController(); // the only stop for model work after a run, which has no stop button
 type OpenProject = { store: ProjectStore; blobs: BlobStore; record: Recorder };
@@ -509,6 +510,24 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   async edit_finding(edit) {
     await editFinding(current(), edit);
+    return null;
+  },
+  estimate_interview: ({ run_id }) => estimateInterview({ settings: modelRun(current().store, run_id, FAKE_LLM, 'asked about').config.project.settings }),
+  async ask_persona({ run_id, persona_id, question }) {
+    const place = current();
+    const run = modelRun(place.store, run_id, FAKE_LLM, 'asked about');
+    const { project } = run.config;
+    if (!FAKE_LLM) requireCredential(project.settings, 'navigator', project.settings.routing.navigator, secret);
+    const { cost_usd: [, most], unpriced } = estimateInterview({ settings: project.settings });
+    if (unpriced.length) throw new Error(`No price is known for ${unpriced.join(', ')}.`);
+    const key = runKey(place.store.dir, run_id);
+    if (asking.has(key)) throw new Error('A question for this run is still being answered.');
+    asking.add(key);
+    try {
+      await askPersona(place, run, persona_id, question, cappedGateway(projectGateway({ fake: FAKE_LLM, secrets: secret, config: project, record: place.record }), most, quitting.signal));
+    } finally {
+      asking.delete(key);
+    }
     return null;
   },
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
+import { interviewContext, QUESTION_MAX, runInterview } from '@gnomi/simulation/agent/interview.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
 import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
 import { estimateRun } from '@gnomi/simulation/llm/estimate.ts';
@@ -220,6 +221,24 @@ export async function planStudy(place: RunPlace, { run_id, config }: RunRow, llm
   }
   await blobs.put(`runs/${run_id}/study-plan.md`, new TextEncoder().encode(studyPlanToMarkdown(report, report.study_plan!)));
   return report;
+}
+
+/** One question to a persona of an ended run, answered by one call. Refused before anything is spent; a failed call adds no answer. */
+export async function askPersona(place: RunPlace, { run_id, config }: RunRow, persona_id: string, question: string, llm: LlmGateway): Promise<string> {
+  const asked = question.trim();
+  if (!asked) throw new Error('Write a question first.');
+  if (asked.length > QUESTION_MAX) throw new Error(`The question has ${asked.length} characters, and the limit is ${QUESTION_MAX}.`);
+  const persona = config.personas.find((p) => p.id === persona_id);
+  if (!persona) throw new Error(`${run_id} has no persona ${persona_id}.`);
+  const log = place.store.events(run_id);
+  const context = await interviewContext(log, persona_id, run_id, place.blobs);
+  if (context === null) throw new Error(`${persona.name} did nothing the log of ${run_id} records, so there is nothing to draw on.`);
+  try {
+    return await runInterview({ config, persona, question: asked, context, round: log.at(-1)?.round ?? 1, llm, record: place.record });
+  } finally {
+    // Written even when the call failed: a failed attempt can still cost money, and the files are snapshots of the log.
+    await rewriteReport(place, run_id);
+  }
 }
 
 export interface StudyOutcome {

@@ -96,6 +96,13 @@ npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --projec
 - `report` still reads what the run found, and so do `runs/<id>/report.json` and `report.md`, `compare`, `gate`, repeat sets and every model. The `edit` field on a theme says what the team changed, and `unmatched_edits` in `--format json` lists edits a `rejudge` left with no finding, whose finding is back in exports.
 - `report <project dir> --run <run id> --for-sharing` gives the copy the app exports, in any `--format`: hidden findings gone, the team's wording marked as reworded, and a line, `shared` in JSON, saying how many were hidden and reworded. Nothing removes that line. It takes one run, not `--repeat`.
 
+## Asking a persona
+
+- `ask <project dir> --run <run id> --persona <persona id> --question "<text>" [--budget <usd>] --json` asks one persona of an ended run one question of up to 500 characters. It makes one text-only call on the run's navigator model and spends under `rejudge`'s rule: at most what is left of the run's cost budget, or `--budget`. Persona ids are in `report --format json`. The `ask` result line gives `answer`, `label` and `cost_usd`, and each question stands alone, so earlier answers are not sent back.
+- The answer is a new generation from the persona's log, not a memory of why it acted. Always pass on `label` with it: "Generated after the run. This is a new answer from the model, not a memory of why this persona acted."
+- It costs money, so run it only when the user asks. Do not spend on `ask` to explain a finding, to check one, to rank findings, to fill a gap in a report, or to decide what to fix: it makes no finding more correct, and the steps, screenshots and evidence in the report are what happened and cost nothing to read. Do not loop over personas, and do not ask again in the hope of a better answer. A team that wants a reason needs a study with real people (`study`).
+- Answers stay in the log and the app's inspector. They reach no finding, count, summary, study plan, `rejudge`, `compare` or export, so never quote one in a report or as a finding.
+
 ## Before and after
 
 To see what a change did, run a finished run again on the new build, then compare the two:
