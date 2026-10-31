@@ -162,7 +162,9 @@ export interface ReportTheme {
   category?: 'friction' | 'objection'; // objection: a reason not to adopt, from the survey; absent before structured surveys
   prevalence?: Prevalence; // first-hand personas only (new_simulation.md §4); absent in reports written before it
   heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
+  remembered?: number; // personas who only repeated what they complained of on an earlier visit, beside heard_first, never in both; absent with none
   first_hand?: string[]; // the persona ids counted in prevalence; absent before it was stored
+  echoed?: number[]; // the first seq of each member report that may hold another persona's words, which a memory of this run leaves out (report/prior.ts); absent with none
   scan_only?: true; // found by the page scan alone: its prevalence of 0 says no persona reported it, not that none met it
   trust: Trust; // the highest among member frictions
   trust_counts?: Record<Trust, number>; // member frictions per trust; absent in older reports
@@ -321,6 +323,7 @@ export interface ReportMethods {
   undersized_targets?: { page: string; element: string | null; width: number; height: number; personas: number }[]; // an audit, not findings: the team's product's small_target signals, so only elements a mobile persona tapped, by page, element and size, most personas first; only in runs with one
   accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
   grounding?: { segment_id: string; name: string; facts: number; remarks: number; sources: string[] }[]; // the segments in this run that real data shaped, as the run froze them; `sources` holds file names; only in runs with one
+  prior?: { run_id: string; fresh: number }; // a returning run: the run its personas remember, and how many had no visit there to remember; only in such runs
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }

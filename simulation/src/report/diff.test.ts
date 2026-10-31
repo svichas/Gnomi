@@ -267,6 +267,18 @@ test('a report saved before the fingerprint falls back on its labels', () => {
   assert.deepEqual(diffReports([old], [{ ...rewritten, personas: rewritten.personas.slice(1) }]).gaps.map(({ kind }) => kind), ['personas']);
 });
 
+test('a returning side and a first-use side are not like for like, and two returning sides only with one base', () => {
+  const back = (run_id: string, base: string): Report => { const report = before(); return { ...report, run_id, methods: { ...report.methods, prior: { run_id: base, fresh: 0 } } }; };
+  const kinds = (a: Report[], b: Report[]) => diffReports(a, b).gaps.filter(({ kind }) => kind === 'returning').map(({ text }) => text);
+  assert.deepEqual(kinds([before()], [back('r-2', 'r-1')]), ["One side's personas had used the product before and the other's had not, so a change may come from what they remember rather than the build."]);
+  assert.deepEqual(kinds([back('r-2', 'r-1')], [before()]), kinds([before()], [back('r-2', 'r-1')]), 'whichever side it is');
+  assert.deepEqual(kinds([back('r-2', 'r-1')], [back('r-3', 'r-1')]), [], 'one base');
+  assert.deepEqual(kinds([back('r-2', 'r-1')], [back('r-4', 'r-3')]), ['The two sides remember different earlier runs, so a change may come from what they remember rather than the build.']);
+  assert.deepEqual(kinds([before()], [before()]), [], 'first use on both sides, with old reports as with new');
+  const diff = diffReports([before()], [back('r-2', 'r-1')]);
+  assert.ok(diff.notes.some((note) => note.startsWith("One side's personas")), 'compare says so');
+});
+
 test('competitor POIs stay out of the themes, the POI list and the spread', () => {
   const report = before();
   const pois = [...report.pois, { id: 'rival', type: 'web' as const, name: 'Rival', start_url: 'http://rival.test/', competitor: true as const }];

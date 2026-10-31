@@ -579,8 +579,52 @@ try {
   await assertFits(page, 'the trait-free note fits a narrow viewport');
   await traitFreeLine.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'trait-free-320.png') });
+
+  // Returning personas: never the default, at 320 px too, and a real report that says what its personas knew and what they only repeated.
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.locator('#tab-runs').click();
+  await page.getByRole('button', { name: 'r-0003', exact: false }).first().click();
+  await page.getByRole('button', { name: 'Run again', exact: true }).click();
+  await dialog.getByText(/^About \$/).waitFor();
+  const remember = dialog.getByLabel('Personas remember r-0003, though prior knowledge can hide first-use problems');
+  assert.equal(await remember.isChecked(), false, 'never the default');
+  await assertFits(page, 'the returning option fits a wide viewport');
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await remember.check();
+  await dialog.getByText(/^About \$/).waitFor();
+  await assertFits(page, 'the returning option fits a narrow viewport');
+  await page.screenshot({ path: join(shots, 'run-again-returning-320.png') });
+  await dialog.getByRole('button', { name: 'Start run' }).click();
+  await dialog.waitFor({ state: 'detached' });
+  await page.locator('.run-history-context code').getByText('r-0008', { exact: true }).waitFor();
+  const returningNotice = root.locator('.report-header').getByText('These personas used the product before, in r-0003, so this run says little about first use.', { exact: true });
+  await returningNotice.waitFor({ timeout: 120_000 });
+  await assertFits(page, 'the returning notice fits a narrow viewport');
+  await returningNotice.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-returning-320.png') });
+  // Scripted personas only repeat themselves, so every finding here has nobody first-hand and waits with the individual observations.
+  const remembered = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Individual observations' }) });
+  await remembered.locator(':scope > summary').click();
+  await remembered.locator('.report-finding summary').first().click();
+  await remembered.getByText('more after remembering it from an earlier visit', { exact: false }).first().waitFor();
+  await assertFits(page, 'the remembered count fits a narrow viewport');
+  const methodsFold = root.locator('.report-fold').filter({ has: page.locator('summary h3').filter({ hasText: 'Run details & methodology' }) });
+  await methodsFold.locator(':scope > summary').click();
+  await methodsFold.getByText('Earlier visit', { exact: true }).waitFor();
+  assert.ok(await methodsFold.locator('dd').getByText('in r-0003', { exact: false }).isVisible(), 'the methods name the base run');
+  await assertFits(page, 'the methods row fits a narrow viewport');
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await assertFits(page, 'the returning report fits a wide viewport');
+  await returningNotice.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-returning.png') });
+  const returned = openProject(projectDir);
+  const frozen = returned.listRuns().find((run) => run.run_id === 'r-0008')!.config.prior!;
+  const prompts = returned.transcripts('r-0008').map(({ request_json }) => request_json).join('\n');
+  returned.close();
+  assert.equal(frozen.run_id, 'r-0003');
+  assert.match(prompts, /remembered imperfectly/, 'the prompts carry the memory');
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan, a study outcome, edits for sharing and questions to a persona on a real report, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan, a study outcome, edits for sharing and questions to a persona on a real report, returning personas, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

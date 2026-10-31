@@ -89,7 +89,7 @@ async function readText(poi: TextPoi, deps: EpisodeDeps): Promise<EpisodeEnd> {
     let output: ReadOutput;
     try {
       const shared = readShared({ poi, text, part, index, parts: parts.length });
-      const user = readParts({ persona, text, part, index, parts: parts.length, memory, opinion, heard });
+      const user = readParts({ persona, text, part, index, parts: parts.length, memory, opinion, heard, prior: deps.prior });
       heard = [];
       const { object } = await llm.call({ role: 'navigator', model: config.project.settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: READ_TEXT, poi_id: poi.id, shared, system, user, schema: readSchema(index < parts.length - 1), signal });
       output = object;

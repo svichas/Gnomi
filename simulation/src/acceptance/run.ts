@@ -18,11 +18,12 @@ import { openProject } from '../log/sqlite.ts';
 import { preflight } from '../poi/index.ts';
 import { buildReport } from '../report/build.ts';
 import { reportToMarkdown } from '../report/markdown.ts';
+import { priorOf } from '../report/prior.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '../run.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, Responder } from '../seams.ts';
 import { PROVIDER_DEFAULTS } from '../settings.ts';
 import { graphMetrics } from '../social/graph.ts';
-import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunSettings } from '../types.ts';
+import type { GnomiEvent, LlmRole, Opinion, PageSnapshot, ProviderId, Report, RunConfig, RunSettings } from '../types.ts';
 import { applyMapping, ARMS, assess, BILLING_CAVEAT, controlThemes, createAllowance, defectScores, executionCriterion, FULL_POPULATION, KEY_ENV, mappingScores, observeAttempt, pairedDifference, STABILITY_TOP, TOP, topOverlap, validateOptions, webDefects, type Arm, type Criterion, type Facts, type Mapper, type Mode, type Options, type Status } from './checks.ts';
 import { complaint, controlBuild, fixture, FIXTURE_VERSION, generic, germanProbe, grounded, gym, M3_SEEDS, M4_SEEDS, M5_SEEDS, SEED, subset, type Fixture } from './fixture.ts';
 import { atScale, buyerTextCriterion, controlFrameCriterion, d28Criterion, D26_FRAME, designCase, designSkipped, DESIGN_PERSONAS, FIGMA_LISTING, frameMismatchCriterion, frameMismatches, textCase } from './m5.ts';
@@ -254,7 +255,7 @@ export async function runAcceptance(options: Options, env: Record<string, string
 interface SeedRun extends SeedLog { responses: Map<number, unknown>; spread: Spread | null; run_status: string | null; cost_usd: number | null; report?: Report }
 
 /** One seeded run with its evidence in `<out>/<name>`; social runs get the injected complaint and their spread (M4), others only the report (M3). */
-async function runSeed(name: string, seed: number, data: Fixture, options: Options, pool: BrowserPool, allowance: Allowance, env: Record<string, string | undefined>, social: boolean, assets: string[] = []): Promise<SeedRun> {
+async function runSeed(name: string, seed: number, data: Fixture, options: Options, pool: BrowserPool, allowance: Allowance, env: Record<string, string | undefined>, social: boolean, assets: string[] = [], prior?: RunConfig['prior']): Promise<SeedRun> {
   const dir = join(options.out, name);
   mkdirSync(dir);
   const projectDir = join(dir, 'project');
@@ -273,7 +274,7 @@ async function runSeed(name: string, seed: number, data: Fixture, options: Optio
     store.replacePersonas(data.personas);
     const blobs = createFsBlobStore(projectDir);
     for (const path of assets) await importLocalFile(blobs, path); // M5's text and frames: the project's own copies, under the ids its POIs name
-    const config = store.createRun({ ...newRunConfig(project, { personas: data.personas, sessions: [], reset: false }), seed, pause_timeout_ms: 0, injected_posts: social ? [complaint(data)] : [] });
+    const config = store.createRun({ ...newRunConfig(project, { personas: data.personas, sessions: [], reset: false, prior }), seed, pause_timeout_ms: 0, injected_posts: social ? [complaint(data)] : [] });
     run = startRun(config, { store, blobs, browsers: pool, llm, record, sessions: null });
     const report = await run.done;
     const reopened = openProject(projectDir); // every M4 check reads the log alone
@@ -635,7 +636,7 @@ export async function runM5Acceptance(options: Options, env: Record<string, stri
   return result;
 }
 
-const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed, then the same arm and seed on the no-defect control build. Arm order is shuffled per replicate with a seed, and the Gym store is reset before each run. Outcomes are run-level; whole replicates are the unit of analysis. recall_high and precision are hint-based estimates, not reviewed mappings; control_themes counts the control build\'s confirmed and observed themes.';
+const EVALUATE_SCOPE = 'Evaluation harness: the frozen population on Gym v2 (all 25 defects) with the injected complaint, one run per declared arm in each replicate, matched on population and seed, then the same arm and seed on the no-defect control build. The returning arm first runs a visit of its own, which is only its memory and is not measured. Arm order is shuffled per replicate with a seed, and the Gym store is reset before each run. Outcomes are run-level; whole replicates are the unit of analysis. recall_high and precision are hint-based estimates, not reviewed mappings; control_themes counts the control build\'s confirmed and observed themes.';
 // The predeclared benchmark fields (new_simulation.md §9); none is filled yet, so validity and efficiency cannot be claimed.
 // primary_metrics stays null until a pilot sets it; until then every interval is exploratory.
 const BENCHMARK = { human_reference_dataset: null, behavioural_error_margin: null, efficiency_margin: null, confirmatory_repeats: null, primary_metrics: null as string[] | null };
@@ -747,27 +748,34 @@ export async function runEvaluation(options: Options, env: Record<string, string
       gym: { defects: DEFECT_IDS, control: [], catalogue: 'defects.yaml', login: false }, ...source, started_at: new Date(started).toISOString(),
     });
     pool = await launchBrowserPool();
-    const measure = async (target: typeof server, name: string, seed: number, data: Fixture) => {
+    const measure = async (target: typeof server, name: string, seed: number, data: Fixture, prior?: RunConfig['prior']) => {
       const reset = await fetch(`${target.url}/__reset`, { method: 'POST' }); // jobs and users an earlier run created must not leak into this one
       if (!reset.ok) throw new Error(`The Gym reset failed with HTTP ${reset.status}.`);
-      return runSeed(name, seed, data, options, pool!, allowance, env, data.project.settings.social !== false);
+      return runSeed(name, seed, data, options, pool!, allowance, env, data.project.settings.social !== false, [], prior);
     };
     for (const entry of replicates) {
       for (const arm of entry.order) {
         if (allowance.signal.aborted) break; // later runs stay missing: no new provider calls
-        const spec: { settings?: Partial<RunSettings>; generic?: true; grounded?: true } = ARMS[arm];
+        const spec: { settings?: Partial<RunSettings>; generic?: true; grounded?: true; returning?: true } = ARMS[arm];
         const from = spec.generic ? plain : spec.grounded ? researched : base;
         const data = { ...from, project: { ...from.project, settings: { ...from.project.settings, ...spec.settings } } };
         const name = `r${entry.replicate}-${arm}`;
         const runStarted = performance.now();
-        const run = await measure(server, name, entry.seed, data);
+        // The arm's own first visit, so its place in the shuffled order changes nothing. Only the run after it is measured.
+        const first = spec.returning ? await measure(server, `${name}-first-visit`, entry.seed, data) : null;
+        if (first && first.run_status !== 'finished') {
+          entry.arms[arm] = { run_status: first.run_status, evidence: `${name}-first-visit`, duration_ms: Math.round(performance.now() - runStarted), outcomes: null, control: null };
+          continue;
+        }
+        const prior = first ? priorOf(first.events) : undefined;
+        const run = await measure(server, name, entry.seed, data, prior);
         const outcomes = run.report?.status === 'finished' ? outcomesOf(run.report, data, run.events, catalogue) : null;
         const result = { run_status: run.run_status, evidence: name, duration_ms: Math.round(performance.now() - runStarted), outcomes, control: null as { run_status: string | null; evidence: string } | null };
         entry.arms[arm] = result;
         if (!outcomes) continue;
         finished.push({ name, report: run.report });
         if (allowance.signal.aborted) continue;
-        const off = await measure(control, `${name}-control`, entry.seed, controlBuild(data, control.url));
+        const off = await measure(control, `${name}-control`, entry.seed, controlBuild(data, control.url), prior);
         result.control = { run_status: off.run_status, evidence: `${name}-control` };
         if (off.report?.status === 'finished') outcomes.control_themes = controlThemes(off.report.themes ?? []);
       }

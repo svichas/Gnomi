@@ -1,5 +1,5 @@
 import { matchThemes, type ThemeMatch } from './match.ts';
-import type { Report, ReportTheme, RunConfig } from '../types.ts';
+import type { Report, ReportMethods, ReportTheme, RunConfig } from '../types.ts';
 
 // What the runs of a repeat set have in common (features_roadmap.md item 3). Repeats test robustness inside the simulation; they
 // are not evidence about real users. Each run keeps its own report, and this is computed when read, so a rejudge needs no rewrite.
@@ -24,6 +24,7 @@ export interface RepeatSet {
   families: string[]; // the model families of the compared runs
   findings: RepeatFinding[]; // seen in the most runs first, then by rank
   trait_free?: string; // the run of personas with no traits, once it has finished; in no count above
+  prior?: ReportMethods['prior']; // a returning set: the run its personas remember; every run of a set shares it
 }
 
 /** The set's run of personas with no traits: a control, so it is one more run that no count of the set includes. */
@@ -79,6 +80,7 @@ export function combineReports(reports: Report[], live = false): RepeatSet {
   // The scan finds a rule on a page whoever browses, so a scan-only theme on either side says nothing about the personas or the model.
   const noted = (themes: ReportTheme[]) => themes.filter(({ scan_only }) => !scan_only);
   const alike = new Set(control && matchThemes(noted(clusters.map(({ first }) => first)), noted(control.themes ?? [])).pairs.filter(({ by }) => by !== 'shared_key').map(({ a }) => a));
+  const prior = reports[0]?.methods.prior;
   return {
     group: repeat?.group ?? null,
     of,
@@ -96,5 +98,6 @@ export function combineReports(reports: Report[], live = false): RepeatSet {
       ...(alike.has(first) ? { trait_free: true as const } : {}),
     })),
     ...(control ? { trait_free: control.run_id } : {}),
+    ...(prior ? { prior } : {}),
   };
 }

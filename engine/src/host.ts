@@ -20,7 +20,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { askPersona, audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
+import { askPersona, audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, returningPrior, runSet } from './workspace.ts';
 import { estimateInterview, estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
@@ -218,7 +218,7 @@ function releaseProject(project: OpenProject | null) {
 }
 
 /** The start path of a new run and of a rerun: checks each role's login, launches the first run, and lets the rest of a set follow. */
-async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Persona[], reset: boolean, rerun?: { from: RunConfig; loginUrl(url: string): string }) {
+async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Persona[], reset: boolean, rerun?: { from: RunConfig; loginUrl(url: string): string; prior?: RunConfig['prior'] }) {
   const place = here();
   const { store, blobs, record, sessions: held } = place;
   const { config } = planned[0];
@@ -244,7 +244,7 @@ async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Pe
     return { verified, browserPool };
   };
   const launch = (run: typeof planned[number], { verified, browserPool }: Awaited<ReturnType<typeof prepare>>) => {
-    const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat, from: rerun?.from }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
+    const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat, from: rerun?.from, prior: rerun?.prior }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
     const key = runKey(store.dir, started.run_id);
     runs.set(key, started);
     started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
@@ -398,10 +398,11 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     current().store.putPersona({ ...old, name, job_title, background, context_of_use, goal_interpretation, voice });
     return null;
   },
-  estimate_run({ repeats, run_id }) {
+  estimate_run({ repeats, run_id, returning }) {
     if (run_id !== undefined) {
-      const from = finishedRun(current().store, run_id);
-      return estimateFor(rerunProject(from).config, from.personas, repeats);
+      const { store } = current();
+      const from = finishedRun(store, run_id);
+      return estimateFor(rerunProject(from).config, from.personas, repeats, undefined, false, returning ? returningPrior(store, from) : undefined);
     }
     const config = project();
     return estimateFor(config, population(current().store, config), repeats);
@@ -413,14 +414,15 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
     return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret }), reset);
   },
-  async duplicate_run({ run_id, reset, repeats, urls }) {
+  async duplicate_run({ run_id, reset, repeats, urls, returning }) {
     noSetup('starting a run');
     const { store } = current();
     const from = finishedRun(store, run_id);
+    const prior = returning ? returningPrior(store, from) : undefined;
     const { config, loginUrl } = rerunProject(from, urls);
     const planned = repeatRuns(config, repeats);
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
-    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret, personas: from.personas }), reset, { from, loginUrl });
+    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret, personas: from.personas }), reset, { from, loginUrl, prior });
   },
   stop_run({ run_id, project_dir }) {
     const dir = project_dir ? resolve(project_dir) : current().store.dir;

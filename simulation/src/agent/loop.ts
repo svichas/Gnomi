@@ -5,7 +5,7 @@ import { boxIn } from '../browser/prune.ts';
 import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type PageAudit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
-import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, PageSnapshot, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
+import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, PageSnapshot, Persona, PriorPoi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { readsImages } from '../settings.ts';
 import { perceptionOf, stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
@@ -43,6 +43,8 @@ export interface EpisodeDeps {
   stepsBefore: number;
   /** The persona's opinion of this POI when the episode starts, from an earlier social phase; null or absent when it has none. */
   opinion?: Opinion | null;
+  /** In a returning run, the persona's own earlier visit to this POI, for every prompt of the episode; absent otherwise. */
+  prior?: PriorPoi;
   /**
    * A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely
    * re-recorded. Between slices it gets the `state` the persona's last page left with instead.
@@ -187,7 +189,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     // By the hash the step records, so the report models can find it and identical pages share one file.
     await blobs.put(`runs/${run_id}/snapshots/${snapshot.hash}.txt`, new TextEncoder().encode(snapshot.text));
     const scan = poi.mode === 'full' ? await deps.audit?.(page, snapshot) : null; // not a competitor's site: its problems are not the team's to fix
-    const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
+    const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, prior: deps.prior, page: snapshot, screenshot: sendShots ? shot : null });
     heard = [];
     if (signal.aborted) return null;
     try {

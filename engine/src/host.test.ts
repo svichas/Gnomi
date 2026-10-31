@@ -653,6 +653,19 @@ test('duplicate_run reruns a finished run on its frozen config and personas, and
   assert.ok(set.themes.every((theme) => theme.after.of === 2 && theme.after.seen_in === 2 && theme.status === 'unchanged'));
   await assert.rejects(call('compare_runs', { base: runs[0].run_id, run: runs[1].run_id }), /one run or one repeat set/);
   t.diagnostic(`compared ${set.themes.length} themes`);
+
+  // Only when asked, the personas remember: a plain duplicate of a returning run does not.
+  assert.ok((await call('estimate_run', { run_id: first, returning: true })).cost_usd[1] > (await call('estimate_run', { run_id: first })).cost_usd[1], 'the memory is in the estimate');
+  assert.equal(again.config.prior, undefined);
+  const { run_id: back } = await call('duplicate_run', { run_id: first, reset: false, returning: true });
+  await ended(back);
+  const row = async (run_id: string) => (await call('get_project', {})).runs.find((run) => run.run_id === run_id)!;
+  assert.equal((await row(back)).config.prior?.run_id, first);
+  assert.deepEqual((await call('get_report', { run_id: back })).methods.prior, { run_id: first, fresh: 0 });
+  assert.ok((await call('compare_runs', { base: first, run: back })).gaps.some(({ kind }) => kind === 'returning'));
+  const { run_id: later } = await call('duplicate_run', { run_id: back, reset: false });
+  await ended(later);
+  assert.equal((await row(later)).config.prior, undefined);
 });
 
 test('duplicate_run refuses a stopped run, unknown POI and a production address, and moves a web POI to its new address', async (t) => {

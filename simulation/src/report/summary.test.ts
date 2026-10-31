@@ -171,6 +171,12 @@ test('a theme nobody met first-hand says so', () => {
   assert.match(say({ themes: [heard] }), /“Save does nothing”, which no persona met first-hand: 2 personas reported it only after reading about it in the feed\. Next,/);
 });
 
+test('a theme nobody met first-hand says what the reports came from, memory or the feed', () => {
+  const second = (personas: number, remembered: number) => say({ themes: [theme({ prevalence: prevalence(0, 12), personas, remembered, heard_first: personas - remembered })] });
+  assert.match(second(2, 2), /which no persona met first-hand: 2 personas reported it after remembering it from an earlier visit\. /);
+  assert.match(second(3, 1), /which no persona met first-hand: 1 persona reported it after remembering it from an earlier visit, and 2 only after reading about it in the feed\. /);
+});
+
 test('a theme with no affected segment skips who it affects', () => {
   const built = [{ segment_id: null, name: 'Built-in persona', affected: 3, reached: 12, rate: 0.25 }];
   for (const affected of [[], built]) {

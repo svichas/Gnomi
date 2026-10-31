@@ -129,6 +129,17 @@ test('too few finished runs on a side cannot decide, and an old run with no repe
   assert.deepEqual(old.reasons, ['The earlier side has 1 finished run, and the gate needs 3 from one repeat set.']);
 });
 
+test('a returning side against a first-use side cannot decide, and two returning sides on one base can', () => {
+  const back = (runs: Report[], run_id: string) => runs.map((run) => ({ ...run, methods: { ...run.methods, prior: { run_id, fresh: 0 } } }));
+  const later = set('later', [OLD, NEW], [OLD, NEW], [OLD, NEW]);
+  const mixed = decide(base(), back(later, 'base-1'));
+  assert.equal(mixed.decision, 'could_not_decide');
+  assert.deepEqual(mixed.reasons, ["One side's personas had used the product before and the other's had not, so a change may come from what they remember rather than the build."]);
+  assert.deepEqual(titles(mixed.failing), [NEW.title], 'what would have failed stays visible');
+  assert.equal(decide(back(base(), 'r-1'), back(later, 'r-1')).decision, 'failed', 'one base is like for like');
+  assert.equal(decide(back(base(), 'r-1'), back(later, 'r-2')).decision, 'could_not_decide');
+});
+
 test('a side that was stopped cannot decide, even with enough finished runs', () => {
   const planned = (run: Report, of: number) => ({ ...run, repeat: { ...run.repeat!, of } });
   const cut = decide(base(), set('later', [OLD], [OLD], [OLD]).map((run) => planned(run, 5)));

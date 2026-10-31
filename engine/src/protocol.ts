@@ -93,8 +93,8 @@ export interface Api {
   remove_persona: { params: { id: string }; result: null };
   /** Saves hand edits to a persona's written fields; sampled traits stay as they were. */
   edit_persona: { params: { persona: Persona }; result: null };
-  /** With `repeats`, the whole set: the estimate of every run together. With `run_id`, of running that finished run again. */
-  estimate_run: { params: { repeats?: number; run_id?: string }; result: RunEstimate };
+  /** With `repeats`, the whole set: the estimate of every run together. With `run_id`, of running that finished run again, and `returning`, with the memory that adds to each prompt. */
+  estimate_run: { params: { repeats?: number; run_id?: string; returning?: boolean }; result: RunEstimate };
   /**
    * Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use.
    * With `repeats` it answers with the first run; the rest of the set follow one after another, each with its logins checked again and
@@ -104,8 +104,9 @@ export interface Api {
   /**
    * Runs a finished run again with its frozen config and personas and a new run id, through start_run's path and refusals. `urls` moves
    * web POIs to a new address by POI id, and each new host joins that POI's allowed hosts. Refuses a run that did not finish.
+   * `returning`, never the default: the personas remember that run, and every run of a set remembers the same one. Refuses a comparison study.
    */
-  duplicate_run: { params: { run_id: string; reset: boolean; repeats?: number; urls?: Record<string, string> }; result: { run_id: string } };
+  duplicate_run: { params: { run_id: string; reset: boolean; repeats?: number; urls?: Record<string, string>; returning?: boolean }; result: { run_id: string } };
   /** Also ends the project's repeat set, even when the run has already logged its end and so stays finished. */
   stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */

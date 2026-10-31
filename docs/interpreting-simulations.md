@@ -20,6 +20,8 @@ Existing report fields named `evidence` contain **simulation records**. They mak
 
 A segment can be grounded in a team's analytics or research notes, and the report's methods then name those sources. Grounded personas are still fictional, and their findings are still hypotheses: real data can make a persona look more credible without making it more accurate. Data used to write personas cannot also test them.
 
+**Returning personas** remember an earlier run of theirs, so such a report says little about first use, and it says so at the top. Their memory is a short summary handed to a model, not what a person who came back would recall, and nothing yet shows that they behave like returning people. A persona that repeats a complaint from its earlier visit counts apart from those who met it first-hand: "2 more reported it after remembering it from an earlier visit". A repeat can still be a real problem that is still there, so read it as a place to look. A returning side and a first-use side are not like for like, so a comparison says so and the CI gate cannot decide. Findings from returning personas are hypotheses like any other.
+
 ## Read trust labels within the simulation
 
 - **Confirmed:** a generated self-report aligns with an observed signal under the report's matching rules. This means corroboration within the run, not confirmation by real participants.

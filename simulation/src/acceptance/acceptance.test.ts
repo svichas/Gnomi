@@ -11,7 +11,7 @@ import { mapThemes, rescoreEvaluation, runEvaluation, unmappedRuns } from './run
 import { traitFree } from '../persona.ts';
 import type { LlmAttempt, LlmGateway } from '../seams.ts';
 import { profileBlock } from '../agent/prompt.ts';
-import type { Persona, Report, ReportTheme } from '../types.ts';
+import type { EventOf, GnomiEvent, Persona, Report, ReportTheme } from '../types.ts';
 
 test('the frozen acceptance fixture is deterministic, has fifty people and a guaranteed German probe', () => {
   const first = fixture('http://localhost:4317');
@@ -321,7 +321,7 @@ test('a mapper names a provider and a model, runs with --evaluate only, and come
 test('evaluate mode takes repeats and arms, always with the baseline', () => {
   const options = parseOptions(['--evaluate', '--arms', 'baseline,social_off']);
   assert.deepEqual([options.evaluate, options.repeats, options.arms, options.mode], [true, 5, ['baseline', 'social_off'], 'scripted']);
-  assert.equal(parseOptions(['--evaluate']).arms?.length, 12);
+  assert.equal(parseOptions(['--evaluate']).arms?.length, 13);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,finding_check']).arms, ['baseline', 'finding_check']);
   assert.deepEqual(parseOptions(['--evaluate', '--arms', 'baseline,text_only,fewer_rounds']).arms, ['baseline', 'text_only', 'fewer_rounds']);
   assert.throws(() => parseOptions(['--evaluate', '--arms', 'social_off']), /include baseline/);
@@ -435,6 +435,35 @@ test('the grounded arm carries the stored remarks into its prompts and names its
   assert.ok(read('r1-grounded-control', 'report.json').methods.grounding, 'its control run freezes the same audience');
   assert.equal(read('r1-baseline', 'report.json').methods.grounding, undefined);
   assert.equal(read('r1-grounded', 'events.json').some((e: { type: string; payload: { purpose?: string } }) => e.type === 'llm.call' && e.payload.purpose === 'ground_segment'), false);
+});
+
+test('the returning arm carries the first visit into its prompts and opinions, and what it repeats leaves its first-hand counts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-evaluate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = join(dir, 'run');
+  const result = await runEvaluation(parseOptions(['--evaluate', '--repeats', '1', '--arms', 'baseline,returning', '--personas', '4', '--out', out]));
+  assert.equal(result.error, null);
+  assert.equal(result.recorded_cost_usd, 0);
+  assert.equal(result.complete_replicates, 1);
+  const read = (run: string, file: string) => JSON.parse(readFileSync(join(out, run, file), 'utf8'));
+  const prompts = (run: string) => read(run, 'transcripts.json').flatMap(({ request }: { request: { user?: { text?: string }[] } }) => (request.user ?? []).map((part) => part.text ?? '')).join('\n');
+  assert.match(prompts('r1-returning'), /own earlier visit, remembered imperfectly/, 'prompts carry the memory');
+  for (const run of ['r1-baseline', 'r1-returning-first-visit']) assert.doesNotMatch(prompts(run), /remembered imperfectly/);
+
+  const events: GnomiEvent[] = read('r1-returning', 'events.json');
+  const started = events.find((e): e is EventOf<'run.started'> => e.type === 'run.started')!.payload.config;
+  const firstStep = events.findIndex((e) => e.type === 'persona.step');
+  const seeded = events.slice(0, firstStep).filter((e): e is EventOf<'persona.opinion_changed'> => e.type === 'persona.opinion_changed');
+  assert.ok(seeded.length > 0, 'opinions start from the earlier run');
+  for (const seed of seeded) assert.deepEqual(seed.payload.after, started.prior!.memories[seed.persona_id!].pois[seed.poi_id!].opinion);
+
+  const [first, again]: Report[] = [read('r1-returning-first-visit', 'report.json'), read('r1-returning', 'report.json')];
+  const counts = ({ themes = [] }: Report) => ({ first_hand: themes.reduce((sum, theme) => sum + (theme.first_hand?.length ?? 0), 0), remembered: themes.reduce((sum, theme) => sum + (theme.remembered ?? 0), 0) });
+  assert.ok(counts(first).first_hand > 0 && counts(first).remembered === 0, JSON.stringify(counts(first)));
+  assert.ok(counts(again).remembered > 0 && counts(again).first_hand < counts(first).first_hand, JSON.stringify(counts(again)));
+  assert.deepEqual(again.methods.prior, { run_id: first.run_id, fresh: 0 });
+  assert.ok(read('r1-returning-control', 'report.json').methods.prior, 'its control run comes back too');
+  assert.equal(read('r1-baseline', 'report.json').methods.prior, undefined);
 });
 
 test('the finding_check arm runs the check on its own runs only', async (t) => {

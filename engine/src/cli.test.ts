@@ -616,6 +616,47 @@ test('rerun runs a finished run again on what it froze, and compare reads the tw
   assert.ok(against.themes.every((theme: { after: { of: number } }) => theme.after.of === 2));
 });
 
+test('rerun --returning has personas remember the named run, every run of a set the same one, and a plain rerun carries nothing forward', () => {
+  const project = join(dir, 'returning');
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  const configs = () => { const store = openProject(project, { readOnly: true }); try { return Object.fromEntries(store.listRuns().map((run) => [run.run_id, run.config])); } finally { store.close(); } };
+  const logged = (run_id: string) => { const store = openProject(project, { readOnly: true }); try { return store.transcripts(run_id).map(({ request_json }) => request_json).join('\n'); } finally { store.close(); } };
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+
+  const plain = lines('estimate', project, '--base', 'r-0001').at(-1);
+  const priced = lines('estimate', project, '--base', 'r-0001', '--returning').at(-1);
+  assert.ok(priced.cost_usd[1] > plain.cost_usd[1], `the estimate counts the memory: ${priced.cost_usd} over ${plain.cost_usd}`);
+
+  const set = lines('rerun', project, '--base', 'r-0001', '--returning', '--repeats', '2');
+  assert.deepEqual(set.at(-1).run_ids, ['r-0002', 'r-0003']);
+  assert.deepEqual(set.at(-1).prior, { run_id: 'r-0001', fresh: 0 }, "the set's own line names the run they remember");
+  assert.deepEqual(lines('report', project, '--repeat', set.at(-1).group).at(-1).prior, { run_id: 'r-0001', fresh: 0 });
+  assert.match(cli('report', project, '--repeat', set.at(-1).group, '--format', 'md'), /> These personas used the product before, in r-0001/);
+  const runs = configs();
+  assert.equal(runs['r-0001'].prior, undefined);
+  assert.equal(runs['r-0002'].prior!.run_id, 'r-0001');
+  assert.deepEqual(runs['r-0003'].prior, runs['r-0002'].prior, 'not the run before it in the set');
+  assert.match(logged('r-0002'), /remembered imperfectly/);
+
+  const { report } = lines('report', project, '--run', 'r-0002', '--format', 'json').at(-1);
+  assert.deepEqual(report.methods.prior, { run_id: 'r-0001', fresh: 0 });
+  assert.ok(report.themes.some((theme: { remembered?: number; first_hand: string[] }) => theme.remembered === 1 && theme.first_hand.length === 0), JSON.stringify(report.themes));
+  assert.match(cli('report', project, '--run', 'r-0002', '--format', 'md'), /> These personas used the product before, in r-0001, so this run says little about first use\.[\s\S]*1 more reported it after remembering it from an earlier visit/);
+  assert.match(lines('report', project, '--run', 'r-0002').at(-1).report.returning, /in r-0001/);
+  assert.ok(lines('compare', project, '--base', 'r-0001', '--run', 'r-0002').at(-1).gaps.some(({ kind }: { kind: string }) => kind === 'returning'));
+
+  lines('rerun', project, '--base', 'r-0002'); // r-0004
+  assert.equal(configs()['r-0004'].prior, undefined, 'without the flag a returning run\'s memory stays behind');
+  assert.doesNotMatch(logged('r-0004'), /remembered imperfectly/);
+  lines('rerun', project, '--base', 'r-0002', '--returning'); // r-0005
+  assert.equal(configs()['r-0005'].prior!.run_id, 'r-0002', 'one visit deep: the latest, not the first');
+
+  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' }).stderr;
+  assert.match(refused('run', '--pois', join(dir, 'pois.json'), '--returning'), /--returning needs a run to remember/);
+  assert.match(refused('estimate', '--pois', join(dir, 'pois.json'), '--returning'), /--returning needs a run to remember/);
+  assert.match(refused('rerun', project, '--base', 'r-0009', '--returning'), /There is no run r-0009/);
+});
+
 test('estimate --base prices a rerun on what the run froze, not on the defaults, in a project with no pois file', () => {
   const project = join(dir, 'rerun-estimate');
   const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
@@ -662,6 +703,7 @@ test('rerun and compare refuse what cannot work, before anything runs', () => {
     assert.equal(db.prepare("SELECT status FROM run WHERE id = 'r-0002'").get()?.status, 'running');
     db.exec("UPDATE run SET status = 'stopped' WHERE id = 'r-0002'");
     assert.match(fails('rerun', project, '--base', 'r-0002', '--fake-llm'), /r-0002 is stopped, and only a finished run/);
+    assert.match(fails('rerun', project, '--base', 'r-0002', '--returning', '--fake-llm'), /r-0002 is stopped, and only a finished run/);
   } finally {
     db.close();
   }
@@ -802,6 +844,7 @@ test('--also-trait-free adds one run to a set, in its snapshot alone, and only a
   assert.ok(!compared.notes.some((note: string) => note.includes('did not finish')), compared.notes.join(' | '));
 
   assert.match(refused('rerun', project, '--base', 'r-0003').stderr, /r-0003 is a set's trait-free run/);
+  assert.match(refused('rerun', project, '--base', 'r-0003', '--returning').stderr, /r-0003 is a set's trait-free run/);
   assert.match(refused('rerun', project, '--base', 'r-0001', '--also-trait-free').stderr, /--also-trait-free is for run/);
   const empty = join(dir, 'trait-free-none');
   assert.match(refused('run', '--pois', pois, '--goal', 'Pick a plan', '--project', empty, '--also-trait-free').stderr, /needs an audience/);

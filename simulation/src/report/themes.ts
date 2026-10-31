@@ -195,6 +195,15 @@ const KIND_TITLE: Record<CandidateKind, string> = {
 
 export const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
 
+/**
+ * A group key without its page's host: a Gym's port changes with every start, and a PR preview has its own host.
+ * shortcut: two hosts of one POI with the same path count as one page, keep the host if a POI ever spans sites.
+ */
+export function hostless(key: string): string {
+  const [poi_id, page, ...rest] = JSON.parse(key) as [string, string | null, ...string[]];
+  return JSON.stringify([poi_id, page && pathOf(page), ...rest]);
+}
+
 /** A persona's words as a title: the first sentence, cut at a word when it is still too long. */
 function headline(text: string): string {
   const first = text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/\.$/, '');
@@ -357,30 +366,60 @@ export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, r
   return { affected, severity: median([...worst.values()]), trust: maxTrust(members), trust_counts, prevalence: share, score: share.low * weight };
 }
 
-interface Echoes {
+export interface Echoes {
   feeds: EventOf<'social.feed_viewed'>[]; // in seq order
-  heard: Map<number, string[]>; // step seq → the posts handed to that step; empty in logs from before heard ids
+  heard: Map<number, string[]>; // step or report seq → the posts handed to it; empty in logs from before heard ids
   authors: Map<string, string>; // post id → the persona who wrote it
   rounds: Map<number, number>; // event seq → its round
+  remembered: Map<string, Set<string>>; // persona → the keys of the complaints in its memory of an earlier visit; empty unless the run is a returning one
 }
+
+/** What a report's first-hand count, and a memory of the run (report/prior.ts), read from the log. */
+export function echoesOf(events: GnomiEvent[]): Echoes {
+  const config = events.find((e) => e.type === 'run.started')?.payload.config;
+  return {
+    feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
+    heard: new Map(events.flatMap((e) => ((e.type === 'persona.step' || e.type === 'persona.friction_reported') && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
+    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
+    rounds: new Map(events.map((e) => [e.seq, e.round])),
+    remembered: new Map(Object.entries(config?.prior?.memories ?? {}).map(([id, { pois: visited }]) => [id, new Set(Object.values(visited).flatMap(({ frictions }) => frictions.map(({ key }) => key)))])),
+  };
+}
+
+/** The posts among `ids` that are not this persona's own. */
+export const othersPosts = (ids: string[], persona_id: string, { authors }: Echoes) => ids.filter((id) => authors.get(id) !== persona_id);
+
+/** A report that says again what its persona complained of on the earlier visit its prompts showed it. */
+const remembers = (c: Candidate, echoes: Echoes) => !!echoes.remembered.get(c.persona_id)?.has(hostless(groupKey(c)));
+
+/** Another persona's posts handed to a report: a design's friction on an earlier frame sits on that frame's step but was written with the later step's posts. */
+const handed = (c: Candidate, echoes: Echoes) => othersPosts([c.step_seq ?? -1, c.seqs[0]].flatMap((seq) => echoes.heard.get(seq) ?? []), c.persona_id, echoes);
+
+/** A browser cannot repeat a post or a memory; a scan's signal may be on anyone's step, so it says nothing here. */
+const witnessed = (c: Candidate) => c.signals.some((s) => s !== 'accessibility');
+
+/** Whether a feed showed the report's persona a post the judge tagged with this theme before it reported (when it tagged any). */
+function fed(c: Candidate, theme: string, tagged: Map<string, string[]> | null, echoes: Echoes): boolean {
+  const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
+  return !!shown && shown.seq < c.seqs[0];
+}
+
+/** A report that may hold another persona's words, so a memory leaves it out: a browser signal shows the persona met it, but not whose words it wrote with a post in the prompt. */
+const echoesOther = (c: Candidate, theme: string, tagged: Map<string, string[]> | null, echoes: Echoes) => handed(c, echoes).length > 0 || (!witnessed(c) && fed(c, theme, tagged, echoes));
 
 /**
  * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal on their own step, or made before any feed
  * showed them a post the judge tagged with the theme (when it tagged any), and not at a step that was handed a post by a persona
- * who met the theme at an earlier round and step.
+ * who met the theme at an earlier round and step, nor one repeating a complaint from the persona's earlier visit.
  */
 function firstHand(members: Candidate[], theme: string, tagged: Map<string, string[]> | null, echoes: Echoes): Set<string> {
   // Seqs order completion, not time, across personas running at once; round then step number is the persona's own clock.
   const at = (c: Candidate) => [echoes.rounds.get(c.seqs[0]) ?? 0, c.step_no ?? Infinity];
   const earlier = (a: Candidate, b: Candidate) => at(a)[0] < at(b)[0] || (at(a)[0] === at(b)[0] && at(a)[1] < at(b)[1]);
   const echo = (c: Candidate) => {
-    if (c.signals.some((s) => s !== 'accessibility')) return false; // a browser signal cannot repeat a post; a scan's may be on anyone's step, so it says nothing here
-    const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
-    if (shown && shown.seq < c.seqs[0]) return true;
-    return (echoes.heard.get(c.step_seq ?? -1) ?? []).some((id) => {
-      const author = echoes.authors.get(id);
-      return author !== undefined && author !== c.persona_id && members.some((m) => m.persona_id === author && earlier(m, c));
-    });
+    if (witnessed(c)) return false;
+    if (remembers(c, echoes) || fed(c, theme, tagged, echoes)) return true;
+    return handed(c, echoes).some((id) => members.some((m) => m.persona_id === echoes.authors.get(id) && earlier(m, c)));
   };
   return new Set(members.filter((c) => !echo(c)).map((c) => c.persona_id));
 }
@@ -652,13 +691,9 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const themes: ReportTheme[] = [];
   const set_aside: ReportTheme[] = [];
   const tagged = new Map<string, string[]>();
-  const checkOn = events.find((e) => e.type === 'run.started')?.payload.config.project.settings?.finding_check;
-  const echoes: Echoes = {
-    feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
-    heard: new Map(events.flatMap((e) => (e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
-    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
-    rounds: new Map(events.map((e) => [e.seq, e.round])),
-  };
+  const config = events.find((e) => e.type === 'run.started')?.payload.config;
+  const checkOn = config?.project.settings?.finding_check;
+  const echoes = echoesOf(events);
 
   for (const poi_id of pois) {
     // Each POI says the same things, so with several each note names its POI.
@@ -709,6 +744,9 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const met = felt(members);
         const personas = new Set(met.map((m) => m.persona_id)).size;
         const hand = firstHand(met, id, themeTags, echoes);
+        // A persona both remembered it and heard of it counts here, once: its own memory came before any feed.
+        const remembered = new Set(met.filter((m) => !hand.has(m.persona_id) && remembers(m, echoes)).map((m) => m.persona_id)).size;
+        const echoed = met.filter((m) => echoesOther(m, id, themeTags, echoes)).map((m) => m.seqs[0]);
         const interference = members.filter((m) => m.interference).length;
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
@@ -721,8 +759,10 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           named_by: draft.named_by,
           category: categoryOf(draft.groups[0].kind),
           prevalence: share,
-          heard_first: personas - hand.size,
+          heard_first: personas - hand.size - remembered,
+          ...(remembered > 0 && { remembered }),
           first_hand: [...hand],
+          ...(echoed.length > 0 && { echoed }),
           ...(met.length === 0 && { scan_only: true as const }),
           trust,
           trust_counts,

@@ -11,6 +11,11 @@ const SEGMENTS = 3; // named in full, the worst hit first
 const list = new Intl.ListFormat('en');
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
+/** Why a theme nobody met first-hand was reported at all. */
+const secondHand = ({ personas, remembered = 0 }: ReportTheme) => (remembered
+  ? `${count(remembered, 'persona')} reported it after remembering it from an earlier visit${personas > remembered ? `, and ${personas - remembered} only after reading about it in the feed` : ''}`
+  : `${count(personas, 'persona')} reported it only after reading about it in the feed`);
+
 /** Who a theme's share counts: the page holds for a site only, and a theme of survey answers has no page. */
 function exposed(theme: ReportTheme, poi?: Report['pois'][number]) {
   if (poi?.type === 'text') return 'who read the text';
@@ -22,7 +27,7 @@ function reach(theme: ReportTheme, verb: 'met' | 'raised', poi?: Report['pois'][
   const share = theme.prevalence;
   if (theme.scan_only) return 'found by the accessibility scan, which says nothing about how many personas met it';
   if (!share) return `${verb} by ${count(theme.personas, 'persona')}`; // older reports have no denominator
-  if (share.personas === 0) return `which no persona ${verb} first-hand: ${count(theme.personas, 'persona')} reported it only after reading about it in the feed`;
+  if (share.personas === 0) return `which no persona ${verb} first-hand: ${secondHand(theme)}`;
   return `${verb} by ${share.personas} of ${count(share.exposed, 'persona')} ${exposed(theme, poi)}`;
 }
 

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, HIDDEN_FRICTIONS, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, sharedText, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, HIDDEN_FRICTIONS, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, priorNotice, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, sharedText, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { isTraitFree, type RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { HIDDEN_ALL, writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
@@ -73,7 +73,7 @@ const EVIDENCE_LEVEL = {
   strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it' },
   some: { text: 'Some evidence', plain: 'two or more personas' },
   single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern' },
-  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed first' },
+  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed, or was repeating an earlier visit' },
 } as const satisfies Record<EvidenceLevel, { text: string; plain: string }>;
 const evidenceOf = (finding: { prevalence?: Prevalence; personas: number }): EvidenceLevel => finding.prevalence?.level ?? (finding.personas <= 1 ? 'single' : 'some');
 // One persona or none met it first-hand: worth a look, not a reason to fix something first.
@@ -242,7 +242,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           <div className="report-evidence-heading"><Icon name="activity" size={16} /><h5>Behind this finding</h5></div>
           <div className="flex flex-wrap items-center gap-2">{!theme.scan_only && <EvidenceChip finding={theme} />}<TrustBadge trust={theme.trust} counts={theme.trust_counts} /></div>
           {!theme.scan_only && <>
-            <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}, {count(theme.frictions, 'report')}</p>
+            <p className="text-xs text-stone-500"><Share finding={theme} noun="affected" />{theme.heard_first ? `, +${theme.heard_first} more after reading the feed` : ''}{theme.remembered ? `, +${theme.remembered} more after remembering it from an earlier visit` : ''}, {count(theme.frictions, 'report')}</p>
             {theme.interference && <p className="text-xs text-stone-500">{interferenceNote(theme)}.</p>}
             <Affected theme={theme} />
             {theme.drivers && <ul className="space-y-1 text-xs text-stone-600">{theme.drivers.map((driver) => <li key={`${driver.id}/${attributeKey(driver.value)}`}>{driverText(driver)}</li>)}</ul>}
@@ -314,7 +314,7 @@ function Priorities({ themes, setAside, pois, hidAll, onInspect, renderScreensho
         <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : hidAll ? HIDDEN_ALL : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
-      {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
+      {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, remembered from an earlier visit, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
       {setAside.length > 0 && <Fold id="set-aside-title" title={`Set aside by the evidence check (${setAside.length})`} hint="A model's review points away from the product; each reason is here" icon="report"><SetAside themes={setAside} pois={pois} /></Fold>}
       {competitors.length > 0 && <Fold id="competitor-findings-title" title={`Competitor findings (${competitors.length})`} hint="Friction on the other products in this run" icon="globe"><Findings themes={competitors} empty="" {...props} /></Fold>}
     </div>
@@ -671,6 +671,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         <p className="report-context"><Icon name="people" size={14} />{count(report.personas.length, 'simulated user')}<span aria-hidden="true">·</span>Findings to validate with real people</p>
         {report.shared && <Note tone="info">{sharedText(report.shared)}</Note>}
         {report.repeat && <p className="text-sm text-stone-600">Run {report.repeat.index} of {report.repeat.of} in a repeat set{isTraitFree(report) && ', of personas with no traits'}.{repeats && ` ${setNote(repeats)}`}</p>}
+        {report.methods.prior && <Note tone="info">{priorNotice(report.methods.prior)}</Note>}
         {report.status === 'stopped' && report.stop_reason && (report.stop_reason.startsWith('error: ') ? <Note tone="error">{stopText(report.stop_reason)}</Note> : <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>)}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}

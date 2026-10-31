@@ -37,6 +37,7 @@
     "./report/markdown.ts": "./src/report/markdown.ts",
     "./report/match.ts": "./src/report/match.ts",
     "./report/models.ts": "./src/report/models.ts",
+    "./report/prior.ts": "./src/report/prior.ts",
     "./report/repeats.ts": "./src/report/repeats.ts",
     "./report/similarity.ts": "./src/report/similarity.ts",
     "./report/study.ts": "./src/report/study.ts",

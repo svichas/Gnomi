@@ -14,7 +14,7 @@ Each id stands for its whole repeat set, so any run of a set gives the same answ
 | --- | --- | --- |
 | 0 | `passed` | No theme fails, and the two sides are like for like. |
 | 1 | `failed` | A theme with status `new` is high severity in at least two later runs, and those runs tie to each other by more than one shared key. |
-| 2 | `could_not_decide` | A side has too few finished runs, a set was cut short, nobody got a valid model answer in a run, or the sides differ in model, personas, goal or POIs. Personas differ when anything about them does, not only their ids and names. So does anything else that stops the gate, such as an unknown run id or a bad flag. |
+| 2 | `could_not_decide` | A side has too few finished runs, a set was cut short, nobody got a valid model answer in a run, the sides differ in model, personas, goal or POIs, or one side's personas remember an earlier run (`rerun --returning`) and the other's do not, or remember another one. Personas differ when anything about them does, not only their ids and names. So does anything else that stops the gate, such as an unknown run id or a bad flag. |
 
 High severity is the rule the priority labels use (`isSevere` in [report/themes.ts](../simulation/src/report/themes.ts)): a severity that rounds to 3 or more of 4. A theme's severity is a median, so 2.5 counts. Each later run's theme is judged on its own severity, and sightings are tied to each other rather than to the first one, so the verdict does not depend on which run came first. One limit remains: a comparison groups themes run by run, so a run with two themes that each share one key with an earlier run's can put a sighting on a row of its own, where it counts alone.
 

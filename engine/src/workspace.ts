@@ -18,6 +18,7 @@ import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
 import { reportToMarkdown, studyPlanToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { priorOf } from '@gnomi/simulation/report/prior.ts';
 import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, isCalendarDate, localDate, NOTE_MAX, runStudyPlan, topFindings } from '@gnomi/simulation/report/study.ts';
 import { newRunConfig, startRun, type RunDeps, type RunHandle } from '@gnomi/simulation/run.ts';
@@ -303,6 +304,12 @@ export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
   return run.config;
 }
 
+/** What a returning run freezes, from a run finishedRun let through: read once here, so each run of a set remembers the same visit and none reads that log. */
+export function returningPrior(store: ProjectStore, from: RunConfig): NonNullable<RunConfig['prior']> {
+  if (from.project.comparison) throw new Error(`${from.run_id} is a comparison study, whose personas assess tools rather than use a product, so nobody can return to it.`);
+  return priorOf(store.events(from.run_id));
+}
+
 /** `url` on the old address's origin, moved to the new one; anywhere else it stays. */
 function moved(url: string, from: string, to: string): string {
   const [at, old, next] = [URL.parse(url), URL.parse(from), URL.parse(to)];
@@ -340,9 +347,9 @@ export function rerunProject(from: RunConfig, urls: Record<string, string> = {})
  * The sum over a set's runs: the --also-model run has its own prices, and the runs go one after another, so their minutes add up too.
  * Each run stops at its share, so a total within the budget can hide a run over its share: `run_high_usd` is the dearest run's high estimate.
  */
-export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice, withTraitFree = false): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
+export function estimateFor(config: ProjectConfig, personas: Persona[], repeats = 1, also?: ModelChoice, withTraitFree = false, prior?: RunConfig['prior']): RunEstimate & { run_budget_usd: number; run_high_usd: number } {
   const runs = repeatRuns(config, repeats, also, withTraitFree);
-  const each = runs.map((run) => estimateRun({ personas: runPersonas(run, personas), settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison }));
+  const each = runs.map((run) => estimateRun({ personas: runPersonas(run, personas), settings: run.config.settings, audience: config.audience, pois: config.pois, comparison: config.comparison, prior }));
   const sum = (pick: (estimate: RunEstimate) => number) => each.reduce((total, estimate) => total + pick(estimate), 0);
   return {
     calls: sum((e) => e.calls),
@@ -394,13 +401,13 @@ export function requireCredential(settings: RunSettings, role: LlmRole, { provid
 export function launchRun(
   store: ProjectStore,
   config: ProjectConfig,
-  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat']; from?: RunConfig },
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat']; from?: RunConfig; prior?: RunConfig['prior'] },
   deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
 ): RunHandle {
   let handle: RunHandle | undefined;
   const llm = projectGateway({ fake: deps.fake, secrets: deps.secrets, config, record: deps.record, onThrottle: (provider) => handle?.throttle(provider) });
   const base = newRunConfig(config, run);
-  // A rerun keeps what the run froze: a run without an audience draws a new seed otherwise, and the signal defaults may have moved.
+  // A rerun keeps what the run froze: a run without an audience draws a new seed otherwise, and the signal defaults may have moved. Its `prior` stays behind unless asked for.
   const frozen = run.from ? { seed: run.from.seed, ...(run.from.signals ? { signals: run.from.signals } : {}) } : {};
   handle = startRun(store.createRun({ ...base, ...frozen, pause_timeout_ms: run.pause_timeout_ms ?? base.pause_timeout_ms }), { store, blobs: deps.blobs, browsers: deps.browsers, llm, record: deps.record, sessions: deps.sessions });
   return handle;

@@ -10,7 +10,7 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
 import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
@@ -25,7 +25,7 @@ import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts'
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, EDIT_WARNING, forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
 import { gateDecision, type GateDecision } from '@gnomi/simulation/report/gate.ts';
-import { diffToMarkdown, gateToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { diffToMarkdown, gateToMarkdown, priorNotice, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
 import { combineReports, isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { NOTE_WARNING } from '@gnomi/simulation/report/study.ts';
@@ -49,8 +49,8 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
-  estimate <project dir> --base <run id> [--repeats <n>]
-      what rerun would cost, on that run's frozen settings and personas.
+  estimate <project dir> --base <run id> [--repeats <n>] [--returning]
+      what rerun would cost, on that run's frozen settings and personas. --returning counts the memory each prompt carries.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
       [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
       [--repeats <n>] [--also-model <provider:model>] [--also-trait-free]
@@ -63,9 +63,11 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       --repeat compares the runs of a repeat set; each run keeps its own report. --for-sharing gives one run's copy for sharing, as
       the app exports it: without the findings "edit" hid, with its wording, and saying how many it hid and reworded. Without it you
       read what the run found.
-  rerun <project dir> --base <run id> [--repeats <n>] [--url <poi id>=<url>]... [--fake-llm] [--headed]
+  rerun <project dir> --base <run id> [--repeats <n>] [--url <poi id>=<url>]... [--returning] [--fake-llm] [--headed]
       runs a finished run again with its frozen settings, personas and goal, under a new run id. --url gives a web point of interest
-      a new address, such as a PR preview, and its host joins the allowed hosts. --repeats makes a set, as run does.
+      a new address, such as a PR preview, and its host joins the allowed hosts. --repeats makes a set, as run does. --returning has
+      the personas remember the base run, for changes that confuse people who learned the old version; what they know can hide
+      first-use problems, so such a run is not like for like with a first-use run. Every run of a set remembers the base run alone.
   compare <project dir> --base <run id> --run <run id>
       what changed between two runs; a run of a repeat set stands for that set's finished runs. No model calls. "Not seen again"
       means the later run did not show a problem, not that it is fixed.
@@ -120,6 +122,7 @@ const OPTIONS = {
   repeats: { type: 'string' },
   'also-model': { type: 'string' },
   'also-trait-free': { type: 'boolean', default: false },
+  returning: { type: 'boolean', default: false },
   repeat: { type: 'string' },
   budget: { type: 'string' },
   file: { type: 'string', multiple: true },
@@ -300,7 +303,7 @@ function summarize(report: Report) {
       name: poi.name,
       themes: (report.themes ?? []).filter((t) => t.poi_id === poi.id).sort((a, b) => a.rank - b.rank).slice(0, 5)
         // A scan-only theme's prevalence of 0 is not a count of those who met it, so it gives none.
-        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }), ...(t.reworded && { reworded: true }) })),
+        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.remembered && { remembered: t.remembered }), ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }), ...(t.reworded && { reworded: true }) })),
     })),
     ...(report.study_count && { study_count: report.study_count }),
     ...(report.unmatched_outcomes && { unmatched_outcomes: report.unmatched_outcomes }),
@@ -309,6 +312,7 @@ function summarize(report: Report) {
     cost_usd: report.cost_usd,
     duration_ms: report.duration_ms,
     banner: report.banner,
+    ...(report.methods.prior && { returning: priorNotice(report.methods.prior) }),
   };
 }
 
@@ -470,7 +474,7 @@ function estimateRerun(v: Values, dir: string | undefined): void {
     const from = finishedRun(store, v.base!);
     const { config } = rerunProject(from);
     const repeats = Number(v.repeats ?? 1);
-    const e = estimateFor(config, from.personas, repeats);
+    const e = estimateFor(config, from.personas, repeats, undefined, false, v.returning ? returningPrior(store, from) : undefined);
     const budget = config.settings.cost_budget_usd;
     out(`${from.personas.length} personas${repeats > 1 ? `, ${repeats} runs` : ''}: ${estimateText(e)}; ${budgetText(e, budget)}`, { kind: 'estimate', personas: from.personas.length, runs: repeats, stale: 0, ...e, budget_usd: budget });
   } finally {
@@ -479,6 +483,7 @@ function estimateRerun(v: Values, dir: string | undefined): void {
 }
 
 async function estimate(v: Values): Promise<void> {
+  refuseReturning(v);
   const file = v.audience ? readAudienceFile(v.audience) : null;
   const settings = settingsFrom(v);
   await inTempProject(async (_store, blobs) => {
@@ -503,7 +508,7 @@ function requireKeys(planned: ReturnType<typeof repeatRuns>, settings: RunSettin
 }
 
 /** Runs what was planned, one after another: each writes its report files and prints its result, and a set ends with its comparison. */
-async function runPlanned(dir: string, store: ProjectStore, record: Recorder, planned: ReturnType<typeof repeatRuns>, personas: Persona[], v: Values, from?: RunConfig): Promise<void> {
+async function runPlanned(dir: string, store: ProjectStore, record: Recorder, planned: ReturnType<typeof repeatRuns>, personas: Persona[], v: Values, from?: RunConfig, prior?: RunConfig['prior']): Promise<void> {
   const blobs = createFsBlobStore(dir);
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
@@ -519,7 +524,7 @@ async function runPlanned(dir: string, store: ProjectStore, record: Recorder, pl
     });
     const reports = await runSet(planned, async (run) => {
       // Nobody can resume a blocked persona from a terminal, so a block ends their episode at once.
-      started = launchRun(store, run.config, { personas: runPersonas(run, personas), sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from }, {
+      started = launchRun(store, run.config, { personas: runPersonas(run, personas), sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from, prior }, {
         blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake: v['fake-llm'], secrets: envSecrets,
       });
       const report = await started.done;
@@ -542,7 +547,13 @@ async function runPlanned(dir: string, store: ProjectStore, record: Recorder, pl
   }
 }
 
+/** A flag nobody can act on here would pass for a run with memory. */
+function refuseReturning(v: Values) {
+  if (v.returning) throw new Error('--returning needs a run to remember: use rerun, or estimate with --base.');
+}
+
 async function runSimulation(v: Values): Promise<void> {
+  refuseReturning(v);
   const file = v.audience ? readAudienceFile(v.audience) : null;
   const fake = v['fake-llm'];
   const settings = settingsFrom(v);
@@ -594,6 +605,7 @@ async function rerun(v: Values, dir: string | undefined): Promise<void> {
   const store = existingProject(dir, { recover: false });
   try {
     const from = finishedRun(store, v.base);
+    const prior = v.returning ? returningPrior(store, from) : undefined;
     const { config } = rerunProject(from, urlsFrom(v));
     if (from.personas.some((persona) => roleOf(persona, config) !== null)) throw new Error(`${v.base} logs in, and recorded logins are only available in the app.`);
     const repeats = Number(v.repeats ?? 1);
@@ -602,9 +614,9 @@ async function rerun(v: Values, dir: string | undefined): Promise<void> {
     const active = store.listRuns().find((run) => run.status === 'running');
     if (active) throw new Error(`${active.run_id} is still running in this project, so another run cannot start. If its process was killed, opening the project in the app clears it.`);
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets, personas: from.personas }))[0]!;
-    const estimated = estimateFor(config, personas, repeats);
+    const estimated = estimateFor(config, personas, repeats, undefined, false, prior);
     note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, config.settings.cost_budget_usd)}`);
-    await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from);
+    await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from, prior);
   } finally {
     store.close();
   }

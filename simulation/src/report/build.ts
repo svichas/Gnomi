@@ -131,6 +131,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   const audience: Audience | null = config.project.audience ?? null;
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
+  const { prior } = config;
   const { pois } = withPois(config.project);
   const grounding = (audience?.segments ?? []).flatMap(({ id, name, grounding: real }) => (real && config.personas?.some((persona) => persona.segment_id === id)
     ? [{ segment_id: id, name, facts: real.facts.length, remarks: real.remarks.length, sources: real.sources.map((source) => source.name) }] : []));
@@ -395,6 +396,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       ...(undersized_targets.length ? { undersized_targets } : {}),
       ...(accessibility_audit.length ? { accessibility_audit } : {}),
       ...(grounding.length ? { grounding } : {}),
+      ...(prior ? { prior: { run_id: prior.run_id, fresh: population.filter((p) => !prior.memories[p.id]).length } } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },

@@ -76,7 +76,7 @@ export function roleOf(persona: Persona, project: ProjectConfig): string | null 
 }
 
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
-export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat'] }): Omit<RunConfig, 'run_id'> {
+export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat']; prior?: RunConfig['prior'] }): Omit<RunConfig, 'run_id'> {
   return {
     seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
     project: structuredClone({ ...project, persona_schema: getPersonaSchema(project.persona_schema) }),
@@ -87,6 +87,7 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
     signals: { ...DEFAULT_SIGNALS },
     ...(opts.repeat ? { repeat: opts.repeat } : {}),
+    ...(opts.prior ? { prior: structuredClone(opts.prior) } : {}),
   };
 }
 
@@ -392,6 +393,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         budget: budgets[i],
         stepsBefore,
         opinion: currentOpinion(persona.id, poi.id),
+        prior: config.prior?.memories[persona.id]?.pois[poi.id],
         openPage: openPage(persona, role),
         llm: budgetedLlm,
         blobs,
@@ -636,7 +638,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       // The host's preflight catches this first; a run started some other way ends here, logged, rather than half-scheduled.
       const idle = !project.comparison && config.personas.find((p) => assigned.get(p.id)!.length === 0);
       if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
-      for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
+      for (const persona of config.personas) {
+        record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
+        // A returning persona starts from the opinion it left with, in the log so that every step, survey, social phase and report fold starts there too.
+        for (const [poi_id, { opinion }] of Object.entries(config.prior?.memories[persona.id]?.pois ?? {})) {
+          if (opinion) record({ ...base, persona_id: persona.id, poi_id, type: 'persona.opinion_changed', payload: { poi_id, before: null, after: opinion, cause: { step_ids: [], post_ids: [] } } });
+        }
+      }
       await schedule();
     } catch (err) {
       fail(err);
