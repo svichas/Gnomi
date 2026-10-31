@@ -4,6 +4,9 @@ import { rankOrder } from './themes.ts';
 // The top of a report in a few template sentences. Every name and number comes from the report, so it costs no model call and
 // cannot invent anything. It speaks of personas in this run: its findings are hypotheses (docs/interpreting-simulations.md).
 
+/** In a copy with nothing left to show: "no problem came up" would be false, as the team hid them. */
+export const HIDDEN_ALL = 'No friction theme is left in this copy, which leaves out what the team sharing it hid.';
+
 const SEGMENTS = 3; // named in full, the worst hit first
 const list = new Intl.ListFormat('en');
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -46,7 +49,7 @@ export function writtenSummary(report: Report): string | null {
   const verb = problems.length ? 'met' : 'raised';
   return [
     ...(report.status === 'finished' ? [] : [`The run did not finish: ${started} of ${count(report.personas.length, 'persona')} started, so this covers only what they got to.`]),
-    ...(problems.length ? [] : [aside
+    ...(problems.length ? [] : [report.shared?.hidden ? HIDDEN_ALL : aside
       ? `The evidence check set aside ${aside === 1 ? 'the one friction theme' : `all ${aside} friction themes`} as a persona's mistake or the test setup. That is one model's review, so a real problem can be among them.`
       : report.pois.every((poi) => poi.competitor) // report/compare.ts counts such a run as the team's, but it tried nothing of theirs
         ? 'This run tried only competitor sites, so it has no finding on your product.'

@@ -1,4 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react';
+import { forSharing } from '@gnomi/simulation/report/edits.ts';
 import { droppedText, leftOutText, NO_SCREENER, NO_TASKS, OUTCOME_NOTE, outcomeDetails, outcomeText, OUTDATED_PLAN, STUDY_WARNING, studyCountText, studyPlanToMarkdown, UNMATCHED_NOTE } from '@gnomi/simulation/report/markdown.ts';
 import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, localDate, NOTE_MAX, NOTE_WARNING, topFindings } from '@gnomi/simulation/report/study.ts';
@@ -93,10 +94,11 @@ function Plan({ plan }: { plan: ReportStudyPlan }) {
   );
 }
 
-/** The plan's words, as study-plan.md has them, so what is copied is what the CLI would hand over. */
+/** The plan's words, as study-plan.md has them, except that this leaves the app: what the team hid or reworded goes as in any export. */
 function PlanActions({ report, plan }: { report: ReportData; plan: ReportStudyPlan }) {
   const { busy, outcome, run } = useAction();
-  const markdown = studyPlanToMarkdown(report, plan);
+  const shared = forSharing(report);
+  const markdown = studyPlanToMarkdown(shared, shared.study_plan ?? plan);
   const copy = () => run(async () => { await navigator.clipboard.writeText(markdown); return { ok: true, text: 'Study plan copied.' }; });
   const save = () =>
     run(async () => {

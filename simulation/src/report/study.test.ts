@@ -86,7 +86,7 @@ test('a plan drops what quotes the finding and counts it; the notes for the rese
   }));
   assert.deepEqual(made.screener, ['Do you hire at least once a quarter?']);
   assert.equal(made.screener_dropped, 1);
-  assert.deepEqual(made.hypotheses, [{ title: 'Salary range is hidden behind a form', poi_id: 'poi', tasks: ['Find out what this role pays.'], dropped: 1, observe: ['Watch whether the salary range is hidden behind a form for them.'] }]);
+  assert.deepEqual(made.hypotheses, [{ title: 'Salary range is hidden behind a form', poi_id: 'poi', keys: [], tasks: ['Find out what this role pays.'], dropped: 1, observe: ['Watch whether the salary range is hidden behind a form for them.'] }]);
 });
 
 test("a task is checked against every finding in the plan, not only its own, and an evidence quote counts as much as a title", () => {

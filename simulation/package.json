@@ -30,6 +30,7 @@
     "./report/build.ts": "./src/report/build.ts",
     "./report/diff.ts": "./src/report/diff.ts",
     "./report/dimensions.ts": "./src/report/dimensions.ts",
+    "./report/edits.ts": "./src/report/edits.ts",
     "./report/friction.ts": "./src/report/friction.ts",
     "./report/gate.ts": "./src/report/gate.ts",
     "./report/markdown.ts": "./src/report/markdown.ts",

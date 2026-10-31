@@ -3,9 +3,9 @@ import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
 import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
-import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
+import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, HIDDEN_FRICTIONS, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, PRIORITY_NOTE, PRIORITY_TEXT, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, sharedText, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import { isTraitFree, type RepeatSet } from '@gnomi/simulation/report/repeats.ts';
-import { writtenSummary } from '@gnomi/simulation/report/summary.ts';
+import { HIDDEN_ALL, writtenSummary } from '@gnomi/simulation/report/summary.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
@@ -15,6 +15,7 @@ import { Note, usd } from './ui.tsx';
 import { count, Fold, heading, InFile, OUTCOMES, PersonaLink, pct, SectionHeading, signed, Th, Tile } from './reportParts.tsx';
 import type { Inspect, Tone } from './reportParts.tsx';
 import { Flow } from './ReportFlow.tsx';
+import { EditFinding, EditMark, UnmatchedEdits } from './ReportEdit.tsx';
 import { Methods } from './ReportMethods.tsx';
 import { Spread } from './ReportSpread.tsx';
 import { OutcomeDetails, RecordOutcome, Study } from './ReportStudy.tsx';
@@ -225,6 +226,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
             <h4>{theme.title}</h4>
             <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats?.appeared && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{repeats?.trait_free && ` · ${repeats.trait_free}`}{theme.interference && ' · possibly interference between personas'}</span></p>
             {theme.validation && <p className="report-finding-outcome">{outcomeText(theme.validation)}</p>}
+            <EditMark theme={theme} />
           </div>
           {priority && <PriorityChip priority={priority} />}
           <SeverityChip severity={theme.severity} />
@@ -251,6 +253,7 @@ function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }:
           {theme.named_by === 'rules' && <p className="text-xs text-stone-500">Title generated from the page and element.</p>}
           {repeats && repeats.other_titles.length > 0 && <p className="text-xs text-stone-500">Named in other runs: {repeats.other_titles.join('; ')}</p>}
           {!inFile && <RecordOutcome runId={run_id} theme={theme} />}
+          {!inFile && <EditFinding runId={run_id} theme={theme} />}
         </div>
       </details>
     </li>
@@ -283,17 +286,19 @@ function SetAside({ themes, pois }: { themes: ReportTheme[]; pois: ReportData['p
         const poi = themePoi(theme, pois);
         return <li key={`${theme.poi_id}/${theme.id}`}>
           <p className="text-sm font-medium text-stone-900">{theme.title}</p>
+          <EditMark theme={theme} />
           <p className="text-sm text-stone-700">The model&rsquo;s review points to {setAsideCause(theme)}: {theme.check?.reason}</p>
           <p className="text-xs text-stone-500">{count(theme.personas, 'persona')}, {count(theme.frictions, 'report')}{poi && ` · ${poi}`}</p>
           {theme.validation && <><p className="text-sm font-medium text-stone-900">{outcomeText(theme.validation)}</p><OutcomeDetails outcome={theme.validation} title={theme.title} /></>}
           {!inFile && <RecordOutcome runId={run_id} theme={theme} />}
+          {!inFile && <EditFinding runId={run_id} theme={theme} />}
         </li>;
       })}
     </ul>
   </div>;
 }
 
-function Priorities({ themes, setAside, pois, onInspect, renderScreenshot }: { themes: ReportTheme[]; setAside: ReportTheme[]; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Priorities({ themes, setAside, pois, hidAll, onInspect, renderScreenshot }: { themes: ReportTheme[]; setAside: ReportTheme[]; pois: ReportData['pois']; hidAll: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const own = themes.filter((theme) => !pois.find((poi) => poi.id === theme.poi_id)?.competitor);
   const shared = own.filter((t) => !isSingle(t));
   const problems = shared.filter((t) => t.category !== 'objection');
@@ -306,7 +311,7 @@ function Priorities({ themes, setAside, pois, onInspect, renderScreenshot }: { t
     <div className="report-priorities">
       <section aria-labelledby="themes-title">
         <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Fix now, Next and Later suggest where to look first in this run. Open an issue for the suggested change and evidence." />
-        <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : 'No shared issues were reported in this run.'} {...props} />
+        <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : hidAll ? HIDDEN_ALL : 'No shared issues were reported in this run.'} {...props} />
       </section>
       {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
       {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
@@ -538,8 +543,9 @@ function Friction({ friction, onInspect, renderScreenshot }: { friction: ReportF
 }
 
 /** One persona folded to who they are and how it ended; opening it lists what got in their way, the worst first. */
-function PersonaReport({ persona, segment, pois, frictions, onInspect, renderScreenshot }: { persona: ReportPersona; segment?: string; pois: ReportData['pois']; frictions: ReportFriction[]; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function PersonaReport({ persona, segment, pois, frictions, hid, onInspect, renderScreenshot }: { persona: ReportPersona; segment?: string; pois: ReportData['pois']; frictions: ReportFriction[]; hid: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
+  const left = hid && persona.frictions > 0; // a copy lists what the team kept, and this persona's count is still the run's
   return (
     <li>
       <details className="disclosure" open={inFile}>
@@ -553,7 +559,7 @@ function PersonaReport({ persona, segment, pois, frictions, onInspect, renderScr
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs font-normal text-stone-600">
             <OutcomeChip outcome={persona.outcome} />
-            {frictions.length === 0 ? 'No friction' : <span className="flex items-center gap-1.5 whitespace-nowrap">{count(frictions.length, 'friction')}, worst <SeverityChip severity={frictions[0].severity} /></span>}
+            {frictions.length === 0 ? (left ? 'Left out of this copy' : 'No friction') : <span className="flex items-center gap-1.5 whitespace-nowrap">{count(frictions.length, 'friction')}, worst <SeverityChip severity={frictions[0].severity} /></span>}
           </div>
         </summary>
         <div className="disclosure-body space-y-3">
@@ -566,7 +572,7 @@ function PersonaReport({ persona, segment, pois, frictions, onInspect, renderScr
             </ul>
           )}
           {frictions.length === 0 ? (
-            <p className="text-sm text-stone-600">{persona.name} reported no friction.</p>
+            <p className="text-sm text-stone-600">{left ? HIDDEN_FRICTIONS : `${persona.name} reported no friction.`}</p>
           ) : (
             <ol className="space-y-3" aria-label={`What got in ${persona.name}'s way`}>
               {frictions.map((friction) => (
@@ -601,6 +607,7 @@ function Personas({ report, onInspect, renderScreenshot }: { report: ReportData;
             segment={segmentName(persona)}
             pois={report.pois}
             frictions={report.frictions.filter((friction) => friction.persona_id === persona.id).sort(bySeverity)}
+            hid={!!report.shared?.hidden}
             onInspect={onInspect}
             renderScreenshot={renderScreenshot}
           />
@@ -662,6 +669,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         </div>
         <p className="report-goal">{report.goal}</p>
         <p className="report-context"><Icon name="people" size={14} />{count(report.personas.length, 'simulated user')}<span aria-hidden="true">·</span>Findings to validate with real people</p>
+        {report.shared && <Note tone="info">{sharedText(report.shared)}</Note>}
         {report.repeat && <p className="text-sm text-stone-600">Run {report.repeat.index} of {report.repeat.of} in a repeat set{isTraitFree(report) && ', of personas with no traits'}.{repeats && ` ${setNote(repeats)}`}</p>}
         {report.status === 'stopped' && report.stop_reason && (report.stop_reason.startsWith('error: ') ? <Note tone="error">{stopText(report.stop_reason)}</Note> : <p className="text-sm text-stone-500">{stopText(report.stop_reason)}</p>)}
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
@@ -670,7 +678,8 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
       {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
         {summary && <section aria-label="Summary" className="report-goal">{summary}</section>}
         <Glance report={report} themes={themes} />
-        {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
+        {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} hidAll={!!report.shared?.hidden} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
+        {report.unmatched_edits && <UnmatchedEdits edits={report.unmatched_edits} />}
         <Study report={report} />
       </>}
       <div className="report-details">

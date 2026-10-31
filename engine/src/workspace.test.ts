@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { cappedGateway, checkRun, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -13,6 +13,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
@@ -307,6 +308,46 @@ test('an outcome is refused at the boundary for each thing that can be wrong, an
   const log = store.events(run_id, { types: ['finding.validated'] });
   assert.deepEqual(log.map((e) => e.type === 'finding.validated' && e.payload.note?.length), [2_000, undefined], 'today and the longest note pass, and a blank note is none');
   assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0, 'no model call');
+});
+
+test('an edit is refused at the boundary for each thing that can be wrong, and nothing is recorded', async (t) => {
+  const { store, place, run_id, end, themes } = loggedRun(t);
+  await assert.rejects(editFinding(place, { run_id, theme_id: 'g1', hidden: true }), /has not ended/);
+  end();
+  const [{ id: theme_id }] = themes();
+  const good = { run_id, theme_id };
+  await assert.rejects(editFinding(place, good), /Say what to change/);
+  await assert.rejects(editFinding(place, { ...good, title: 'x'.repeat(EDIT_TITLE_MAX + 1) }), /121 characters, and the limit is 120/);
+  await assert.rejects(editFinding(place, { ...good, description: 'x'.repeat(EDIT_DESCRIPTION_MAX + 1) }), /601 characters, and the limit is 600/);
+  await assert.rejects(editFinding(place, { ...good, theme_id: 'g99', hidden: true }), /has no finding "g99"/);
+  await assert.rejects(editFinding(place, { ...good, run_id: 'r-9999', hidden: true }), /There is no run r-9999/);
+  assert.equal(store.events(run_id, { types: ['finding.hidden', 'finding.edited', 'report.generated'] }).length, 0);
+  await editFinding(place, { ...good, title: 'x'.repeat(EDIT_TITLE_MAX), description: 'y'.repeat(EDIT_DESCRIPTION_MAX) });
+  assert.equal(themes()[0].edit?.new_title?.length, EDIT_TITLE_MAX, 'the longest pass');
+  assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0, 'no model call');
+});
+
+test('an edit keeps the other field, blank goes back to the original, and the run\'s files keep what it found', async (t) => {
+  const { dir, store, place, run_id, end, themes } = loggedRun(t);
+  end();
+  await rewriteReport(place, run_id);
+  const [theme] = themes();
+  const good = { run_id, theme_id: theme.id };
+  const markdown = () => readFileSync(join(dir, `runs/${run_id}/report.md`), 'utf8');
+  const before = markdown();
+  await editFinding(place, { ...good, title: '  Our title  ' });
+  await editFinding(place, { ...good, description: 'Our description' });
+  assert.deepEqual(themes()[0].edit, { hidden: false, new_title: 'Our title', new_description: 'Our description' });
+  await editFinding(place, { ...good, hidden: true });
+  assert.deepEqual(themes()[0].edit, { hidden: true, new_title: 'Our title', new_description: 'Our description' });
+  assert.equal(store.events(run_id).at(-1)?.type, 'report.generated', 'an open app reloads');
+  assert.equal(markdown(), before, 'report.md stays the run\'s record');
+  assert.equal(JSON.parse(readFileSync(join(dir, `runs/${run_id}/report.json`), 'utf8')).themes[0].title, theme.title);
+
+  await editFinding(place, { ...good, title: '   ' });
+  assert.deepEqual(themes()[0].edit, { hidden: true, new_title: null, new_description: 'Our description' });
+  await editFinding(place, { ...good, hidden: false, description: '' });
+  assert.equal(themes()[0].edit, undefined, 'back to what the run found');
 });
 
 test('a study plan writes its own file and report, and a failed call leaves the report as it was, an earlier plan included', async (t) => {

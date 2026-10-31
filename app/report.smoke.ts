@@ -1,6 +1,6 @@
 // Report disclosure, evidence navigation, and responsive layout in a disposable Electron project.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startGym } from '../demo/GymSite/server.ts';
 import type { Page } from 'playwright-core';
@@ -75,6 +75,7 @@ report.themes[0].drivers = [{ id: 'seniority', name: 'Seniority', value: 'Lead',
 report.themes[0].validation = { status: 'supported', note: 'Five of six participants could not tell whether the job went live.', study_date: '2026-10-12', title: 'An earlier name for this finding' };
 report.study_count = { of: 5, supported: 1, contradicted: 0, unresolved: 0, not_studied: 4 };
 report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'A finding the judge has since merged away' }];
+report.unmatched_edits = [{ title: 'A hidden finding the judge has since merged away', hidden: true, new_title: null, new_description: null }, { title: 'Another finding', hidden: false, new_title: 'Words nobody needs now', new_description: null }];
 report.study_plan = {
   screener: ['Do you hire for your company at least once a quarter?'], screener_dropped: 1, left_out: { objections: 1, competitors: 0, set_aside: 1, scan_only: 1, lower_ranked: 2 }, outdated: true,
   hypotheses: [{ title: titles[0], poi_id: report.pois[0].id, tasks: ['Post a job for a new role and make it live.'], dropped: 0, observe: ['Whether people look for a sign that the job is live.'] }, { title: titles[1], poi_id: report.pois[0].id, tasks: [], dropped: 2, observe: [] }],
@@ -320,6 +321,7 @@ try {
   assert.ok(await file.getByText("Your team's study, 12 Oct 2026: supported", { exact: true }).isVisible(), 'the export says whose the outcome is');
   assert.ok(await file.getByText('Post a job for a new role and make it live.', { exact: true }).isVisible(), 'and carries the plan');
   assert.equal(await file.getByRole('button').count(), 0, 'with no controls');
+  assert.equal(await file.getByText('Edits with no matching finding').count(), 0, 'an edit with no finding is for the team, not the file');
   await file.close();
   await page.setViewportSize({ width: 320, height: 1000 });
   // The team's own study, apart from the simulated numbers, at both widths.
@@ -332,6 +334,10 @@ try {
   assert.ok(await study.getByText('2 drafts left out because they repeated a finding\'s words.', { exact: true }).isVisible());
   assert.ok(await study.getByText(/^Left out of this plan: 2 lower-ranked findings; 1 objection; 1 set aside by the evidence check; 1 found by the accessibility scan alone/).isVisible());
   assert.match(await study.getByRole('button', { name: 'Plan again' }).locator('..').innerText(), /costs at most \$0\.\d{4}/, 'the control says the most it can cost');
+  const orphans = root.getByRole('region', { name: 'Edits with no matching finding' });
+  assert.ok(await orphans.getByText('A hidden finding the judge has since merged away', { exact: true }).isVisible(), 'an edit with no finding is shown, not dropped');
+  assert.ok(await orphans.getByText('is back in exports', { exact: false }).isVisible(), 'and the app says what that means');
+  assert.ok(await orphans.getByText('Was reworded: Words nobody needs now', { exact: true }).isVisible());
   await page.setViewportSize({ width: 320, height: 1000 });
   await assertFits(page, 'the study section fits a narrow viewport');
   await study.scrollIntoViewIfNeeded();
@@ -469,6 +475,53 @@ try {
   assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'recording an outcome makes no model call');
   assert.match(readFileSync(join(projectDir, 'runs/r-0003/report.md'), 'utf8'), /Your team's study, 2 Oct 2026: contradicted/);
   await assertFits(page, 'the recorded outcome fits a narrow viewport');
+  // An edit for sharing on the run's real report: the original stays on screen, each edit reloads it, and only the exported file changes.
+  const original = await studied.locator('h4').first().innerText();
+  const exported = async () => {
+    rmSync(exportedFile, { force: true });
+    await page.getByRole('button', { name: 'Export report' }).click();
+    while (!existsSync(exportedFile)) await page.waitForTimeout(50);
+    await page.getByText(/^Report exported to/).waitFor();
+    return readFileSync(exportedFile, 'utf8');
+  };
+  await studied.getByRole('button', { name: 'Reword for sharing' }).click();
+  await studied.getByLabel('Title for exports').fill('Our words for this finding');
+  await assertFits(page, 'the wording form fits a narrow viewport');
+  await studied.getByLabel('Title for exports').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-edit-320.png') });
+  await studied.getByRole('button', { name: 'Save wording' }).click();
+  await studied.locator('summary').first().getByText('Reworded for exports', { exact: true }).waitFor();
+  await studied.getByText('Our words for this finding', { exact: true }).waitFor();
+  assert.equal(await studied.locator('h4').first().innerText(), original, 'the original stays in place');
+  assert.ok(await studied.getByText('As the run found it', { exact: true }).isVisible(), 'and shows beside the new words');
+  await assertFits(page, 'the two wordings fit a narrow viewport');
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  const columns = await studied.locator('.report-edit-compare > div').evaluateAll((sides) => sides.map((side) => side.getBoundingClientRect().top));
+  assert.equal(columns[0], columns[1], 'side by side at desktop width');
+  await page.getByLabel('Export format').selectOption('md');
+  const reworded = await exported();
+  assert.match(reworded, /hid 0 findings from this copy and reworded 1 finding/);
+  assert.match(reworded, /Our words for this finding\n\nReworded by the team\./);
+  assert.ok(!reworded.includes(original), 'the file has the new words');
+  await studied.getByRole('button', { name: 'Hide from exports' }).click();
+  await studied.locator('summary').first().getByText('Hidden from exports', { exact: true }).waitFor();
+  assert.equal(await studied.locator('h4').first().innerText(), original, 'a hidden finding stays in place');
+  await studied.scrollIntoViewIfNeeded();
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'a hidden finding fits a narrow viewport');
+  await page.screenshot({ path: join(shots, 'report-hidden-320.png') });
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.getByLabel('Export format').selectOption('html');
+  const hiddenHtml = await exported();
+  assert.ok(hiddenHtml.includes('hid 1 finding from this copy and reworded 0 findings') && !hiddenHtml.includes(original) && !hiddenHtml.includes('Our words for this finding'), 'no export has it');
+  assert.doesNotMatch(hiddenHtml, /<button/, 'and no control reaches a file');
+  assert.ok(readFileSync(join(projectDir, 'runs/r-0003/report.md'), 'utf8').includes(original), 'report.md stays the run\'s record');
+  await page.getByLabel('Export format').selectOption('json');
+  assert.deepEqual(JSON.parse(await exported()).shared, { hidden: 1, reworded: 0 });
+  await studied.getByRole('button', { name: 'Show in exports' }).click();
+  await studied.locator('summary').first().getByText('Reworded for exports', { exact: true }).waitFor();
+  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'an edit makes no model call');
+  await page.setViewportSize({ width: 320, height: 1000 });
   const rerun = openProject(projectDir);
   const scans = rerun.events('r-0003', { types: ['accessibility.scanned'] });
   rerun.close();
@@ -493,7 +546,7 @@ try {
   await traitFreeLine.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'trait-free-320.png') });
   assert.deepEqual(errors, []);
-  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan and a study outcome on a real report, and 320–1440px layouts');
+  console.log('ok    collapsed findings, written summary, priority labels, trait counts, coverage in the methods, keyboard toggles, evidence inspector and its replay, boxes on screenshots in the app and the printed export, the drop-off flow, continued numbering, detail sections, set-aside themes, empty/legacy reports, compare and run again, the repeat count and a real repeat set read again when its last report is written, a set with a trait-free run, a study plan, a study outcome and edits for sharing on a real report, and 320–1440px layouts');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'report-failure.png'), fullPage: true });

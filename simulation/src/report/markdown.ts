@@ -4,7 +4,7 @@ import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen,
 import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
 import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
 import { isTraitFree, type RepeatSet } from './repeats.ts';
-import { writtenSummary } from './summary.ts';
+import { HIDDEN_ALL, writtenSummary } from './summary.ts';
 import { priorityOf } from './themes.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
@@ -78,6 +78,15 @@ export function studyCountText({ of, supported, contradicted, unresolved, not_st
 /** At the top of every plan: the file goes to a researcher, who must keep the hypotheses from participants. */
 export const STUDY_WARNING = 'These hypotheses come from simulated users and are unproven. Do not show them to participants: people get only the screener and the tasks. A model wrote this plan, so read it before you use it.';
 
+/** At the top of every copy for sharing the team changed anything in, and nothing the team can do removes it: a copy that hides what it left out would mislead its reader. */
+export const sharedText = ({ hidden, reworded }: NonNullable<Report['shared']>) => `The team sharing this report hid ${count(hidden, 'finding')} from this copy and reworded ${count(reworded, 'finding')}. The rest is as the run found it.`;
+
+/** On every finding whose words in a copy are the team's. */
+export const REWORDED_TEXT = 'Reworded by the team';
+
+/** Where a copy has no friction left to list: "none reported" would be false, as they went with what the team hid. */
+export const HIDDEN_FRICTIONS = 'Frictions are left out of this copy with the findings the team sharing it hid.';
+
 export const NO_TASKS = 'No task is left for this hypothesis, so write one by hand that does not mention the finding.';
 export const NO_SCREENER = 'No screener question is left, so write them by hand from who you want to reach.';
 export const OUTDATED_PLAN = 'The findings were judged again after this plan was written, so it may not match them. Plan again to catch up.';
@@ -122,7 +131,7 @@ function studyPlanLines(plan: ReportStudyPlan, heading: string): string[] {
 
 /** The plan on its own, as runs/<id>/study-plan.md: a team can hand a researcher this without the findings. */
 export const studyPlanToMarkdown = (report: Report, plan: ReportStudyPlan): string =>
-  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
+  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []), `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
 
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
@@ -280,6 +289,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     '',
     `> ${report.banner}`,
     '',
+    ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []),
     ...(summary ? [line(summary), ''] : []),
     ...(report.study_count ? [`**From your team's studies, not the simulation:** ${studyCountText(report.study_count)}`, ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
@@ -443,11 +453,14 @@ export const interferenceNote = ({ interference, frictions }: ReportTheme) => `$
 export const setAsideCause = ({ check }: ReportTheme) => (check?.verdict === 'environment' ? 'the test setup' : "a persona's mistake");
 
 // Weak signals alone make no theme, so an empty section cannot say that nothing went wrong. The undersized-target audit leaves competitors out.
-const noThemes = (aside: ReportTheme[] = [], competitor?: true) => (aside.length ? 'The evidence check set aside every theme here.' : `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`);
+const noThemes = ({ shared }: Report, aside: ReportTheme[] = [], competitor?: true) => {
+  if (shared?.hidden) return HIDDEN_ALL;
+  return aside.length ? 'The evidence check set aside every theme here.' : `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`;
+};
 
 function themeLines(report: Report, set?: RepeatSet): string[] {
   if (!report.themes) return [];
-  if (report.themes.length === 0) return ['', '## Themes', '', noThemes(report.set_aside)];
+  if (report.themes.length === 0) return ['', '## Themes', '', noThemes(report, report.set_aside)];
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
@@ -457,7 +470,7 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report, report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme), report.pois))),
   ];
@@ -481,7 +494,7 @@ function setAsideLines(report: Report): string[] {
     SET_ASIDE_TEXT, '',
     ...report.set_aside.map((t) => {
       const poi = themePoi(t, report.pois);
-      return `- **${line(t.title)}**${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}${t.validation ? ` ${outcomeLines(t)[0]}` : ''}`;
+      return `- **${line(t.title)}**${t.reworded ? ` (${REWORDED_TEXT})` : ''}${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}${t.validation ? ` ${outcomeLines(t)[0]}` : ''}`;
     }),
     '', '</details>',
   ];
@@ -525,6 +538,7 @@ function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<ty
   const priority = themePriority(t, pois);
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
+    ...(t.reworded ? [`${REWORDED_TEXT}.`, ''] : []),
     ...(priority ? [`Suggested priority in this run: **${PRIORITY_TEXT[priority]}**`, ''] : []),
     ...outcomeLines(t),
     line(t.description), '',
@@ -679,7 +693,7 @@ function segmentLines(report: Report): string[] {
 
 // Grouped by segment, then persona. Numbers run on across the groups, so each finding has one reference.
 function frictionLines(report: Report): string[] {
-  if (report.frictions.length === 0) return ['No frictions reported.'];
+  if (report.frictions.length === 0) return [report.shared?.hidden ? HIDDEN_FRICTIONS : 'No frictions reported.'];
   const segmentIds = [...new Set([...report.segments.map((s) => s.id), ...report.frictions.map((f) => f.segment_id)])];
   const lines: string[] = [];
   let n = 0;
@@ -701,7 +715,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
   return [
     `${index + 1}. Step ${friction.step_no}, severity ${friction.severity}: ${line(friction.what)}`,
     `   - Expected: ${line(friction.expected)}`,
-    `   - Quote: "${line(friction.quote)}"`,
+    ...(friction.quote ? [`   - Quote: "${line(friction.quote)}"`] : []),
     ...passageLine(friction),
     `   - Page: ${pageUrl(friction.url)}`,
     ...(friction.frame !== undefined ? [`   - Frame: ${friction.frame + 1}`] : []),

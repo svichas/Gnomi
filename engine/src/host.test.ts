@@ -124,6 +124,11 @@ test('a study plan and an outcome reach the app through report.generated, and a 
   const studied = await call('get_report', { run_id });
   assert.deepEqual(studied.themes![0].validation, { status: 'unresolved', note: 'Too few sessions.', study_date: '2026-10-12', title: report.themes![0].title });
   await assert.rejects(call('plan_study', { run_id: 'r-9999' }), /There is no run r-9999/);
+
+  await assert.rejects(call('edit_finding', { run_id, theme_id }), /Say what to change/);
+  await call('edit_finding', { run_id, theme_id, hidden: true, title: 'Our words' });
+  assert.equal(generated(), 4, 'an edit reaches the app the same way');
+  assert.deepEqual((await call('get_report', { run_id })).themes![0].edit, { hidden: true, new_title: 'Our words', new_description: null });
 });
 
 test('a second plan for a run is refused while the first is written, so leaving the report and clicking again cannot spend twice', async () => {

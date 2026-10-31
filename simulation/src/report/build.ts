@@ -6,6 +6,7 @@ import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
 import { buildCoverage } from './coverage.ts';
 import { buildDimensions, reportAttributes, themeDrivers } from './dimensions.ts';
+import { foldEdits } from './edits.ts';
 import { buildFlow } from './flow.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { foldStudy } from './study.ts';
@@ -346,6 +347,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     ...(buyers.length > 0 ? { buyers } : {}),
     ...(flows.length > 0 ? { flows } : {}),
     ...foldStudy(events, analysis.themes, analysis.set_aside ?? [], competitors),
+    ...foldEdits(events, analysis.themes, analysis.set_aside ?? [], analysis.tagged),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,

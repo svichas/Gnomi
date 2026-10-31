@@ -15,6 +15,7 @@ import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { diffReports, type ReportDiff } from '@gnomi/simulation/report/diff.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
 import { reportToMarkdown, studyPlanToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, isCalendarDate, localDate, NOTE_MAX, runStudyPlan, topFindings } from '@gnomi/simulation/report/study.ts';
@@ -243,6 +244,34 @@ export async function recordOutcome(place: RunPlace, { run_id, theme_id, status,
   const theme = [...themes, ...set_aside].find((t) => t.id === theme_id);
   if (!theme) throw new Error(`${run_id} has no finding "${theme_id}".`);
   record({ run_id, round: log.at(-1)?.round ?? 1, persona_id: null, poi_id: theme.poi_id, type: 'finding.validated', payload: { keys: theme.keys ?? [], category: theme.category, title: theme.title, status, note: text, study_date } });
+  return rewriteReport(place, run_id);
+}
+
+export interface FindingEdit {
+  run_id: string;
+  theme_id: string;
+  hidden?: boolean;
+  title?: string; // blank: back to the original; left out: as it stands
+  description?: string;
+}
+
+/** What a team changes for sharing, for a finding as it stands now: exports apply it, and the run's record and every model keep the original. No model is involved. */
+export async function editFinding(place: RunPlace, { run_id, theme_id, hidden, title, description }: FindingEdit): Promise<Report> {
+  const { store, record } = place;
+  endedRun(store, run_id);
+  if (hidden === undefined && title === undefined && description === undefined) throw new Error('Say what to change: hide or show the finding, or give its title or description.');
+  const [new_title, new_description] = [title, description].map((text) => text?.trim());
+  if (new_title && new_title.length > EDIT_TITLE_MAX) throw new Error(`The title has ${new_title.length} characters, and the limit is ${EDIT_TITLE_MAX}.`);
+  if (new_description && new_description.length > EDIT_DESCRIPTION_MAX) throw new Error(`The description has ${new_description.length} characters, and the limit is ${EDIT_DESCRIPTION_MAX}.`);
+  const log = store.events(run_id);
+  const { themes = [], set_aside = [] } = buildReport(log);
+  const theme = [...themes, ...set_aside].find((t) => t.id === theme_id);
+  if (!theme) throw new Error(`${run_id} has no finding "${theme_id}".`);
+  const event = { run_id, round: log.at(-1)?.round ?? 1, persona_id: null, poi_id: theme.poi_id };
+  const finding = { keys: theme.keys ?? [], category: theme.category, title: theme.title };
+  if (hidden !== undefined) record({ ...event, type: 'finding.hidden', payload: { ...finding, hidden } });
+  // The latest for a theme wins, so a change to one field carries the other as it stands.
+  if (title !== undefined || description !== undefined) record({ ...event, type: 'finding.edited', payload: { ...finding, new_title: new_title === undefined ? theme.edit?.new_title ?? null : new_title || null, new_description: new_description === undefined ? theme.edit?.new_description ?? null : new_description || null } });
   return rewriteReport(place, run_id);
 }
 

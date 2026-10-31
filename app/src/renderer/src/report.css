@@ -40,6 +40,8 @@
 .report-study-actions > .note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 .report-outcome-form > div { margin-top: 10px; }
 .report-outcome-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 12px; }
+.report-edit-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 16px; font-size: 13px; overflow-wrap: anywhere; }
+.report-edit-compare h5 { margin-bottom: 4px; font-size: 11px; font-weight: 500; color: var(--gnomi-text-muted); }
 .report-finding-summary > svg, .report-fold > summary > svg { color: var(--gnomi-text-muted); transition: transform var(--gnomi-duration); }
 .report-finding > details[open] > summary > svg, .report-fold[open] > summary > svg { transform: rotate(90deg); }
 .report-finding > details[open] > summary { background: var(--gnomi-canvas); }

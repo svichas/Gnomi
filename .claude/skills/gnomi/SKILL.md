@@ -90,6 +90,12 @@ npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --projec
 - `outcome <project dir> --run <run id> --theme <theme id> --status supported|contradicted|unresolved --date YYYY-MM-DD [--note "<text>"] --json` records what the team's own study found. Theme ids are in `report --format json`. It makes no model call. The date must be a real day that is not in the future, and a note can be 2,000 characters. Record only what the user tells you a real study found: never infer an outcome from a simulated result. Keep names and contact details out of a note: it stays in the project's log, even after a correction, and appears in reports and exports.
 - The latest outcome for a finding wins, so correct one by recording another. A `rejudge` keeps outcomes. One with no finding of its own left, as when two studied findings merge, moves to `unmatched_outcomes` with its title and stays in the report, in the `report` summary too. A theme's outcome is its `validation`, and `study_count` says how the top five stand. An outcome belongs to its run: a repeat set, `rerun` or `compare` does not carry it across.
 
+## Editing before sharing
+
+- `edit <project dir> --run <run id> --theme <theme id> (--hide | --show | --title <text> | --description <text> | --reset) --json` changes what exports show, with no model call. Pass exactly one. `--title` takes up to 120 characters and `--description` up to 600, blank means back to the original, and `--reset` puts both back. Numbers from the run cannot be edited. Change a finding only when the user asks: hiding one is their decision, never a way to tidy a report.
+- `report` still reads what the run found, and so do `runs/<id>/report.json` and `report.md`, `compare`, `gate`, repeat sets and every model. The `edit` field on a theme says what the team changed, and `unmatched_edits` in `--format json` lists edits a `rejudge` left with no finding, whose finding is back in exports.
+- `report <project dir> --run <run id> --for-sharing` gives the copy the app exports, in any `--format`: hidden findings gone, the team's wording marked as reworded, and a line, `shared` in JSON, saying how many were hidden and reworded. Nothing removes that line. It takes one run, not `--repeat`.
+
 ## Before and after
 
 To see what a change did, run a finished run again on the new build, then compare the two:

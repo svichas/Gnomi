@@ -20,7 +20,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
+import { audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, runSet } from './workspace.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
@@ -505,6 +505,10 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
   },
   async record_outcome(outcome) {
     await recordOutcome(current(), outcome);
+    return null;
+  },
+  async edit_finding(edit) {
+    await editFinding(current(), edit);
     return null;
   },
   import_asset: (params) => ('path' in params ? importLocalFile(current().blobs, params.path) : importText(current().blobs, params.text, params.name)),

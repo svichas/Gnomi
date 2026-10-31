@@ -3,7 +3,7 @@ import type { AnalyticsResult } from './audience/analytics.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
-import type { StudyOutcome } from './workspace.ts';
+import type { FindingEdit, StudyOutcome } from './workspace.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
@@ -122,6 +122,8 @@ export interface Api {
   plan_study: { params: { run_id: string }; result: null };
   /** What a team's own study found about a finding, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
   record_outcome: { params: StudyOutcome; result: null };
+  /** Hides a finding from exports or rewords it there, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
+  edit_finding: { params: FindingEdit; result: null };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }

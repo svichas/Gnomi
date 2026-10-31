@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Report as ReportData } from '@gnomi/simulation/types.ts';
+import { forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
 import { reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import type { ReportFormat } from '../../reports.ts';
@@ -93,9 +94,11 @@ ${PRINT}</style>
 `;
 }
 
-/** What goes in the exported file; for PDF that is the HTML main prints. */
+/** What goes in the exported file, always the copy for sharing; for PDF that is the HTML main prints. */
 export async function reportFile(report: ReportData, format: ReportFormat, thumbnails: (paths: string[]) => Promise<Record<string, string>>, repeats?: RepeatSet): Promise<string> {
-  if (format === 'json') return JSON.stringify(report, null, 2);
-  if (format === 'md') return reportToMarkdown(report, repeats);
-  return reportHtml(report, thumbnails, repeats);
+  const shared = forSharing(report);
+  const set = repeats && setForSharing(repeats, report);
+  if (format === 'json') return JSON.stringify(shared, null, 2);
+  if (format === 'md') return reportToMarkdown(shared, set);
+  return reportHtml(shared, thumbnails, set);
 }
