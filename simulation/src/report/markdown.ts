@@ -1,6 +1,11 @@
 import { isUnrated } from '../types.ts';
-import type { Prevalence, Report, ReportEvidence, ReportFriction, ReportMethods, ReportTheme, SpreadStats, StepEvidence, Trust } from '../types.ts';
-import { formatAttributeValue } from './dimensions.ts';
+import type { Outcome, Prevalence, Report, ReportCoverage, ReportDriver, ReportEvidence, ReportFlow, ReportFlowPage, ReportFriction, ReportMethods, ReportStudyPlan, ReportTheme, SpreadStats, StepEvidence, StudyCount, ThemeValidation, Trust } from '../types.ts';
+import { RETEST_REACH, type Change, type DiffStatus, type ReportDiff, type Seen, type SpreadDiff, type ThemeDiff } from './diff.ts';
+import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } from './dimensions.ts';
+import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
+import { MIN_PAIRS, uncounted, type RepeatSet, type WhatIfNumber, type WhatIfResult } from './repeats.ts';
+import { HIDDEN_ALL, writtenSummary } from './summary.ts';
+import { priorityOf } from './themes.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
 // so HTML and the characters that start a link, image or code span are escaped: a page cannot make the export load an image
@@ -17,28 +22,325 @@ const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 /** A POI as the report names it: a competitor's site says so. */
 export const poiName = (poi: Report['pois'][number]) => (poi.competitor ? `${poi.name} (competitor, observed only)` : poi.name);
 
+/** The name of a theme's POI, in a report with several. */
+export const themePoi = ({ poi_id }: ReportTheme, pois: Report['pois']) => {
+  const poi = pois.find(({ id }) => id === poi_id);
+  return pois.length > 1 && poi ? poiName(poi) : undefined;
+};
+
+export const PRIORITY_TEXT = { fix_now: 'Fix now', next: 'Next', later: 'Later' } as const;
+
+/** Said wherever the labels are explained: they are a suggestion within one run, not a finding about real users. */
+export const PRIORITY_NOTE = 'Fix now, Next and Later suggest where to look first within this run, from its evidence and severity. They do not change the ranking, so a Next can sit below a Later, and they say nothing about real users.';
+
+/** A finding's label; a competitor's has none, because its problems are not the team's to fix. */
+export const themePriority = (theme: ReportTheme, pois: Report['pois']) => (pois.find(({ id }) => id === theme.poi_id)?.competitor ? null : priorityOf(theme));
+
+/** Said wherever a finding of the page scan alone is shown, so its place on a persona's step does not read as that persona meeting it. */
+export const SCAN_TEXT = 'Found by the accessibility scan of the page, not by a persona. It sits on the step of whichever persona reached that page first, so it says nothing about how many personas met it.';
+
+/** What a reader acts on: the rule, how bad it is, and where. */
+export const scanText = ({ rule, impact, elements, selectors }: Pick<NonNullable<ReportEvidence['scan']>, 'rule' | 'impact' | 'elements' | 'selectors'>) => `${rule}, ${impact}, ${count(elements, 'element')}: ${selectors.join('; ')}${elements > selectors.length ? ' and more' : ''}`;
+
+/** "More common among personas with Region EMEA: 4 of 6 with it, against 1 of 9 others": counts within the run, never a cause. */
+export const driverText = ({ name, value, holders, others }: ReportDriver) => `More common among personas with ${name} ${formatAttributeValue(value)}: ${holders.affected} of ${holders.reached} with it, against ${others.affected} of ${count(others.reached, 'other')}`;
+
+/** Said wherever drivers are shown. */
+export const DRIVER_NOTE = `"More common among" compares the simulated personas who reached a finding's pages, or answered a survey for a finding with no pages. It shows only with at least ${DRIVER_HOLDERS} personas holding a value, ${DRIVER_AFFECTED} of them meeting the finding and a gap of ${Math.round(DRIVER_GAP * 100)} points. Connected personas are not independent, so read it as a place to look, within this run only.`;
+
+/** What a POI's coverage says, in the order it is shown: the hint, the curve, then what few personas reached. */
+export const coverageText = ({ hint, curve, thin_pages }: ReportCoverage) => [
+  hint,
+  ...(curve ? [`New problems per persona, in the order they began: ${curve.join(', ')}.`] : []),
+  ...(thin_pages.length ? [`Barely tested, reached by fewer than ${RETEST_REACH} personas: ${thin_pages.map(({ page, personas }) => `${page} (${personas})`).join(', ')}.`] : []),
+];
+
+const studyDay = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** "Your team's study, 12 Oct 2026: supported": always attributed, so an outcome can never read as something the simulation found. */
+export const outcomeText = ({ status, study_date }: ThemeValidation) => `Your team's study, ${studyDay.format(new Date(`${study_date}T00:00:00Z`))}: ${status}`;
+
+/** The note and, after a rejudge renamed the finding, what it was called when the study was recorded. */
+export const outcomeDetails = ({ note, title }: ThemeValidation, current?: string) => [...(note ? [note] : []), ...(current !== undefined && title !== current ? [`Recorded for "${title}".`] : [])];
+
+/** Said wherever outcomes are shown: what people found stays apart from what the simulation did, and belongs to one run. */
+export const OUTCOME_NOTE = "Study outcomes are your team's own, from real people. They change no simulated count, rank, label or summary, reach no model, and stay with this run: a repeat set or a comparison does not carry them across.";
+
+export const UNMATCHED_NOTE = 'These outcomes have no finding of their own in this report, for example after the findings were judged again and two studied ones became one. They stay here, with the title each was recorded for.';
+
+/** "Of the top 5 findings, your team's studies supported 2, contradicted 1, left 1 unresolved, and 1 is not studied yet": counts, as a handful of chosen findings is no sample. */
+export function studyCountText({ of, supported, contradicted, unresolved, not_studied }: StudyCount): string {
+  const found = [...(supported ? [`supported ${supported}`] : []), ...(contradicted ? [`contradicted ${contradicted}`] : []), ...(unresolved ? [`left ${unresolved} unresolved`] : [])];
+  const parts = [...(found.length ? [`your team's studies ${found[0]}`, ...found.slice(1)] : []), ...(not_studied ? [`${not_studied} ${not_studied === 1 ? 'is' : 'are'} not studied yet`] : [])];
+  return `Of the top ${count(of, 'finding')}, ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts[0]}.`;
+}
+
+/** At the top of every plan: the file goes to a researcher, who must keep the hypotheses from participants. */
+export const STUDY_WARNING = 'These hypotheses come from simulated users and are unproven. Do not show them to participants: people get only the screener and the tasks. A model wrote this plan, so read it before you use it.';
+
+/** At the top of every copy for sharing the team changed anything in, and nothing the team can do removes it: a copy that hides what it left out would mislead its reader. */
+export const sharedText = ({ hidden, reworded }: NonNullable<Report['shared']>) => `The team sharing this report hid ${count(hidden, 'finding')} from this copy and reworded ${count(reworded, 'finding')}. The rest is as the run found it.`;
+
+/** On every finding whose words in a copy are the team's. */
+export const REWORDED_TEXT = 'Reworded by the team';
+
+/** Where a copy has no friction left to list: "none reported" would be false, as they went with what the team hid. */
+export const HIDDEN_FRICTIONS = 'Frictions are left out of this copy with the findings the team sharing it hid.';
+
+export const NO_TASKS = 'No task is left for this hypothesis, so write one by hand that does not mention the finding.';
+export const NO_SCREENER = 'No screener question is left, so write them by hand from who you want to reach.';
+export const OUTDATED_PLAN = 'The findings were judged again after this plan was written, so it may not match them. Plan again to catch up.';
+
+/** Null when the quote check took nothing out. */
+export const droppedText = (dropped: number) => (dropped ? `${count(dropped, 'draft')} left out because ${dropped === 1 ? 'it' : 'they'} repeated a finding's words.` : null);
+
+/** What a plan does not cover, and why; null when it covers every finding. */
+export function leftOutText({ lower_ranked, objections, competitors, set_aside, scan_only }: ReportStudyPlan['left_out']): string | null {
+  const parts = [
+    ...(lower_ranked ? [count(lower_ranked, 'lower-ranked finding')] : []),
+    ...(objections ? [count(objections, 'objection')] : []),
+    ...(competitors ? [count(competitors, 'competitor finding')] : []),
+    ...(set_aside ? [`${set_aside} set aside by the evidence check`] : []),
+    ...(scan_only ? [`${scan_only} found by the accessibility scan alone, which needs an audit rather than a study with people`] : []),
+  ];
+  return parts.length ? `Left out of this plan: ${parts.join('; ')}.` : null;
+}
+
+function studyPlanLines(plan: ReportStudyPlan, heading: string): string[] {
+  const dropped = droppedText(plan.screener_dropped);
+  const leftOut = leftOutText(plan.left_out);
+  return [
+    ...(plan.outdated ? [OUTDATED_PLAN, ''] : []),
+    `${heading} Screener`, '',
+    ...(plan.screener.length ? plan.screener.map((question) => `- ${line(question)}`) : [NO_SCREENER]),
+    ...(dropped ? ['', dropped] : []),
+    ...plan.hypotheses.flatMap((hypothesis, i) => {
+      const left = droppedText(hypothesis.dropped);
+      return [
+        '', `${heading} Hypothesis ${i + 1}: ${line(hypothesis.title)}`, '',
+        'Tasks:', '',
+        ...(hypothesis.tasks.length ? hypothesis.tasks.map((task, n) => `${n + 1}. ${line(task)}`) : [NO_TASKS]),
+        ...(left ? ['', left] : []),
+        '', 'For the researcher, what to watch for:', '',
+        ...(hypothesis.observe.length ? hypothesis.observe.map((note) => `- ${line(note)}`) : ['- Nothing was written.']),
+      ];
+    }),
+    ...(leftOut ? ['', leftOut] : []),
+  ];
+}
+
+/** The plan on its own, as runs/<id>/study-plan.md: a team can hand a researcher this without the findings. */
+export const studyPlanToMarkdown = (report: Report, plan: ReportStudyPlan): string =>
+  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []), ...(report.methods.prior ? [`> ${priorNotice(report.methods.prior)}`, ''] : []), `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
+
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
 
-export function reportToMarkdown(report: Report): string {
+/** "2 runs compared." and what a repeat means, or that the set is still going, or that it ended early. */
+export function setNote(set: RepeatSet): string {
+  const state = set.running ? `${set.compared} of ${set.of} runs finished so far.` : set.incomplete ? `Incomplete set: ${set.compared} of ${set.of} runs finished.` : `${count(set.of, 'run')} compared.`;
+  return `${state} Repeats test robustness inside the simulation: a finding that comes back is still a hypothesis about real users.${set.trait_free ? ' One more run, of personas with no traits, is in no count here.' : ''}${set.what_if ? ' The runs with the added post are in no count here.' : ''}`;
+}
+
+/** What sets a run apart in its set, for the line that places it there. */
+export function repeatLabel(run: Parameters<typeof uncounted>[0]): string {
+  const what_if = run.repeat?.what_if;
+  if (what_if) return `, pair ${what_if.pair}, ${what_if.post ? 'with the post your team added' : 'without the added post'}`;
+  return uncounted(run) === 'trait_free' ? ', of personas with no traits' : '';
+}
+
+/** Said before a what-if starts with too few pairs for an interval; null with enough. */
+export const fewPairsText = (pairs: number) => (pairs < MIN_PAIRS ? `${count(pairs, 'pair')} ${pairs === 1 ? 'gives' : 'give'} no interval, only a mean difference. Use at least ${MIN_PAIRS}.` : null);
+
+export const WHAT_IF_COLUMNS = ['Number', 'Mean difference, with the post minus without', '95% interval', 'Pairs'];
+
+/** A what-if's row after its label: the interval, or why there is none. */
+export const whatIfCells = ({ mean, lower, upper, note, n }: WhatIfNumber) => [mean === null ? '-' : signed(mean), lower === null || upper === null ? note! : `${signed(lower)} to ${signed(upper)}`, String(n)];
+
+/** Where the post stood and how many pairs count. */
+export const whatIfText = ({ round, pairs, of }: WhatIfResult) => `Added by your team in round ${round}, shown to the others as one persona's post, which it never wrote. ${pairs} of ${count(of, 'pair')} finished; a pair with a run still going or stopped is left out.`;
+
+function whatIfLines(whatIf: WhatIfResult): string[] {
+  return [
+    '## What-if post', '',
+    `> ${whatIf.note}`, '',
+    `"${line(whatIf.post)}"`, '',
+    whatIfText(whatIf), '',
+    `| ${WHAT_IF_COLUMNS.join(' | ')} |`,
+    '| --- | --- | --- | --- |',
+    ...whatIf.numbers.map((number) => `| ${cell(number.label)} | ${whatIfCells(number).join(' | ')} |`),
+    '',
+  ];
+}
+
+/** On a finding that the set's run of personas with no traits matched. It removes nothing and changes no rank. */
+export const TRAIT_FREE_TEXT = 'Personas with no traits hit this too, so it may say more about the model than this audience';
+
+/** What a set says about one finding of its run: "Appeared in 3 of 3 runs". Null for a run the set could not compare, or a set of one with nothing to add. */
+export function repeatNote(set: RepeatSet | undefined, run_id: string, theme: ReportTheme) {
+  const finding = set?.findings.find((f) => f.poi_id === theme.poi_id && f.themes[run_id] === theme.id);
+  if (!set || !finding || (finding.of < 2 && !finding.trait_free)) return null;
+  return {
+    appeared: finding.of < 2 ? null : `Appeared in ${finding.seen_in} of ${finding.of} runs`,
+    one_family: set.families.length > 1 && finding.families.length === 1 ? `Only ${finding.families[0]} runs produced this` : null,
+    trait_free: finding.trait_free ? TRAIT_FREE_TEXT : null,
+    other_titles: finding.titles.filter((title) => title !== theme.title), // how a reader can spot a false pair (report/repeats.ts)
+  };
+}
+
+/** A set's findings side by side, for `gnomi report --repeat`. */
+export function repeatsToMarkdown(set: RepeatSet): string {
+  return [
+    `# Gnomi repeat set ${set.group ?? ''}`.trimEnd(), '',
+    `> ${setNote(set)}`, '',
+    ...(set.prior ? [`> ${priorNotice(set.prior)}`, ''] : []),
+    ...(set.what_if ? whatIfLines(set.what_if) : []),
+    `Model families: ${set.families.map(line).join(', ') || 'none'}.`, '',
+    '| Finding | Appeared in | Model families | Also named |',
+    '| --- | --- | --- | --- |',
+    ...set.findings.map((f) => `| ${cell(f.titles[0])} | ${f.seen_in} of ${f.of} runs${f.trait_free ? `. ${TRAIT_FREE_TEXT}` : ''} | ${f.families.map(cell).join(', ')} | ${f.titles.slice(1).map(cell).join('; ')} |`),
+    '',
+  ].join('\n');
+}
+
+/** At the top of every comparison: the status stays `fixed` for machines, but nothing here may tell a person a problem is fixed. */
+export const DIFF_NOTICE = '"Not seen again" means the later run did not show a problem, not that it is fixed: the personas may simply not have tried the failing path. These are simulated findings, so treat every change here as a hypothesis and check it with real users.';
+
+export const DIFF_LABEL: Record<DiffStatus, string> = { fixed: 'Not seen again', new: 'New', unchanged: 'Unchanged', not_retested: 'Not retested' };
+
+export const DIFF_HINT: Record<DiffStatus, string> = {
+  fixed: 'The later run did not show these, on pages it did reach. That does not prove they are fixed.',
+  new: 'Only the later run showed these.',
+  unchanged: 'Both sides showed these.',
+  not_retested: `The later run did not show these, but fewer than ${RETEST_REACH} personas reached their pages, so their absence says nothing.`,
+};
+
+/** What a person reads as a comparison row's name: the later title when there is one. */
+export const diffTitle = (theme: ThemeDiff) => (theme.after_title ?? theme.before_title)!;
+
+/** "was in 3 of 4 runs, not seen in 3 of 3, 6 personas reached its page", then what weakens the row, in plain words. */
+export function diffText(theme: ThemeDiff): string {
+  const runs = ({ seen_in, of }: Seen) => `${seen_in} of ${count(of, 'run')}`;
+  const reach = theme.reached === null
+    ? 'the later report does not say who got there'
+    : `${count(theme.reached, 'persona')} ${theme.pages.length === 0 ? 'answered a survey on it' : theme.pages.length === 1 ? 'reached its page' : 'reached all its pages'}`;
+  const seen = `was in ${runs(theme.before)}`;
+  const gone = `${seen}, not seen in ${theme.after.of} of ${theme.after.of}, ${reach}`;
+  const titles = theme.before_title !== null && theme.after_title !== null && theme.before_title !== theme.after_title;
+  const quoted = (...names: (string | null)[]) => new Intl.ListFormat('en').format([...new Set(names)].map((name) => `"${name}"`));
+  return [
+    `${theme.status === 'fixed' ? gone : theme.status === 'not_retested' ? `${gone}${theme.reached === null ? '' : `, and it takes ${RETEST_REACH} to say anything`}` : `${seen}, now in ${runs(theme.after)}`}.`,
+    ...(theme.weak ? [`They only share one place on a page, so ${quoted(...(theme.grouped_with ?? []), theme.before_title, theme.after_title)} may be different problems.`] : titles ? [`Earlier called "${theme.before_title}".`] : []),
+    ...(theme.set_aside ? [`The evidence check set it aside in the ${theme.set_aside === 'before' ? 'earlier' : 'later'} run and kept it in the other, so this says nothing either way about a change in the product.`] : []),
+  ].join(' ');
+}
+
+/** Posts and personas average over a set's runs, so a side can be 2.5. */
+export const plainNumber = (n: number) => String(Math.round(n * 10) / 10);
+
+/** "0.50 → 1.00 (+0.50)", or a dash for a side without the number. */
+export function changeText(change: Change, show: (n: number) => string, delta = (n: number) => `${n > 0 ? '+' : ''}${show(n)}`): string {
+  const side = (n: number | null) => (n === null ? '-' : show(n));
+  return `${side(change.before)} → ${side(change.after)}${change.delta === null ? '' : ` (${delta(change.delta)})`}`;
+}
+
+export const pointsChange = (change: Change) => changeText(change, (n) => pct(n), (n) => `${n > 0 ? '+' : ''}${Math.round(n * 100)} points`);
+
+/** A product's row of the spread table, then a row per segment, which has only its readers. */
+export const spreadRows = (spread: SpreadDiff) => [
+  { name: spread.name, cells: [changeText(spread.posts, plainNumber), changeText(spread.second_hand, plainNumber), changeText(spread.readers, plainNumber), changeText(spread.sentiment, (n) => n.toFixed(2))] },
+  ...spread.segments.map((segment) => ({ name: `${spread.name}: ${segment.name}`, cells: ['-', '-', changeText(segment.readers, plainNumber), '-'] })),
+];
+
+/** Two sides of a comparison, for `gnomi compare`. */
+export function diffToMarkdown(diff: ReportDiff): string {
+  const side = (ids: string[]) => ids.map(line).join(', ');
+  const poi = (theme: ThemeDiff) => (diff.pois.length > 1 ? ` on ${line(diff.pois.find(({ id }) => id === theme.poi_id)?.name ?? theme.poi_id)}` : '');
+  return [
+    `# Gnomi comparison: ${side(diff.before)} to ${side(diff.after)}`, '',
+    `> ${DIFF_NOTICE}`, '',
+    ...(diff.notes.length ? ['## What weakens this comparison', '', ...diff.notes.map((note) => `- ${line(note)}`), ''] : []),
+    ...(['new', 'unchanged', 'not_retested', 'fixed'] as const).flatMap((status) => {
+      const themes = diff.themes.filter((theme) => theme.status === status);
+      return themes.length ? [`## ${DIFF_LABEL[status]} (${themes.length})`, '', DIFF_HINT[status], '', ...themes.map((theme) => `- **${line(diffTitle(theme))}**${poi(theme)}, severity ${theme.severity} of 4: ${line(diffText(theme))}`), ''] : [];
+    }),
+    ...(diff.themes.length ? [] : ['No themes on either side.', '']),
+    ...(diff.segments.length ? [
+      '## By segment', '',
+      '| Segment | Mean sentiment, -2 to +2 | Ran into friction |',
+      '| --- | --- | --- |',
+      ...diff.segments.map((s) => `| ${cell(s.name)} | ${changeText(s.sentiment, (n) => n.toFixed(2))} | ${pointsChange(s.with_friction)} |`), '',
+    ] : []),
+    ...(diff.spread.length ? [
+      '## Opinion spread', '',
+      '| Product | Posts | Second-hand | Reached | Mean sentiment, last round |',
+      '| --- | --- | --- | --- | --- |',
+      ...diff.spread.flatMap(spreadRows).map(({ name, cells }) => `| ${cell(name)} | ${cells.join(' | ')} |`), '',
+    ] : []),
+  ].join('\n');
+}
+
+const GATE_HEADLINE: Record<GateResult, string> = {
+  passed: 'No new high-severity theme in these simulated runs. This does not show that people will not hit one.',
+  failed: `A new high-severity theme came back in at least ${GATE_SIGHTINGS} of the later simulated runs. It is a hypothesis to check, not evidence about real users.`,
+  could_not_decide: 'The gate could not decide, so this is not a pass.',
+};
+
+/** A pass with warnings lists new high-severity themes from these same runs, so it cannot say there were none. */
+const gateHeadline = ({ decision, warnings }: GateDecision) => (decision === 'passed' && warnings.length
+  ? `No new high-severity problem clearly came back in at least ${GATE_SIGHTINGS} of these simulated runs. This does not show that people will not hit one.`
+  : GATE_HEADLINE[decision]);
+
+/** A gate's verdict, for `gnomi gate`. */
+export function gateToMarkdown(gate: GateDecision): string {
+  const rows = (themes: ThemeDiff[]) => themes.map((theme) => {
+    const sightings = theme.sightings ?? [];
+    const severe = severeSightings(theme).length;
+    const loose = sightings.some(({ weak }) => weak) ? ' Some of those runs only share one place on a page, so they may be different problems.' : '';
+    const attitude = theme.category === 'objection' ? ' This is an objection, a reason not to adopt, so it never fails a build.' : '';
+    return `- **${line(diffTitle(theme))}**, ${sightings.length ? `high severity in ${severe} of ${count(theme.after.of, 'later run')}` : `severity ${theme.severity} of 4`}: ${line(diffText(theme))}${loose}${attitude}`;
+  });
+  return [
+    `# Gnomi gate: ${gate.decision.replaceAll('_', ' ')}`, '',
+    ...(gate.base.length ? [`Compared ${gate.base.map(line).join(', ')} to ${gate.run.map(line).join(', ')}.`, ''] : []),
+    `> ${gateHeadline(gate)}`, '',
+    ...(gate.reasons.length ? ['## Why it could not decide', '', ...gate.reasons.map((reason) => `- ${line(reason)}`), ''] : []),
+    ...(gate.failing.length ? [`## ${gate.reasons.length ? 'Would have failed' : 'Failed on'} (${gate.failing.length})`, '', ...rows(gate.failing), ''] : []),
+    ...(gate.warnings.length ? [`## Warnings (${gate.warnings.length})`, '', 'High severity, but not enough to fail on.', '', ...rows(gate.warnings), ''] : []),
+  ].join('\n');
+}
+
+/** A run of a repeat set gets `set` when read, which adds how its findings did across the set; the run's own report stays as it was. */
+export function reportToMarkdown(report: Report, set?: RepeatSet): string {
   if (report.comparison) return comparisonToMarkdown(report);
   const status = report.stop_reason === null ? report.status : `${report.status} (${report.stop_reason})`;
   const duration = report.duration_ms === null ? 'not finished' : `${(report.duration_ms / 1000).toFixed(1)} s`;
   const missingUsage = missingUsageText(report.unreported_usage_calls);
+  const summary = writtenSummary(report);
   return [
     `# Gnomi report: ${report.goal}`,
     '',
     `> ${report.banner}`,
     '',
+    ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []),
+    ...(report.methods.prior ? [`> ${priorNotice(report.methods.prior)}`, ''] : []),
+    ...(summary ? [line(summary), ''] : []),
+    ...(report.study_count ? [`**From your team's studies, not the simulation:** ${studyCountText(report.study_count)}`, ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
     `- Personas: ${report.personas.length}, steps: ${report.steps}`,
     `- Status: ${status}`,
+    ...(report.repeat ? [`- Repeat: run ${report.repeat.index} of ${report.repeat.of} in set ${report.repeat.group}${repeatLabel(report)}`] : []),
+    ...(set ? [`- ${setNote(set)}`] : []),
     '',
+    ...(set?.what_if ? whatIfLines(set.what_if) : []),
     '## Segments',
     '',
     ...segmentLines(report),
     ...dimensionLines(report),
-    ...themeLines(report),
+    ...themeLines(report, set),
+    ...setAsideLines(report),
+    ...studyLines(report),
+    ...flowLines(report),
     ...sentimentLines(report),
     ...buyerLines(report),
     ...wentWellLines(report),
@@ -59,9 +361,15 @@ export function reportToMarkdown(report: Report): string {
     '',
     '## Methods',
     '',
+    ...coverageLines(report),
     ...methodsToMarkdown(report.methods),
     '',
   ].join('\n');
+}
+
+function coverageLines({ coverage = [], pois }: Report): string[] {
+  const of = ({ poi_id }: ReportCoverage) => (pois.length > 1 ? ` of ${line(pois.find(({ id }) => id === poi_id)?.name ?? poi_id)}` : '');
+  return coverage.flatMap((poi) => coverageText(poi).map((text) => `- Coverage${of(poi)}: ${line(text)}`));
 }
 
 /** Comparison studies lead with decisions and scoped evidence, never pooled legacy completion. */
@@ -167,32 +475,117 @@ export const TRUST_TEXT = {
   reported: 'a self-report only',
 } as const;
 
-function themeLines(report: Report): string[] {
+/** Said wherever a set-aside theme is shown: the verdict is one model's reading, and the reader decides. */
+export const SET_ASIDE_TEXT = "A model reviewed the evidence behind these themes and judged that it points to a persona's mistake or the test setup rather than the product. This is a model's review, not a test of the product, so a real problem can be among them: read each reason. They are left out of the ranking and the friction rate, and their events stay in the log.";
+
+/** The tag's reason, for a reader deciding whether to discount it (tech.md §9.2). Nothing tagged leaves the report. */
+export const INTERFERENCE_TEXT = "possibly interference between personas: another persona changed an element of the same name shortly before, so this may be their doing rather than the product's";
+
+/** "1 of 3 reports tagged …": how much of a theme carries the tag. */
+export const interferenceNote = ({ interference, frictions }: ReportTheme) => `${interference} of ${count(frictions, 'report')} tagged ${INTERFERENCE_TEXT}`;
+
+/** What a set-aside theme's verdict points to, in words. */
+export const setAsideCause = ({ check }: ReportTheme) => (check?.verdict === 'environment' ? 'the test setup' : "a persona's mistake");
+
+// Weak signals alone make no theme, so an empty section cannot say that nothing went wrong. The undersized-target audit leaves competitors out.
+const noThemes = ({ shared }: Report, aside: ReportTheme[] = [], competitor?: true) => {
+  if (shared?.hidden) return HIDDEN_ALL;
+  return aside.length ? 'The evidence check set aside every theme here.' : `No themes. Small-target and backtrack signals do not make one alone${competitor ? '.' : '; any undersized targets on your product are listed under Methods.'}`;
+};
+
+function themeLines(report: Report, set?: RepeatSet): string[] {
   if (!report.themes) return [];
-  if (report.themes.length === 0) return ['', '## Themes', '', 'No frictions to group into themes.'];
+  if (report.themes.length === 0) return ['', '## Themes', '', noThemes(report, report.set_aside)];
   return [
     '', '## Themes', '',
     "The judge model is asked to put the findings one concrete product change would remove in one theme, so a cause seen on several pages is one theme; a friction and an objection never share one. Ranked by evidence first (strong, then some, then single, then none), so a problem one persona reported never ranks above one several met first-hand; within the same evidence, by severity (the median over personas of each one's worst); within a severity, by the low end of the share of personas who met it first-hand × the mean trust of its personas. The share counts the personas who reached its pages (for buyer objections, the buyers surveyed); its 95% Wilson range is among this run's simulated personas, assuming independent personas; not an estimate of real users. Evidence is strong with three or more personas and at least a quarter of those, some with two or more, single with one, none when every report followed a feed post. Trust is a label within the simulation, not validation by real people: confirmed is a self-report backed by an objective signal, observed a signal only, reported a self-report only.",
+    '', PRIORITY_NOTE,
+    ...(report.themes.some((t) => t.drivers) ? ['', DRIVER_NOTE] : []),
     // Themes are ranked within each POI, so several POIs get a section each.
     ...(report.pois.length > 1
       ? report.pois.flatMap((poi) => {
           const themes = report.themes!.filter((t) => t.poi_id === poi.id);
-          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####')) : ['', 'No frictions to group into themes.'])];
+          return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report, report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
-      : report.themes.flatMap((theme) => themeToMarkdown(theme))),
+      : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme), report.pois))),
   ];
 }
 
-function themeToMarkdown(t: ReportTheme, heading = '###'): string[] {
+/** Beside a finding, apart from its simulated numbers. */
+const outcomeLines = (t: ReportTheme) => (t.validation ? [`**${outcomeText(t.validation)}.**${outcomeDetails(t.validation, t.title).map((text) => ` ${line(text)}`).join('')}`, ''] : []);
+
+function studyLines({ study_plan: plan, unmatched_outcomes: unmatched }: Report): string[] {
+  return [
+    ...(unmatched ? ['', '## Study outcomes with no matching finding', '', UNMATCHED_NOTE, '', ...unmatched.map((outcome) => `- **${line(outcome.title)}**: ${outcomeText(outcome)}.${outcomeDetails(outcome).map((text) => ` ${line(text)}`).join('')}`)] : []),
+    ...(plan ? ['', '## Study plan', '', `> ${STUDY_WARNING}`, '', ...studyPlanLines(plan, '###')] : []),
+  ];
+}
+
+function setAsideLines(report: Report): string[] {
+  if (!report.set_aside?.length) return [];
+  return [
+    '', '## Set aside by the evidence check', '',
+    '<details>', `<summary>${count(report.set_aside.length, 'theme')} set aside</summary>`, '',
+    SET_ASIDE_TEXT, '',
+    ...report.set_aside.map((t) => {
+      const poi = themePoi(t, report.pois);
+      return `- **${line(t.title)}**${t.reworded ? ` (${REWORDED_TEXT})` : ''}${poi ? ` on ${line(poi)}` : ''} (the model's review points to ${setAsideCause(t)}): ${line(t.check?.reason ?? '')} Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}${t.validation ? ` ${outcomeLines(t)[0]}` : ''}`;
+    }),
+    '', '</details>',
+  ];
+}
+
+/** Said wherever a flow is shown: it counts where episodes ended, and leaves the reasons to the findings. */
+export const FLOW_TEXT = 'Each persona counts once per page and once per direction between two pages. "Ended here" says where an episode ended, not why.';
+
+/** "3: 2 done, 1 abandoned": the personas who ended on a page, by outcome. */
+export function flowEnded(ended: ReportFlowPage['ended'], word = (outcome: Outcome) => outcome.replaceAll('_', ' ')): string {
+  const outcomes = Object.entries(ended) as [Outcome, number][];
+  const total = outcomes.reduce((sum, [, n]) => sum + n, 0);
+  return total ? `${total}: ${outcomes.map(([outcome, n]) => `${n} ${word(outcome)}`).join(', ')}` : '0';
+}
+
+/** The pages past the flow's cap; null when it shows them all. */
+export function flowLeftOut({ left_out: { pages, ended } }: ReportFlow): string | null {
+  return pages ? `${count(pages, 'less visited page')} left out, where ${count(ended, 'persona')} ended. Moves to and from them are not counted here.` : null;
+}
+
+function flowLines(report: Report): string[] {
+  if (!report.flows) return [];
+  return [
+    '', '## Where personas went', '',
+    FLOW_TEXT,
+    ...report.flows.flatMap((flow) => {
+      const poi = report.pois.find(({ id }) => id === flow.poi_id);
+      const leftOut = flowLeftOut(flow);
+      return [
+        ...(report.pois.length > 1 && poi ? ['', `### ${line(poiName(poi))}`] : []),
+        '', '| Page | Reached | Ended here | Moved on to |', '| --- | --- | --- | --- |',
+        ...flow.pages.map(({ page, reached, ended }) => `| ${cell(page)} | ${reached} | ${flowEnded(ended)} | ${flow.moves.filter((m) => m.from === page).map((m) => `${cell(m.to)} (${m.personas})`).join(', ') || '-'} |`),
+        ...(leftOut ? ['', leftOut] : []),
+      ];
+    }),
+  ];
+}
+
+function themeToMarkdown(t: ReportTheme, heading: string, repeats: ReturnType<typeof repeatNote>, pois: Report['pois']): string[] {
   const affected = t.affected.filter((a) => a.reached > 0).map((a) => `${cell(a.name)} ${a.affected} of ${a.reached} (${pct(a.rate)})`);
+  const priority = themePriority(t, pois);
   return [
     '', `${heading} ${t.rank}. ${line(t.title)}`, '',
+    ...(t.reworded ? [`${REWORDED_TEXT}.`, ''] : []),
+    ...(priority ? [`Suggested priority in this run: **${PRIORITY_TEXT[priority]}**`, ''] : []),
+    ...outcomeLines(t),
     line(t.description), '',
     ...(t.category ? [`- Kind: ${t.category === 'objection' ? 'objection (a reason not to adopt it)' : 'friction (got in the way of the task)'}`] : []),
-    ...(t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}`] : []),
+    ...(t.scan_only ? [`- Evidence: ${SCAN_TEXT}`] : t.prevalence ? [`- Evidence: ${t.prevalence.level}, ${shareText(t.prevalence)}${t.heard_first ? `; ${t.heard_first} more reported it only after reading about it in the feed` : ''}${t.remembered ? `; ${t.remembered} more reported it after remembering it from an earlier visit` : ''}`] : []),
     t.trust_counts ? `- Trust: ${trustMix(t.trust_counts)}` : `- Trust: ${t.trust} (${TRUST_TEXT[t.trust]})`,
-    `- Severity ${t.severity} of 4, score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, ${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
-    `- Affected first-hand by segment: ${affected.join('; ') || 'none'}`,
+    ...(repeats ? [`- Repeats: ${[repeats.appeared, repeats.one_family, repeats.trait_free].filter((text) => text !== null).map(line).join('. ')}`] : []),
+    ...(repeats?.other_titles.length ? [`- Named in other runs: ${repeats.other_titles.map(line).join('; ')}`] : []),
+    ...(t.interference ? [`- ${interferenceNote(t)}.`] : []),
+    `- Severity ${t.severity} of 4, ${t.scan_only ? '' : `score ${t.score.toFixed(2)}, ${t.personas} persona${t.personas === 1 ? '' : 's'}, `}${t.frictions} friction${t.frictions === 1 ? '' : 's'}`,
+    ...(t.scan_only ? [] : [`- Affected first-hand by segment: ${affected.join('; ') || 'none'}`]),
+    ...(t.drivers ?? []).map((driver) => `- ${line(driverText(driver))}`),
     ...(t.pages.length > 0 ? [`- Pages: ${t.pages.map(line).join(', ')}`] : []),
     ...(t.elements.length > 0 ? [`- Elements: ${t.elements.map(line).join(', ')}`] : []),
     `- Events: ${t.seqs.map((seq) => `#${seq}`).join(', ')}`,
@@ -215,10 +608,13 @@ function evidenceToMarkdown(e: ReportEvidence, i: number): string {
   return [
     `${i + 1}. ${line(e.persona_name)} (${at}, severity ${e.severity}, ${e.trust}${signals}): ${line(e.what)}`,
     ...(e.quote ? [`   - Quote: "${line(e.quote)}"`] : []),
+    ...(e.scan ? [`   - Accessibility scan: ${line(scanText(e.scan))}${e.trust === 'observed' ? `. ${SCAN_TEXT}` : ''}`] : []),
     ...(e.url ? [`   - Page: ${pageUrl(e.url)}`] : []),
     ...(e.frame !== undefined ? [`   - Frame: ${e.frame + 1}`] : []),
     ...passageLine(e),
     `   - Screenshot: ${e.screenshot ?? 'none'}`,
+    ...(e.box ? [`   - About: ${line(e.box.element)}`] : []),
+    ...(e.interference ? [`   - Tagged ${INTERFERENCE_TEXT}.`] : []),
     `   - Event: #${e.seq}`,
   ].join('\n');
 }
@@ -301,7 +697,7 @@ function spreadToMarkdown(s: SpreadStats, name: (id: string) => string): string[
   const crossed = s.segments.filter((g) => !g.seed).length;
   return [
     `- ${count(s.posts, 'post')}; first-hand: ${count(s.first_hand.length, 'persona')}; second-hand: ${count(s.second_hand.length, 'persona')}${s.second_hand.length > 0 ? ` (${s.second_hand.map(name).join(', ')})` : ''}`,
-    ...s.seeds.map((p) => `- Seed post by ${line(p.persona_name)}, round ${p.round}${p.injected ? ', injected by the test harness' : ''}: "${line(p.text)}" (#${p.seq})`),
+    ...s.seeds.map((p) => `- ${p.injected ? `Post added by your team, shown as ${line(p.persona_name)}'s` : `Seed post by ${line(p.persona_name)}`}, round ${p.round}: "${line(p.text)}" (#${p.seq})`),
     ...(s.posters ? [`- Posted: ${count(s.posters.length, 'persona')}; reached: ${count(s.readers?.length ?? 0, 'persona')}`] : []),
     `- Segments reached: ${s.segments.map((g) => `${line(g.name)} ${g.personas}${g.seed ? ' (seed)' : ''}`).join(', ') || 'none'}; crossed into ${count(crossed, 'other segment')}`,
     `- Influence: ${s.influence.map((e) => `${name(e.from)} → ${name(e.to)} (round ${e.round}, ${signed(e.delta)}, #${e.seq})`).join('; ') || 'none'}`,
@@ -332,7 +728,7 @@ function segmentLines(report: Report): string[] {
 
 // Grouped by segment, then persona. Numbers run on across the groups, so each finding has one reference.
 function frictionLines(report: Report): string[] {
-  if (report.frictions.length === 0) return ['No frictions reported.'];
+  if (report.frictions.length === 0) return [report.shared?.hidden ? HIDDEN_FRICTIONS : 'No frictions reported.'];
   const segmentIds = [...new Set([...report.segments.map((s) => s.id), ...report.frictions.map((f) => f.segment_id)])];
   const lines: string[] = [];
   let n = 0;
@@ -354,7 +750,7 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
   return [
     `${index + 1}. Step ${friction.step_no}, severity ${friction.severity}: ${line(friction.what)}`,
     `   - Expected: ${line(friction.expected)}`,
-    `   - Quote: "${line(friction.quote)}"`,
+    ...(friction.quote ? [`   - Quote: "${line(friction.quote)}"`] : []),
     ...passageLine(friction),
     `   - Page: ${pageUrl(friction.url)}`,
     ...(friction.frame !== undefined ? [`   - Frame: ${friction.frame + 1}`] : []),
@@ -362,8 +758,18 @@ function frictionToMarkdown(friction: ReportFriction, index: number): string {
   ].join('\n');
 }
 
+/** Said wherever a report names grounded segments, because real data makes personas look more credible whether or not they are more accurate. */
+export const GROUNDING_NOTE = 'Grounded personas are still fictional, and their findings are still hypotheses.';
+
+/** The notice on a returning run: how the report and the app say what its personas knew, and who had nothing to remember. */
+export const priorNotice = ({ run_id, fresh }: NonNullable<ReportMethods['prior']>) =>
+  `These personas used the product before, in ${run_id}, so this run says little about first use.${fresh ? ` ${count(fresh, 'persona')} had no earlier visit to remember and started fresh.` : ''}`;
+
+export const groundingText = ({ name, facts, remarks, sources }: NonNullable<ReportMethods['grounding']>[number]) =>
+  `${name}: ${count(sources.length, 'source')} (${sources.join(', ')}), ${count(facts, 'fact')}, ${count(remarks, 'remark')}`;
+
 function methodsToMarkdown(m: ReportMethods): string[] {
-  const models = Object.entries(m.models).map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
+  const models = [...Object.entries(m.models), ...(m.check_model ? [['evidence check', m.check_model] as const] : [])].map(([role, choice]) => `${role} ${choice?.model} (${choice?.provider})`);
   const blocked = m.blocked.map(
     (b) =>
       `- Blocked at step ${b.step_no}, persona ${b.persona_id} (${b.reason}, ${b.resumed ? 'resumed' : 'not resumed'}): ${line(b.detail)}`,
@@ -381,6 +787,10 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(tripwires.length > 0 ? tripwires : ['- Tripwires: none']),
     `- Reset hook: ${resetToMarkdown(m.reset)}`,
     ...(m.signal_thresholds === undefined ? [] : [`- Signal thresholds: ${m.signal_thresholds === null ? 'not frozen in this run' : Object.entries(m.signal_thresholds).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ')}`]),
+    ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
+    ...(m.accessibility_audit ? [`- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): ${m.accessibility_audit.map((a) => `${line(a.page)}, ${line(a.help)} (${line(scanText(a))})`).join('; ')}`] : []),
+    ...(m.grounding ? [`- Grounded segments: ${m.grounding.map((segment) => line(groundingText(segment))).join('; ')}. ${GROUNDING_NOTE}`] : []),
+    ...(m.prior ? [`- Earlier visit: ${priorNotice(m.prior)}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,
       ...(m.homogeneity.warning ? [`- Homogeneity warning: ${line(m.homogeneity.warning)}`] : []),

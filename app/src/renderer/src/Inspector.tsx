@@ -1,24 +1,89 @@
 import { useEffect, useRef, useState } from 'react';
-import type { EventOf, GnomiEvent, Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Segment } from '@gnomi/simulation/types.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
+import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
-import { FEELINGS, personaProgress, stateWord, toRows, TONE_CLASSES } from './activity.ts';
-import type { PersonaState } from './activity.ts';
-import { Button, Screenshot } from './ui.tsx';
+import { FEELINGS, personaProgress, shotLabels, stateWord, toRows, TONE_CLASSES } from './activity.ts';
+import type { PersonaState, Row } from './activity.ts';
+import { call } from './engine.ts';
+import { Button, Field, inputClass, OutcomeNote, Screenshot, useAction } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
+import { useCallCost } from './ReportStudy.tsx';
 import './results.css';
+
+/**
+ * A persona's steps as a flipbook, oldest first, so a live run's new steps never move the one on show. Only that step and its two
+ * neighbours are in the page, and each loads its own image, so a long episode costs three images however far it is flipped.
+ */
+function Replay({ steps, name, shotLabel }: { steps: Row[]; name: string; shotLabel: (row: Row) => string | undefined }) {
+  const [index, setIndex] = useState(0);
+  const go = (to: number) => setIndex(Math.max(0, Math.min(to, steps.length - 1)));
+  const step = steps[index];
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: the flipbook takes focus so its arrow keys work without tabbing to a button
+    <div role="region" id="inspector-replay" aria-label="Replay" aria-keyshortcuts="ArrowLeft ArrowRight" tabIndex={0} className="inspector-replay" onKeyDown={(event) => {
+      if (event.key === 'ArrowLeft') go(index - 1);
+      if (event.key === 'ArrowRight') go(index + 1);
+    }}>
+      <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Replay</h3><span>Left and right arrow keys</span></div>
+      {/* Apart from the visible count, whose total grows with every step of a live run: only flipping should be announced. */}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{`Step ${index + 1}: ${step.title}`}</p>
+      <div className="inspector-replay-frame">
+        <div className="inspector-replay-stage">
+          {/* Neighbours sit behind the step on show, so moving to one shows an image that has already loaded. */}
+          {steps.slice(Math.max(0, index - 1), index + 2).map((row) => <div key={row.seq} data-current={row === step || undefined}>
+            {row.screenshot ? <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} /> : <p className="text-sm text-stone-500">No screenshot for this step.</p>}
+          </div>)}
+        </div>
+        <div className="inspector-replay-caption">
+          <p className="font-medium text-stone-900">Step {index + 1} of {steps.length}</p>
+          <p>{step.title}</p>
+          {step.page && <p className="break-all text-xs text-stone-500">{step.page}</p>}
+          {step.screenshot && shotLabel(step) && <p className="text-xs text-stone-500">{shotLabel(step)}</p>}
+        </div>
+      </div>
+      <div className="inspector-replay-controls">
+        {/* aria-disabled, because a button that disables itself under the keyboard drops focus out of the flipbook. */}
+        <Button small aria-disabled={index === 0} onClick={() => go(index - 1)}><Icon name="back" size={15} />Previous</Button>
+        <Button small aria-disabled={index === steps.length - 1} onClick={() => go(index + 1)}>Next<Icon name="arrow" size={15} /></Button>
+      </div>
+    </div>
+  );
+}
+
+/** A question to one persona after the run. It spends money, so it says how much at most and waits for a click. */
+function AskPersona({ runId, persona, name }: { runId: string; persona: Persona; name: string }) {
+  const [question, setQuestion] = useState('');
+  const { cost, ready } = useCallCost('estimate_interview', runId);
+  const { busy, outcome, run } = useAction();
+  const ask = () =>
+    run(async () => {
+      await call('ask_persona', { run_id: runId, persona_id: persona.id, question }); // the answer arrives with the log, as persona.interviewed
+      setQuestion('');
+      return { ok: true, text: 'The answer is below.' };
+    });
+  return (
+    <div className="space-y-2">
+      <Field label={`Ask ${name} about this run`} hint={`${cost} ${QUESTION_WARNING}`}><textarea className={inputClass} rows={2} maxLength={QUESTION_MAX} value={question} onChange={(e) => setQuestion(e.target.value)} /></Field>
+      <Button small onClick={() => void ask()} loading={busy} disabled={!ready || !question.trim()}>Ask</Button>
+      <OutcomeNote outcome={outcome} />
+    </div>
+  );
+}
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
 export function Inspector(props: {
-  runId: string; persona: Persona; schema?: PersonaSchema; pois?: { id: string; name: string }[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  runId: string; persona: Persona; schema?: PersonaSchema; pois?: Poi[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
+  askable: boolean; // an ended run that a question can go to: a comparison study has no such thing
   state: PersonaState; // the run's own status for her: her events alone miss the run's end and a comparison's rules
   events: GnomiEvent[]; // hers only, in order
   social: SocialMemory | null; // null: the run had no social rounds
   names: Map<string, string>;
   onClose(): void;
 }) {
-  const { runId, persona, schema, pois, segment, focusSeq, ended, state, events, social, names, onClose } = props;
+  const { runId, persona, schema, pois, segment, focusSeq, ended, askable, state, events, social, names, onClose } = props;
   const poiName = (id: string) => pois?.find((poi) => poi.id === id)?.name ?? id;
   const name = personaLabel(persona, schema);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -37,10 +102,14 @@ export function Inspector(props: {
     section?.focus({ preventScroll: true });
   }
 
-  const rows = toRows(events); // newest first, like the feed, so a live persona's latest step is at the top
+  const rows = toRows(events, assetPlaces(pois ?? [])); // newest first, like the feed, so a live persona's latest step is at the top
+  const shotLabel = shotLabels(events);
+  const steps = rows.filter((row) => row.source?.type === 'persona.step').toReversed();
+  const replayable = steps.some((row) => row.screenshot); // a text's steps have none, so there is nothing to flip through
   const feeling = personaProgress(events).get(persona.id)?.feeling ?? null;
   const opinions = foldOpinions(events).filter((entry) => entry.run_id === runId && entry.persona_id === persona.id);
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
+  const answers = events.filter((event): event is EventOf<'persona.interviewed'> => event.run_id === runId && event.type === 'persona.interviewed').toReversed();
   const highlighted = evidenceSeq ?? focusSeq;
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
@@ -60,8 +129,10 @@ export function Inspector(props: {
         </Button>
       </div>
       <nav className="inspector-jump-links" aria-label="Persona sections">
+        {replayable && <button type="button" onClick={() => jumpTo('inspector-replay')}><Icon name="play" size={15} />Replay</button>}
         <button type="button" onClick={() => jumpTo('inspector-timeline')}><Icon name="activity" size={15} />Journey<span>{rows.length}</span></button>
         <button type="button" onClick={() => jumpTo('inspector-opinions')}><Icon name="message" size={15} />Opinions</button>
+        {(askable || answers.length > 0) && <button type="button" onClick={() => jumpTo('inspector-ask')}><Icon name="spark" size={15} />Ask</button>}
         <button type="button" onClick={() => jumpTo('inspector-profile')}><Icon name="people" size={15} />Profile</button>
       </nav>
 
@@ -73,6 +144,8 @@ export function Inspector(props: {
             {feeling !== null ? `Feeling ${FEELINGS[feeling] ?? feeling} (${feeling > 0 ? '+' : ''}${feeling}).` : 'No steps yet.'}
           </p>
         </section>
+
+        {replayable && <Replay steps={steps} name={name} shotLabel={shotLabel} />}
 
         <section aria-label="Timeline" id="inspector-timeline" tabIndex={-1}>
           <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Step by step</h3><span>Newest first</span></div>
@@ -96,6 +169,7 @@ export function Inspector(props: {
                 {row.screenshot && (
                   <div className="mt-2">
                     <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} />
+                    {shotLabel(row) && <p className="mt-1 text-xs text-stone-500">{shotLabel(row)}</p>}
                   </div>
                 )}
               </li>
@@ -126,6 +200,16 @@ export function Inspector(props: {
             </div>
           </div>)}
         </section>
+
+        {(askable || answers.length > 0) && <section aria-label="Questions after the run" id="inspector-ask" tabIndex={-1} className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Questions after the run</h3>
+          {askable && <AskPersona runId={runId} persona={persona} name={name} />}
+          {answers.map(({ seq, payload: { question, answer } }) => <article key={seq} className="space-y-1 rounded-lg border border-stone-200 px-4 py-3 text-sm">
+            <p className="inspector-synthetic-label">{INTERVIEW_LABEL}</p>
+            <p className="break-words font-medium text-stone-900">{question}</p>
+            <p className="break-words text-stone-700">{answer}</p>
+          </article>)}
+        </section>}
 
         <details aria-label="Survey" className="inspector-fold" open={surveys.length > 0}>
           <summary><h3>End-of-episode survey</h3><span>{surveys.length || 'Not recorded'}</span></summary>
@@ -167,7 +251,7 @@ export function Inspector(props: {
                   <ul className="mt-1 max-h-48 space-y-2 overflow-y-auto">
                     {posts.map(({ seq, persona_id, round, payload }) => (
                       <li key={seq} className="break-words">
-                        <span className="text-xs text-stone-500">{names.get(persona_id ?? '') ?? persona_id}, round {round}{payload.parent_id ? ', a reply' : ''}{payload.injected ? ', injected by the test harness' : ''}: </span>
+                        <span className="text-xs text-stone-500">{names.get(persona_id ?? '') ?? persona_id}, round {round}{payload.parent_id ? ', a reply' : ''}{payload.injected ? ', added by your team' : ''}: </span>
                         {payload.text}
                       </li>
                     ))}

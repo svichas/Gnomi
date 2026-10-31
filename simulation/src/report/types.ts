@@ -1,6 +1,6 @@
 // The report: a projection of the event log (tech.md §5.1), rebuilt by report/build.ts.
 import type { InfluenceEdge } from '../social/influence.ts';
-import type { AttributeValue, BuyerAnswers, Device, Outcome, PoiType, ProfileAttribute, Routing, SignalKind, StepEvidence } from '../types.ts';
+import type { AccessibilityViolation, AttributeValue, BuyerAnswers, CheckVerdict, Device, EventPayloads, LlmRole, ModelChoice, Outcome, PoiType, ProfileAttribute, Routing, RunConfig, SignalKind, StepEvidence, StudyStatus } from '../types.ts';
 
 /** How much a finding rests on: no persona first-hand, one persona, a few, or a clear share of those who could meet it. */
 export type EvidenceLevel = 'strong' | 'some' | 'single' | 'none';
@@ -65,6 +65,15 @@ export interface ReportSegment {
 /** Evidence trust within the simulation (tech.md §8.1): a self-report backed by a signal, a signal alone, a self-report alone. */
 export type Trust = 'confirmed' | 'observed' | 'reported';
 
+/** Where the element a piece of evidence is about sits on its screenshot, in percent of the image, so it scales with no script. */
+export interface ReportBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  element: string; // role "name"
+}
+
 /** One member friction shown as evidence for a theme. */
 export type ReportEvidence = {
   seq: number; // the self-report, survey or signal event
@@ -79,12 +88,72 @@ export type ReportEvidence = {
   what: string;
   quote: string; // the persona's think-aloud at that step, or the survey's reason
   screenshot: string | null;
+  box?: ReportBox; // only when the evidence is about that element and it shows on the screenshot; absent in older logs
   signals: SignalKind[];
+  scan?: AccessibilityViolation; // what the page scan found; never sent to a report model, which reads `what`
+  interference?: true; // possibly another persona's doing (signals/index.ts), which a reader can discount; absent otherwise and in older logs
 } & StepEvidence;
+
+/** A profile value more common among a theme's first-hand personas than among others who reached it, in this run; never a cause. */
+export interface ReportDriver {
+  id: string; // the dimension's
+  name: string;
+  value: AttributeValue;
+  holders: { affected: number; reached: number }; // personas with this value: first-hand, of those who reached the theme's pages
+  others: { affected: number; reached: number }; // the same for those without it
+  gap: number; // the difference of the two rates
+}
+
+/** What a team's own study with real people found about a finding (report/study.ts). No simulated count, rank or label reads it, and no model does. */
+export interface ThemeValidation {
+  status: StudyStatus;
+  note: string | null;
+  study_date: string; // YYYY-MM-DD
+  title: string; // the finding's title when this was recorded, which a rejudge may have changed since
+}
+
+/** An outcome with no finding to sit on. It keeps its record's keys, as its title may be one a rejudge has changed since. */
+export type UnmatchedOutcome = ThemeValidation & Pick<ReportTheme, 'keys' | 'category' | 'poi_id'>;
+
+/** What a team changed about a finding for sharing (report/edits.ts). The finding keeps its own text: exports apply this, and no count, rank, label or model reads it. */
+export interface ThemeEdit {
+  hidden: boolean;
+  new_title: string | null; // null: the original
+  new_description: string | null;
+  posts?: number[]; // hidden only: the feed posts the judge tagged with it, by seq
+  endings?: string[]; // hidden only: the personas whose reason for giving up is part of it
+}
+
+/** An edit with no finding left in this report, as after a rejudge. What it hid or reworded is back in exports as it stands. */
+export interface UnmatchedEdit {
+  title: string; // the finding's title when this was recorded
+  hidden: boolean;
+  new_title: string | null;
+  new_description: string | null;
+}
+
+/** How the top findings stand with the team's own studies: counts only, as these are few and chosen, not a sample. */
+export interface StudyCount {
+  of: number; // top findings, at most STUDY_FINDINGS
+  supported: number;
+  contradicted: number;
+  unresolved: number;
+  not_studied: number;
+}
+
+/** A plan for a study with real people (report/study.ts). Participants see the tasks and the screener only. */
+export interface ReportStudyPlan {
+  screener: string[];
+  screener_dropped: number; // entries the quote check took out
+  hypotheses: { title: string; poi_id: string; keys?: string[]; tasks: string[]; dropped: number; observe: string[] }[]; // keys: the finding's when planned; dropped: tasks the quote check took out
+  left_out: EventPayloads['report.study']['left_out'];
+  outdated?: true; // the findings were judged again after this plan was written
+}
 
 /** Frictions grouped into one problem, ranked by severity tier, then the low end of the first-hand share × trust (tech.md §8.2). */
 export interface ReportTheme {
   id: string; // its group ids joined by '+'
+  keys?: string[]; // each group's key, which unlike the id means the same in another run (report/match.ts); absent in older reports
   poi_id: string;
   rank: number; // 1 first, within the POI
   title: string;
@@ -93,7 +162,10 @@ export interface ReportTheme {
   category?: 'friction' | 'objection'; // objection: a reason not to adopt, from the survey; absent before structured surveys
   prevalence?: Prevalence; // first-hand personas only (new_simulation.md §4); absent in reports written before it
   heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
+  remembered?: number; // personas who only repeated what they complained of on an earlier visit, beside heard_first, never in both; absent with none
   first_hand?: string[]; // the persona ids counted in prevalence; absent before it was stored
+  echoed?: number[]; // the first seq of each member report that may hold another persona's words, which a memory of this run leaves out (report/prior.ts); absent with none
+  scan_only?: true; // found by the page scan alone: its prevalence of 0 says no persona reported it, not that none met it
   trust: Trust; // the highest among member frictions
   trust_counts?: Record<Trust, number>; // member frictions per trust; absent in older reports
   severity: number; // median over personas of each persona's highest member severity, 1–4
@@ -103,9 +175,33 @@ export interface ReportTheme {
   pages: string[]; // page patterns, ids normalised out
   elements: string[]; // role "name"
   affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[]; // affected: first-hand personas
+  drivers?: ReportDriver[]; // at most two, the largest gap first; only when a value passes the limits in report/dimensions.ts
   evidence: ReportEvidence[]; // at most three, highest severity first
   seqs: number[]; // every member's events, so the theme always links to the log
+  interference?: number; // member frictions tagged as possibly another persona's doing; absent with none and in older logs
   suggestion: { change: string; solution: string } | null; // generated by the author model; a suggestion, not a finding
+  check?: { verdict: CheckVerdict; reason: string }; // a model's review of the evidence; absent when the check did not cover the theme
+  validation?: ThemeValidation; // the latest outcome of the team's own study; absent when none is recorded
+  edit?: ThemeEdit; // what the team changed for sharing; absent when nothing is, and in every copy for sharing
+  reworded?: true; // only in a copy for sharing: its title or description are the team's words
+}
+
+/** Who got where on one POI in one run, so a later comparison can tell a problem that went away from one nobody tried (report/diff.ts). */
+export interface ReportReach {
+  poi_id: string;
+  started: string[]; // personas who used the POI at all, in the order they began
+  surveyed: string[]; // personas who answered a survey on it, without which a survey's theme was not asked about again
+  pages: Record<string, string[]>; // page pattern → personas who reached it
+}
+
+/** Whether later personas still found new problems on one of the team's POIs, and what few reached (report/coverage.ts). Within this run only. */
+export interface ReportCoverage {
+  poi_id: string;
+  curve?: number[]; // new friction themes per persona, in the order they began; absent when no theme has first-hand personas
+  last_fifth?: { personas: number; themes: number }; // the last fifth of the curve, and the themes it added
+  left_out?: number; // friction themes with no first-hand persona on record, so not on the curve; only when some are
+  thin_pages: { page: string; personas: number }[]; // pages or screens fewer than RETEST_REACH personas reached, fewest first; none for a text
+  hint: string; // what the curve says, in plain words
 }
 
 /** End-of-episode survey answers per segment (tech.md §8.2 step 8). */
@@ -150,14 +246,32 @@ export interface ReportBuyers {
   unclear: ReportLike[];
 }
 
+/** A page of a flow. */
+export interface ReportFlowPage {
+  page: string; // a page pattern, as themes name it
+  reached: number; // personas who were on it
+  ended: Partial<Record<Outcome, number>>; // personas whose episode ended on it, by outcome
+}
+
+/** Where the personas went on one web POI (report/flow.ts): where episodes ended, never why. */
+export interface ReportFlow {
+  poi_id: string;
+  personas: number; // personas with a step on it
+  pages: ReportFlowPage[]; // the most reached first, at most FLOW_PAGES
+  moves: { from: string; to: string; personas: number }[]; // between pages shown, each persona once per direction, the most first
+  left_out: { pages: number; ended: number }; // pages past the cap, and the personas who ended on one
+}
+
 export interface Report {
   comparison?: import('../comparison/types.ts').ComparisonReport;
   run_id: string;
+  repeat?: RunConfig['repeat']; // the repeat set this run is one of; absent on a lone run
   status: 'running' | 'finished' | 'stopped';
   stop_reason: string | null;
   goal: string;
   pois: { id: string; type: PoiType; name: string; start_url: string | null; competitor?: true }[]; // in the project's order; start_url for web POIs only; competitor: observe-only
   personas: ReportPersona[]; // in start order
+  personas_fingerprint?: string; // a hash of the frozen personas, every field: one written again keeps its id and name. Absent in a report file saved before it
   segments: ReportSegment[];
   dimensions?: ReportDimension[]; // rebuilt from each run's frozen schema and persona values
   weighted: { completion: number | null; with_friction: number | null }; // Σ share × rate over segments: each segment counts by its share, not its persona count; null when none started
@@ -165,11 +279,21 @@ export interface Report {
   frictions: ReportFriction[]; // in seq order
   // M3 friction pipeline; absent in reports written before it. Themes are ranked within each POI.
   themes?: ReportTheme[];
+  set_aside?: ReportTheme[]; // themes the evidence check put down to a persona's mistake or the test setup: rank 0, outside the friction rate; only when there are some
+  reach?: ReportReach[]; // absent only in a report file saved before it: a report built from the log always has it
+  coverage?: ReportCoverage[]; // the team's POIs that someone used; absent in older reports and comparison studies
   sentiment?: ReportSentiment[];
   went_well?: ReportLike[];
   comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
+  end_opinions?: Record<string, number>; // POI id → mean opinion at the end, whether or not anyone posted; only in the runs of a what-if set
   buyers?: ReportBuyers[]; // M5 buying survey per POI and segment; only in runs where a buyer answered one
+  flows?: ReportFlow[]; // the team's own web POIs with a step; absent in older reports
+  study_plan?: ReportStudyPlan; // the newest plan; only once one was made
+  study_count?: StudyCount; // only once an outcome is recorded and there are findings to count
+  unmatched_outcomes?: UnmatchedOutcome[]; // outcomes whose finding this report no longer has, newest first; shown, never dropped
+  unmatched_edits?: UnmatchedEdit[]; // edits whose finding this report no longer has; shown in the app, never dropped
+  shared?: { hidden: number; reworded: number }; // only in a copy for sharing, whenever the team changed something in it
   cost_usd: number;
   llm_calls: number;
   unreported_usage_calls?: number; // explicit missing usage in new logs; absent in legacy reports
@@ -187,6 +311,8 @@ export interface ReportMethods {
   seed: number; // the audience seed, or the run seed without an audience
   roles: string[]; // the logins personas used
   models: Partial<Routing>; // the roles this run called, with their models
+  check_model?: ModelChoice; // the model the evidence check called, which the judge role in models does not show; only in runs with a check call
+  response_models?: Partial<Record<LlmRole, string[]>>; // the model ids providers reported, per role: an alias can move while `models` stays the same; only when a provider reported one
   budgets: { cost_usd: number; wall_clock_min: number; concurrency: number };
   allowed_hosts: string[]; // start_url's host first, then the POI's allowed hosts
   blocked_requests: { host: string; count: number; reason?: 'observe_only' | 'robots' }[]; // distinct blocked requests per host and reason, most first
@@ -195,6 +321,10 @@ export interface ReportMethods {
   reset: { url: string; status: number | null; error: string | null } | null;
   concurrency_changes: { concurrency: number; reason: string }[];
   signal_thresholds?: Record<string, unknown> | null; // as the run froze them; null when it did not
+  undersized_targets?: { page: string; element: string | null; width: number; height: number; personas: number }[]; // an audit, not findings: the team's product's small_target signals, so only elements a mobile persona tapped, by page, element and size, most personas first; only in runs with one
+  accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
+  grounding?: { segment_id: string; name: string; facts: number; remarks: number; sources: string[] }[]; // the segments in this run that real data shaped, as the run froze them; `sources` holds file names; only in runs with one
+  prior?: { run_id: string; fresh: number }; // a returning run: the run its personas remember, and how many had no visit there to remember; only in such runs
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }
@@ -217,7 +347,7 @@ export interface ReportPost {
   segment_id: string | null;
   round: number;
   text: string;
-  injected: boolean; // put in the persona's name by the test harness, not written by a model
+  injected: boolean; // added by the team in the persona's name, not written by a model
 }
 
 /** How talk about a POI, or one of its themes, travelled on the feed (tech.md §8.2 step 7, §6.6). */

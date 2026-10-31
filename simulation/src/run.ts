@@ -3,7 +3,7 @@ import { admits, effectiveComparisonPois, inScenario, validateComparison } from 
 import type { ComparisonTarget, ComparisonTask } from './comparison/types.ts';
 import { askBuyer } from './agent/buyer.ts';
 import type { EpisodeEnd } from './agent/loop.ts';
-import { HEARD_POSTS, type HeardPost } from './agent/prompt.ts';
+import { HEARD_POSTS, perceptionOf, type HeardPost } from './agent/prompt.ts';
 import { socialParts, socialSchema, socialSystemPrompt } from './agent/social.ts';
 import { surveyedName, surveyFacts, surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './agent/survey.ts';
 import { personaEnvironment } from './audience/locations.ts';
@@ -20,12 +20,12 @@ import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import { socialRounds } from './settings.ts';
-import { DEFAULT_SIGNALS } from './signals/index.ts';
+import { DEFAULT_SIGNALS, pageAudits } from './signals/index.ts';
 import { readBoard, selectFeed, type FeedPost } from './social/feed.ts';
 import { networkGraph } from './social/graph.ts';
 import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder, SessionStore, StorageState } from './seams.ts';
 
-import type { EventPayloads, GnomiEvent, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi } from './types.ts';
+import type { EventPayloads, GnomiEvent, InjectedPost, Opinion, Persona, Poi, ProjectConfig, ProviderId, Report, RunConfig, Segment, SessionInfo, WebPoi, WhatIf } from './types.ts';
 
 const MODEL_TIMEOUT_MS = 180_000; // the whole call, retries included; as long as the report's calls get
 
@@ -75,10 +75,18 @@ export function roleOf(persona: Persona, project: ProjectConfig): string | null 
   return persona.segment_id === null ? project.role : (segment?.role ?? null);
 }
 
+/** A feed shows a post by its author, so the team's post needs one: the seed picks who, per pair, and the report says whose text it is. */
+function addedPost({ pair, round, poi_id, text }: WhatIf, personas: Persona[], seed: number): InjectedPost {
+  const pick = mulberry32(fnv1a(`what-if/${seed}/${pair}`))();
+  return { round, persona_id: personas[Math.floor(pick * personas.length)].id, poi_id, text };
+}
+
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
-export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean }): Omit<RunConfig, 'run_id'> {
+export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat']; prior?: RunConfig['prior'] }): Omit<RunConfig, 'run_id'> {
+  const seed = project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31);
+  const what_if = opts.repeat?.what_if;
   return {
-    seed: project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31),
+    seed,
     project: structuredClone({ ...project, persona_schema: getPersonaSchema(project.persona_schema) }),
     personas: structuredClone(opts.personas),
     sessions: structuredClone(opts.sessions),
@@ -86,6 +94,9 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     pause_timeout_ms: 10 * 60_000,
     app_version: '0.0.0', // shortcut: fixed until packaging (M7) stamps a real version
     signals: { ...DEFAULT_SIGNALS },
+    ...(opts.repeat ? { repeat: opts.repeat } : {}),
+    ...(opts.prior ? { prior: structuredClone(opts.prior) } : {}),
+    ...(what_if?.post ? { injected_posts: [addedPost(what_if, opts.personas, seed)] } : {}),
   };
 }
 
@@ -156,7 +167,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const checkRecordedBudget = () => {
     const now = spentUsd();
     if (now < settings.cost_budget_usd) return now;
-    halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd} recorded-cost budget was reached` }, true);
+    halt({ reason: 'cost_budget', detail: `the $${settings.cost_budget_usd.toFixed(2)} recorded-cost budget was reached` }, true);
     return now;
   };
   const budgetedLlm: LlmGateway = {
@@ -188,7 +199,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (drain.signal.aborted) return false;
     const perStep = estimatedCost ?? (stepsDone ? now / stepsDone : 0);
     if (project.comparison && now + (inFlight + 1) * perStep >= settings.cost_budget_usd) {
-      halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd} budget` }, false);
+      halt({ reason: 'cost_budget', detail: `the next steps were projected to reach the $${settings.cost_budget_usd.toFixed(2)} budget` }, false);
       return false;
     }
     inFlight++;
@@ -203,7 +214,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   const admit = (steps: number, what: string) => {
     const now = spentUsd();
     if (now + steps * (stepsDone ? now / stepsDone : 0) < settings.cost_budget_usd) return true;
-    halt({ reason: 'cost_budget', detail: `${what} was projected to reach the $${settings.cost_budget_usd} budget` }, false);
+    halt({ reason: 'cost_budget', detail: `${what} was projected to reach the $${settings.cost_budget_usd.toFixed(2)} budget` }, false);
     return false;
   };
 
@@ -244,9 +255,11 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const observe = observeOptions(hard.signal); // robots.txt once per run and observe-only POI
+  const audit = settings.accessibility_checks ? pageAudits() : undefined;
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
   const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi, state?: StorageState) => {
     const login = poi.mode === 'full' ? role : null;
+    const perception = target ? undefined : perceptionOf(project, persona); // a comparison's own loop has no such step (comparison/runtime.ts)
     const saved = login ? await sessions?.load(login) : null;
     if (target && saved && saved.info.target_id !== target.id) throw new ComparisonEnvironmentError(`The recorded session is not bound to ${target.name}; record its own test account.`);
     const observing = await observe(poi);
@@ -257,6 +270,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     return browsers.newPage({
       device: persona.device,
       ...personaEnvironment(persona),
+      ...(perception && perception !== 'screen_reader' && { vision: perception }),
       allowedHosts: allowedHosts(poi),
       blockedDomains: poi.production_domains,
       storageState: state ?? saved?.state ?? null,
@@ -388,6 +402,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         budget: budgets[i],
         stepsBefore,
         opinion: currentOpinion(persona.id, poi.id),
+        prior: config.prior?.memories[persona.id]?.pois[poi.id],
         openPage: openPage(persona, role),
         llm: budgetedLlm,
         blobs,
@@ -399,6 +414,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
         waitForResume: waitForResume(persona.id),
         round: () => base.round,
         slice: rounds ? { steps: slice, next: between(persona.id, poi.id) } : undefined,
+        audit,
       });
       const last = end === 'stopped' || i === pois.length - 1;
       if (last) ends.set(persona.id, end);
@@ -417,8 +433,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (!beginStep()) return null;
     try {
       const post_ids = feed.map((p) => p.post_id);
+      // A post the team added in this persona's name was never its own, and a reply must not tell it otherwise.
+      const parentOf = ({ parent_id }: FeedPost) => {
+        const parent = parent_id ? posts.get(parent_id) : undefined;
+        return parent?.injected && parent.author === persona.id ? undefined : parent;
+      };
       // A reply shows its parent's text too, so the parent reached the persona as well.
-      const parent_ids = [...new Set(feed.flatMap((p) => (p.parent_id && posts.has(p.parent_id) ? [p.parent_id] : [])))];
+      const parent_ids = [...new Set(feed.flatMap((p) => parentOf(p)?.post_id ?? []))];
       record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids, parent_ids } });
       const opinionOf = (poi_id: string) => opinions.get(JSON.stringify([persona.id, poi_id])) ?? null;
       const pois = assigned.get(persona.id)!;
@@ -445,10 +466,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
           frictions: own.flatMap((e) => (e.type === 'persona.friction_reported' ? [{ what: e.payload.what, quote: e.payload.passage?.text ?? null }] : [])),
           thoughts: steps.slice(-2).flatMap((e) => (e.type === 'persona.step' && e.payload.thought ? [e.payload.thought] : [])),
           pois: pois.map((poi) => ({ name: poi.name, opinion: opinionOf(poi.id) })),
-          posted: own.flatMap((e) => (e.type === 'social.post' ? [e.payload.text] : [])),
+          posted: own.flatMap((e) => (e.type === 'social.post' && !e.payload.injected ? [e.payload.text] : [])), // a post the team added was never this persona's
           feed: feed.map((p) => {
-            const { post_id, author, text, agree, disagree, parent_id } = p;
-            const parent = parent_id ? posts.get(parent_id) : undefined;
+            const { post_id, author, text, agree, disagree } = p;
+            const parent = parentOf(p);
             return { post_id, author: name(author), about: about(p.about_poi_id), text, agree, disagree, parent: parent ? { author: name(parent.author), text: parent.text } : null };
           }),
         }),
@@ -511,7 +532,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   };
 
   const socialPhase = async (round: number) => {
-    // Harness posts go in first, under ids no model post can have, so this round's feeds can show them.
+    // Injected posts go in first, under ids no model post can have, so this round's feeds can show them.
     injectedIn(round).forEach((p, i) => {
       record({ ...base, persona_id: p.persona_id, poi_id: p.poi_id, type: 'social.post', payload: { post_id: `inj-r${round}-${i + 1}`, parent_id: null, text: p.text, about_poi_id: p.poi_id, injected: true } });
     });
@@ -580,7 +601,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     try {
       for (let round = 1; round <= rounds && !drain.signal.aborted; round++) {
         const using = config.personas.filter((p) => !ends.has(p.id));
-        if (!using.length && !injectedIn(round).length && !planPhase(round).due.size) break;
+        // A post still to come keeps the rounds going: a quiet swarm would otherwise end before it, and the run would not differ from its pair.
+        if (!using.length && !(config.injected_posts ?? []).some((p) => p.round >= round) && !planPhase(round).due.size) break;
         if (using.length && !admit(using.reduce((sum, p) => sum + sliceOf(p), 0), `the usage slice of round ${round}`)) break;
         base.round = round;
         record({ ...base, type: 'run.round_started', payload: {} });
@@ -631,7 +653,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       // The host's preflight catches this first; a run started some other way ends here, logged, rather than half-scheduled.
       const idle = !project.comparison && config.personas.find((p) => assigned.get(p.id)!.length === 0);
       if (idle) throw new Error(`${idle.name} has no point of interest to use.`);
-      for (const persona of config.personas) record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
+      for (const persona of config.personas) {
+        record({ ...base, persona_id: persona.id, type: 'persona.created', payload: follows ? { persona, follows: follows.get(persona.id)! } : { persona } });
+        // A returning persona starts from the opinion it left with, in the log so that every step, survey, social phase and report fold starts there too.
+        for (const [poi_id, { opinion }] of Object.entries(config.prior?.memories[persona.id]?.pois ?? {})) {
+          if (opinion) record({ ...base, persona_id: persona.id, poi_id, type: 'persona.opinion_changed', payload: { poi_id, before: null, after: opinion, cause: { step_ids: [], post_ids: [] } } });
+        }
+      }
       await schedule();
     } catch (err) {
       fail(err);
@@ -641,7 +669,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     }
     // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
     try {
-      if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, record, events: () => store.events(run_id) });
+      if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, blobs, record, events: () => store.events(run_id) });
     } catch (err) {
       fail(err); // the run still ends, logged and reported, rather than staying 'running'
     } finally {

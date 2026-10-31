@@ -57,6 +57,10 @@ export function describe(e: GnomiEvent): string {
       return `step ${e.payload.step_no}: "${e.payload.message}"`;
     case 'signal.small_target':
       return `step ${e.payload.step_no}: ${e.payload.box[2]}×${e.payload.box[3]} target`;
+    case 'signal.accessibility':
+      return `step ${e.payload.step_no}: ${e.payload.rule} (${e.payload.impact}) on ${e.payload.elements} element${e.payload.elements === 1 ? '' : 's'} of ${e.payload.url}`;
+    case 'accessibility.scanned':
+      return `step ${e.payload.step_no}: ${e.payload.url} ${e.payload.error ? `not scanned: ${e.payload.error}` : `scanned, ${e.payload.audit.length} moderate or minor`}`;
     case 'persona.survey':
       return `${e.payload.poi_id}: sentiment ${e.payload.sentiment}, ${e.payload.would_continue ? 'would' : 'would not'} continue: "${e.payload.reason}"`;
     case 'run.round_started':
@@ -65,7 +69,7 @@ export function describe(e: GnomiEvent): string {
     case 'social.feed_viewed':
       return `${e.payload.post_ids.length} posts`;
     case 'social.post':
-      return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (injected)' : ''}: "${e.payload.text}"`;
+      return `${e.payload.parent_id ? `reply to ${e.payload.parent_id}` : 'post'} ${e.payload.post_id}${e.payload.injected ? ' (added by the team)' : ''}: "${e.payload.text}"`;
     case 'social.reaction':
       return `${e.payload.kind} ${e.payload.post_id}`;
     case 'social.discarded':
@@ -78,10 +82,22 @@ export function describe(e: GnomiEvent): string {
       return e.payload.pois.length ? `naming themes and writing suggestions for ${e.payload.pois.join(', ')}` : 'no frictions to name themes for';
     case 'report.themes':
       return `${e.payload.poi_id}: ${e.payload.themes.length} themes named by the judge`;
+    case 'report.checks':
+      return `${e.payload.poi_id}: ${e.payload.checks.length} themes reviewed by the evidence check`;
     case 'report.suggestions':
       return `${e.payload.poi_id}: ${e.payload.suggestions.length} suggested changes from the author`;
     case 'report.generated':
       return `${e.payload.path} (${e.payload.friction_count} frictions)`;
+    case 'report.study':
+      return `study plan for ${e.payload.themes.length} finding${e.payload.themes.length === 1 ? '' : 's'}`;
+    case 'finding.validated':
+      return `study outcome, ${e.payload.study_date}: ${e.payload.status} for "${e.payload.title}"`;
+    case 'persona.interviewed':
+      return `asked after the run: "${e.payload.question}"`;
+    case 'finding.hidden':
+      return `${e.payload.hidden ? 'hidden from exports' : 'back in exports'}: "${e.payload.title}"`;
+    case 'finding.edited':
+      return `${e.payload.new_title === null && e.payload.new_description === null ? 'wording back to the original' : 'reworded for exports'}: "${e.payload.title}"`;
     case 'comparison.episode_started':
       return `${e.payload.target_id}, ${e.payload.task_id}: position ${e.payload.order + 1}`;
     case 'comparison.episode_finished':

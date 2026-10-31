@@ -12,10 +12,12 @@ export async function startHost() {
   const progress: { done: number; total: number }[] = [];
   const events: GnomiEvent[] = [];
   const toMain: EngineToClient[] = []; // anything but responses, which main would drop
+  const repeatFailures: string[] = [];
   const reply = (msg: EngineToClient) => {
     if (msg.kind === 'response') replies.get(msg.id)?.(msg);
     else if (msg.kind === 'event') events.push(msg.event);
     else if (msg.kind === 'progress') progress.push(msg);
+    else if (msg.kind === 'repeat_failed') repeatFailures.push(msg.error);
   };
   (process as unknown as { parentPort: unknown }).parentPort = {
     on: (event: string, listener: Listener) => event === 'message' && listeners.push(listener),
@@ -41,5 +43,5 @@ export async function startHost() {
     return caller((data) => portListeners.forEach((listener) => listener({ data, ports: [] })));
   }
   connect(); // the renderer, which events and progress stream to
-  return { call: caller(send), connect, send, events, progress, toMain };
+  return { call: caller(send), connect, send, events, progress, toMain, repeatFailures };
 }

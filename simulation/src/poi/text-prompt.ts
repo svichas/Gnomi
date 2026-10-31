@@ -3,11 +3,11 @@
 // persona block as the browsing prompt (agent/prompt.ts, §6.1); the engine checks every quoted passage against the text.
 import { z } from 'zod';
 import { personaEnvironment } from '../audience/locations.ts';
-import { firstName, heardLines, languageRules, patienceRule, personaSection, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
+import { firstName, heardLines, languageRules, patienceRule, personaSection, priorLines, taskSection, wordsFor, type HeardPost } from '../agent/prompt.ts';
 import { english, ENGLISH } from '../llm/english.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import type { UserPart } from '../seams.ts';
-import type { Opinion, Persona, ProjectConfig, Segment, TextPoi } from '../types.ts';
+import type { Opinion, Persona, PriorPoi, ProjectConfig, Segment, TextPoi } from '../types.ts';
 
 /** The request purpose, for logs and scripted responders (llm/scripted.ts). */
 export const READ_TEXT = 'read_text';
@@ -98,11 +98,12 @@ export function readShared(opts: { poi: TextPoi; text: string; part: { start: nu
 }
 
 /** The volatile part: which part this is, what the persona took from the earlier ones, its current opinion and what it heard. */
-export function readParts(opts: { persona: Persona; text: string; part: { start: number; end: number }; index: number; parts: number; memory: ReadMemory[]; opinion: Opinion | null; heard?: HeardPost[] }): UserPart[] {
+export function readParts(opts: { persona: Persona; text: string; part: { start: number; end: number }; index: number; parts: number; memory: ReadMemory[]; opinion: Opinion | null; heard?: HeardPost[]; prior?: PriorPoi }): UserPart[] {
   const { persona, text, part, index, parts, memory, opinion } = opts;
   const p = firstName(persona);
   const lines = [
     `${partLine(text, part, index, parts)} The part is the text quoted above.`,
+    ...(opts.prior ? ['', ...priorLines(p, opts.prior).slice(0, -1)] : []),
     ...(memory.length ? ['', `What ${p} took from the earlier parts:`, ...memory.map((m) => `${m.part}. ${p} thought: "${inert(m.thought)}"${m.confusions.length ? ` Confused by: ${m.confusions.map((c) => `"${inert(c)}"`).join('; ')}` : ''}`)] : []),
     ...(opinion ? ['', `Current opinion (self-reported, from earlier parts): ${inert(JSON.stringify(opinion))}`] : []),
     ...(opts.heard?.length ? ['', ...heardLines(p, opts.heard).map(inert)] : ['']),

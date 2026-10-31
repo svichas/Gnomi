@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { ProjectInfo } from '@gnomi/engine/protocol.ts';
 import type { Persona, ProjectConfig } from '@gnomi/simulation/types.ts';
 import { addedSeed, GENERATION, personaId, slotSeed } from '@gnomi/simulation/audience/sample.ts';
-import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, generatedCount, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare, staleProfiles } from './audience.ts';
+import { addedByHand, addSegment, audienceProblem, blankAudience, cleanAudience, countryShares, distribution, generatedCount, mixText, rebalance, removeCountry, removeSegment, segmentCounts, setCountryShare, setShare, staleProfiles } from './audience.ts';
 
 test('country weights become percentages and adding, changing and removing a country preserves 100%', () => {
   assert.deepEqual(countryShares({ DE: 0.6, GR: 0.4 }), { DE: 60, GR: 40 });
@@ -12,6 +12,12 @@ test('country weights become percentages and adding, changing and removing a cou
   assert.deepEqual(setCountryShare({ DE: 75, GR: 25 }, 'DE', 50), { DE: 50, GR: 50 });
   assert.deepEqual(removeCountry({ DE: 50, GR: 50 }, 'GR'), { DE: 100 });
   assert.equal(removeCountry({ DE: 100 }, 'DE'), undefined, 'removing the last country restores legacy language sampling');
+});
+
+test('a mix reads in percents of its sum, whichever way it is stored', () => {
+  assert.equal(mixText({ DE: 99, GR: 1 }), 'DE 99%, GR 1%', 'a 1% country is not 100%');
+  assert.equal(mixText({ en: 0.6, de: 0.4 }), 'en 60%, de 40%');
+  assert.equal(mixText({}), '');
 });
 
 test('employer lists are trimmed, deduplicated and saved without empty lines', () => {
@@ -27,6 +33,7 @@ test('country mix validation gives an actionable error before saving', () => {
   const invalid: Record<string, number>[] = [{ ZZ: 1 }, { DE: 0 }, { DE: -1 }, { DE: NaN }];
   for (const countries of invalid) {
     assert.match(audienceProblem({ ...audience, countries }) ?? '', /Audience: .*country/i);
+    assert.match(audienceProblem({ ...audience, segments: [{ ...audience.segments[0], countries }] }) ?? '', /Audience: .*country/i, 'a segment mix is checked too');
   }
 });
 

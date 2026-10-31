@@ -25,7 +25,7 @@
 
 .inspector-header { padding: 24px; flex-shrink: 0; }
 .inspector-header .button { flex-shrink: 0; }
-.inspector-jump-links { display: flex; gap: 4px; padding: 0 20px 12px; border-bottom: 1px solid var(--gnomi-line); flex-shrink: 0; }
+.inspector-jump-links { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 20px 12px; border-bottom: 1px solid var(--gnomi-line); flex-shrink: 0; }
 .inspector-jump-links button { display: flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 40px; border-radius: var(--gnomi-radius-control); color: var(--gnomi-action); font-size: 12px; font-weight: 500; }
 .inspector-jump-links button:hover { background: var(--gnomi-selected); }
 .inspector-jump-links button > span { color: var(--gnomi-text-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
@@ -44,6 +44,15 @@
 .inspector-empty > svg { margin: 0 auto 12px; color: var(--gnomi-action); }
 .inspector-empty p { font-size: 14px; }
 .inspector-empty span { display: block; margin-top: 4px; font-size: 12px; color: var(--gnomi-text-muted); }
+.inspector-replay { padding: 16px; border: 1px solid var(--gnomi-line); border-radius: var(--gnomi-radius-control); }
+.inspector-replay:focus-visible { outline-offset: 2px; }
+.inspector-replay-frame { display: flex; flex-wrap: wrap; gap: 12px; }
+.inspector-replay-stage { flex: 2 1 12rem; min-width: 0; display: grid; align-items: start; }
+.inspector-replay-stage > * { grid-area: 1 / 1; min-width: 0; }
+.inspector-replay-stage > :not([data-current]) { visibility: hidden; }
+.inspector-replay-caption { flex: 1 1 7rem; min-width: 0; overflow-wrap: anywhere; display: grid; align-content: start; gap: 4px; font-size: 13px; }
+.inspector-replay-controls { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+.inspector-replay-controls .button[aria-disabled='true'] { opacity: .45; cursor: not-allowed; }
 .inspector-fold { border-top: 1px solid var(--gnomi-line); }
 .inspector-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 16px; }
 .inspector-fold > summary::after { content: '+'; color: var(--gnomi-action); font-size: 18px; }

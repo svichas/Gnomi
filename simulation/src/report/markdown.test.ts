@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Report, ReportTheme } from '../types.ts';
 import { HYPOTHESIS_BANNER } from './build.ts';
-import { missingUsageText, reportToMarkdown } from './markdown.ts';
+import type { RepeatSet } from './repeats.ts';
+import { missingUsageText, priorNotice, reportToMarkdown } from './markdown.ts';
 
 const url = 'http://localhost:3001/jobs/new';
 
@@ -281,13 +282,77 @@ test('themes carry rank, trust, affected share, evidence with event links and la
     assert.ok(md.includes(expected), expected);
   }
   assert.ok(md.indexOf('## Themes') < md.indexOf('## Frictions'));
-  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No frictions to group into themes.'));  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
+  assert.ok(reportToMarkdown({ ...report, themes: [] }).includes('No themes. Small-target and backtrack signals do not make one alone'));  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
   const echoed = (heard_first: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first }], sentiment: [], went_well: [] });
   assert.ok(echoed(1).includes('95% range 9%–91%); 1 more reported it only after reading about it in the feed'), 'heard-first personas sit beside the share');
   assert.ok(!echoed(0).includes('reading about it in the feed'));
   const mixed = reportToMarkdown({ ...report, themes: [{ ...theme, trust_counts: { confirmed: 1, observed: 0, reported: 3 } }] });
   assert.ok(mixed.includes('- Trust: 1 confirmed, 3 reported\n'), 'the trust mix, not the best member');
   assert.ok(mixed.includes("among this run's simulated personas, assuming independent personas; not an estimate of real users"));
+});
+
+test('a returning run says so at the top and in the methods, with the base run, and a remembered complaint sits beside the share', () => {
+  const shared = { personas: 1, exposed: 2, share: 0.5, low: 0.09, high: 0.91, level: 'single' as const };
+  const back = (fresh: number) => reportToMarkdown({ ...report, themes: [{ ...theme, prevalence: shared, heard_first: 1, remembered: 2 }], methods: { ...report.methods, prior: { run_id: 'r-0001', fresh } } });
+  const md = back(0);
+  const notice = 'These personas used the product before, in r-0001, so this run says little about first use.';
+  assert.ok(md.indexOf(`> ${notice}`) > md.indexOf(`> ${report.banner}`) && md.indexOf(`> ${notice}`) < md.indexOf('## Segments'), 'a notice under the banner, which still calls the findings hypotheses');
+  assert.ok(md.includes(`- Earlier visit: ${notice}`), 'and a line in the methods');
+  assert.ok(md.includes('; 1 more reported it only after reading about it in the feed; 2 more reported it after remembering it from an earlier visit'));
+  assert.ok(back(3).includes(`${notice} 3 personas had no earlier visit to remember and started fresh.`));
+  assert.ok(!back(0).includes('started fresh'));
+  assert.ok(!reportToMarkdown(report).includes('earlier visit'), 'a first-use report says none of it');
+  assert.doesNotMatch(priorNotice({ run_id: 'r-1', fresh: 1 }), /validated|confidence|users? said/i);
+});
+
+test('a tagged theme and its evidence say possibly interference between personas; an old report says nothing', () => {
+  const tagged = reportToMarkdown({ ...report, themes: [{ ...theme, interference: 1, evidence: [{ ...theme.evidence[0], interference: true }, theme.evidence[1]] }] });
+  assert.match(tagged, /- 1 of 3 reports tagged possibly interference between personas: another persona changed an element of the same name shortly before/);
+  assert.equal(tagged.match(/Tagged possibly interference between personas/g)?.length, 1, 'on the tagged evidence only');
+  assert.doesNotMatch(reportToMarkdown({ ...report, themes: [theme] }), /interference/);
+});
+
+test("a competitor's section with no themes does not point at the undersized-target audit, which covers only the team's product", () => {
+  const pois = [...report.pois, { id: 'poi-new', type: 'web', name: 'New site', start_url: null }, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: null, competitor: true }] as Report['pois'];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme] });
+  const section = (from: string, to: string) => md.slice(md.indexOf(from), md.indexOf(to, md.indexOf(from)));
+  assert.ok(section('### New site', '### Rival').includes('any undersized targets on your product are listed under Methods.'));
+  const rival = section('### Rival (competitor, observed only)', '\n## ');
+  assert.ok(rival.includes('No themes. Small-target and backtrack signals do not make one alone.'));
+  assert.ok(!rival.includes('Methods'));
+});
+
+test('set-aside themes fold apart with each reason, called a model\'s review, and an empty ranking does not read as no frictions', () => {
+  const aside = (verdict: 'agent_mistake' | 'environment', reason: string): ReportTheme => ({ ...theme, rank: 0, title: `Theme\n${verdict}`, check: { verdict, reason } });
+  const md = reportToMarkdown({ ...report, themes: [{ ...theme, id: 'g2', title: 'Kept', check: { verdict: 'unclear', reason: 'Not decided.' } }], set_aside: [aside('agent_mistake', 'She typed <her own> name.'), aside('environment', 'The goal cannot be done.')] });
+  const section = md.slice(md.indexOf('## Set aside by the evidence check'));
+  assert.ok(md.indexOf('## Themes') < md.indexOf('## Set aside by the evidence check'));
+  for (const expected of [
+    '<details>\n<summary>2 themes set aside</summary>',
+    "A model reviewed the evidence behind these themes",
+    "This is a model's review",
+    "- **Theme agent_mistake** (the model's review points to a persona's mistake): She typed &lt;her own&gt; name. Events: #4, #5, #20",
+    "- **Theme environment** (the model's review points to the test setup): The goal cannot be done. Events: #4, #5, #20",
+    '</details>',
+  ]) {
+    assert.ok(section.includes(expected), expected);
+  }
+  assert.doesNotMatch(section, /disprov|false positive|not real/i);
+  assert.ok(!reportToMarkdown({ ...report, themes: [theme] }).includes('Set aside'));
+  const empty = reportToMarkdown({ ...report, themes: [], set_aside: [aside('environment', 'The goal cannot be done.')] });
+  assert.ok(empty.includes('The evidence check set aside every theme here.'));
+  assert.ok(!empty.includes('No themes.'));
+  const pois = [...report.pois, { ...report.pois[0], id: 'poi-b', name: 'Other' }];
+  const split = reportToMarkdown({ ...report, pois, themes: [theme], set_aside: [{ ...aside('environment', 'Blocked.'), poi_id: 'poi-b' }] });
+  assert.ok(split.includes('### Other\n\nThe evidence check set aside every theme here.'));
+});
+
+test('with several POIs each set-aside theme names its POI, and a competitor\'s says so', () => {
+  const aside = (poi_id: string): ReportTheme => ({ ...theme, rank: 0, poi_id, title: `Aside on ${poi_id}`, check: { verdict: 'environment', reason: 'Blocked.' } });
+  const pois = [...report.pois, { ...report.pois[0], id: 'rival', name: 'Rival', competitor: true as const }];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme], set_aside: [aside('poi-gym'), aside('rival')] });
+  assert.ok(md.includes("- **Aside on poi-gym** on Gym (the model's review points to the test setup): Blocked."));
+  assert.ok(md.includes("- **Aside on rival** on Rival (competitor, observed only) (the model's review points to the test setup): Blocked."));
 });
 
 test('sentiment, what went well and the analysis appendix appear when the report has them, and legacy reports skip them', () => {
@@ -309,7 +374,7 @@ test('sentiment, what went well and the analysis appendix appear when the report
     assert.ok(md.includes(expected), expected);
   }
   const legacy = reportToMarkdown(report);
-  for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
+  for (const absent of ['## Themes', '## Sentiment', '## What went well', 'Signal thresholds', 'Undersized', 'Limitation']) assert.ok(!legacy.includes(absent), absent);
 });
 
 test('page and model text cannot add HTML, images or links to the export, and evidence pages lose their query strings', () => {
@@ -322,6 +387,8 @@ test('page and model text cannot add HTML, images or links to the export, and ev
   });
   assert.ok(md.includes('&lt;img src="https://t.example/p.gif"&gt; !\\[x\\](https://t.example/i.png) \\[Verify your account\\](https://phish) \\`x\\` \\\\\\['), 'shown as text');
   assert.doesNotMatch(md, /<img|(?<!\\)\]\(|(?<!\\)`x/);
+  const audit = reportToMarkdown({ ...report, methods: { ...report.methods, undersized_targets: [{ page: 'localhost:3001/[a](b)', element: hostile, width: 20, height: 20, personas: 1 }] } });
+  assert.doesNotMatch(audit, /<img|(?<!\\)\]\(|(?<!\\)`x/, 'an element name in the audit is the page\'s text too');
   assert.ok(md.includes('   - Page: http://localhost:3001/reset\n') && !md.includes('s3cret'), 'no token in the export');
 });
 
@@ -342,4 +409,66 @@ test('missing-usage copy names the count and preserves uncertainty about provide
   assert.match(missingUsageText(2)!, /^2 model calls did not report complete usage/);
   assert.match(missingUsageText(2)!, /Canceled or failed requests may still incur provider charges/);
   assert.match(missingUsageText(2)!, /Actual charges may exceed the recorded cost/);
+});
+
+test('a run of a repeat set says how each finding did across the set, only when read with the set', () => {
+  const set: RepeatSet = {
+    group: 'set-a', of: 3, compared: 3, running: false, incomplete: false, families: ['anthropic', 'deepseek'],
+    findings: [{ poi_id: 'poi-gym', seen_in: 2, of: 3, families: ['anthropic'], titles: ['Saving a job\nfails', 'The form [loses](x) work'], themes: { 'r-0001': 'g1+g3' } }],
+  };
+  const own = { ...report, repeat: { group: 'set-a', index: 1, of: 3 }, themes: [theme] };
+  const read = reportToMarkdown(own, set);
+  assert.ok(read.includes('- Repeat: run 1 of 3 in set set-a'));
+  assert.ok(read.includes('- 3 runs compared. Repeats test robustness inside the simulation'));
+  assert.ok(read.includes('- Repeats: Appeared in 2 of 3 runs. Only anthropic runs produced this'));
+  assert.ok(read.includes('- Named in other runs: The form \\[loses\\](x) work'), 'a title is the model\'s text, escaped');
+  assert.doesNotMatch(read, /confidence|validated/i);
+
+  const alone = reportToMarkdown(own);
+  assert.ok(alone.includes('- Repeat: run 1 of 3 in set set-a'), 'the run says which set it is in');
+  assert.doesNotMatch(alone, /Appeared in|robustness/);
+
+  const family = reportToMarkdown(own, { ...set, families: ['anthropic'] });
+  assert.ok(family.includes('- Repeats: Appeared in 2 of 3 runs\n'), 'one family in the set flags nothing');
+  const uncompared = reportToMarkdown({ ...own, run_id: 'r-0003' }, set);
+  assert.doesNotMatch(uncompared, /Appeared in/, 'a run the set left out has no such line');
+  const lone = reportToMarkdown(own, { ...set, findings: [{ ...set.findings[0], seen_in: 1, of: 1 }], compared: 1, incomplete: true });
+  assert.doesNotMatch(lone, /Appeared in/, 'one finished run compares nothing');
+  assert.ok(lone.includes('- Incomplete set: 1 of 3 runs finished.'));
+  assert.doesNotMatch(reportToMarkdown({ ...report, themes: [theme] }), /Repeat/, 'a lone run is as it was');
+});
+
+const priorityBase = (over: Partial<ReportTheme>): ReportTheme => ({ ...theme, title: 'Saving a job fails', ...over });
+
+test('each theme opens with its suggested priority, explained as a look within this run', () => {
+  const strong = { personas: 3, exposed: 3, share: 1, low: 0.4, high: 1, level: 'strong' } as const;
+  const md = reportToMarkdown({
+    ...report,
+    themes: [
+      priorityBase({ prevalence: strong }),
+      priorityBase({ id: 'g2', rank: 2, title: 'Too dear', category: 'objection', prevalence: strong }),
+      priorityBase({ id: 'g3', rank: 3, title: 'From an older report' }),
+    ],
+  });
+  assert.ok(md.includes('### 1. Saving a job fails\n\nSuggested priority in this run: **Fix now**\n\nSave does nothing'));
+  assert.ok(md.includes('### 2. Too dear\n\nSave does nothing'), 'an objection is an attitude, not a fix');
+  assert.ok(md.includes('### 3. From an older report\n\nSuggested priority in this run: **Later**\n'));
+  assert.ok(md.includes('suggest where to look first within this run'));
+});
+
+test('a competitor\'s theme has no priority: its problems are not the team\'s to fix', () => {
+  const pois: Report['pois'] = [...report.pois, { id: 'poi-rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true }];
+  const strong = { personas: 3, exposed: 3, share: 1, low: 0.4, high: 1, level: 'strong' } as const;
+  const md = reportToMarkdown({ ...report, pois, themes: [priorityBase({ poi_id: 'poi-rival', title: 'Rival breaks', prevalence: strong }), priorityBase({ id: 'g2', prevalence: strong })] });
+  assert.ok(md.includes('#### 1. Rival breaks\n\nSave does nothing'));
+  assert.ok(md.includes('#### 1. Saving a job fails\n\nSuggested priority in this run: **Fix now**'));
+});
+
+test('the written summary follows the banner, escaped like the rest of the report', () => {
+  const md = reportToMarkdown({ ...report, themes: [priorityBase({ title: 'Save <b>fails</b> [here](http://evil.test)' })] });
+  const summary = md.split('\n')[4];
+  assert.equal(md.split('\n')[2], `> ${HYPOTHESIS_BANNER}`);
+  assert.match(summary, /^The biggest problem in this run is “Save &lt;b&gt;fails&lt;\/b&gt; \\\[here\\\]\(http:\/\/evil\.test\)”, met by 2 personas\./);
+  assert.equal(md.split('\n')[6], '- Tried: Gym (http://localhost:3001/)');
+  assert.doesNotMatch(reportToMarkdown(report), /biggest problem|No friction theme/, 'a report older than themes has no summary');
 });

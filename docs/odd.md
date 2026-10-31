@@ -33,12 +33,12 @@ For each round `1..R` (`run.ts`, `schedule`):
 
 1. **Usage slice.** Every persona still using a POI takes up to `ceil(sum of its POI budgets / R)` steps, personas in parallel up to `concurrency`, steps within a persona sequential. Personas start in a seeded order that mixes segments (`order/<seed>/<persona>`), so a stop part-way does not cut the population by segment. A persona that heard posts gets them in its next step prompt only.
 2. **Social phase.**
-   1. Harness-injected posts are recorded first.
+   1. Injected posts, a what-if run's or the evaluation harness's complaint, are recorded first.
    2. One snapshot of the log is folded into the board (posts, reactions, per-persona seen sets). Nothing written in this phase is visible in it.
    3. Each persona with more than one persona in the run is *due* if its feed is non-empty, or if it took a step since it last read the feed and a later round remains. Everyone else is skipped.
    4. Due personas make one independent `socialiser` call concurrently.
    5. After every call has settled, validated answers are applied **in population order**, so response speed cannot decide whose post is newest. After a stop, late answers are logged as `llm.call` but not applied.
-3. The loop ends early when nobody is using a POI, nothing is injected and nobody is due. Before each usage slice and social phase, or once at the start of a run without social rounds, the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
+3. The loop ends early when nobody is using a POI, no injected post is still to come and nobody is due. Before each usage slice and social phase, or once at the start of a run without social rounds, the whole cohort's steps are projected at the average cost so far and the cohort is admitted whole or the run stops, so response timing cannot choose which personas get steps. A hard stop (user, tripwire, recorded cost, error) cancels model calls in flight; the wall clock and the projected cost are soft stops: nothing new starts and calls in flight finish. Either ends the run with partial results.
 
 A persona writes at most one post per round. Silence is a valid action; a failed call is a different outcome.
 
@@ -47,19 +47,19 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 - **Imposed, not emergent.** The follow graph, the feed policy, the step budgets and the round count are imposed. Emergent, if anything: which complaints spread, who forms or changes an opinion, and when personas give up.
 - **Attention.** Exposure is explicit: a persona sees only posts the feed policy selected for it, and `social.feed_viewed` records which (ids and order). A follow edge alone never counts as exposure. Reading is not tied to posting propensity.
 - **Heterogeneity.** Persona traits are sampled per segment from seeded streams; the biography is written by a model from the sampled traits.
-- **Adaptation and learning.** None beyond bounded memory: the last 6 step memories, the last 5 frictions and the last 3 own posts are in the prompt (`agent/prompt.ts`).
+- **Adaptation and learning.** None beyond bounded memory: the last 6 step memories, the last 5 frictions and the last 3 own posts are in the prompt (`agent/prompt.ts`), and in a returning run a short memory of one earlier visit.
 - **Interaction.** Posts, replies and agree/disagree reactions through the feed. No private messages.
 - **Decision.** One structured model response per step or social turn, validated against a schema. The engine, not the prompt, enforces budgets.
 - **Opinion.** The model proposes a full opinion snapshot; code records it only when it differs from the previous one. Popularity is never converted into belief and convergence is not forced.
-- **Stochasticity.** Application randomness comes from named streams (`fnv1a` of a key, then `mulberry32`): `follows/<seed>`, `rewire/<seed>`, `<policy>/<seed>`, `posting/<seed>`, `traits/<seed>`, `feed/<seed>/<persona>/<round>`. Model sampling is the declared temperature and, where supported, a provider seed (section 8).
+- **Stochasticity.** Application randomness comes from named streams (`fnv1a` of a key, then `mulberry32`): `follows/<seed>`, `rewire/<seed>`, `<policy>/<seed>`, `posting/<seed>`, `traits/<seed>`, `feed/<seed>/<persona>/<round>`, `what-if/<seed>/<pair>`, `what-if-order/<seed>/<pair>`. Model sampling is the declared temperature and, where supported, a provider seed (section 8).
 - **Observation.** Every action, exposure, opinion change and model call (with temperature, seed and the model the provider reports) is an event.
 
 ## 5. Initialization
 
 - **Population.** Personas come from the frozen audience: traits from `sampleTraits` (`audience/sample.ts`), one draw per trait in a fixed order; `patience` is uniform over the segment's integer range, clamped to 1-5; `posting_propensity` is `round(u^3, 2)` from its own stream, so it is mostly low (the median draw is 0.13).
 - **Graph.** Built once from `networkGraph(policy, personas, seed)` before round 1 (`social/graph.ts`) and a function of the seed and population order only.
-- **Opinions.** None at the start; a first opinion after reading counts as `formed`, not `influence`.
-- **Board.** Empty, plus harness-injected posts at their round.
+- **Opinions.** None at the start; a first opinion after reading counts as `formed`, not `influence`. In a returning run a persona with a memory starts from the opinion that memory holds, which draws no edge.
+- **Board.** Empty, plus injected posts at their round.
 - **Randomness.** Streams are allocated by stable identity (above), not consumed in completion order.
 
 ## 6. Input data
@@ -67,9 +67,12 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 | Input | Provenance |
 | --- | --- |
 | Audience, segments, goals | Authored by the user or proposed by a model; synthetic input, not an observed human record. |
+| Analytics export (optional) | A CSV the team imports for a segment: counts become segment shares, phone shares, countries and languages, which sampling reads as usual. Values Gnomi cannot map are skipped and listed. The file is read once; its name and hash stay with the segment. |
+| Research notes (optional) | Interview notes or support tickets the team adds for a segment. Emails and phone numbers are removed in code, then the `persona_writer` model condenses them into a digest of at most 8 facts and 5 remarks. A remark is kept only if it is word for word in the redacted text. The digest shapes the fictional personas of that segment, and each persona's prompt quotes up to three remarks, picked by its seed; nothing is fitted to their behaviour. The files are read once; their names and hashes stay with the segment. |
+| Which data shaped a run | A report's methods name each grounded segment with its file names and its counts of facts and remarks, as the run froze them. Grounded personas are still fictional, and their findings are still hypotheses. |
 | Products, texts, designs | The user's own web app, pasted or uploaded text, Figma frames or images; hashes are stored with the run. |
 | Prices | A bundled price table for cost accounting (`llm/prices.ts`). |
-| Human reference data | None. No parameter is fitted to observed behaviour. |
+| Human reference data | None for validation. Analytics and research notes shape personas when a team adds them, but no parameter is fitted to observed behaviour, and data used to write personas cannot also test them. |
 
 ## 7. Submodels
 
@@ -81,17 +84,33 @@ A persona writes at most one post per round. Silence is a valid action; a failed
 
 **Posting.** The model decides `nothing`, `post`, `reply` or `react` each turn. `posting_propensity` does not gate an action in code: it picks one of four sentences in the system prompt (below 0.15 "almost never posts", below 0.35 "rarely", below 0.6 "now and then", else "more readily than most"). The prompt states that doing nothing is the usual answer. Personas written before the field existed use 0.2.
 
+**What-if posts (`repeatRuns`, `newRunConfig`, `report/repeats.ts`).** A what-if set is n matched pairs of runs on one audience and seed, one run of each pair with one post the team wrote, in a round it chose, about its first own POI. Each run gets an equal share of the budget, and the seed orders each pair. Feeds show a post by its author, so a persona the seed picks per pair stands as the author: the others read the post as that persona's, that persona gets it neither in its feed, nor among its own posts, nor above a reply to it, and it counts for nobody as a post, a repeat or a first-hand report. Runs with the post are in no count of the set. The result is the paired mean difference, with the post minus without, over pairs where both runs finished, of people who posted, second-hand reach, mean opinion at the end and people who abandoned. It describes the simulator only: spread is relative and uncalibrated.
+
 **Step budgets (`stepBudget`, `poiBudget`).** Patience 1 to 5 gives 12, 20, 30, 45 or 60 steps; outside the range 30. Web POIs use the budget as is; text POIs use `ceil(budget / 15)` (1-4 parts); design POIs use `min(budget, frames)`; every POI gets at least 1. Exhaustion ends the episode with `signal.budget_exceeded` and is reported, not silent.
 
 **Opinion (`opinion/index.ts`).** Sentiment is an integer -2 to 2 (very negative to very positive); confidence 0-1 is the persona's own certainty, not a statistical quantity. `sameOpinion` suppresses unchanged snapshots. `foldOpinions` keeps the latest per run, persona and POI by `seq`.
 
 **Influence and formed edges (`influenceEdges`).** For a `persona.opinion_changed` event citing post ids: `delta = after.sentiment - before.sentiment`, with a missing prior opinion counted from 0. A change with `|delta| < 0.5` draws nothing; with integer sentiment a change of a prior opinion always clears it, but a neutral first opinion (delta 0) does not, so the threshold binds for would-be `formed` edges. For each distinct cited post by another persona and about the same POI, one edge; a reply with no POI of its own takes its parent's, and a post with none in a one-POI project is about that POI. The kind is `formed` when there was no prior opinion and `influence` otherwise; only `influence` edges are counted as influence. Uncited changes, self-citations and cross-POI citations draw no edge. Product steps record the heard post ids on the step and friction events; a change that cites steps instead of posts draws a `heard` edge from each post handed to one of those steps. `formed` edges appear in the engine's live graph (kept apart from `influence` edges); the report's spread section leaves them out and shows `heard` edges, which the live graph does not.
 
-**Echo handling in findings.** The call is made per persona, not per friction. A persona is first-hand on a theme when any of its reports on the theme precedes its first exposure to a post the judge tagged with the theme (a feed that showed a reply also counts as showing its quoted parent), or when any of its reports has `confirmed` or `observed` trust; otherwise it is *heard first* and is kept out of k and ranking. The heard ids are checked whether or not the judge tagged posts: a reported friction logged at a step whose heard post ids include a post by a persona already counted in the theme is heard first; with neither tags nor heard ids, the report says echoes could not be separated ([new_simulation.md §4](new_simulation.md#social-echo-in-finding-counts)).
+**Echo handling in findings.** The call is made per persona, not per friction. A persona is first-hand on a theme when any of its reports on the theme precedes its first exposure to a post the judge tagged with the theme (a feed that showed a reply also counts as showing its quoted parent), or when any of its reports is backed by a browser signal other than the accessibility scan, whose step can be anyone's and so says nothing about what this persona had read; otherwise it is *heard first* and is kept out of k and ranking. The heard ids are checked whether or not the judge tagged posts: a reported friction logged at a step whose heard post ids include a post by a persona already counted in the theme is heard first; with neither tags nor heard ids, the report says echoes could not be separated ([new_simulation.md §4](new_simulation.md#social-echo-in-finding-counts)).
+
+**Returning personas (`report/prior.ts`, `agent/prompt.ts`, `report/themes.ts`).** Off unless a rerun asks for it, because prior knowledge hides first-use problems. A persona's memory of a run is frozen in the new run's config, per POI: how the visit ended, the pages it reached, its own complaints, its survey answers, and the last opinion it held before another persona's words could reach one. A competitor's POI is not remembered. A complaint stays out, report by report, when its step was handed another persona's post, even with a browser signal behind it, as it was written with that post in the prompt, or when an earlier feed showed the persona a post tagged with its theme and no browser signal backs it. An opinion change stays out when it cites another persona's post or its step was handed one, and so does every opinion after it, as each is a full snapshot. So a memory holds no other persona's words as far as the log can tell: a survey reason, a complaint on a later step, or an opinion changed later with no citation can still paraphrase a post it read. The memory is cut to the limits in the table below, shown to the model as the persona's own earlier visit, remembered imperfectly, and goes one visit deep: built on a returning run, it holds that run's complaints, the persona's own repeats of the visit before among them, and nothing it did not say again. A complaint past `PRIOR_FRICTIONS` is not in the prompt, so saying it again is a first report.
+
+The rule for counting mirrors heard first. A report whose group key, without its host, is one the persona's memory holds is not first-hand and leaves k and ranking. The same exception applies: a report backed by a browser signal other than the scan's on the persona's own step stays first-hand, as a browser cannot repeat a memory, and a signal with no report is never a complaint, so it is neither remembered nor discounted. The call is per persona, so a persona with one remembered report and one new one on a theme is first-hand. A persona who is not first-hand and has a remembered report counts in `remembered`, the rest in `heard_first`, so one with both counts once, under its memory, which came before any feed. Neither count touches `with_friction`, which reads every member of a theme. A key is coarse in both directions. A complaint repeated at another element has another key and counts as first-hand, and a seeded opinion can carry a complaint with no key at all, so this rule can miss repeats. A new complaint can share a key with an old one, on one element, on a page where neither named an element, or in a survey answer about the same part of the product, and then it reads as a repeat.
+
+Comparing a returning side with a first-use side, or two returning sides with different bases, gives a `returning` gap: a note in a comparison, and "could not decide" at the gate. The `returning` arm shows that prompts carry the memory, that opinions start from it and that a repeat leaves first-hand counts. It cannot show that returning personas behave like people coming back, and personas may anchor on their earlier opinion. No human data backs any of this.
 
 **Episode outcomes (`report/build.ts`).** Each persona ends per POI as `done`, `abandoned`, `budget_exceeded`, `repeated_failure`, `model_failed` (three invalid model answers in a row), `blocked`, `incomplete` or `not_started` (the run never reached it); a persona is done only when it is done on every POI it was given, else it takes its worst. `not_started` and `model_failed` say nothing about the product, so they are left out of the completion and friction rates and counted apart.
 
-**Theme trust, ranking and prevalence (`report/themes.ts`).** A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
+**Theme trust, ranking and prevalence (`report/themes.ts`).** A theme made only of weak signals (`small_target`, `backtrack`) is left out of the report: it is not ranked and does not count towards the friction rate. The log and the group ids are unchanged, and undersized targets go to the methods appendix as an audit. A theme's trust is scored by the mix of its members (each persona at its best trust, averaged), not by its maximum, and the report shows the counts. Themes rank by severity tier (the rounded median of each persona's worst severity), then by the lower bound of the Wilson interval times that trust weight. The prevalence denominator is the personas who reached the theme's pages (page reach), or for buyer objections the buyers surveyed on the POI; k is the first-hand personas.
+
+**Suggested priority (`report/themes.ts`).** `priorityOf` labels a friction theme for the reader and changes nothing else: not the rank, the score or any count. Fix now is severity at least 3 (rounded, as in the ranking) with strong evidence. Next is severity at least 3 with some evidence, strong evidence at a lower severity, or severity at least 3 with single evidence and confirmed or observed trust. Everything else is Later, including a theme with no prevalence. An objection has no label, and neither does a competitor's theme.
+
+**Evidence check (`report/models.ts`, `report/themes.ts`).** Off unless `finding_check` is set or `gnomi rejudge --check` asks for it. A model reads each top friction theme's evidence and answers `product`, `agent_mistake`, `environment` or `unclear`. A theme with `agent_mistake` or `environment` leaves the ranking and the friction rate and the ranks close up; `product` and `unclear` change nothing but the theme's `check` field. Prevalence and scores do not change, and the persona's posts about it still count as first-hand in the spread. The check can reject a real defect and can share bias with the personas, which is why results stay visible and `check_model` can name another family. Its effect has not been measured.
+
+**Study plans and outcomes (`report/study.ts`).** Neither takes part in the simulation. A plan is a model's answer recorded after the run. An outcome is what a team's own study of real people found, and it changes no state, count, rank, priority or trust level; it only sits beside its finding. It does not set `TRUST_WEIGHT` or fill `BENCHMARK`, which stay assumed until there is enough data. A team's edits for sharing (`report/edits.ts`) take no part either: they touch exported copies only. Nor does a question to a persona (`agent/interview.ts`): it is a new generation after the run, from that persona's log, and no state, fold or later prompt reads the answer.
+
+**Accessibility scan and perception limits (`signals/index.ts`, `agent/prompt.ts`, `report/friction.ts`).** Off unless `accessibility_checks` is set. Each page state of a full-mode POI is scanned once per run with axe-core, and critical and serious violations signal once per rule and page pattern, on the step of whichever persona got there first, which is arbitrary. So a scan's signal counts towards no persona, in k, severity or the trust weight: a theme of nothing else has trust `observed`, prevalence 0 and evidence `none`, and says it was found by the scan. It confirms a self-report by any persona on the same page, only when the complaint's words fit the rule's category, and a report only a scan confirms can still be heard first. Moderate and minor violations go to the methods appendix. `colour_blind` and `low_vision` personas browse under Chromium's vision emulation, and `screen_reader` personas get no screenshots. The prompt's words stay as they were. Its effect on recall has not been measured.
 
 **Round count and clamp (`socialRounds`).** `R = min(10, max(1, floor(rounds ?? 5)))` when social is on and an audience exists, else 0.
 
@@ -139,6 +158,10 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | `motivation` | 1-5 | 10, 25, 35, 20, 10 percent | Most people meet a work tool as a chore. | `audience/sample.ts` | assumed |
 | `seniority` | junior, mid, senior, lead | 25, 40, 25, 10 percent | An organisation pyramid. | `audience/sample.ts` | assumed |
 | `pronouns` | she, he, they | 48, 48, 4 percent | No binary assumption in prompts. | `audience/sample.ts` | assumed |
+| `MAX_FACTS` | facts per segment | 8 | Enough for goals, vocabulary, objections and tools without crowding the writer's prompt. | `engine/src/audience/ground.ts` | assumed |
+| `MAX_REMARKS` | remarks per segment | 5 | A few voices, so three per persona still vary across a segment. | `engine/src/audience/ground.ts` | assumed |
+| `MAX_REMARK_CHARS` | characters | 280 | Longer verbatim passages are dropped, because each remark rides in the cached prefix. | `engine/src/audience/ground.ts` | assumed |
+| `REMARKS_SHOWN` | remarks per persona | 3 | Real examples of how a segment talks, picked by seed, not a script to follow. | `agent/prompt.ts` | assumed |
 
 ### Patience and step budgets
 
@@ -161,7 +184,65 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | edge threshold | sentiment units | 0.5 | Binds for a neutral first opinion (delta 0); any change of a prior integer opinion is at least 1. | `social/influence.ts` | assumed |
 | `influence` rule | prior opinion required | yes | A first view is not a changed view. | `social/influence.ts`, new_simulation.md §4 | assumed |
 | `formed` rule | no prior opinion | first opinion cites a post | Shown separately, not counted as influence. | `social/influence.ts` | assumed |
-| echo discount | `reported` frictions only | heard first leaves k | Browser signals cannot echo a post. | `report/themes.ts` | assumed |
+| echo discount | frictions with no signal but the scan's | heard first leaves k | A signal on the persona's own step cannot echo a post; a scan's may sit on anyone's. | `report/themes.ts` | assumed |
+| memory discount | frictions with no signal but the scan's | a report on a remembered group key leaves k | The same rule as the echo discount, as a memory prompts a repeat as a post does. | `report/themes.ts` | assumed |
+
+### Returning personas
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+|---|---|---|---|---|---|
+| `PRIOR_PAGES` | pages per POI | 8 | A memory sits in every step's prompt, so a long run leaves a short one. | `report/prior.ts` | assumed |
+| `PRIOR_FRICTIONS` | complaints per POI | 5 | The worst, once per group key; an opinion holds as many. | `report/prior.ts` | assumed |
+| `PRIOR_LIKES` | survey likes per POI | 3 | Enough to say what worked without crowding the complaints. | `report/prior.ts` | assumed |
+| `PRIOR_OPINION_ITEMS` | likes and frictions per seeded opinion | 3 each | A seeded opinion is in every prompt from the first step. | `report/prior.ts` | assumed |
+| `PRIOR_TEXT` | characters per text | 200 | The most one remembered sentence needs. | `report/prior.ts` | assumed |
+| memory depth | visits | 1 | Only the named run is read, so nothing older accumulates. | `report/prior.ts` | assumed |
+
+### Comparing runs
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. A report's coverage lists pages and screens below it as barely tested. | `report/diff.ts`, `report/coverage.ts` | assumed |
+| `GATE_RUNS` | finished runs per side | 3 | The regression plan's rolling window over three runs. | `report/gate.ts`; roadmap.md, evaluation plan | assumed |
+| `GATE_SIGHTINGS` | later runs | 2 | How many a new theme must be high severity in before the gate fails. One run is one sample of a noisy model. | `report/gate.ts` | assumed |
+| high severity | rounded severity | 3 or more of 4 | The priority labels' rule, so a median of 2.5 counts. | `report/themes.ts` (`isSevere`) | assumed |
+| `WHAT_IF_POST_MAX` | characters | 500 | As long as a persona's own post, so the team's reads like one and fits the feed's token cap. | `report/repeats.ts`, `agent/social.ts` | assumed |
+| `MIN_PAIRS` | pairs | 3 | Fewer give no interval, as with the evaluation's replicates; the run still starts, after saying so. | `report/repeats.ts` (`pairedDifference`); new_simulation.md §9 | assumed |
+| what-if numbers | named list | people who posted, second-hand reach, mean opinion at the end, people who abandoned | Numbers each report already has for the post's POI. Themes are left out, because the two runs of a pair name them apart. | `report/repeats.ts` | assumed |
+| trait-free match | how a run of personas with no traits ties to a finding | keys or title, never one shared key alone, against the finding's first theme | One shared key is often chance. A theme matching only a later run's wording shows no note, which only leaves the note out. | `report/repeats.ts`; features_roadmap.md item 3 | assumed |
+
+### Reading one run
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `CURVE_MIN` | personas | 10 | Under this the discovery curve is too short to read, so the report says so and claims nothing from it. | `report/coverage.ts` | assumed |
+| last fifth | personas | `ceil(n / 5)` | The window whose new themes the hint counts. | `report/coverage.ts`; tech.md §6.7 | assumed |
+| `DRIVER_HOLDERS` | personas | 5 | How many must hold a value and have reached a theme's pages before it can read as "more common among". | `report/dimensions.ts`; features_roadmap.md item 8 | assumed |
+| `DRIVER_AFFECTED` | personas | 2 | Of those, how many must have met the theme first-hand, so one persona is never a pattern. | `report/dimensions.ts` | assumed |
+| `DRIVER_GAP` | difference of two rates | 0.25 | The least gap against those without the value. No p-value is given, as connected personas are not independent. | `report/dimensions.ts`; new_simulation.md §9 | assumed |
+| `DRIVER_MAX` | values per theme | 2 | Keeps a finding readable, the largest gap first. | `report/dimensions.ts` | assumed |
+| `STUDY_FINDINGS` | themes | 5 | How many top friction themes a study plan covers and the study count reports. | `report/study.ts`; roadmap.md, Confirmed findings | assumed |
+| `QUOTE_WORDS` | consecutive words | 4 | A task or screener entry sharing this many in a row with a finding quotes it. Fewer are ordinary words. Its false positives and misses are unmeasured. | `report/study.ts`; interpreting-simulations.md | assumed |
+
+### Friction signals
+
+| Name | Unit or range | Value | Rationale | Provenance | Status |
+| --- | --- | --- | --- | --- | --- |
+| `small_target_px` | CSS pixels | 24 | A mobile tap under this in either direction is a `small_target` signal. Frozen per run, so older runs keep 40. Unlike WCAG, it does not exempt links inside a sentence. | `signals/index.ts`; the WCAG level AA minimum | assumed |
+| weak signals | signal kinds | `small_target`, `backtrack` | Often the persona rather than the product, so a theme made only of them is left out of the report. | `report/friction.ts`, `report/themes.ts`; the 16 October Gym run, a tiny sample | assumed |
+| `interference_s` | seconds | 60 | A failed action on an element whose name matches something another persona changed on the same POI this long before is tagged "possibly interference between personas". The tag removes nothing and changes no rank. Frozen per run, so older runs have no tag. | `signals/index.ts`; the minute in [tech.md §9.2](tech.md#92-dummy-data) | assumed |
+| changed element | step kinds | a `type` or `select` that succeeded, or a `click` that did something on anything but a link | What the log can show of a write. Reads, hovers and link clicks write nothing, and a click with no effect changed nothing. A draft only its persona can see counts, because the log cannot tell it from a shared record, and pressing Enter does not, because the log does not say what a key did. So the tag can fire when nothing was shared. | `signals/index.ts` | assumed |
+| interference name match | element names | whole name, ignoring case and outer spaces | The simplest rule that works from the log. A generic name such as "Save" can match across pages, and a renamed record cannot match at all. | `signals/index.ts` | assumed |
+| priority labels | rounded severity, evidence level, trust | severity 3 splits the labels; single evidence needs confirmed or observed trust to reach Next | A recorded failure one persona met can still be a real defect, but one self-report is not yet a pattern. A reading aid within the run. | `report/themes.ts`, `interpreting-simulations.md` | assumed |
+| `finding_check` | boolean | absent, which is off | Stays off until its `--evaluate` arm shows it helps. | `report/models.ts`, `acceptance/checks.ts` | assumed |
+| evidence check input | themes per POI, per call; steps after each piece of evidence | 15, 3, 2 | Bounds the calls and what each one reads. | `report/models.ts`, `report/themes.ts` | assumed |
+| `accessibility_checks` | boolean | absent, which is off | Covers the scan, the vision emulation and screen readers' missing screenshots. Stays off until its `--evaluate` arm shows it helps. | `agent/prompt.ts`, `signals/index.ts`, `acceptance/checks.ts` | assumed |
+| signalled impacts | axe-core impact | `critical`, `serious` | Below them a violation goes to the methods appendix, as weak signals have made false themes before. | `signals/index.ts`; the 16 October Gym run, a tiny sample | assumed |
+| `accessibility` signal severity | 1-4 | 2 | As the other signals, whatever the rule's impact. | `report/friction.ts` | assumed |
+| complaint words for a scan | word lists per axe category | `SCAN_WORDS`: colour, naming (aria, forms, name-role-value, text-alternatives) and keyboard; any other category confirms nothing | A scan's step is arbitrary, so nearness says nothing, and an unrelated complaint beside a violation must not read as confirmed. Written by hand, not fitted. | `report/friction.ts` | assumed |
+| vision emulation | need to Chromium type | `colour_blind`: `deuteranopia`, `low_vision`: `blurredVision` | The prompt says red-green. `blurredVision` cut the edge contrast of a screenshot of 14 px text about 15-fold (10.49 to 0.69) and leaves large headings readable. That says it blurs, not that it matches any person's sight. | `agent/prompt.ts`, `browser/audit.test.ts` | assumed |
+| scan time limit | ms | 10,000 in the page, 1,000 more in the driver | Past it the persona carries on and the page counts as not scanned. 45-500 ms per page on the Gym. | `browser/page.ts` | assumed |
+| scanned elements kept | count, path parts | 3, last 5 | Enough for a reader to find the elements; `elements` keeps the full count. | `browser/page.ts` | assumed |
 
 ### Rounds
 

@@ -1,10 +1,13 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportEvidence, ReportTheme, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, ThemeEdit, UnmatchedEdit, UnmatchedOutcome, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 
 export type AccessibilityNeed = 'none' | 'low_vision' | 'colour_blind' | 'screen_reader' | 'motor';
+
+/** What code limits about what a persona perceives (agent/prompt.ts perceptionOf): a Chromium vision emulation, or no screenshots. */
+export type Perception = 'deuteranopia' | 'blurredVision' | 'screen_reader';
 
 export type AttributeValue = string | number | boolean | string[];
 export type ProfileGroup = 'identity' | 'work' | 'capability' | 'context' | 'psychology' | 'intent' | 'voice' | 'biography';
@@ -111,6 +114,9 @@ export interface RunSettings {
   rounds?: number; // R when social rounds are on, 1–10, default 5
   network_policy?: NetworkPolicy; // which follow graph (social/graph.ts); absent means 'legacy'
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
+  finding_check?: boolean; // review friction themes against their evidence before the author writes (report/models.ts); absent means off
+  check_model?: ModelChoice; // the model for that review, which may be another family; absent means the judge's route
+  accessibility_checks?: boolean; // the page scan, and what accessibility needs do in code: vision emulation and no screenshots for screen readers; absent means off
 }
 
 // The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
@@ -138,6 +144,20 @@ export interface Segment {
   goal_override: string | null; // replaces the project goal for this segment
   employers?: string[]; // optional organisations to spread this segment's personas across
   kind?: 'user' | 'buyer'; // absent: 'user'. Buyers only perceive, so by default they see text and designs, not web apps (tech.md §7)
+  countries?: Record<string, number>; // as Audience.countries, for this segment alone (from an analytics export); replaces the audience's
+  languages?: Record<string, number>; // as Audience.languages, for this segment alone; replaces the audience's
+  grounding?: Grounding; // real data behind this segment; source files are read once and never kept
+}
+
+export interface GroundingSource {
+  name: string; // the file's basename
+  sha256: string; // of the file as read, so a team can tell which version was used
+}
+
+export interface Grounding {
+  facts: string[]; // the segment's goals, vocabulary, objections and tools, in general terms
+  remarks: string[]; // verbatim from the redacted sources; real people's words, shown to personas as quoted material
+  sources: GroundingSource[];
 }
 
 export interface Audience {
@@ -239,11 +259,42 @@ export interface RunConfig {
   reset: boolean; // POST the POI's reset hook before the run
   pause_timeout_ms: number; // how long a blocked persona waits for the user before its episode ends
   app_version: string;
-  signals?: SignalThresholds; // absent on runs before M3: they used DEFAULT_SIGNALS
-  injected_posts?: InjectedPost[]; // test harness only: posted for a persona before that round's social phase
+  signals?: SignalThresholds; // frozen per run, so an older run keeps its own (small_target_px was 40). Absent only on logs older than the detectors, which hold no signals
+  injected_posts?: InjectedPost[]; // posted in a persona's name before that round's social phase
+  repeat?: { group: string; index: number; of: number; trait_free?: number; what_if?: WhatIf }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set. what_if: on every run of a what-if set
+  prior?: { run_id: string; memories: Record<string, PriorVisit> }; // a returning run (report/prior.ts): what each persona id remembers of run_id, frozen here so the run never reads that log; absent on every other run
 }
 
-/** A post the harness puts in a persona's name, e.g. the seeded complaint of the M4 spread acceptance. */
+/** One complaint a persona keeps of an earlier visit. */
+export interface PriorFriction {
+  key: string; // its group key without the host (report/themes.ts hostless), which decides whether a later report repeats it
+  what: string;
+}
+
+/** What a persona keeps of one POI of an earlier visit: short, and its own. */
+export interface PriorPoi {
+  outcome: Outcome;
+  pages: string[]; // without their host, which a new build may change
+  frictions: PriorFriction[]; // worst first
+  survey: { sentiment: number; would_continue: boolean; reason: string; likes: string[] } | null;
+  opinion: Opinion | null; // what the run starts from
+}
+
+/** A persona's own earlier visit: only the team's POIs it used, by id. Competitor POIs are not remembered. */
+export interface PriorVisit {
+  pois: Record<string, PriorPoi>;
+}
+
+/** One run of a what-if set: `of` runs in `of / 2` matched pairs, which differ only in the post. */
+export interface WhatIf {
+  pair: number; // from 1
+  post: boolean; // whether this run of the pair has the post
+  text: string;
+  round: number;
+  poi_id: string; // what the post is about, and whose numbers the pairs compare
+}
+
+/** A post no model wrote, in a persona's name: a what-if run's, or the seeded complaint of the M4 spread acceptance. */
 export interface InjectedPost {
   round: number;
   persona_id: string;
@@ -259,6 +310,7 @@ export interface SignalThresholds {
   back_window: number; // …within this many steps is a backtrack
   revisit_window: number; // so is returning to a page acted on in this many previous steps
   small_target_px: number; // a mobile tap target narrower or shorter than this, in CSS pixels
+  interference_s?: number; // a failed action on what another persona changed this many seconds before may be theirs; absent on older runs, which keep no such tag
 }
 
 export type RunStatus = 'running' | 'finished' | 'stopped' | 'interrupted';
@@ -294,6 +346,9 @@ export interface ActionTarget {
   box: [x: number, y: number, width: number, height: number] | null;
 }
 
+/** What a screenshot spans, in the CSS pixels of an ActionTarget's box: not always the image's size, as a phone zooms out to fit a page with no viewport tag. */
+export type Viewport = [x: number, y: number, width: number, height: number];
+
 export interface ActionResult {
   ok: boolean;
   url_before: string;
@@ -313,6 +368,7 @@ export interface PageSnapshot {
   title: string;
   text: string; // pruned accessibility snapshot, one node per line, with [ref=eN]
   hash: string;
+  viewport?: Viewport;
 }
 
 /** The persona's self-reported view of one POI, distinct from a momentary step feeling. */
@@ -328,6 +384,16 @@ export interface SignalBase {
   step_no: number;
   url: string; // the page the step acted on
   ref: string | null; // the step's target element, if any
+}
+
+/** What axe-core reports for one rule on a page. It holds no page text: the rule's own wording, and elements by tag and position. */
+export interface AccessibilityViolation {
+  rule: string; // axe's rule id, e.g. color-contrast
+  impact: 'critical' | 'serious' | 'moderate' | 'minor';
+  category: string; // axe's category of the rule, e.g. color
+  help: string; // axe's one-line statement of the rule
+  elements: number; // how many elements on the page break it
+  selectors: string[]; // the first few of them
 }
 
 /** Where a step or friction happened on a POI without pages: the frame of a design, the passage of a text. */
@@ -350,7 +416,7 @@ export interface EventPayloads {
   'run.round_ended': Record<string, never>;
   'run.concurrency_changed': { concurrency: number; reason: string }; // e.g. backing off after a provider's rate limit
   'persona.created': { persona: Persona; follows?: string[] }; // follows: persona ids from the run's follow graph (M4)
-  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[] };
+  'persona.episode_started': { poi_id: string; device: Device; start_url: string; locale?: string; timezone?: string; languages?: string[]; perception?: Perception };
   'persona.step': {
     step_no: number;
     action: Action;
@@ -360,6 +426,7 @@ export interface EventPayloads {
     feeling: number; // −2…+2
     snapshot_hash: string;
     screenshot: string | null; // blob path, relative to the project folder
+    viewport?: Viewport; // what the screenshot spans; absent in older logs and on texts and designs
     duration_ms: number;
     heard_post_ids: string[]; // the feed posts handed to this step's prompt; empty when none
   } & StepEvidence;
@@ -383,7 +450,7 @@ export interface EventPayloads {
   'persona.abandoned': { step_no: number; reason: string };
   'persona.blocked': { step_no: number; reason: 'captcha' | 'session_expired'; detail: string }; // paused, waiting for the user
   'persona.resumed': { step_no: number };
-  // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a harness post, not a model's.
+  // The swarm feed (tech.md §6.6). A reply is a post with a parent; `injected` marks a post the team added, not a model's.
   'social.feed_viewed': { post_ids: string[]; parent_ids?: string[] }; // in the order shown: a post's feed position is its index here; parent_ids: the replies' parents it quoted, absent in older logs
   'social.discarded': { call_seq: number | null }; // a paid social answer a hard stop left unapplied; call_seq: its llm.call
   'social.post': { post_id: string; parent_id: string | null; text: string; about_poi_id: string | null; injected?: boolean };
@@ -399,6 +466,10 @@ export interface EventPayloads {
   'signal.error': SignalBase & { kind: 'console' | 'exception' | 'http'; status: number | null; message: string };
   'signal.validation_error': SignalBase & { message: string };
   'signal.small_target': SignalBase & { box: [x: number, y: number, width: number, height: number] };
+  // About the page, not the persona: on the step of whoever reached that page state first, at most once per rule and page pattern (signals/index.ts).
+  'signal.accessibility': SignalBase & AccessibilityViolation;
+  // One per page state per run. audit: its moderate and minor violations, which are no signals; error: why that state went unscanned.
+  'accessibility.scanned': { step_no: number; url: string; snapshot_hash: string; audit: AccessibilityViolation[]; error: string | null };
   // End-of-episode survey per POI (tech.md §8.2); `reason` renders like a think-aloud line.
   'persona.survey': {
     poi_id: string;
@@ -438,9 +509,28 @@ export interface EventPayloads {
   'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
   // keys: each friction group's id → its grouping key when the judge ran, so a rebuild under changed grouping rules drops stale answers; absent in older logs
   'report.themes': { poi_id: string; themes: JudgeTheme[]; posts?: JudgePostTag[]; likes?: JudgeLike[]; keys?: Record<string, string> }; // the judge's semantic merge and naming of friction groups; posts only when the POI had posts (M4)
+  // keys: as in report.themes, when the check ran; a check older than the newest report.themes is not used
+  'report.checks': { poi_id: string; checks: ThemeCheck[]; keys: Record<string, string> }; // the evidence check's verdicts on friction themes
   'report.suggestions': { poi_id: string; suggestions: AuthorSuggestion[] }; // the author's generated suggestions
   'report.generated': { path: string; friction_count: number };
+  // A study plan's model answer with what it was asked about, in full, so the plan rebuilds from this event alone (report/study.ts).
+  'report.study': {
+    answer: { screener: string[]; themes: { theme_id: string; tasks: string[]; observe: string[] }[] };
+    themes: { id: string; keys: string[]; poi_id: string; title: string; description: string; quotes: string[] }[]; // the findings covered, as they stood
+    left_out: { objections: number; competitors: number; set_aside: number; scan_only: number; lower_ranked: number };
+  };
+  // What a team's own study with real people found, never a model's. keys: theme ids change after a rejudge. The envelope's poi_id is the theme's.
+  'finding.validated': { keys: string[]; category?: 'friction' | 'objection'; title: string; status: StudyStatus; note: string | null; study_date: string }; // title: at the time; study_date: YYYY-MM-DD
+  // What a team changed for sharing, stored as finding.validated is: exports read it, and no model, count or rank does (report/edits.ts).
+  'finding.hidden': { keys: string[]; category?: 'friction' | 'objection'; title: string; hidden: boolean }; // hidden: false shows it again
+  'finding.edited': { keys: string[]; category?: 'friction' | 'objection'; title: string; new_title: string | null; new_description: string | null }; // null: back to the original
+  // A question to a persona after the run and the model's new answer, not a memory (agent/interview.ts). Only the Inspector reads it: no fold, export or later prompt. The envelope's persona_id is who was asked.
+  'persona.interviewed': { question: string; answer: string };
 }
+
+/** The human outcome words of docs/interpreting-simulations.md. */
+export const STUDY_STATUSES = ['supported', 'contradicted', 'unresolved'] as const;
+export type StudyStatus = (typeof STUDY_STATUSES)[number];
 
 /**
  * One structured survey answer (tech.md §8.2): a friction got in the way of the task, an objection is a reason to doubt or
@@ -476,6 +566,16 @@ export interface JudgePostTag {
   group_ids: string[];
 }
 
+/** What a model's review of a theme's evidence points to: the product, the persona, the test setup, or nothing it can decide. */
+export type CheckVerdict = 'product' | 'agent_mistake' | 'environment' | 'unclear';
+
+/** The evidence check's answer on one theme (report/models.ts). */
+export interface ThemeCheck {
+  theme_id: string;
+  verdict: CheckVerdict;
+  reason: string;
+}
+
 export interface AuthorSuggestion {
   theme_id: string;
   change: string; // one sentence
@@ -501,4 +601,4 @@ export type Outcome = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failu
 /** Neither says anything about the product, so the completion and friction rates leave them out. */
 export const isUnrated = (outcome: Outcome) => outcome === 'not_started' || outcome === 'model_failed';
 
-export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target';
+export type SignalKind = 'failed_action' | 'loop' | 'backtrack' | 'error' | 'validation_error' | 'small_target' | 'accessibility';

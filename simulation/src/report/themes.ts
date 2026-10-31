@@ -1,9 +1,10 @@
-import type { AuthorSuggestion, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportSegment, ReportSentiment, ReportTheme, Trust } from '../types.ts';
+import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportReach, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
-import { buildCandidates, categoryOf, groupCandidates, groupKey, latestSurveys, likeGroups, pagePattern, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { pagePattern } from '../signals/index.ts';
+import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
 
-// Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's and author's answers come in as
-// report.themes and report.suggestions events and are checked against the deterministic ids here, every time.
+// Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's, check's and author's answers come in as
+// report.themes, report.checks and report.suggestions events and are checked against the deterministic ids here, every time.
 
 /** About 30k tokens of group summaries per judge call (tech.md §8.2); the author gets a little less. */
 export const JUDGE_TOKEN_CAP = 30_000;
@@ -12,12 +13,22 @@ export const AUTHOR_TOKEN_CAP = 20_000;
 export const JUDGE_POST_CAP = 10_000;
 /** Of what is left, at most this much goes to survey likes; the friction and objection groups get the rest. */
 export const JUDGE_LIKE_CAP = 5_000;
+/** Of the author's cap, at most this much goes to page text. Excerpts get only what the themes leave, so they push no theme out. */
+export const AUTHOR_PAGE_CAP = 10_000;
+/** Characters of page text per piece of evidence: about a median page (M3 seed runs: 1,193) once PAGE_MARKS are gone. */
+export const PAGE_TEXT_MAX = 1_200;
+/** Friction themes the evidence check reviews per POI, top first. */
+export const CHECK_MAX = 15;
+const NEXT_STEPS = 2; // what the check sees of a persona after each piece of evidence
+export const CHECK_VERDICTS = ['product', 'agent_mistake', 'environment', 'unclear'] as const satisfies readonly CheckVerdict[];
 /** Fewer personas than this on a POI and every share has a wide range, which the report says. */
 export const FEW_PERSONAS = 5;
 const POST_MAX = 280;
 const EVIDENCE = 3;
 const TITLE_MAX = 120;
 export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
+// The navigator's handles on a page: half its characters, and nothing a suggestion should quote.
+export const PAGE_MARKS = / \[(?:ref|box|cursor)=[^\]]*\]/g;
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {
@@ -56,6 +67,9 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/** The members a persona met. A scan's sits on the step of whoever reached the page first, which says nothing about who met the problem. */
+const felt = (members: Candidate[]) => members.filter((m) => m.kind !== 'accessibility');
+
 function maxTrust(members: Candidate[]): Trust {
   return members.reduce<Trust>((best, m) => (TRUST_WEIGHT[m.trust] > TRUST_WEIGHT[best] ? m.trust : best), 'reported');
 }
@@ -69,7 +83,7 @@ export function summarise(group: Group): GroupSummary {
     page: group.page,
     element: group.element,
     kind: group.kind,
-    personas: new Set(group.members.map((m) => m.persona_id)).size,
+    personas: new Set(felt(group.members).map((m) => m.persona_id)).size,
     frictions: group.members.length,
     trust,
     severity: median(group.members.map((m) => m.severity)),
@@ -77,9 +91,9 @@ export function summarise(group: Group): GroupSummary {
   };
 }
 
-/** The groups one judge call sees, most personas first, while they fit the cap; the others stay as their own themes. */
+/** The groups one judge call sees, most personas first, while they fit the cap; the others stay as their own themes. Weak groups never become one, so they are not sent. */
 export function judgeGroups(groups: Group[], cap = JUDGE_TOKEN_CAP): GroupSummary[] {
-  const order = groups.map(summarise).sort((a, b) => b.personas - a.personas || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
+  const order = groups.filter((g) => !isWeak(g)).map(summarise).sort((a, b) => b.personas - a.personas || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
   const sent: GroupSummary[] = [];
   let used = 0;
   for (const summary of order) {
@@ -176,9 +190,19 @@ const KIND_TITLE: Record<CandidateKind, string> = {
   error: 'Errors',
   validation_error: 'Validation errors',
   small_target: 'Small tap targets',
+  accessibility: 'Accessibility problems',
 };
 
-const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
+export const pathOf = (page: string) => (page.includes('/') ? page.slice(page.indexOf('/')) : page);
+
+/**
+ * A group key without its page's host: a Gym's port changes with every start, and a PR preview has its own host.
+ * shortcut: two hosts of one POI with the same path count as one page, keep the host if a POI ever spans sites.
+ */
+export function hostless(key: string): string {
+  const [poi_id, page, ...rest] = JSON.parse(key) as [string, string | null, ...string[]];
+  return JSON.stringify([poi_id, page && pathOf(page), ...rest]);
+}
 
 /** A persona's words as a title: the first sentence, cut at a word when it is still too long. */
 function headline(text: string): string {
@@ -192,7 +216,8 @@ function headline(text: string): string {
 export function rulesTitle(group: Group): string {
   if (group.kind === 'survey' || group.kind === 'objection') return headline(group.members[0].text);
   const where = group.page ? ` on ${pathOf(group.page)}` : '';
-  return group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
+  const scan = group.kind === 'accessibility' ? group.members[0].scan?.help : null;
+  return scan ? `${scan}${where}` : group.element ? `Trouble with ${group.element}${where}` : `${KIND_TITLE[group.kind]}${where}`;
 }
 
 const byEvidence = (a: Candidate, b: Candidate) => b.severity - a.severity || TRUST_WEIGHT[b.trust] - TRUST_WEIGHT[a.trust] || a.seqs[0] - b.seqs[0];
@@ -261,34 +286,43 @@ export function pickEvidence(members: Candidate[], n = EVIDENCE): Candidate[] {
 
 interface Reach {
   pages: Map<string, Set<string>>; // persona → page patterns it reached
+  poiPages: Map<string, Map<string, Set<string>>>; // poi → page pattern → personas who reached it
+  surveyed: Map<string, Set<string>>; // poi → personas who answered a survey on it
   poi: Map<string, Set<string>>; // poi → personas that reached it at all
   buyers: Map<string, Set<string>>; // poi → personas who answered a buyer survey on it
   buyerSeqs: Set<number>; // the buyer surveys' events
 }
 
-function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
+export function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: string): Reach {
   const places = placesOf(events);
   const pages = new Map<string, Set<string>>();
+  const poiPages = new Map<string, Map<string, Set<string>>>();
   const poi = exposureOf(events, defaultPoi);
+  const surveyed = new Map<string, Set<string>>();
   const buyers = new Map<string, Set<string>>();
   const buyerSeqs = new Set<number>();
   const add = <K, V>(map: Map<K, Set<V>>, key: K, value: V) => (map.get(key) ?? map.set(key, new Set()).get(key)!).add(value);
+  const reached = (poi_id: string, page: string, persona_id: string) => {
+    add(pages, persona_id, page);
+    add(poiPages.get(poi_id) ?? poiPages.set(poi_id, new Map()).get(poi_id)!, page, persona_id);
+  };
   for (const e of events) {
     if (!e.persona_id) continue;
+    if (e.type === 'persona.survey') add(surveyed, e.payload.poi_id, e.persona_id);
     if (e.type === 'persona.survey' && e.payload.buyer) {
       add(buyers, e.payload.poi_id, e.persona_id);
       buyerSeqs.add(e.seq);
     }
     if (e.type === 'persona.step') {
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_before, places));
-      add(pages, e.persona_id, pagePattern(e.payload.result.url_after, places));
+      reached(e.poi_id ?? defaultPoi, pagePattern(e.payload.result.url_before, places), e.persona_id);
+      reached(e.poi_id ?? defaultPoi, pagePattern(e.payload.result.url_after, places), e.persona_id);
     }
   }
   for (const c of candidates) {
-    if (c.page) add(pages, c.persona_id, c.page);
+    if (c.page) reached(c.poi_id, c.page, c.persona_id);
     add(poi, c.poi_id, c.persona_id);
   }
-  return { pages, poi, buyers, buyerSeqs };
+  return { pages, poiPages, surveyed, poi, buyers, buyerSeqs };
 }
 
 /**
@@ -299,7 +333,10 @@ function reachOf(events: GnomiEvent[], candidates: Candidate[], defaultPoi: stri
  */
 export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, reach: Reach, firstHand = new Set(members.map((m) => m.persona_id))) {
   const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
-  const affectedIds = new Set(members.map((m) => m.persona_id));
+  // A scan's persona counts only in a theme of nothing else, which still needs a severity and a trust.
+  const met = felt(members);
+  const counted = met.length > 0 ? met : members;
+  const affectedIds = new Set(counted.map((m) => m.persona_id));
   // Buyers and users answer different surveys, so a theme from one survey only is a share of those who were asked it.
   const buyers = members.every((m) => m.kind === 'objection' && reach.buyerSeqs.has(m.seqs[0]));
   const users = members.every((m) => m.step_no === null && !reach.buyerSeqs.has(m.seqs[0]));
@@ -318,41 +355,72 @@ export function scoreTheme(members: Candidate[], poi_id: string, ctx: Context, r
   const worst = new Map<string, number>();
   const best = new Map<string, number>();
   const trust_counts: Record<Trust, number> = { confirmed: 0, observed: 0, reported: 0 };
-  for (const m of members) {
+  for (const m of counted) {
     worst.set(m.persona_id, Math.max(worst.get(m.persona_id) ?? 0, m.severity));
     best.set(m.persona_id, Math.max(best.get(m.persona_id) ?? 0, TRUST_WEIGHT[m.trust]));
-    trust_counts[m.trust] += 1;
   }
+  for (const m of members) trust_counts[m.trust] += 1;
   const weight = [...best.values()].reduce((sum, w) => sum + w, 0) / best.size;
   const exposed = new Set([...ids.filter(reached), ...affectedIds]).size;
   const share = prevalence(firstHand.size, exposed);
   return { affected, severity: median([...worst.values()]), trust: maxTrust(members), trust_counts, prevalence: share, score: share.low * weight };
 }
 
-interface Echoes {
+export interface Echoes {
   feeds: EventOf<'social.feed_viewed'>[]; // in seq order
-  heard: Map<number, string[]>; // step seq → the posts handed to that step; empty in logs from before heard ids
+  heard: Map<number, string[]>; // step or report seq → the posts handed to it; empty in logs from before heard ids
   authors: Map<string, string>; // post id → the persona who wrote it
   rounds: Map<number, number>; // event seq → its round
+  remembered: Map<string, Set<string>>; // persona → the keys of the complaints in its memory of an earlier visit; empty unless the run is a returning one
 }
 
+/** What a report's first-hand count, and a memory of the run (report/prior.ts), read from the log. */
+export function echoesOf(events: GnomiEvent[]): Echoes {
+  const config = events.find((e) => e.type === 'run.started')?.payload.config;
+  return {
+    feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
+    heard: new Map(events.flatMap((e) => ((e.type === 'persona.step' || e.type === 'persona.friction_reported') && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
+    // A post the team added says nothing of what the persona in whose name it stands met.
+    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id && !e.payload.injected ? [[e.payload.post_id, e.persona_id] as const] : []))),
+    rounds: new Map(events.map((e) => [e.seq, e.round])),
+    remembered: new Map(Object.entries(config?.prior?.memories ?? {}).map(([id, { pois: visited }]) => [id, new Set(Object.values(visited).flatMap(({ frictions }) => frictions.map(({ key }) => key)))])),
+  };
+}
+
+/** The posts among `ids` that are not this persona's own. */
+export const othersPosts = (ids: string[], persona_id: string, { authors }: Echoes) => ids.filter((id) => authors.get(id) !== persona_id);
+
+/** A report that says again what its persona complained of on the earlier visit its prompts showed it. */
+const remembers = (c: Candidate, echoes: Echoes) => !!echoes.remembered.get(c.persona_id)?.has(hostless(groupKey(c)));
+
+/** Another persona's posts handed to a report: a design's friction on an earlier frame sits on that frame's step but was written with the later step's posts. */
+const handed = (c: Candidate, echoes: Echoes) => othersPosts([c.step_seq ?? -1, c.seqs[0]].flatMap((seq) => echoes.heard.get(seq) ?? []), c.persona_id, echoes);
+
+/** A browser cannot repeat a post or a memory; a scan's signal may be on anyone's step, so it says nothing here. */
+const witnessed = (c: Candidate) => c.signals.some((s) => s !== 'accessibility');
+
+/** Whether a feed showed the report's persona a post the judge tagged with this theme before it reported (when it tagged any). */
+function fed(c: Candidate, theme: string, tagged: Map<string, string[]> | null, echoes: Echoes): boolean {
+  const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
+  return !!shown && shown.seq < c.seqs[0];
+}
+
+/** A report that may hold another persona's words, so a memory leaves it out: a browser signal shows the persona met it, but not whose words it wrote with a post in the prompt. */
+const echoesOther = (c: Candidate, theme: string, tagged: Map<string, string[]> | null, echoes: Echoes) => handed(c, echoes).length > 0 || (!witnessed(c) && fed(c, theme, tagged, echoes));
+
 /**
- * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal, or made before any feed
+ * The personas who met a theme first-hand (new_simulation.md §4): one report backed by a browser signal on their own step, or made before any feed
  * showed them a post the judge tagged with the theme (when it tagged any), and not at a step that was handed a post by a persona
- * who met the theme at an earlier round and step.
+ * who met the theme at an earlier round and step, nor one repeating a complaint from the persona's earlier visit.
  */
 function firstHand(members: Candidate[], theme: string, tagged: Map<string, string[]> | null, echoes: Echoes): Set<string> {
   // Seqs order completion, not time, across personas running at once; round then step number is the persona's own clock.
   const at = (c: Candidate) => [echoes.rounds.get(c.seqs[0]) ?? 0, c.step_no ?? Infinity];
   const earlier = (a: Candidate, b: Candidate) => at(a)[0] < at(b)[0] || (at(a)[0] === at(b)[0] && at(a)[1] < at(b)[1]);
   const echo = (c: Candidate) => {
-    if (c.trust !== 'reported') return false; // a browser signal cannot repeat a post
-    const shown = tagged && echoes.feeds.find((e) => e.persona_id === c.persona_id && [...e.payload.post_ids, ...(e.payload.parent_ids ?? [])].some((id) => tagged.get(id)?.includes(theme)));
-    if (shown && shown.seq < c.seqs[0]) return true;
-    return (echoes.heard.get(c.step_seq ?? -1) ?? []).some((id) => {
-      const author = echoes.authors.get(id);
-      return author !== undefined && author !== c.persona_id && members.some((m) => m.persona_id === author && earlier(m, c));
-    });
+    if (witnessed(c)) return false;
+    if (remembers(c, echoes) || fed(c, theme, tagged, echoes)) return true;
+    return handed(c, echoes).some((id) => members.some((m) => m.persona_id === echoes.authors.get(id) && earlier(m, c)));
   };
   return new Set(members.filter((c) => !echo(c)).map((c) => c.persona_id));
 }
@@ -393,13 +461,35 @@ function evidenceOf(c: Candidate, ctx: Context): ReportEvidence {
     what: c.text,
     quote: c.quote,
     screenshot: c.screenshot,
+    ...(c.box && { box: c.box }),
     signals: c.signals,
+    ...(c.scan && { scan: c.scan }),
+    ...(c.interference && { interference: true as const }),
     ...stepEvidence(c),
   };
 }
 
-const lastFor = <T extends 'report.themes' | 'report.suggestions'>(events: GnomiEvent[], type: T, poi_id: string) =>
+const lastFor = <T extends 'report.themes' | 'report.checks' | 'report.suggestions'>(events: GnomiEvent[], type: T, poi_id: string) =>
   events.findLast((e) => e.type === type && (e.payload as { poi_id: string }).poi_id === poi_id) as Extract<GnomiEvent, { type: T }> | undefined;
+
+/** What the evidence check reviews, from a POI's themes in rank order. An objection is an attitude, which evidence cannot settle. */
+export const checkable = (ranked: ReportTheme[]) => ranked.filter((t) => t.category !== 'objection').slice(0, CHECK_MAX);
+
+/** The check's validation: one verdict per theme it reviews, the first one given; any other id is reported. */
+export function applyChecks(ranked: ReportTheme[], checks: ThemeCheck[]): { unknown: string[] } {
+  const byId = new Map(checkable(ranked).map((t) => [t.id, t]));
+  const unknown = new Set<string>();
+  for (const c of checks) {
+    const theme = byId.get(c?.theme_id);
+    const reason = typeof c?.reason === 'string' ? clip(c.reason, TEXT_MAX) : '';
+    if (!theme) unknown.add(String(c?.theme_id));
+    else if (!theme.check && reason && CHECK_VERDICTS.includes(c.verdict)) theme.check = { verdict: c.verdict, reason };
+  }
+  return { unknown: [...unknown] };
+}
+
+// Moved out of the ranking and the friction rate, not deleted. An unclear theme stays: a model that cannot decide removes nothing.
+const isSetAside = (t: ReportTheme) => t.check?.verdict === 'agent_mistake' || t.check?.verdict === 'environment';
 
 /** Step 7's validation: one suggestion per known theme id, the first one given; blank text is no suggestion. */
 export function applySuggestions(themes: ReportTheme[], suggestions: AuthorSuggestion[] | null): { unknown: string[] } {
@@ -415,27 +505,65 @@ export function applySuggestions(themes: ReportTheme[], suggestions: AuthorSugge
   return { unknown: [...unknown] };
 }
 
-/** What the author sees for one POI: its ranked themes with evidence, while they fit the cap. */
-export function authorThemes(themes: ReportTheme[], cap = AUTHOR_TOKEN_CAP) {
-  const sent = [];
+/**
+ * What the author sees for one POI: its ranked themes with evidence, while they fit the cap, then the page at each evidence step
+ * (`pages`, by the step's seq) while that fits both AUTHOR_PAGE_CAP and what the themes left of the cap.
+ * shortcut: an excerpt is the top of the page, so an element further down is cut; centre it on the element if suggestions still miss it.
+ */
+export function authorThemes(themes: ReportTheme[], pages: Map<number, string> = new Map(), cap = AUTHOR_TOKEN_CAP) {
+  const brief = (t: ReportTheme, excerpt: (step_seq: number | null) => { page_text?: string }) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    trust: t.trust,
+    personas: t.personas,
+    pages: t.pages,
+    elements: t.elements,
+    evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals, ...excerpt(e.step_seq) })),
+  });
+  const sent: ReportTheme[] = [];
   let used = 0;
   for (const t of themes) {
-    const item = {
-      id: t.id,
-      title: t.title,
-      description: t.description,
-      trust: t.trust,
-      personas: t.personas,
-      pages: t.pages,
-      elements: t.elements,
-      evidence: t.evidence.map((e) => ({ what: clip(e.what, 300), quote: clip(e.quote, 300), url: e.url, signals: e.signals })),
-    };
-    const cost = tokens(item);
+    const cost = tokens(brief(t, () => ({})));
     if (used + cost > cap) break; // ranked, so the rest matter less
     used += cost;
-    sent.push(item);
+    sent.push(t);
   }
-  return sent;
+  let room = Math.min(AUTHOR_PAGE_CAP, cap - used);
+  return sent.map((t) =>
+    brief(t, (step_seq) => {
+      const page_text = clip((pages.get(step_seq ?? -1) ?? '').replace(PAGE_MARKS, ''), PAGE_TEXT_MAX);
+      if (!page_text || tokens({ page_text }) > room) return {};
+      room -= tokens({ page_text });
+      return { page_text };
+    }),
+  );
+}
+
+/** What the check sees for one batch: the author's view of each theme, plus the persona's next steps and the number of the attached screenshot (`shots`, in order). */
+export function checkInput(themes: ReportTheme[], pages: Map<number, string>, events: GnomiEvent[], shots: string[] = []) {
+  const steps = events.filter((e): e is EventOf<'persona.step'> => e.type === 'persona.step');
+  const nextSteps = (step_seq: number | null) => {
+    const at = steps.find((s) => s.seq === step_seq);
+    return at ? steps.filter((s) => s.seq > at.seq && s.persona_id === at.persona_id && s.poi_id === at.poi_id).slice(0, NEXT_STEPS) : [];
+  };
+  return authorThemes(themes, pages).map((brief, i) => ({
+    ...brief,
+    evidence: brief.evidence.map((item, j) => {
+      const { step_seq, screenshot } = themes[i].evidence[j];
+      const next_steps = nextSteps(step_seq).map(({ payload: { action, target, result, thought } }) => ({
+        action: action.type,
+        ...(target ? { target: `${target.role} "${target.name}"` } : {}),
+        ...(action.text ? { text: clip(action.text, 200) } : {}),
+        ok: result.ok,
+        ...(result.error ? { error: result.error } : {}),
+        url: result.url_after,
+        thought: clip(thought, 300),
+      }));
+      const shot = shots.indexOf(screenshot ?? '') + 1;
+      return { ...item, ...(next_steps.length ? { next_steps } : {}), ...(shot ? { screenshot: shot } : {}) };
+    }),
+  }));
 }
 
 /** Step 8: the mean survey sentiment and the share who would continue, per segment, over users' answers; buyers have their own section. */
@@ -520,8 +648,30 @@ export function wentWell(events: GnomiEvent[], ctx?: Context, groups = likeGroup
   return likes.sort((a, b) => b.personas - a.personas || b.count - a.count || a.seqs[0] - b.seqs[0]);
 }
 
+/** Evidence first, so one self-report cannot top a problem many met; then severity tier, then the share's low end × trust. */
+export const rankOrder = (a: ReportTheme, b: ReportTheme) =>
+  EVIDENCE_ORDER[b.prevalence?.level ?? 'none'] - EVIDENCE_ORDER[a.prevalence?.level ?? 'none'] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id);
+
+/** High severity. A theme's severity is a median, so it can sit between two tiers: this rounds as the ranking does. */
+export const isSevere = (severity: number) => Math.round(severity) >= 3;
+
+/**
+ * Where to look first within this run; the rank stays as it is, so a next can sit below a later. An objection is an attitude, not
+ * a fix, so it has none. One persona's recorded failure can still be a real defect (docs/interpreting-simulations.md).
+ */
+export function priorityOf({ category, severity, trust, prevalence: share }: ReportTheme): 'fix_now' | 'next' | 'later' | null {
+  if (category === 'objection') return null;
+  const severe = isSevere(severity);
+  const level = share?.level;
+  if (severe && level === 'strong') return 'fix_now';
+  if (level === 'strong' || (severe && level === 'some') || (severe && level === 'single' && trust !== 'reported')) return 'next';
+  return 'later';
+}
+
 export interface Analysis {
   themes: ReportTheme[];
+  set_aside?: ReportTheme[]; // left out of themes by the evidence check; absent when it set none aside
+  reach: ReportReach[];
   tagged?: Map<string, string[]>; // post id → the ids of the themes the judge tagged it with; absent when it tagged none
   sentiment: ReportSentiment[];
   went_well: ReportLike[];
@@ -532,21 +682,21 @@ export interface Analysis {
 export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const candidates = buildCandidates(events, ctx.poi_id);
   const groups = groupCandidates(candidates);
+  // Group ids are positions and saved answers name them, so weak groups stay grouped and drop out as drafts below.
+  const pois = [...new Set(groups.filter((g) => !isWeak(g)).map((g) => g.poi_id))];
   const likes = likeGroups(events);
   const reach = reachOf(events, candidates, ctx.poi_id);
   const names = poiNamesOf(events);
   const about = postPois(events);
   const limitations: string[] = [];
   const themes: ReportTheme[] = [];
+  const set_aside: ReportTheme[] = [];
   const tagged = new Map<string, string[]>();
-  const echoes: Echoes = {
-    feeds: events.filter((e): e is EventOf<'social.feed_viewed'> => e.type === 'social.feed_viewed'),
-    heard: new Map(events.flatMap((e) => (e.type === 'persona.step' && Array.isArray(e.payload.heard_post_ids) ? [[e.seq, e.payload.heard_post_ids] as const] : []))),
-    authors: new Map(events.flatMap((e) => (e.type === 'social.post' && e.persona_id ? [[e.payload.post_id, e.persona_id] as const] : []))),
-    rounds: new Map(events.map((e) => [e.seq, e.round])),
-  };
+  const config = events.find((e) => e.type === 'run.started')?.payload.config;
+  const checkOn = config?.project.settings?.finding_check;
+  const echoes = echoesOf(events);
 
-  for (const poi_id of [...new Set(groups.map((g) => g.poi_id))]) {
+  for (const poi_id of pois) {
     // Each POI says the same things, so with several each note names its POI.
     const note = (text: string) => limitations.push(names.size > 1 ? `${names.get(poi_id) ?? poi_id}: ${text}` : text);
     const own = groups.filter((g) => g.poi_id === poi_id);
@@ -554,7 +704,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     // Group ids are positions: after a change to the grouping rules an old answer's id names another group, so it is dropped.
     const keys = judged?.payload.keys;
     const keyOf = new Map(own.map((g) => [g.id, groupKey(g.members[0])]));
-    const stale = (id: unknown) => keys !== undefined && keys[String(id)] !== keyOf.get(String(id));
+    const staleIn = (saved: Record<string, string> | undefined) => (id: unknown) => saved !== undefined && saved[String(id)] !== keyOf.get(String(id));
+    const stale = staleIn(keys);
     const fresh = <T extends { group_ids?: unknown }>(items: T[] | undefined) =>
       Array.isArray(items) ? items.filter((item) => !(Array.isArray(item?.group_ids) && item.group_ids.some(stale))) : items;
     const judgedThemes = fresh(judged?.payload.themes);
@@ -566,8 +717,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
       note('The judge model did not name the themes (no key, a model failure, or the run stopped first), so each theme is one deterministic group with a generated title.');
       if (talk.length > 0) note('Without the judge, posts are not tagged to themes, so the opinion spread covers the product as a whole only.');
     } else {
-      const sent = input.groups.length;
-      if (sent < own.length) note(`${plural(own.length - sent, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
+      const missed = own.filter((g) => !isWeak(g)).length - input.groups.length;
+      if (missed > 0) note(`${plural(missed, 'friction group')} did not fit the judge's input and stayed as their own themes.`);
       if (input.posts.length < talk.length) note(`${plural(talk.length - input.posts.length, 'post')} did not fit the judge's input and are not tagged to themes.`);
       if (unknown.length > 0) note(`The judge named unknown group ids (${unknown.join(', ')}); they were ignored.`);
       if (keys === undefined) note('This log predates group keys, so the judge\'s titles could not be checked against the current grouping and may name other groups.');
@@ -584,15 +735,24 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     const unseparated = 'Posts were not tagged to themes and the steps did not record which posts they were handed, so reports that repeat the feed could not be separated from first-hand ones.';
     if (!themeTags && echoes.heard.size === 0 && echoes.feeds.length > 0 && !limitations.includes(unseparated)) limitations.push(unseparated);
 
+    // Left out here, not before: a saved tag or suggestion that names a weak group is known, not an unknown id.
+    const weak = new Set(drafts.filter((d) => d.groups.every(isWeak)).map(idOf));
     const ranked = drafts
+      .filter((draft) => !weak.has(idOf(draft)))
       .map((draft): ReportTheme => {
         const members = draft.groups.flatMap((g) => g.members);
         const id = idOf(draft);
-        const personas = new Set(members.map((m) => m.persona_id)).size;
-        const hand = firstHand(members, id, themeTags, echoes);
+        const met = felt(members);
+        const personas = new Set(met.map((m) => m.persona_id)).size;
+        const hand = firstHand(met, id, themeTags, echoes);
+        // A persona both remembered it and heard of it counts here, once: its own memory came before any feed.
+        const remembered = new Set(met.filter((m) => !hand.has(m.persona_id) && remembers(m, echoes)).map((m) => m.persona_id)).size;
+        const echoed = met.filter((m) => echoesOther(m, id, themeTags, echoes)).map((m) => m.seqs[0]);
+        const interference = members.filter((m) => m.interference).length;
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         return {
           id,
+          keys: draft.groups.map((g) => groupKey(g.members[0])),
           poi_id,
           rank: 0,
           title: draft.title,
@@ -600,8 +760,11 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           named_by: draft.named_by,
           category: categoryOf(draft.groups[0].kind),
           prevalence: share,
-          heard_first: personas - hand.size,
+          heard_first: personas - hand.size - remembered,
+          ...(remembered > 0 && { remembered }),
           first_hand: [...hand],
+          ...(echoed.length > 0 && { echoed }),
+          ...(met.length === 0 && { scan_only: true as const }),
           trust,
           trust_counts,
           severity,
@@ -613,12 +776,27 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           affected,
           evidence: pickEvidence(members).map((m) => evidenceOf(m, ctx)),
           seqs: [...new Set(members.flatMap((m) => m.seqs))].sort((a, b) => a - b),
+          ...(interference > 0 && { interference }),
           suggestion: null,
         };
       })
-      // Evidence first, so one self-report cannot top a problem many met; then severity tier, then the share's low end × trust.
-      .sort((a, b) => EVIDENCE_ORDER[b.prevalence!.level] - EVIDENCE_ORDER[a.prevalence!.level] || Math.round(b.severity) - Math.round(a.severity) || b.score - a.score || (b.prevalence?.personas ?? 0) - (a.prevalence?.personas ?? 0) || b.frictions - a.frictions || groupNo(a.id) - groupNo(b.id));
-    ranked.forEach((t, i) => (t.rank = i + 1));
+      .sort(rankOrder);
+
+    // After a rejudge, a check older than the newest answer reviewed the earlier themes, whose positional ids may now name others.
+    const newest = lastFor(events, 'report.checks', poi_id);
+    const checked = judged && newest && newest.seq < judged.seq ? undefined : newest;
+    const verdicts = Array.isArray(checked?.payload.checks) ? checked.payload.checks : [];
+    const staleCheck = staleIn(checked?.payload.keys);
+    const current = verdicts.filter((c) => !(typeof c?.theme_id === 'string' && c.theme_id.split('+').some(staleCheck)));
+    const notChecked = applyChecks(ranked, current).unknown;
+    if (current.length < verdicts.length) note(`The grouping rules changed after this run, so the report dropped ${plural(verdicts.length - current.length, 'evidence check')} naming groups that no longer match.`);
+    if (notChecked.length > 0) note(`The evidence check named unknown theme ids (${notChecked.join(', ')}); they were ignored.`);
+    const frictionThemes = ranked.filter((t) => t.category !== 'objection').length;
+    const reviewed = ranked.filter((t) => t.check).length;
+    if ((checkOn || newest) && reviewed < frictionThemes) note(`The evidence check covers ${reviewed} of ${plural(frictionThemes, 'friction theme')}.`);
+    const shown = ranked.filter((t) => !isSetAside(t));
+    set_aside.push(...ranked.filter(isSetAside));
+    shown.forEach((t, i) => (t.rank = i + 1));
 
     // After a rejudge, suggestions older than the newest answer were written for the earlier themes.
     const latest = lastFor(events, 'report.suggestions', poi_id);
@@ -628,18 +806,19 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
     const dropped = (judged?.payload.themes?.length ?? 0) - (judgedThemes?.length ?? 0) + (judged?.payload.posts?.length ?? 0) - (judgedPosts?.length ?? 0);
     const unsuggested = (given?.length ?? 0) - (suggestions?.length ?? 0);
     if (dropped + unsuggested > 0) note(`The grouping rules changed after this run, so ${plural(dropped, 'judge answer')} and ${plural(unsuggested, 'suggested change')} naming groups that no longer match were dropped.`);
-    if (!suggested) note('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
-    else {
-      const { unknown: strays } = applySuggestions(ranked, suggestions ?? null);
-      const covered = ranked.filter((t) => t.suggestion).length;
-      if (covered < ranked.length) note(`Suggested changes cover ${covered} of ${plural(ranked.length, 'theme')}.`);
+    // With every theme set aside the author had nothing to do, which is no failure.
+    if (!suggested && shown.length > 0) note('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).');
+    else if (suggested) {
+      const strays = applySuggestions(ranked, suggestions ?? null).unknown.filter((id) => !weak.has(id));
+      const covered = shown.filter((t) => t.suggestion).length;
+      if (covered < shown.length) note(`Suggested changes cover ${covered} of ${plural(shown.length, 'theme')}.`);
       if (strays.length > 0) note(`The author named unknown theme ids (${strays.join(', ')}); they were ignored.`);
     }
-    themes.push(...ranked);
+    themes.push(...shown);
   }
 
   // Said once, after the judge's and author's notes: a small run is the likeliest reason a share looks off.
-  const small = [...new Set(groups.map((g) => g.poi_id))].map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
+  const small = pois.map((id) => ({ id, n: reach.poi.get(id)?.size ?? 0 })).filter(({ n }) => n > 0 && n < FEW_PERSONAS);
   if (small.length > 0) {
     const few = Math.min(...small.map(({ n }) => n));
     const which = small.length === 1 ? (names.get(small[0].id) ?? 'it') : 'some of what was tested';
@@ -649,5 +828,13 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   if (sentiment.length === 0 && events.some((e) => e.type === 'persona.step')) {
     limitations.push('No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".');
   }
-  return { themes, ...(tagged.size > 0 ? { tagged } : {}), sentiment, went_well: wentWell(events, ctx, likes), limitations };
+  return {
+    themes,
+    ...(set_aside.length > 0 ? { set_aside } : {}),
+    reach: [...reach.poi].map(([poi_id, started]) => ({ poi_id, started: [...started], surveyed: [...(reach.surveyed.get(poi_id) ?? [])], pages: Object.fromEntries([...(reach.poiPages.get(poi_id) ?? [])].map(([page, ids]) => [page, [...ids]])) })),
+    ...(tagged.size > 0 ? { tagged } : {}),
+    sentiment,
+    went_well: wentWell(events, ctx, likes),
+    limitations,
+  };
 }

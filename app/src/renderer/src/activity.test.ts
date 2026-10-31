@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, ProfileAttribute, RunConfig, Segment } from '@gnomi/simulation/types.ts';
+import type { AttributeValue, EventPayloads, EventType, GnomiEvent, Persona, Poi, ProfileAttribute, RunConfig, RunRow, Segment } from '@gnomi/simulation/types.ts';
+import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildGraph } from '@gnomi/engine/graph/index.ts';
 import type { PersonaNode } from '@gnomi/engine/graph/index.ts';
-import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, resetOutcome, runSetup, stopText, toRows, waitingBlocks } from './activity.ts';
+import { filterEvents, filterPersonas, isTimelineHighlight, matchesProfileValues, merge, personaProgress, personaStates, rereadsSet, resetOutcome, runSetup, shotLabels, stopText, toRows, waitingBlocks } from './activity.ts';
 
 function event<K extends EventType>(seq: number, type: K, payload: EventPayloads[K], persona_id: string | null = 'p-001'): GnomiEvent {
   return { seq, ts: seq, run_id: 'r-0001', round: 1, persona_id, poi_id: 'poi-1', type, payload } as GnomiEvent;
@@ -13,6 +14,21 @@ function event<K extends EventType>(seq: number, type: K, payload: EventPayloads
 const blockedRequest = (seq: number, host: string, path: string) => event(seq, 'containment.blocked_request', { host, url: `http://${host}${path}`, method: 'GET' });
 const blocked = (seq: number, reason: 'captcha' | 'session_expired' = 'captcha', who = 'p-001') => event(seq, 'persona.blocked', { step_no: 2, reason, detail: 'recaptcha' }, who);
 const resumed = (seq: number, who = 'p-001') => event(seq, 'persona.resumed', { step_no: 2 }, who);
+
+test('a screenshot says how the persona saw it only on the POI her perception applied to, not on a design\'s frame', () => {
+  const started = (seq: number, poi_id: string, perception?: 'deuteranopia' | 'screen_reader') => ({ ...event(seq, 'persona.episode_started', { poi_id, device: 'desktop', start_url: 'x', ...(perception && { perception }) }), poi_id }) as GnomiEvent;
+  const shot = (seq: number, poi_id: string) => ({ ...event(seq, 'persona.step', {
+    step_no: seq, action: { type: 'read', ref: null, text: null }, target: null, result: { ok: true, url_before: 'x', url_after: 'x', dom_changed: false, error: null },
+    thought: '', feeling: 0, snapshot_hash: 'h', screenshot: `${poi_id}.jpg`, duration_ms: 1, heard_post_ids: [],
+  }), poi_id }) as GnomiEvent;
+  const labelled = (perception: 'deuteranopia' | 'screen_reader') => {
+    const events = [started(1, 'site', perception), shot(2, 'site'), started(3, 'design'), shot(4, 'design')];
+    const label = shotLabels(events);
+    return toRows(events).filter((row) => row.screenshot).reverse().map((row) => [row.screenshot, label(row)]);
+  };
+  assert.deepEqual(labelled('deuteranopia'), [['site.jpg', 'Simulated red–green colour blindness: the colours here are not the page’s own.'], ['design.jpg', undefined]]);
+  assert.deepEqual(labelled('screen_reader'), [['site.jpg', 'Not shown to this persona, who got the page as text.'], ['design.jpg', undefined]]);
+});
 
 test('a repeated model failure reads as no valid answer and leaves the persona unfinished, not gave up', () => {
   const failed = event(1, 'signal.repeated_failure', { step_no: 3, action: 'wait', error: 'invalid_output' });
@@ -60,7 +76,7 @@ test('rounds, feeds, posts, replies, reactions and feed-driven opinions read as 
     ['Feed', 'Found nothing new in the feed'],
     ['Post', 'Posted in the feed'],
     ['Reply', 'Replied to post inj-r1-1'],
-    ['Post', 'Posted in the feed (put there by the test harness)'],
+    ['Post', 'Posted in the feed (added by your team)'],
     ['Reaction', 'Disagreed with post r1-p-002'],
     ['Opinion', 'Sentiment -1; self-reported confidence 50%, after reading a post'],
     ['Round 2', 'Round 2 ended'],
@@ -190,6 +206,22 @@ test('the swarm graph and the grid read one status: a budget or failure stop is 
   assert.deepEqual(graphStates(compared), personaStates(compared, people));
 });
 
+test('a step row names the page its screenshot shows, not the one the step led to', () => {
+  const [row] = toRows([event(1, 'persona.step', { step_no: 1, action: { type: 'click', ref: 'e1', text: null }, target: null, result: { ok: true, url_before: 'https://app.test/jobs', url_after: 'https://app.test/jobs/1', dom_changed: true, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] })]);
+  assert.equal(row.page, 'https://app.test/jobs');
+});
+
+test('a slice of the log with no run.started still names a design or text by the places it is given', () => {
+  const design: Poi = { id: 'poi-1', type: 'design', name: 'Checkout', segments: null, frames: [{ asset: 'aaaaaaaaaaaaaaaa.png', name: 'Payment' }, { asset: 'bbbbbbbbbbbbbbbb.png', name: null }] };
+  const text: Poi = { id: 'poi-2', type: 'text', name: 'Pricing copy', segments: null, asset: 'cccccccccccccccc.md' };
+  const step = (seq: number, url: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: url, url_after: url, dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] });
+  const hers = [step(1, 'asset:aaaaaaaaaaaaaaaa.png'), step(2, 'asset:cccccccccccccccc.md')];
+  assert.deepEqual(toRows(hers, assetPlaces([design, text])).map((row) => row.page), ['Pricing copy', 'Checkout, screen 1 "Payment"']);
+  assert.deepEqual(toRows(hers).map((row) => row.page), ['a text', 'a design screen'], 'with no places the stored file still stays hidden');
+  const started = event(0, 'run.started', { config: { project: { pois: [design, text] } } as unknown as RunConfig }, null);
+  assert.deepEqual(toRows([started, ...hers]).map((row) => row.page).slice(0, 2), ['Pricing copy', 'Checkout, screen 1 "Payment"'], 'the whole log needs none');
+});
+
 test('the activity filters keep one persona, one segment or one kind of event', () => {
   const people = new Map([person('a1', 'seg-1'), person('a2', 'seg-1'), person('b1', 'seg-2')].map((p) => [p.id, p]));
   const step = (seq: number, who: string) => event(seq, 'persona.step', { step_no: seq, action: { type: 'wait', ref: null, text: null }, target: null, result: { ok: true, url_before: '', url_after: '', dom_changed: false, error: null }, thought: '', feeling: 0, snapshot_hash: '', screenshot: null, duration_ms: 1, heard_post_ids: [] }, who);
@@ -223,6 +255,7 @@ test('detected signals read as sentences and have their own category', () => {
     event(5, 'signal.error', { ...base, kind: 'http', status: 404, message: 'GET http://gym.test/job' }),
     event(6, 'signal.validation_error', { ...base, message: 'Enter a job title' }),
     event(7, 'signal.small_target', { ...base, box: [0, 0, 35.4, 23] }),
+    event(8, 'signal.accessibility', { ...base, ref: null, rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 2, selectors: ['main > p'] }),
   ];
   assert.deepEqual(
     toRows(signals).reverse().map((row) => [row.label, row.title, row.detail]),
@@ -234,9 +267,10 @@ test('detected signals read as sentences and have their own category', () => {
       ['Step 3', 'Detected: the site answered HTTP 404', 'GET http://gym.test/job'],
       ['Step 3', 'Detected: an error message appeared after submitting', 'Enter a job title'],
       ['Step 3', 'Detected: tapped a small target, 35×23 px', base.url],
+      ['Step 3', 'Page scan: Elements must meet minimum color contrast ratio thresholds', base.url],
     ],
   );
-  assert.equal(filterEvents([...signals, blocked(8)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
+  assert.equal(filterEvents([...signals, blocked(9)], { persona: '', segment: '', category: 'signals' }, new Map()).length, signals.length);
 });
 
 test('a step error reads in words, and what covered the target as something in the way', () => {
@@ -304,4 +338,18 @@ test('a text or design starts as reading or looking through it, by its name, not
   ];
   const titles = toRows(events).filter((row) => row.label === 'Start').map((row) => row.title);
   assert.deepEqual(titles, ['Started looking through Checkout', 'Started reading Pricing copy']);
+});
+
+test('a page reads its repeat set again when a report of that set is written, and for nothing else', () => {
+  const row = (run_id: string, group?: string) => ({ run_id, config: group ? { repeat: { group, index: 1, of: 2 } } : {} }) as RunRow;
+  const runs = [row('r-0001', 'set-a'), row('r-0002', 'set-a'), row('r-0003', 'set-b'), row('r-0004')];
+  const of = (run_id: string, type: 'report.generated' | 'run.finished') => ({ ...event(9, type, type === 'run.finished' ? {} : { path: 'report.json', friction_count: 0 }), run_id }) as GnomiEvent;
+  // The last run of the set, as a page for an earlier run sees it: the row says the run is over, and only the report's own event says what it holds.
+  assert.equal(rereadsSet(of('r-0002', 'run.finished'), 'set-a', runs), false, 'the run list already covers this one');
+  assert.equal(rereadsSet(of('r-0002', 'report.generated'), 'set-a', runs), true);
+  assert.equal(rereadsSet(of('r-0001', 'report.generated'), 'set-a', runs), true);
+  assert.equal(rereadsSet(of('r-0003', 'report.generated'), 'set-a', runs), false, 'another set');
+  assert.equal(rereadsSet(of('r-0004', 'report.generated'), 'set-a', runs), false, 'a lone run');
+  assert.equal(rereadsSet(of('r-0005', 'report.generated'), 'set-a', runs), true, 'the run list has not caught up with a run that just started');
+  assert.equal(rereadsSet(of('r-0004', 'report.generated'), undefined, runs), false, 'a lone run\'s page has no set to read');
 });

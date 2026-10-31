@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Action, ActionResult, ActionTarget } from '../types.ts';
-import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, smallTarget, validationError, type Step } from './index.ts';
+import type { PageDriver } from '../seams.ts';
+import type { AccessibilityViolation, Action, ActionResult, ActionTarget, GnomiEvent, PageSnapshot } from '../types.ts';
+import { backtrack, DEFAULT_SIGNALS, detectSignals, failedAction, loop, pageAudits, possibleInterference, smallTarget, validationError, type Step } from './index.ts';
 
 const T = DEFAULT_SIGNALS;
 const A = 'https://app.test/a';
@@ -181,12 +182,12 @@ test('validation_error: copy a click revealed along with new fields is not an er
   assert.equal(validationError(next, WIZARD, `${WIZARD}\n- generic [ref=e20]: Title is required`)?.payload.message, 'Title is required', 'no new field: wording still counts');
 });
 
-test('small_target: a mobile tap on an element under 40×40 CSS px; desktop taps and large targets never', () => {
+test('small_target: a mobile tap on an element under 24 CSS px either way; desktop taps and large targets never', () => {
   const tap = (box: [number, number, number, number] | null) => step(1, 'click', A, B, { target: { role: 'link', name: 'Jobs', box } });
   assert.deepEqual(smallTarget(tap([10, 20, 35, 23]), 'mobile', T), { type: 'signal.small_target', payload: { step_no: 1, url: A, ref: 'e1', box: [10, 20, 35, 23] } });
-  assert.equal(smallTarget(tap([10, 20, 120, 39]), 'mobile', T)?.type, 'signal.small_target', 'too short');
+  assert.equal(smallTarget(tap([10, 20, 120, 23]), 'mobile', T)?.type, 'signal.small_target', 'too short');
   assert.equal(smallTarget(tap([10, 20, 35, 23]), 'desktop', T), null);
-  assert.equal(smallTarget(tap([10, 20, 40, 40]), 'mobile', T), null);
+  assert.equal(smallTarget(tap([10, 20, 24, 24]), 'mobile', T), null);
   assert.equal(smallTarget(tap(null), 'mobile', T), null);
   assert.equal(smallTarget(tap([0, 0, 0, 0]), 'mobile', T), null, 'not laid out');
   assert.equal(smallTarget(step(1, 'type', A, A, { target: { role: 'textbox', name: 'Title', box: [0, 0, 30, 20] } }), 'mobile', T), null, 'typing is not a tap');
@@ -210,4 +211,100 @@ test('detectSignals: page errors become signal.error on the step; a done step re
   const done = step(3, 'done', A, A, { ref: null, target: null, result: { dom_changed: false } });
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: [], before: null, after: null, thresholds: T }), []);
   assert.deepEqual(detectSignals({ history: looped, step: done, device: 'mobile', errors: errors.slice(1), before: null, after: null, thresholds: T }).map((s) => s.type), ['signal.error']);
+});
+
+const violation = (rule: string, impact: AccessibilityViolation['impact']): AccessibilityViolation => ({ rule, impact, category: 'color', help: `${rule} help`, elements: 2, selectors: ['main > p'] });
+const shot = (hash: string, url = 'https://app.test/jobs/1'): PageSnapshot => ({ url, title: 'App', text: '', hash });
+const scanning = (audit: PageDriver['audit']) => ({ audit }) as PageDriver;
+const rules = (found: AccessibilityViolation[] = []) => found.map((v) => v.rule);
+
+test('pageAudits: critical and serious become signals, each rule once per page pattern; moderate and minor stay out of them', async () => {
+  const audit = pageAudits();
+  const page = scanning(async () => [violation('color-contrast', 'serious'), violation('button-name', 'critical'), violation('region', 'moderate'), violation('heading-order', 'minor')]);
+  const first = await audit(page, shot('a'));
+  assert.deepEqual([rules(first?.signals), rules(first?.audit), first?.error], [['color-contrast', 'button-name'], ['region', 'heading-order'], null]);
+  const sameTemplate = await audit(page, shot('b', 'https://app.test/jobs/2?tab=notes'));
+  assert.deepEqual([rules(sameTemplate?.signals), rules(sameTemplate?.audit)], [[], ['region', 'heading-order']], 'another state of the page, another record: no second signal');
+  assert.deepEqual(rules((await audit(page, shot('c', 'https://app.test/settings')))?.signals), ['color-contrast', 'button-name'], 'another page signals on its own');
+});
+
+test('pageAudits: one scan per snapshot across personas reaching it at once', async () => {
+  const audit = pageAudits();
+  let scans = 0;
+  let finish = (_: AccessibilityViolation[]) => {};
+  const page = scanning(() => { scans++; return new Promise((resolve) => { finish = resolve; }); });
+  const first = audit(page, shot('a'));
+  assert.equal(await audit(page, shot('a')), null, 'the second persona carries on while the first scan runs');
+  finish([violation('color-contrast', 'serious')]);
+  assert.deepEqual(rules((await first)?.signals), ['color-contrast']);
+  assert.equal(await audit(page, shot('a')), null);
+  assert.equal(scans, 1);
+});
+
+test('pageAudits: a scan that fails says why and is not repeated, and a page with nothing to scan is passed by', async () => {
+  const audit = pageAudits();
+  let scans = 0;
+  const failing = scanning(async () => {
+    scans++;
+    throw new Error('page.evaluate: axe would not load\n    at somewhere');
+  });
+  assert.deepEqual(await audit(failing, shot('a')), { audit: [], error: 'page.evaluate: axe would not load', signals: [] });
+  assert.equal(await audit(failing, shot('a')), null);
+  assert.equal(scans, 1);
+  assert.equal(await audit({} as PageDriver, shot('b')), null, 'a driver without audit');
+  assert.equal(await audit(failing, shot('c', 'chrome-error://chromewebdata/')), null, 'the browser\'s own error page');
+  assert.equal(scans, 1);
+});
+
+test('detectSignals: a scan\'s violations are about the page, not the step\'s element, even on a done step', () => {
+  const found = violation('color-contrast', 'serious');
+  const done = step(3, 'done', A, A, { ref: 'e7', target: null, result: { dom_changed: false } });
+  assert.deepEqual(detectSignals({ history: [], step: done, device: 'desktop', errors: [], before: null, after: null, thresholds: T, violations: [found] }).map((s) => [s.type, s.payload]), [
+    ['signal.accessibility', { step_no: 3, url: A, ref: null, ...found }],
+  ]);
+});
+
+const SAVED = { role: 'button', name: 'Archive job', box: null } as const;
+const MINUTE = 60_000;
+type Timed = [ts: number, persona: string, step: Step, failed?: 'failed'];
+/** A run that froze `signals`, then these steps at their times, each with `failed` followed by its signal. */
+function timed(signals: object | undefined, ...entries: Timed[]): GnomiEvent[] {
+  const logged = [[0, null, 'run.started', { config: { signals } }], ...entries.flatMap(([ts, persona, s, failed]) => [[ts, persona, 'persona.step', s], ...(failed ? [[ts, persona, 'signal.failed_action', { step_no: s.step_no, url: A, ref: 'e1', action: s.action.type, error: 'no_effect' }]] : [])])];
+  return logged.map(([ts, persona_id, type, payload], i) => ({ run_id: 'r-1', round: 1, persona_id, poi_id: persona_id && 'poi', seq: i + 1, ts, type, payload }) as GnomiEvent);
+}
+const archived = step(1, 'click', A, A, { target: SAVED });
+const dead = step(1, 'click', A, A, { target: SAVED, result: { dom_changed: false } });
+const tagged = (signals: object | undefined, ...entries: Timed[]) => [...possibleInterference(timed(signals, ...entries))];
+
+test('possible interference: a failed action on what another persona changed in the minute before, whatever the case of its name', () => {
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [1000 + MINUTE, 'p2', dead, 'failed']), [4]);
+  const shouted = step(1, 'click', A, A, { target: { ...SAVED, name: ' ARCHIVE JOB ' }, result: { dom_changed: false } });
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', shouted, 'failed']), [4]);
+});
+
+test('possible interference: not after the minute, nor before the change, nor by the same persona', () => {
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [1001 + MINUTE, 'p2', dead, 'failed']), [], 'outside the minute');
+  assert.deepEqual(tagged(T, [1000, 'p2', dead, 'failed'], [2000, 'p1', archived]), [], 'the change came after');
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p1', dead, 'failed']), [], 'her own change');
+  const other = step(1, 'click', A, A, { target: { ...SAVED, name: 'Delete job' }, result: { dom_changed: false } });
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', other, 'failed']), [], 'another name');
+  const events = timed(T, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']);
+  assert.deepEqual([...possibleInterference(events.map((e) => (e.persona_id === 'p1' ? { ...e, poi_id: 'rival' } : e)))], [], 'another POI');
+});
+
+test('possible interference: an old log froze no window, so it has no tag', () => {
+  const { interference_s: _, ...old } = T;
+  assert.deepEqual(tagged(old, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']), [], 'thresholds from before the tag');
+  assert.deepEqual(tagged(undefined, [1000, 'p1', archived], [2000, 'p2', dead, 'failed']), [], 'no thresholds at all');
+  const { target: __, ...bare } = dead;
+  assert.deepEqual(tagged(T, [1000, 'p1', archived], [2000, 'p2', bare as Step, 'failed']), [], 'a step with no recorded target');
+  assert.deepEqual([...possibleInterference([])], [], 'an empty log');
+});
+
+test('possible interference: values typed or chosen and clicks that did something change an element; looking, links and failures do not', () => {
+  const on = (type: Action['type'], role = 'button', result: Partial<ActionResult> = {}) => step(1, type, A, A, { target: { ...SAVED, role }, result });
+  for (const change of [on('type', 'textbox'), on('select', 'combobox'), on('click'), on('click', 'checkbox'), on('click', 'button', { dom_changed: false, pending: true })]) assert.deepEqual(tagged(T, [1000, 'p1', change], [2000, 'p2', dead, 'failed']), [4], change.action.type);
+  for (const look of [on('read'), on('hover'), on('click', 'link'), on('click', 'button', { dom_changed: false }), on('type', 'textbox', { ok: false, error: 'not_editable' })]) assert.deepEqual(tagged(T, [1000, 'p1', look], [2000, 'p2', dead, 'failed']), [], `${look.action.type} ${look.target?.role}`);
+  const unnamed = step(1, 'click', A, A, { target: { ...SAVED, name: ' ' } });
+  assert.deepEqual(tagged(T, [1000, 'p1', unnamed], [2000, 'p2', { ...dead, target: unnamed.target }, 'failed']), [], 'an unnamed element matches nothing');
 });

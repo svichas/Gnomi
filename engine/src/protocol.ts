@@ -1,16 +1,22 @@
 import type { AssetInfo } from '@gnomi/simulation/assets.ts';
+import type { AnalyticsResult } from './audience/analytics.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
+import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
+import type { AddedPost, FindingEdit, StudyOutcome } from './workspace.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
   DiversityReport,
   GnomiEvent,
+  Grounding,
   Persona,
   ProjectConfig,
   ProviderId,
   Report,
   RunEstimate,
   RunRow,
+  Segment,
   SessionInfo,
   SetupCall,
   PersonaProgress,
@@ -73,6 +79,12 @@ export interface Api {
   check_session: { params: { role: string }; result: { ok: boolean; url: string; reason: string | null } };
   /** Proposes segments from the product sentence, the POI and the goal (persona_writer model). Not saved. */
   propose_audience: { params: Record<string, never>; result: { audience: Audience; cost_usd: number } };
+  /** Reads a local CSV export once and answers what it would change in `audience`. Nothing is saved or copied, and no model is called. */
+  analytics_preview: { params: { path: string; audience: Audience; segment_id: string }; result: AnalyticsResult };
+  /** Reads and redacts local .md and .txt files and answers what a digest of them will send and cost at most. Nothing is kept. */
+  estimate_sources: { params: { paths: string[] }; result: { files: string[]; emails: number; phones: number; high_usd: number; notice: string } };
+  /** Condenses a segment's sources with the persona_writer model, refused if it could cost more than budget_usd. Not saved; the sources are not kept. */
+  ground_segment: { params: { segment: Segment; paths: string[]; budget_usd: number }; result: { grounding: Grounding; dropped: number; cost_usd: number } };
   /** Brings the population in line with the saved audience: unchanged slots keep their persona, new or changed slots are sampled and written. Progress streams as 'progress' messages. */
   generate_personas: { params: Record<string, never>; result: { personas: Persona[]; diversity: DiversityReport; cost_usd: number } };
   /** A new seed for one persona: traits re-sampled and re-written. */
@@ -81,14 +93,43 @@ export interface Api {
   remove_persona: { params: { id: string }; result: null };
   /** Saves hand edits to a persona's written fields; sampled traits stay as they were. */
   edit_persona: { params: { persona: Persona }; result: null };
-  estimate_run: { params: Record<string, never>; result: RunEstimate };
-  /** Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use. */
-  start_run: { params: { reset: boolean }; result: { run_id: string } };
+  /** With `repeats`, the whole set: the estimate of every run together, and with `what_if` of `repeats` pairs. With `run_id`, of running that finished run again, and `returning`, with the memory that adds to each prompt. */
+  estimate_run: { params: { repeats?: number; run_id?: string; returning?: boolean; what_if?: AddedPost }; result: RunEstimate };
+  /**
+   * Refuses (as an error) a production target, an unconfirmed non-staging host, or a missing or expired login for any role in use.
+   * With `repeats` it answers with the first run; the rest of the set follow one after another, each with its logins checked again and
+   * its share of the cost budget. A run that stops ends the set; a repeat that cannot start sends 'repeat_failed'. With `what_if` the set
+   * is `repeats` matched pairs of runs with and without that post, refused where the post could not reach anyone or differ alone.
+   */
+  start_run: { params: { reset: boolean; repeats?: number; what_if?: AddedPost }; result: { run_id: string } };
+  /**
+   * Runs a finished run again with its frozen config and personas and a new run id, through start_run's path and refusals. `urls` moves
+   * web POIs to a new address by POI id, and each new host joins that POI's allowed hosts. Refuses a run that did not finish.
+   * `returning`, never the default: the personas remember that run, and every run of a set remembers the same one. Refuses a comparison study.
+   */
+  duplicate_run: { params: { run_id: string; reset: boolean; repeats?: number; urls?: Record<string, string>; returning?: boolean }; result: { run_id: string } };
+  /** Also ends the project's repeat set, even when the run has already logged its end and so stays finished. */
   stop_run: { params: { run_id: string; project_dir?: string }; result: null };
   /** Continues blocked personas after the user re-recorded their login or fixed staging. */
   resume_personas: { params: { run_id: string; persona_ids: string[] }; result: null };
   get_events: { params: { run_id: string; after_seq: number | null; persona_id: string | null }; result: GnomiEvent[] };
   get_report: { params: { run_id: string }; result: Report };
+  /** What a repeat set's runs have in common, computed when read. Each run keeps its own report. */
+  get_repeats: { params: { group: string }; result: RepeatSet };
+  /** What changed from `base` to `run`, computed when read. A run of a repeat set stands for that set's finished runs. */
+  compare_runs: { params: { base: string; run: string }; result: ReportDiff };
+  /** What plan_study would cost: one call on the run's own author model. `cost_usd[1]` is the most it can spend. */
+  estimate_study: { params: { run_id: string }; result: RunEstimate };
+  /** Spends money, so only a person's click calls it, for at most estimate_study's high end. Refuses a run that has not ended and a comparison study. The new plan reaches the report through report.generated. */
+  plan_study: { params: { run_id: string }; result: null };
+  /** What a team's own study found about a finding, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
+  record_outcome: { params: StudyOutcome; result: null };
+  /** Hides a finding from exports or rewords it there, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
+  edit_finding: { params: FindingEdit; result: null };
+  /** What ask_persona would cost: one call on the run's own navigator model. `cost_usd[1]` is the most it can spend. */
+  estimate_interview: { params: { run_id: string }; result: RunEstimate };
+  /** Spends money, so only a person's click calls it, for at most estimate_interview's high end, and one question at a time per run. The answer reaches clients as a persona.interviewed event. */
+  ask_persona: { params: { run_id: string; persona_id: string; question: string }; result: null };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }
@@ -104,6 +145,7 @@ export type EngineToClient =
   | { kind: 'response'; id: number; ok: false; error: string }
   | { kind: 'event'; event: GnomiEvent; project_dir?: string }
   | { kind: 'session_run'; run: SessionRun }
+  | { kind: 'repeat_failed'; error: string }
   | ({ kind: 'progress'; task: 'generate_personas' } & PersonaProgress);
 
 export interface Transport {

@@ -1,13 +1,14 @@
 import { InvalidOutputError } from '../llm/gateway.ts';
 import { personaEnvironment } from '../audience/locations.ts';
 import { sameOpinion } from '../opinion/index.ts';
-import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type Step } from '../signals/index.ts';
+import { boxIn } from '../browser/prune.ts';
+import { DEFAULT_SIGNALS, detectSignals, failedAction, isSubmit, type PageAudit, type Step } from '../signals/index.ts';
 import { normaliseText } from '../report/friction.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder, StorageState } from '../seams.ts';
-import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, Persona, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
+import type { Action, ActionOutcome, ActionTarget, EventPayloads, EventType, NewEvent, Opinion, PageSnapshot, Persona, PriorPoi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
 import { loginPoi } from '../poi/pois.ts';
 import { readsImages } from '../settings.ts';
-import { stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
+import { perceptionOf, stepSchema, systemPrompt, userParts, type HeardPost, type StepMemory, type StepOutput } from './prompt.ts';
 
 // model_failed: the model gave no valid answer three steps running; the engine ends it, and it says nothing about the product.
 export type EpisodeEnd = 'done' | 'abandoned' | 'budget_exceeded' | 'repeated_failure' | 'model_failed' | 'blocked' | 'stopped';
@@ -17,11 +18,17 @@ export function stepBudget(persona: Persona): number {
   return [12, 20, 30, 45, 60][persona.patience - 1] ?? 30;
 }
 
-/** The role and name of the element with this ref in a snapshot (browser/prune.ts lines), or null when it is not there. */
+/** The role, name and box of the element with this ref in a snapshot (browser/prune.ts lines), or null when it is not there. */
 export function targetIn(snapshot: string, ref: string): ActionTarget | null {
   const line = snapshot.split('\n').find((l) => l.includes(`[ref=${ref}]`));
   const m = line && /- (\S+) "((?:[^"\\]|\\.)*)"/.exec(line);
-  return m ? { role: m[1], name: m[2], box: null } : null;
+  return m ? { role: m[1], name: m[2], box: boxIn(line) } : null;
+}
+
+/** An earlier step's target with its box in this snapshot, as this step's screenshot shows it. No box once it is gone: on a new page its ref can name something else. */
+function targetNow(snapshot: string, { action: { ref }, target }: Step): ActionTarget | null {
+  const now = ref ? targetIn(snapshot, ref) : null;
+  return target && { ...target, box: now?.role === target.role && now.name === target.name ? now.box : null };
 }
 
 /** What a POI runner (poi/index.ts) gets for one persona's episode on one POI. */
@@ -36,6 +43,8 @@ export interface EpisodeDeps {
   stepsBefore: number;
   /** The persona's opinion of this POI when the episode starts, from an earlier social phase; null or absent when it has none. */
   opinion?: Opinion | null;
+  /** In a returning run, the persona's own earlier visit to this POI, for every prompt of the episode; absent otherwise. */
+  prior?: PriorPoi;
   /**
    * A fresh page under the web POI's containment with the role's current session; called again after a resume, as the login was likely
    * re-recorded. Between slices it gets the `state` the persona's last page left with instead.
@@ -62,6 +71,8 @@ export interface EpisodeDeps {
    * there (`heard`, for the next step's prompt), or null when the run ended in between. Absent: one straight run.
    */
   slice?: { steps: number; next: () => Promise<{ opinion: Opinion | null; heard?: HeardPost[] } | null> };
+  /** The run's page scans (signals/index.ts); absent unless it has accessibility_checks. */
+  audit?: (page: PageDriver, snapshot: PageSnapshot) => Promise<PageAudit | null>;
 }
 
 /** What every POI runner records the same way, each event stamped with the run, round, persona and this POI. */
@@ -118,8 +129,9 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   let failStreak = 0;
   let invalidStreak = 0;
   const reported = new Set<string>(); // page and normalised text of each friction already recorded this episode
+  const perception = perceptionOf(config.project, persona);
   // The gateway strips images for DeepSeek (llm/gateway.ts), so the prompt must not say there is a screenshot.
-  const sendShots = settings.screenshots && readsImages(settings.routing.navigator);
+  const sendShots = settings.screenshots && readsImages(settings.routing.navigator) && perception !== 'screen_reader';
 
   // The recorded start page belongs to the POI the login was recorded on; the others start at their own.
   const startUrl = session && !config.project.comparison && loginPoi(config.project.pois)?.id === poi.id ? session.start_url : poi.start_url;
@@ -174,24 +186,27 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
     const { snapshot, shot } = await read().catch((err: unknown) => (String(err).includes('Execution context was destroyed') ? read() : Promise.reject(err)));
     const screenshot = `runs/${run_id}/shots/${persona.id}-${String(step_no).padStart(4, '0')}.jpg`;
     await blobs.put(screenshot, shot);
-    const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, page: snapshot, screenshot: sendShots ? shot : null });
+    // By the hash the step records, so the report models can find it and identical pages share one file.
+    await blobs.put(`runs/${run_id}/snapshots/${snapshot.hash}.txt`, new TextEncoder().encode(snapshot.text));
+    const scan = poi.mode === 'full' ? await deps.audit?.(page, snapshot) : null; // not a competitor's site: its problems are not the team's to fix
+    const user = userParts({ persona, stepNo: step_no - stepsBefore, memory, opinion, heard, prior: deps.prior, page: snapshot, screenshot: sendShots ? shot : null });
     heard = [];
     if (signal.aborted) return null;
     try {
       const { object } = await llm.call({ role: 'navigator', model: settings.routing.navigator, run_id, persona_id: persona.id, round: deps.round(), purpose: 'step', poi_id, system, user, schema, signal });
-      return { snapshot, screenshot, output: object as StepOutput | null };
+      return { snapshot, screenshot, scan, output: object as StepOutput | null };
     } catch (err) {
       if (signal.aborted) return null;
       // A second invalid output or a timed-out call is a failed step, not a crash (tech.md §10.6); any other model error ends the run.
       if (!(err instanceof InvalidOutputError) && !(err instanceof Error && err.name === 'TimeoutError')) throw err;
-      return { snapshot, screenshot, output: null };
+      return { snapshot, screenshot, scan, output: null };
     }
   };
 
   try {
     if (signal.aborted) return 'stopped';
     await page.goto(startUrl);
-    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona) });
+    emit('persona.episode_started', { poi_id, device: persona.device, start_url: startUrl, ...personaEnvironment(persona), ...(perception && { perception }) });
     const first = await inspect(stepsBefore, startUrl);
     if (first !== 'go') return first;
 
@@ -221,7 +236,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
       }
       // A provider may return successfully after cancellation. Its usage stays logged, but the answer must not act.
       if (!looked || signal.aborted) return 'stopped';
-      const { snapshot, screenshot, output } = looked;
+      const { snapshot, screenshot, scan, output } = looked;
 
       const action: Action = output?.action ?? { type: 'wait', ref: null, text: null };
       const stay = { url_before: snapshot.url, url_after: snapshot.url, dom_changed: false, target: null, text: null };
@@ -232,11 +247,12 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
           : await page.act(action);
       const { target, text, ...result } = outcome;
       const thought = output?.thought ?? '';
-      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, duration_ms: Date.now() - started, heard_post_ids });
+      const recordedStep = emit('persona.step', { step_no, action, target, result, thought, feeling: output?.feeling ?? 0, snapshot_hash: snapshot.hash, screenshot, ...(snapshot.viewport && { viewport: snapshot.viewport }), duration_ms: Date.now() - started, heard_post_ids });
       // Objective signals right after their step (tech.md §8.1); a submit needs one more look to see what it made appear.
       const step: Step = { step_no, action, target, result, snapshot_hash: snapshot.hash };
       const afterSubmit = isSubmit(step) ? await page.snapshot().then((s) => s.text, () => null) : null;
-      for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds })) emit(s.type, s.payload);
+      if (scan) emit('accessibility.scanned', { step_no, url: snapshot.url, snapshot_hash: snapshot.hash, audit: scan.audit, error: scan.error });
+      for (const s of detectSignals({ history, step, device: persona.device, errors: page.errors(), before: snapshot.text, after: afterSubmit, thresholds, violations: scan?.signals })) emit(s.type, s.payload);
       history.push(step);
       opinion = log.opinion(opinion, output?.opinion, recordedStep.seq);
       const friction = output?.friction ?? null;
@@ -248,7 +264,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
         // What it is about: the element the persona names, else the last action when it failed or did nothing, else the next action's.
         const prev = history.at(-2);
         const about: { ref: string | null; target: ActionTarget | null } = about_ref ? { ref: about_ref, target: targetIn(snapshot.text, about_ref) }
-          : prev && (!prev.result.ok || failedAction(prev, history.at(-3))) ? { ref: prev.action.ref, target: prev.target } : { ref: action.ref, target: null };
+          : prev && (!prev.result.ok || failedAction(prev, history.at(-3))) ? { ref: prev.action.ref, target: targetNow(snapshot.text, prev) } : { ref: action.ref, target: null };
         emit('persona.friction_reported', { step_no, ...report, where: { url: snapshot.url, ref: about.ref }, heard_post_ids, ...(about.target && { about: about.target }) });
       }
 

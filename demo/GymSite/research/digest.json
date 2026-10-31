@@ -1,0 +1,80 @@
+{
+  "seg-1": {
+    "facts": [
+      "Goal: post several jobs a week, reusing the wording of older posts.",
+      "Vocabulary: \"reqs\" and \"the hiring manager\", not \"positions\" or \"owners\".",
+      "Objection: losing a draft, so descriptions are often written elsewhere first.",
+      "Objection: finding out only after publishing that a hiring manager has no account.",
+      "Tool: a text file of descriptions beside the form, and a spreadsheet of who is waiting on what."
+    ],
+    "remarks": [
+      "I write the description somewhere else first, because I have lost a whole draft to a form before.",
+      "If the hiring manager has no account yet, I need to know before I press publish, not after.",
+      "Every req has a budget code, and if the form hides that field I go looking for it.",
+      "We still track who is waiting on what in a spreadsheet, whatever the tool says."
+    ],
+    "sources": [
+      {
+        "name": "recruiting.md",
+        "sha256": "9313e7605590641d850932f18aeb4d51f86c70c7d2d333568af0af3adf74019c"
+      }
+    ]
+  },
+  "seg-2": {
+    "facts": [
+      "Goal: read a resume and leave a decision within a minute.",
+      "Vocabulary: \"shortlist\" and \"pass\"; few know what a pipeline stage is called in the product.",
+      "Objection: not knowing whether a decision or feedback was saved or seen.",
+      "Tool: the email that brings them in, often read on a phone, and messages to the recruiter."
+    ],
+    "remarks": [
+      "I open it from the email on my phone, read the resume, and I want to be done before my next meeting.",
+      "Tell me whose turn it is, because I only come here when someone asks me to.",
+      "I wrote two paragraphs of feedback once and I still do not know if anyone saw them.",
+      "If I cannot tell whether my decision saved, I send the recruiter a message instead."
+    ],
+    "sources": [
+      {
+        "name": "hiring-managers.md",
+        "sha256": "9f4bb4e8c340c525a4d553780d12773a6501fb815366c703cfa2a4fa4aea06ed"
+      }
+    ]
+  },
+  "seg-3": {
+    "facts": [
+      "Goal: set the tool up once and return when a person, a rule or an audit changes something.",
+      "Vocabulary: \"permissions\" and \"approval chain\".",
+      "Objection: the wrong person getting access matters more than speed.",
+      "Tool: settings pages, which they read closely."
+    ],
+    "remarks": [
+      "I need to see who can approve a job before I invite anyone else.",
+      "I invited a manager last week and I cannot tell whether the invite ever arrived.",
+      "Changing a setting should say who it affects, because I answer for it in the audit."
+    ],
+    "sources": [
+      {
+        "name": "admins.md",
+        "sha256": "6afcadd2d2ddb81a63430a1041a69b67833bc43310edace143bc20fc430e146e"
+      }
+    ]
+  },
+  "seg-4": {
+    "facts": [
+      "Goal: check what is waiting for a review each morning across every open job.",
+      "Objection: a list that hides closed jobs without saying so.",
+      "Tool: chat to chase people, and their own notes."
+    ],
+    "remarks": [
+      "I start every morning by asking which candidates have been waiting the longest.",
+      "I do not own any of these jobs, I just keep them moving.",
+      "When the list hides closed jobs I can never tell if a job is gone or just filtered out."
+    ],
+    "sources": [
+      {
+        "name": "coordinators.md",
+        "sha256": "731bf0f66da8a90e6721a3a80b752a108eb2dc85e3f5e47ee8574a64e29e310b"
+      }
+    ]
+  }
+}

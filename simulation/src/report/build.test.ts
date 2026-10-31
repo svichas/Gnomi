@@ -7,6 +7,7 @@ import { openProject } from '../log/sqlite.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type {
+  ActionTarget,
   Audience,
   EventPayloads,
   GnomiEvent,
@@ -165,6 +166,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         frictions: 2,
       },
     ],
+    personas_fingerprint: '5d864bf4b3484168',
     segments: [
       {
         id: null,
@@ -179,6 +181,8 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     ],
     weighted: { completion: 1, with_friction: 1 },
     steps: 2,
+    coverage: [{ poi_id: 'poi-gym', curve: [1], last_fifth: { personas: 1, themes: 1 }, thin_pages: [{ page: 'localhost:3001/jobs/new', personas: 1 }], hint: 'With 1 persona the curve is too short to read.' }],
+    flows: [{ poi_id: 'poi-gym', personas: 1, pages: [{ page: 'localhost:3001/jobs/new', reached: 1, ended: { done: 1 } }], moves: [], left_out: { pages: 0, ended: 0 } }],
     frictions: [
       {
         seq: 3,
@@ -211,6 +215,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
     themes: [
       {
         id: 'g1',
+        keys: [JSON.stringify(['poi-gym', 'localhost:3001/jobs/new', 'kind', 'friction'])],
         poi_id: 'poi-gym',
         rank: 1,
         title: 'Reported friction on /jobs/new',
@@ -238,6 +243,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         suggestion: null,
       },
     ],
+    reach: [{ poi_id: 'poi-gym', started: ['p-001'], surveyed: [], pages: { 'localhost:3001/jobs/new': ['p-001'] } }],
     sentiment: [],
     went_well: [],
     cost_usd: 0.75,
@@ -382,6 +388,103 @@ test('the methods appendix counts blocked requests per host, most first, ties A 
     { host: 'ads.example.net', count: 2 },
     { host: 'cdn.example.com', count: 1 },
   ]);
+});
+
+const tapAt = (persona_id: string, step_no: number, name: string, box: [number, number, number, number]): Script => [
+  [1100, { ...who(persona_id), type: 'persona.step', payload: { ...stepPayload(step_no, 'A tap.', null), target: { role: 'link', name, box } } }],
+  [1101, { ...who(persona_id), type: 'signal.small_target', payload: { step_no, url: `${url}?token=s3cret`, ref: 'e1', box } }],
+];
+
+test('undersized targets are an audit in the methods, not findings: no theme and no friction rate', () => {
+  const report = buildReport(stored([
+    startedAt,
+    ...tapAt('p-001', 1, 'Terms', [0, 0, 18.4, 12.2]),
+    ...tapAt('p-001', 2, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-001', 3, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-002', 1, 'Jobs', [0, 0, 208, 21]),
+    ...tapAt('p-002', 2, ' ', [0, 0, 16, 16]),
+    [1900, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.methods.undersized_targets, [
+    { page: 'localhost:3001/jobs/new', element: 'link "Jobs"', width: 208, height: 21, personas: 2 },
+    { page: 'localhost:3001/jobs/new', element: 'link "Terms"', width: 18, height: 12, personas: 1 },
+    { page: 'localhost:3001/jobs/new', element: null, width: 16, height: 16, personas: 1 },
+  ]);
+  assert.deepEqual(report.themes, []);
+  assert.equal(report.weighted.with_friction, 0, 'nobody ran into friction');
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): localhost:3001/jobs/new, link "Jobs", 208×21 px, 2 personas; localhost:3001/jobs/new, link "Terms", 18×12 px, 1 persona; localhost:3001/jobs/new, unnamed element, 16×16 px, 1 persona\n'));
+  assert.ok(!md.includes('s3cret') && !md.includes('Small tap targets'));
+  assert.ok(md.includes('No themes. Small-target and backtrack signals do not make one alone; any undersized targets on your product are listed under Methods.'));
+  assert.ok(!md.includes('No frictions to group into themes'), 'signals did fire');
+});
+
+test("the undersized-target audit covers the team's product, not a competitor's site", () => {
+  const rival = { ...project.pois[0], id: 'poi-rival', name: 'Rival', start_url: 'http://rival.test/', mode: 'observe_only' } as WebPoi;
+  const started = { ...runEnv, type: 'run.started', payload: { config: { ...config, project: { ...project, pois: [...project.pois, rival] } } } } as NewEvent;
+  const onRival = tapAt('p-001', 2, 'Pricing', [0, 0, 30, 20]).map(([ts, event]): [number, NewEvent] => [ts, { ...event, poi_id: 'poi-rival' }]);
+  const report = buildReport(stored([[1000, started], ...tapAt('p-001', 1, 'Jobs', [0, 0, 208, 21]), ...onRival]));
+  assert.deepEqual(report.methods.undersized_targets?.map((t) => t.element), ['link "Jobs"']);
+  const onlyRival = buildReport(stored([[1000, started], ...onRival]));
+  assert.ok(!('undersized_targets' in onlyRival.methods));
+});
+
+test('an older log keeps its frozen threshold, and a log without the signal builds without the audit', () => {
+  const frozen = { ...config, signals: { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 40 } };
+  const report = buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: frozen } }], ...tapAt('p-001', 1, 'Jobs', [0, 0, 120, 39])]));
+  assert.deepEqual(report.methods.undersized_targets?.map((t) => [t.width, t.height]), [[120, 39]], 'detected under 40, so listed under 40');
+  assert.equal(report.methods.signal_thresholds?.small_target_px, 40);
+  assert.ok(!('undersized_targets' in buildReport(stored(finishedRun())).methods));
+});
+
+const violation = (rule: string, impact: 'serious' | 'moderate' | 'minor' = 'moderate'): Omit<EventPayloads['signal.accessibility'], keyof EventPayloads['signal.loop']> & { rule: string } => ({ rule, impact, category: 'structure', help: `${rule} help`, elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] });
+const scannedAt = (persona_id: string, step_no: number, page: string, audit: ReturnType<typeof violation>[], error: string | null = null): Script => [
+  [1100, { ...who(persona_id), type: 'persona.step', payload: stepPayload(step_no, 'A look.', `shots/${step_no}.jpg`) }],
+  [1101, { ...who(persona_id), type: 'accessibility.scanned', payload: { step_no, url: `${page}?token=s3cret`, snapshot_hash: `h${step_no}`, audit, error } }],
+];
+
+test('moderate and minor scan results are an audit in the methods, not findings, and a page the scan never got through is counted', () => {
+  const signal: [number, NewEvent] = [1102, { ...who('p-001'), type: 'signal.accessibility', payload: { step_no: 1, url, ref: null, ...violation('color-contrast', 'serious') } }];
+  const report = buildReport(stored([
+    startedAt,
+    ...scannedAt('p-001', 1, url, [violation('heading-order'), violation('region', 'minor')]),
+    signal,
+    ...scannedAt('p-002', 2, 'http://localhost:3001/jobs/new', [violation('region', 'minor')]),
+    ...scannedAt('p-002', 3, 'http://localhost:3001/settings', [], 'page.evaluate: no'),
+    ...scannedAt('p-002', 4, 'http://localhost:3001/billing', [], 'no result in 10000 ms'),
+    ...scannedAt('p-001', 5, 'http://localhost:3001/billing', []),
+    [1900, { ...runEnv, type: 'run.finished', payload: {} }],
+  ]));
+  assert.deepEqual(report.methods.accessibility_audit, [
+    { page: 'localhost:3001/jobs/new', rule: 'heading-order', impact: 'moderate', help: 'heading-order help', elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] },
+    { page: 'localhost:3001/jobs/new', rule: 'region', impact: 'minor', help: 'region help', elements: 4, selectors: ['main > h3', 'main > h4', 'main > h5'] },
+  ]);
+  assert.ok(report.methods.limitations?.includes('The accessibility scan failed on 1 page, so nothing is known about it from the scan.'), 'settings: billing was scanned on another try');
+  const [theme] = report.themes!;
+  assert.ok(theme.scan_only);
+  assert.equal(report.weighted.with_friction, 0, 'the scan\'s step is not a persona running into friction');
+  assert.equal(report.frictions.length, 0);
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): localhost:3001/jobs/new, heading-order help (heading-order, moderate, 4 elements: main &gt; h3; main &gt; h4; main &gt; h5 and more); '));
+  assert.ok(md.includes('- Evidence: Found by the accessibility scan of the page, not by a persona.'));
+  assert.ok(md.includes('- Accessibility scan: color-contrast, serious, 4 elements: main &gt; h3; main &gt; h4; main &gt; h5 and more. Found by the accessibility scan'));
+  assert.ok(!md.includes('Affected first-hand by segment') && !md.includes('none, 0 of'), 'no share of personas');
+  assert.ok(md.includes('- Severity 2 of 4, 1 friction\n'), 'no count of personas or score');
+  assert.ok(!md.includes('s3cret'));
+});
+
+test('a run says which personas had what code limits about perception, and its screenshots are read accordingly', () => {
+  const started = (persona_id: string, perception?: 'deuteranopia' | 'blurredVision' | 'screen_reader'): [number, NewEvent] => [1050, { ...who(persona_id), type: 'persona.episode_started', payload: { poi_id: 'poi-gym', device: 'desktop', start_url: startUrl, ...(perception && { perception }) } }];
+  const { limitations } = buildReport(stored([startedAt, started('p-001', 'deuteranopia'), started('p-002', 'blurredVision'), started('p-003', 'screen_reader'), started('p-004')])).methods;
+  assert.ok(limitations?.includes('2 personas browsed with simulated colour-blind or blurred vision, so the screenshots stored for them, here and in the inspector, show that rather than the page as designed.'));
+  assert.ok(limitations?.includes('1 screen-reader persona got the page as text without screenshots, so a screenshot stored for them is what the page looked like, not what they perceived.'));
+});
+
+test('a log from before the scan builds without any of it', () => {
+  const report = buildReport(stored(finishedRun()));
+  assert.ok(!('accessibility_audit' in report.methods));
+  assert.ok(!report.themes?.some((t) => 'scan_only' in t));
+  assert.ok(!report.methods.limitations?.some((l) => /accessibility|screen-reader|simulated/.test(l)));
 });
 
 test('allowed hosts start with the start page host and drop duplicates', () => {
@@ -604,6 +707,21 @@ test('the methods list the roles in use, the models called, the budgets and the 
   assert.deepEqual(methods.concurrency_changes, [{ concurrency: 4, reason: 'rate limited by anthropic' }]);
 });
 
+test('the methods name the segments real data shaped, as the run froze them; a segment nobody ran and an old run have no line', () => {
+  const grounding = { facts: ['Tool: spreadsheets'], remarks: ['One.', 'Two.'], sources: [{ name: 'notes.md', sha256: 'abc' }, { name: 'tickets.txt', sha256: 'def' }] };
+  const absent = { ...managers, id: 'seg-c', name: 'Nobody here', share: 0, grounding };
+  const cfg = populationConfig([{ ...recruiters, grounding }, managers, absent]);
+  const report = buildReport(stored(populationScript(cfg)));
+  assert.deepEqual(report.methods.grounding, [{ segment_id: 'seg-a', name: recruiters.name, facts: 1, remarks: 2, sources: ['notes.md', 'tickets.txt'] }]);
+  const markdown = reportToMarkdown(report);
+  assert.ok(markdown.includes(`- Grounded segments: ${recruiters.name}: 2 sources (notes.md, tickets.txt), 1 fact, 2 remarks. Grounded personas are still fictional, and their findings are still hypotheses.`));
+
+  const old = buildReport(stored(populationScript(populationConfig([recruiters, managers]))));
+  assert.ok(!('grounding' in old.methods));
+  assert.doesNotMatch(reportToMarkdown(old), /Grounded/);
+  assert.doesNotMatch(reportToMarkdown(buildReport(stored(finishedRun()))), /Grounded/);
+});
+
 test('a population run reopened from the store folds to the same report', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'gnomi-report-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -761,4 +879,19 @@ test('personas the model never answered are counted apart and left out of the co
   const [segment] = report.segments;
   assert.deepEqual([segment.personas, segment.outcomes.model_failed, segment.completion], [3, 1, 0.5], 'Ben is out of the denominator, not a failure');
   assert.equal(report.weighted.completion, 0.5);
+});
+
+test('a theme\'s evidence carries the box of what it is about and Markdown names the element, while a log from before viewports has neither', () => {
+  const about: ActionTarget = { role: 'button', name: 'Save', box: [128, 80, 128, 80] };
+  const shot = stepPayload(1, 'Trying.', 'runs/r-0001/shots/p-001-0001.jpg');
+  const log = (step: EventPayloads['persona.step']) => stored([startedAt, [1100, { ...env, type: 'persona.step', payload: step }], [1200, { ...env, type: 'persona.friction_reported', payload: { ...friction(1, 'Save is hidden'), about } }]]);
+  const report = buildReport(log({ ...shot, viewport: [0, 0, 1280, 800] }));
+  assert.deepEqual(report.themes?.[0].evidence[0].box, { left: 10, top: 10, width: 10, height: 10, element: 'button "Save"' });
+  const md = reportToMarkdown(report);
+  assert.ok(md.includes('   - About: button "Save"'));
+  assert.ok(!md.includes('Marked'), 'the file named in the Markdown has no mark on it; only the HTML overlay draws one');
+  const old = buildReport(log(shot));
+  assert.ok(!('box' in old.themes![0].evidence[0]));
+  assert.equal(old.themes?.[0].evidence[0].screenshot, shot.screenshot, 'the plain screenshot stays');
+  assert.ok(!reportToMarkdown(old).includes('   - About: '));
 });

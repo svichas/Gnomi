@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto';
 import { poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
 import { isAttributeEnabled } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
-import { buildDimensions, reportAttributes } from './dimensions.ts';
-import { buildSpread, homogeneity } from './spread.ts';
+import { buildCoverage } from './coverage.ts';
+import { buildDimensions, reportAttributes, themeDrivers } from './dimensions.ts';
+import { foldEdits } from './edits.ts';
+import { buildFlow } from './flow.ts';
+import { buildSpread, endOpinions, homogeneity } from './spread.ts';
+import { foldStudy } from './study.ts';
 import { buyerResults } from './buyers.ts';
 import { stepEvidence, stepReader } from './friction.ts';
 import { analyseFrictions, sentimentBySegment, wentWell, type Context } from './themes.ts';
@@ -19,6 +24,7 @@ import type {
   ProviderId,
   Report,
   ReportFriction,
+  ReportMethods,
   ReportPersona,
   ReportSegment,
   Routing,
@@ -125,7 +131,10 @@ export function buildReport(events: GnomiEvent[]): Report {
   const audience: Audience | null = config.project.audience ?? null;
   const settings = config.project.settings ?? null;
   const schema = config.project.persona_schema;
+  const { prior } = config;
   const { pois } = withPois(config.project);
+  const grounding = (audience?.segments ?? []).flatMap(({ id, name, grounding: real }) => (real && config.personas?.some((persona) => persona.segment_id === id)
+    ? [{ segment_id: id, name, facts: real.facts.length, remarks: real.remarks.length, sources: real.sources.map((source) => source.name) }] : []));
   const comparison = buildComparison(events);
   // A competitor's site gets its own themes and comparisons; outcomes, frictions, feelings and sentiment describe the team's product.
   const competitors = competitorIds(pois);
@@ -199,7 +208,8 @@ export function buildReport(events: GnomiEvent[]): Report {
   const analysis = analyseFrictions(events, ctx);
 
   // Ran into friction: any self-report, survey friction or signal in a friction theme of the team's product; objections are not friction.
-  const personaAt = new Map(events.map((e) => [e.seq, e.persona_id]));
+  // A scan's signal is about the page: its persona only reached it first.
+  const personaAt = new Map(events.filter((e) => e.type !== 'signal.accessibility').map((e) => [e.seq, e.persona_id]));
   const withFriction = new Set(analysis.themes.filter((t) => t.category !== 'objection' && !competitors.has(t.poi_id)).flatMap((t) => t.seqs.flatMap((seq) => personaAt.get(seq) ?? [])));
   const segments: ReportSegment[] = inRun.map((s) =>
     segmentOf(s.id, s.name, s.share, audience ? personas.filter((p) => p.segment_id === s.id) : personas, withFriction, ourPois.map((poi) => poi.id)),
@@ -215,6 +225,7 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Only runs with social rounds get the spread section and the homogeneity guard; other reports stay as they were.
   const social = events.some((e) => e.type === 'social.post');
   const buyers = buyerResults(events, pois, ctx);
+  const flows = comparison ? [] : buildFlow(ours, webPois(ourPois), personas, pois[0]?.id ?? '');
 
   const inUse = audience ? audience.segments.filter((s) => segments.some((seg) => seg.id === s.id)) : [];
   const roleOfUse = comparison ? comparison.study.targets.map((target) => target.session_role) : audience ? inUse.map((s) => s.role) : [config.project.role ?? config.session?.role ?? null];
@@ -226,14 +237,28 @@ export function buildReport(events: GnomiEvent[]): Report {
     // Invalid output steps carry a synthetic zero; it is not the persona reporting a neutral feeling.
     if (event.persona_id && event.payload.result.error !== 'invalid_output') latestFeeling.set(event.persona_id, event.payload.feeling);
   }
+  const dimensions = schema ? buildDimensions(population, personas, latestFeeling, schema, withFriction) : undefined;
+  if (dimensions) {
+    for (const theme of analysis.themes.filter((t) => !competitors.has(t.poi_id))) {
+      const drivers = themeDrivers(theme, dimensions, personas, analysis.reach);
+      if (drivers.length > 0) theme.drivers = drivers;
+    }
+  }
   const total = (pick: (e: EventOf<'llm.call'>) => number) => calls.reduce((sum, e) => sum + pick(e), 0);
   // Runs before M2 have no routing, so the call itself names the model it used.
   const routing: Routing | null = settings?.routing ?? null;
+  // A question after the run counts in the cost, but `methods` describes the run: an alias may answer as a newer model by then, which compare and the gate would read as a change.
+  const runCalls = calls.filter((e) => e.payload.purpose !== 'interview');
   const models: Partial<Routing> = {};
-  for (const call of calls) {
+  for (const call of runCalls) {
     const { role, provider, model } = call.payload;
     models[role] ??= routing?.[role] ?? { provider: provider as ProviderId, model };
   }
+  const response_models: NonNullable<Report['methods']['response_models']> = {};
+  for (const { payload: { role, response_model } } of runCalls) {
+    if (response_model && !response_models[role]?.includes(response_model)) (response_models[role] ??= []).push(response_model);
+  }
+  const checkCall = calls.find((e) => e.payload.purpose === 'report_check')?.payload;
 
   const end = events.findLast(
     (e): e is EventOf<'run.finished' | 'run.stopped'> => e.type === 'run.finished' || e.type === 'run.stopped',
@@ -246,6 +271,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     stop_reason = end.payload.detail === null ? end.payload.reason : `${end.payload.reason}: ${end.payload.detail}`;
   }
   const endedAt = end?.ts ?? null;
+  const coverage = comparison ? [] : buildCoverage(ourPois, personas, analysis.themes, analysis.reach, status);
 
   const perHost = new Map<string, number>();
   for (const e of ofType(events, 'containment.blocked_request')) {
@@ -262,32 +288,70 @@ export function buildReport(events: GnomiEvent[]): Report {
   // Each web POI's start page host comes first and is always allowed. One that does not parse adds none, so it cannot hide the rest of the report.
   const hosts = webPois(pois).flatMap((poi) => [URL.parse(poi.start_url)?.hostname ?? '', ...poi.allowed_hosts]);
   const allowed_hosts = [...new Set(hosts)].filter(Boolean);
+  const perTarget = new Map<string, Set<string>>();
+  for (const e of ofType(ours, 'signal.small_target')) {
+    const { page, element } = atStep(e, e.payload.step_no, e.payload.url);
+    const [, , width, height] = e.payload.box.map(Math.round);
+    const key = JSON.stringify([page, element, width, height]);
+    perTarget.set(key, (perTarget.get(key) ?? new Set()).add(e.persona_id ?? ''));
+  }
+  const undersized_targets = [...perTarget]
+    .sort(([a, m], [b, n]) => n.size - m.size || (a < b ? -1 : 1))
+    .map(([key, ids]) => {
+      const [page, element, width, height] = JSON.parse(key) as [string, string | null, number, number];
+      return { page, element, width, height, personas: ids.size };
+    });
+  // A rule on a page is one line, however many states of the page broke it. A page with one good scan counts as scanned.
+  const audited = new Map<string, NonNullable<ReportMethods['accessibility_audit']>[number]>();
+  const scans = ofType(ours, 'accessibility.scanned').map((e) => ({ e, page: atStep(e, e.payload.step_no, e.payload.url).page ?? e.payload.url }));
+  for (const { e, page } of scans) {
+    for (const { category: _, ...violation } of e.payload.audit) if (!audited.has(page + violation.rule)) audited.set(page + violation.rule, { page, ...violation });
+  }
+  const accessibility_audit = [...audited].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, row]) => row);
+  const scanned = new Set(scans.filter(({ e }) => e.payload.error === null).map(({ page }) => page));
+  const unscanned = new Set(scans.map(({ page }) => page).filter((page) => !scanned.has(page)));
+  const perceiving = new Map(ofType(ours, 'persona.episode_started').flatMap((e) => (e.payload.perception ? [[e.persona_id, e.payload.perception] as const] : [])));
+  const seeing = [...perceiving.values()].filter((perception) => perception !== 'screen_reader').length;
+  const reading = perceiving.size - seeing;
   const discarded = ofType(events, 'social.discarded');
   const runNotes = [
     // A text-only navigator model gets no images (llm/gateway.ts), whatever the setting says.
     ...(webPois(pois).length && settings && (!settings.screenshots || !readsImages(settings.routing.navigator)) ? ['The navigator saw each page as text only, without screenshots, so problems only visible on screen (layout, contrast, images) could not be noticed.'] : []),
     ...(discarded.length ? [`The run stopped in round ${discarded[0].round} before applying ${discarded.length} paid social answer${discarded.length === 1 ? '' : 's'}, so the feed and opinions miss ${discarded.length === 1 ? 'it' : 'them'}.`] : []),
+    ...(settings && [...analysis.themes, ...(analysis.set_aside ?? [])].some((t) => t.check) && !readsImages(settings.check_model ?? settings.routing.judge) ? ['The evidence check read text only, because its model takes no images, so it could not see what the pages looked like.'] : []),
+    ...(unscanned.size ? [`The accessibility scan failed on ${unscanned.size === 1 ? '1 page' : `${unscanned.size} pages`}, so nothing is known about ${unscanned.size === 1 ? 'it' : 'them'} from the scan.`] : []),
+    ...(seeing ? [`${seeing === 1 ? '1 persona' : `${seeing} personas`} browsed with simulated colour-blind or blurred vision, so the screenshots stored for them, here and in the inspector, show that rather than the page as designed.`] : []),
+    ...(reading ? [`${reading === 1 ? '1 screen-reader persona' : `${reading} screen-reader personas`} got the page as text without screenshots, so a screenshot stored for them is what the page looked like, not what they perceived.`] : []),
   ];
 
   return {
     ...(comparison ? { comparison } : {}),
     run_id: started.run_id,
+    ...(config.repeat ? { repeat: config.repeat } : {}),
     status,
     stop_reason,
     goal: config.project.goal,
     pois: pois.map((poi) => ({ id: poi.id, type: poi.type, name: poi.name, start_url: poi.type === 'web' ? poi.start_url : null, ...(poi.type === 'web' && poi.mode === 'observe_only' ? { competitor: true as const } : {}) })),
     personas,
-    ...(schema ? { dimensions: buildDimensions(population, personas, latestFeeling, schema, withFriction) } : {}),
+    personas_fingerprint: createHash('sha256').update(JSON.stringify(population.toSorted((a, b) => a.id.localeCompare(b.id)))).digest('hex').slice(0, 16),
+    ...(dimensions ? { dimensions } : {}),
     segments,
     weighted: { completion: weighted((s) => s.completion), with_friction: weighted((s) => s.with_friction) },
     steps: ofType(events, 'persona.step').length,
     frictions,
     themes: analysis.themes,
+    ...(analysis.set_aside ? { set_aside: analysis.set_aside } : {}),
+    reach: analysis.reach,
+    ...(coverage.length > 0 ? { coverage } : {}),
     sentiment: competitors.size ? sentimentBySegment(ours, ctx) : analysis.sentiment,
     went_well: competitors.size ? wentWell(ours, ctx) : analysis.went_well,
     ...(comparisons.length ? { comparisons } : {}),
-    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name]))) } : {}),
+    ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name])), analysis.set_aside) } : {}),
+    ...(config.repeat?.what_if ? { end_opinions: endOpinions(events) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),
+    ...(flows.length > 0 ? { flows } : {}),
+    ...foldStudy(events, analysis.themes, analysis.set_aside ?? [], competitors),
+    ...foldEdits(events, analysis.themes, analysis.set_aside ?? [], analysis.tagged),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,
@@ -302,6 +366,8 @@ export function buildReport(events: GnomiEvent[]): Report {
       seed: audience?.seed ?? config.seed,
       roles,
       models,
+      ...(Object.keys(response_models).length ? { response_models } : {}),
+      ...(checkCall ? { check_model: { provider: checkCall.provider as ProviderId, model: checkCall.model } } : {}),
       // Runs before M2 ran one persona at a time and kept the cost budget at the top level.
       // shortcut: runs before M2 had no wall-clock budget; the default is shown so the field has a value
       budgets: {
@@ -328,6 +394,10 @@ export function buildReport(events: GnomiEvent[]): Report {
         reason: e.payload.reason,
       })),
       signal_thresholds: config.signals ?? null,
+      ...(undersized_targets.length ? { undersized_targets } : {}),
+      ...(accessibility_audit.length ? { accessibility_audit } : {}),
+      ...(grounding.length ? { grounding } : {}),
+      ...(prior ? { prior: { run_id: prior.run_id, fresh: population.filter((p) => !prior.memories[p.id]).length } } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),
     },

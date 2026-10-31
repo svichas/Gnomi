@@ -121,6 +121,7 @@ export const DEMO_NAVIGATOR: Responder = (() => {
     if (req.purpose === 'read_text') return DEMO_READ(req);
     if (req.purpose === 'survey') return DEMO_SURVEY;
     if (req.purpose === 'design') return DEMO_DESIGNER(req);
+    if (req.purpose === 'interview') return { answer: 'Scripted demo answer: no model read this question, so it says nothing about why this persona acted.' };
     const key = `${req.run_id}/${req.persona_id}`;
     const n = calls.get(key) ?? 0;
     calls.set(key, n + 1);
@@ -160,8 +161,12 @@ function requestJson(req: LlmRequest<unknown>): Record<string, unknown> {
   }
 }
 
-/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. */
+/** One theme per friction or like group the judge was shown, saying plainly that no model named it; in social runs every post is tagged with the first group. Asked to map themes to defects, it maps none; asked to check themes, it calls each one product. */
 export const DEMO_JUDGE: Responder = (req) => {
+  if (req.purpose === 'map_themes') {
+    const { themes = [] } = requestJson(req) as { themes?: { id: string }[] };
+    return { mappings: themes.map((theme) => ({ theme_id: theme.id, defect: null, reason: 'Scripted demo: no model mapped this theme.' })) };
+  }
   if (req.purpose === 'comparison_assessment' || req.purpose === 'comparison_verification') {
     const input = requestJson(req) as { criteria?: { id: string }[] };
     const reason = 'Scripted demo: no model assessed the comparison evidence. Run with a configured model to evaluate these criteria.';
@@ -170,6 +175,10 @@ export const DEMO_JUDGE: Responder = (req) => {
       criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, supported: true, reason })),
     };
     return { outcome: 'incomplete', reason, outcome_evidence: [], criteria: (input.criteria ?? []).map((criterion) => ({ criterion_id: criterion.id, assessment: 'unknown', basis: 'simulated_inference', summary: reason, evidence: [] })) };
+  }
+  if (req.purpose === 'report_check') {
+    const { themes = [] } = requestJson(req) as { themes?: { id: string }[] };
+    return { checks: themes.map((theme) => ({ theme_id: theme.id, verdict: 'product', reason: 'Scripted demo: no model reviewed this evidence.' })) };
   }
   const { groups = [], posts, likes } = requestJson(req) as { groups?: { id: string }[]; posts?: { id: string }[]; likes?: { id: string }[] };
   return {
@@ -183,9 +192,15 @@ export const DEMO_JUDGE: Responder = (req) => {
   };
 };
 
-/** A labelled placeholder suggestion for every theme the author was shown. */
+/** A labelled placeholder suggestion for every theme the author was shown; asked for a study plan, a labelled placeholder plan. */
 export const DEMO_AUTHOR: Responder = (req) => {
   const themes = (requestJson(req).themes ?? []) as { id: string }[];
+  if (req.purpose === 'study_plan') {
+    return {
+      screener: ['Scripted demo question: no author model wrote this, so ask it of nobody.'],
+      themes: themes.map((theme) => ({ theme_id: theme.id, tasks: ['Scripted demo task: no author model wrote this, so give it to nobody.'], observe: ['Scripted demo note: run with a model API key to get a real plan.'] })),
+    };
+  }
   return {
     suggestions: themes.map((theme) => ({
       theme_id: theme.id,

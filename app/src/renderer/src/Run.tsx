@@ -4,18 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/simulation/types.ts';
 import { isAttributeEnabled } from '@gnomi/simulation/profile/schema.ts';
 import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
+import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { socialMemory } from '@gnomi/engine/graph/feed.ts';
 import { Activity, ProfileFilters } from './Activity.tsx';
-import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, foldRows, merge, runSetup, stateWord, statesOf, waitingOf } from './activity.ts';
+import { appended, emptyLog, emptyRows, filterEvents, filterPersonas, foldLog, foldRows, merge, rereadsSet, runSetup, stateWord, statesOf, waitingOf } from './activity.ts';
 import type { Filters, PersonaState } from './activity.ts';
 import { emptyMoments, foldMoments } from './activityFeed.ts';
 import { BlockedBanner } from './Blocked.tsx';
-import { call, errorText, onEvent } from './engine.ts';
+import { call, errorText, onEvent, onRepeatFailed } from './engine.ts';
 import { Inspector } from './Inspector.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { Feed } from './Feed.tsx';
 import { ExportReport } from './ReportExport.tsx';
 import { Report } from './Report.tsx';
+import { RunAgain } from './RunAgain.tsx';
 import { Swarm } from './Swarm.tsx';
 import { Button, Note, Screenshot } from './ui.tsx';
 import { Icon, PersonaAvatar } from './Icon.tsx';
@@ -77,7 +79,7 @@ function useFold<T>(events: GnomiEvent[], reset: unknown[], start: () => T, step
   return state;
 }
 
-function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefined; active: boolean }) {
+function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | undefined; runs: RunRow[]; active: boolean }) {
   const [received, setEvents] = useState<GnomiEvent[]>([]);
   // A hidden tab keeps showing the log it last showed, and catches up in one fold when it is shown again.
   const shown = useRef(received);
@@ -88,6 +90,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   const frozenConfig = log.config ?? row?.config;
   const setup = useMemo(() => runSetup(frozenConfig), [frozenConfig]);
   const [report, setReport] = useState<ReportData | null>(null);
+  const [repeats, setRepeats] = useState<RepeatSet>();
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [reportAttempt, setReportAttempt] = useState(0);
@@ -148,6 +151,25 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
       current = false;
     };
   }, [ended, log.generatedSeq, runId, reportAttempt]);
+
+  const group = frozenConfig?.repeat?.group;
+  const setEnded = runs.filter((run) => run.config.repeat?.group === group && run.status !== 'running').length; // a later repeat ending changes the comparison
+  const [repeatFailures, setRepeatFailures] = useState(0);
+  useEffect(() => onRepeatFailed(() => setRepeatFailures((failures) => failures + 1)), []); // a repeat that cannot start ends the set with no run ending
+  const [setReports, setSetReports] = useState(0);
+  useEffect(() => onEvent((event) => { if (rereadsSet(event, group, runs)) setSetReports((reports) => reports + 1); }), [group, runs]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: compares again when this report is rebuilt, a report of the set is written, another run of the set ends or the set fails
+  useEffect(() => {
+    if (!group || !report) return;
+    let current = true;
+    call('get_repeats', { group }).then(
+      (set) => current && setRepeats(set),
+      (err) => current && setError(errorText(err)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [group, report, setEnded, setReports, repeatFailures]);
 
   async function stop() {
     setStopping(true);
@@ -244,7 +266,8 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
         {report ? <Report
           report={report}
           filter={profileFilter}
-          actions={<ExportReport report={report} />}
+          repeats={repeats}
+          actions={<ExportReport report={report} repeats={repeats} />}
           audienceFilters={groups.length > 0 ? <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /> : undefined}
           onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })}
           renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />}
@@ -261,6 +284,7 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
+          askable={ended && !log.comparison}
           state={states.get(inspected.id) ?? 'waiting'}
           events={inspectedEvents}
           social={social}
@@ -272,11 +296,14 @@ function RunDetail({ runId, row, active }: { runId: string; row: RunRow | undefi
   );
 }
 
-export function Run({ runId, runs, onSetup, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; active: boolean }) {
+export function Run({ runId, runs, onSetup, onStarted, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; onStarted(runId: string): void; active: boolean }) {
+  const [again, setAgain] = useState(false);
+  const row = runs.find((run) => run.run_id === runId);
   return (
     <div className="run-page">
-      {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div><Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
-      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
+      {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div>{row?.status === 'finished' && <Button variant="link" onClick={() => setAgain(true)}><Icon name="play" size={16} />Run again</Button>}<Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
+      {again && row && <RunAgain run={row} running={runs.some((run) => run.status === 'running')} onClose={() => setAgain(false)} onStarted={(id) => { setAgain(false); onStarted(id); }} />}
+      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} runs={runs} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );
 }

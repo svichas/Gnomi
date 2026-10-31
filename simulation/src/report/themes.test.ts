@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, GnomiEvent, JudgeTheme } from '../types.ts';
+import type { EventPayloads, EventType, EvidenceLevel, GnomiEvent, JudgeTheme, ReportTheme, Trust } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
-import { analyseFrictions, applyJudge, applySuggestions, judgeGroups, pickEvidence, prevalence, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, AUTHOR_TOKEN_CAP, authorThemes, frictionGroups, judgeGroups, judgeInput, PAGE_TEXT_MAX, pickEvidence, prevalence, priorityOf, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -80,6 +80,48 @@ test('a survey answer merged into a page theme leaves "reached" at that page; a 
   assert.deepEqual(surveyOnly?.affected.map((a) => [a.affected, a.reached]), [[0, 3], [1, 2]]);
 });
 
+test('page text reaches the author within its caps: per excerpt, in total, and only from what the themes leave of the author\'s cap', () => {
+  const [theme] = analyseFrictions(run, ctx).themes;
+  const pages = new Map(theme.evidence.map((e) => [e.step_seq ?? -1, `- button "Save" [ref=e1] [box=0,0,1,1] ${'x'.repeat(5_000)}`]));
+  const [sent] = authorThemes([theme], pages);
+  assert.ok(sent.evidence.every((e) => e.page_text?.length === PAGE_TEXT_MAX && e.page_text.startsWith('- button "Save" xxx')), 'each excerpt is cut to its cap');
+
+  const bare = authorThemes([theme]);
+  const cost = (items: unknown) => Math.ceil(JSON.stringify(items).length / 4);
+  assert.equal(authorThemes([theme], new Map(), cost(bare) + 10).length, 1);
+  const tight = authorThemes([theme], pages, cost(bare) + 10);
+  assert.equal(tight.length, 1, 'page text never costs a theme its place');
+  assert.ok(tight[0].evidence.every((e) => e.page_text === undefined), 'and the theme goes without it');
+
+  const many = Array.from({ length: 40 }, (_, i) => ({ ...theme, id: `g${i + 1}` }));
+  const all = authorThemes(many, pages);
+  const excerpts = all.flatMap((t) => t.evidence.flatMap((e) => e.page_text ?? []));
+  assert.equal(all.length, authorThemes(many).length, 'excerpts push no theme out: the later ones go without');
+  assert.ok(excerpts.length > 0 && excerpts.length < all.flatMap((t) => t.evidence).length);
+  assert.ok(excerpts.reduce((sum, text) => sum + cost(text), 0) <= AUTHOR_PAGE_CAP);
+
+  // M3's themes cost about 326 tokens each, so 40 leave the excerpts less than their own cap.
+  const real = many.map((t) => ({ ...t, description: 'x'.repeat(1_000) }));
+  const themesAlone = cost(authorThemes(real));
+  assert.ok(themesAlone > AUTHOR_TOKEN_CAP - AUTHOR_PAGE_CAP && themesAlone < AUTHOR_TOKEN_CAP, 'the themes fit, with less than AUTHOR_PAGE_CAP left');
+  const full = authorThemes(real, pages);
+  assert.equal(full.length, real.length, 'excerpts push no theme out at real size either');
+  assert.ok(full.some((t) => t.evidence.some((e) => e.page_text)), 'and they use the room there is');
+  assert.ok(cost(full) <= AUTHOR_TOKEN_CAP, 'together they stay within the cap');
+});
+
+test('a merged theme carries the key of each of its groups', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 2)],
+    ['persona.friction_reported', 'a1', { ...friction(4, 2, 'Home is empty'), where: { url: HOME, ref: null } }],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Both', description: 'Both.', group_ids: ['g1', 'g2'] }] }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.equal(theme.id, 'g1+g2');
+  assert.deepEqual(theme.keys, [JSON.stringify(['poi', 'gym.test/jobs/new', 'element', 'button "save"']), JSON.stringify(['poi', 'gym.test/', 'kind', 'friction'])]);
+});
+
 test('themes rank by score within the POI', () => {
   const events = log(
     ['persona.step', 'a1', step(1)],
@@ -104,6 +146,20 @@ test('evidence: at most three, highest severity first, one per persona first; ev
     ['Abe', 2, 'reported', 4, 'shots/1.jpg', []],
   ]);
   assert.deepEqual(theme.seqs, [2, 3, 5, 8]);
+});
+
+test('a theme counts its tagged members and each piece of evidence keeps the tag; nothing leaves the theme', () => {
+  const save = { role: 'button', name: 'Save', box: null };
+  const dead = { ...step(2), target: save, result: { ...step(2).result, dom_changed: false } };
+  const fail = (step_no: number) => ({ step_no, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' });
+  const events = (signals?: object) => log(['run.started', null, { config: { project: {}, signals } }], ['persona.step', 'a1', { ...step(1), target: save }], ['persona.step', 'a2', dead], ['signal.failed_action', 'a2', fail(2)], ['persona.step', 'b1', dead], ['persona.friction_reported', 'b1', friction(2, 2)]);
+  const [tagged] = analyseFrictions(events({ interference_s: 60 }), ctx).themes;
+  const [old] = analyseFrictions(events(), ctx).themes;
+  assert.equal(tagged.interference, 1);
+  assert.deepEqual(tagged.evidence.map((e) => [e.persona_name, e.interference]), [['Abe', true], ['Bo', undefined]]);
+  assert.equal(tagged.frictions, old.frictions, 'the tag removes nothing');
+  assert.equal(tagged.score, old.score, 'nor does it change the rank');
+  assert.ok(!('interference' in old) && !('interference' in old.evidence[0]), 'an old log has no tag');
 });
 
 const groups = (): Group[] =>
@@ -182,7 +238,9 @@ test('limitations say what the analysis could not do', () => {
     'The author model wrote no suggested changes (no key, a model failure, or the run stopped first).',
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ]);
-  assert.deepEqual(analyseFrictions(log(['persona.step', 'a1', step(1)]), ctx), { themes: [], sentiment: [], went_well: [], limitations: [
+  const { reach, ...quiet } = analyseFrictions(log(['persona.step', 'a1', step(1)]), ctx);
+  assert.deepEqual(reach.map(({ poi_id, started }) => [poi_id, started]), [['poi', ['a1']]]);
+  assert.deepEqual(quiet, { themes: [], sentiment: [], went_well: [], limitations: [
     'No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".',
   ] });
 });
@@ -214,7 +272,7 @@ test('echoes: a report after a feed showed a post about the theme is heard first
   };
   assert.deepEqual(counts([...social, judged]), [3, 2, 1, 'some', false], 'by the judge’s tags');
   assert.deepEqual(counts(social), [3, 2, 1, 'some', false], 'by the heard ids, without the judge');
-  const unrecorded = social.map((e) => (e.type === 'persona.step' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
+  const unrecorded = social.map((e) => (e.type === 'persona.step' || e.type === 'persona.friction_reported' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
   assert.deepEqual(counts(unrecorded), [3, 3, 0, 'strong', true], 'neither: every report counts, and the report says so');
   const taggedNothing = { ...judged, payload: { ...judged.payload, posts: [] } } as GnomiEvent;
   assert.deepEqual(counts([...social, taggedNothing]), [3, 2, 1, 'some', false], 'a judge that tagged nothing leaves the heard ids in charge');
@@ -342,6 +400,78 @@ test('after a rejudge, suggestions older than the newest judge answer are not us
   assert.ok(rejudged.limitations.includes('The author model wrote no suggested changes (no key, a model failure, or the run stopped first).'));
 });
 
+const tiny = (step_no: number) => ({ step_no, url: JOBS, ref: 'e1', box: [0, 0, 208, 21] });
+const onLink = (step_no: number, name: string) => ({ ...step(step_no), target: { role: 'link', name, box: null } });
+// g1 and g3 are weak signals alone; g2 and g4 are self-reports.
+const mixed = log(
+  ['persona.step', 'a1', onLink(1, 'Tiny')],
+  ['signal.small_target', 'a1', tiny(1)],
+  ['persona.step', 'a1', onLink(2, 'Home')],
+  ['persona.friction_reported', 'a1', friction(2, 3, 'Home is empty')],
+  ['persona.step', 'a1', onLink(3, 'Back')],
+  ['signal.backtrack', 'a1', { step_no: 3, url: JOBS, ref: null, kind: 'revisit' }],
+  ['persona.step', 'a1', onLink(4, 'Next')],
+  ['persona.friction_reported', 'a1', friction(4, 2, 'Next is broken')],
+);
+
+test('weak signals alone make no theme and no note, and stay in the groups so ids hold', () => {
+  const weak = mixed.filter((e) => e.type !== 'persona.friction_reported');
+  const { themes, limitations } = analyseFrictions(weak, ctx);
+  assert.deepEqual(themes, []);
+  assert.deepEqual(limitations, ['No persona answered the end-of-episode survey, so there is no sentiment by segment and no "what went well".'], 'nothing about a judge that had nothing to name');
+  assert.deepEqual(frictionGroups(weak, 'poi').map((g) => [g.id, g.kind]), [['g1', 'small_target'], ['g2', 'backtrack']]);
+  assert.deepEqual(frictionGroups(mixed, 'poi').map((g) => g.id), ['g1', 'g2', 'g3', 'g4'], 'not renumbered around the weak ones');
+});
+
+test('a self-report or another signal on the same element keeps a weak signal in its theme, as before', () => {
+  const reported = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.small_target', 'a1', tiny(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+  );
+  const [theme] = analyseFrictions(reported, ctx).themes;
+  assert.deepEqual([theme.id, theme.frictions, theme.trust, theme.trust_counts], ['g1', 2, 'observed', { confirmed: 0, observed: 1, reported: 1 }]);
+  const failed = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.small_target', 'a1', tiny(1)],
+    ['signal.failed_action', 'a1', { step_no: 1, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' }],
+  );
+  assert.deepEqual(analyseFrictions(failed, ctx).themes.map((t) => [t.id, t.frictions]), [['g1', 2]]);
+});
+
+test('saved answers naming weak groups stay valid: their ids are known, and only themes with something else in them remain', () => {
+  const groups = groupCandidates(buildCandidates(mixed, 'poi'));
+  const keys = Object.fromEntries(groups.map((g) => [g.id, groupKey(g.members[0])]));
+  const post = log(['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'So tiny!', about_poi_id: 'poi' }]).map((e) => ({ ...e, seq: 50 }));
+  const answer = (themes: JudgeTheme[]) => ({ ...mixed[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes, posts: [{ post_id: 'p1', group_ids: ['g1'] }], keys } }) as GnomiEvent;
+  const suggest = (...ids: string[]) => ({ ...mixed[0], seq: 100, persona_id: null, type: 'report.suggestions', payload: { poi_id: 'poi', suggestions: ids.map((theme_id) => ({ theme_id, change: `Fix ${theme_id}.`, solution: 's' })) } }) as GnomiEvent;
+  const named = (title: string, ...group_ids: string[]) => ({ title, description: 'd', group_ids });
+  const noise = (limitations: string[]) => limitations.filter((l) => /unknown|did not fit|no longer match/.test(l));
+
+  const kept = analyseFrictions([...mixed, ...post, answer([named('Tiny link', 'g1'), named('Empty home', 'g2'), named('Next and back', 'g3', 'g4')]), suggest('g1', 'g2', 'g3+g4')], ctx);
+  assert.deepEqual(kept.themes.map((t) => [t.id, t.title, t.named_by, t.suggestion?.change]), [
+    ['g2', 'Empty home', 'judge', 'Fix g2.'],
+    ['g3+g4', 'Next and back', 'judge', 'Fix g3+g4.'],
+  ]);
+  assert.deepEqual(noise(kept.limitations), []);
+  const merged = analyseFrictions([...mixed, ...post, answer([named('Tiny and back', 'g1', 'g3')]), suggest('g1+g3')], ctx);
+  assert.deepEqual(merged.themes.map((t) => t.id), ['g2', 'g4'], 'a merge of weak groups is weak too');
+  assert.deepEqual(noise(merged.limitations), []);
+});
+
+test('the judge is not sent weak groups, and they never count as not fitting its input', () => {
+  assert.deepEqual(judgeInput(frictionGroups(mixed, 'poi'), []).groups.map((g) => g.id), ['g2', 'g4']);
+  assert.deepEqual(judgeGroups(frictionGroups(mixed.filter((e) => e.type !== 'persona.friction_reported'), 'poi')), []);
+  const answered = (events: GnomiEvent[]) => [...events, { ...events[0], seq: 9_999, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [] } } as GnomiEvent];
+  const unfit = (events: GnomiEvent[]) => analyseFrictions(answered(events), ctx).limitations.filter((l) => l.includes("did not fit the judge's input"));
+  assert.deepEqual(unfit(mixed), []);
+  const many = Array.from({ length: 500 }, (_, i): [EventType, string, object] => ['persona.friction_reported', 'a1', { ...friction(1, 2, `Problem ${i} `.repeat(30)), where: { url: `http://gym.test/p${i}`, ref: null } }]);
+  const crowded = log(...many, ['signal.small_target', 'a1', tiny(1)]);
+  const sent = judgeInput(frictionGroups(crowded, 'poi'), []).groups.length;
+  assert.ok(sent < 500);
+  assert.deepEqual(unfit(crowded), [`${500 - sent} friction groups did not fit the judge's input and stayed as their own themes.`], 'the 501st group is weak, so it is not one of them');
+});
+
 test('a buyer’s plain answers are objections; an older survey’s are frictions grouped by their words', () => {
   const buyer = { ...survey(['Too expensive for us'], []), buyer: { would_buy: false, price: 'high', objections: ['Too expensive for us'], unclear: [] } } as EventPayloads['persona.survey'];
   const kinds = buildCandidates(log(['persona.survey', 'a1', buyer], ['persona.survey', 'a2', survey(['It was long.'], [])]), 'poi').map((c) => [c.kind, c.element, c.severity]);
@@ -385,4 +515,210 @@ test('what went well: likes grouped by where, merged and named by the judge, wit
     ['The form is short', null, ['Job form', 'job form'], 2, 3, 'some'],
   ]);
   assert.deepEqual(likes[0].quotes, [{ persona_id: 'a1', persona_name: 'Ana', what: 'Seeing the ad before posting' }, { persona_id: 'b1', persona_name: 'Bo', what: 'Preview matches the board' }]);
+});
+
+test('priorityOf follows the evidence and the rounded severity, and suggests a look at a recorded failure one persona met', () => {
+  const shares = { strong: prevalence(3, 12), some: prevalence(2, 12), single: prevalence(1, 12), none: prevalence(0, 12) } satisfies Record<EvidenceLevel, unknown>;
+  const label = (level: EvidenceLevel | null, severity: number, trust: Trust = 'reported', category?: ReportTheme['category']) =>
+    priorityOf({ severity, trust, category, prevalence: level ? shares[level] : undefined } as ReportTheme);
+  const cases: [Parameters<typeof label>, ReturnType<typeof priorityOf>][] = [
+    [['strong', 4], 'fix_now'],
+    [['strong', 3], 'fix_now'],
+    [['strong', 2.5], 'fix_now'], // rounds up, as the ranking's severity tier does
+    [['strong', 2.4], 'next'],
+    [['strong', 1], 'next'],
+    [['some', 4], 'next'],
+    [['some', 3], 'next'],
+    [['some', 2], 'later'],
+    [['single', 3, 'confirmed'], 'next'],
+    [['single', 4, 'observed'], 'next'],
+    [['single', 3, 'reported'], 'later'],
+    [['single', 2, 'confirmed'], 'later'],
+    [['none', 4, 'confirmed'], 'later'],
+    [[null, 4, 'confirmed'], 'later'], // a report from before prevalence
+    [['strong', 4, 'confirmed', 'objection'], null],
+    [[null, 1, 'reported', 'objection'], null],
+  ];
+  for (const [input, expected] of cases) assert.equal(label(...input), expected, JSON.stringify(input));
+});
+
+const scanned = (step_no: number, url = JOBS): EventPayloads['signal.accessibility'] => ({ step_no, url, ref: null, rule: 'color-contrast', impact: 'serious', category: 'color', help: 'Elements must meet minimum color contrast ratio thresholds', elements: 3, selectors: ['main > p'] });
+
+test('a lone scan finding is an observed theme that no persona met: its step is only where one happened to be', () => {
+  const { themes } = analyseFrictions(log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.step', 'a3', step(1)],
+    ['persona.step', 'b1', step(1)],
+    ['persona.friction_reported', 'b1', friction(1, 2, 'Save does nothing')],
+  ), ctx);
+  const theme = themes.find((t) => t.scan_only)!;
+  assert.equal(theme.title, 'Elements must meet minimum color contrast ratio thresholds on /jobs/new');
+  assert.deepEqual([theme.trust, theme.personas, theme.first_hand, theme.heard_first], ['observed', 0, [], 0]);
+  assert.deepEqual([theme.prevalence?.personas, theme.prevalence?.exposed, theme.prevalence?.level], [0, 4, 'none']);
+  assert.ok(theme.affected.every((a) => a.affected === 0), 'no segment is said to have met it');
+  assert.equal(priorityOf(theme), 'later');
+  assert.equal(themes.at(-1), theme, 'below what a persona met');
+  assert.deepEqual(theme.evidence[0].scan?.selectors, ['main > p']);
+  assert.equal(theme.evidence[0].quote, '');
+});
+
+test('the judge is told no persona met a scan\'s group, and sees axe\'s words only', () => {
+  const groups = frictionGroups(log(['persona.step', 'a1', step(1)], ['signal.accessibility', 'a1', scanned(1)]), 'poi');
+  const [summary] = judgeGroups(groups);
+  assert.deepEqual([summary.kind, summary.personas, summary.trust.observed], ['accessibility', 0, 1]);
+  assert.deepEqual(summary.texts, ['Accessibility scan: Elements must meet minimum color contrast ratio thresholds (color-contrast, serious, 3 elements)']);
+  assert.ok(!JSON.stringify(summary).includes('main > p'), 'selectors stay out of what a model reads');
+  const { themes } = analyseFrictions(log(['persona.step', 'a1', step(1)], ['signal.accessibility', 'a1', scanned(1)]), ctx);
+  assert.ok(!JSON.stringify(authorThemes(themes)).includes('main > p'), 'the author and the evidence check read the same brief');
+});
+
+test('a matching complaint makes a confirmed theme of the persona who made it', () => {
+  const { themes } = analyseFrictions(log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(7)],
+    ['persona.friction_reported', 'a2', friction(7, 2, 'The hints are too faint to read')],
+  ), ctx);
+  assert.equal(themes.length, 1);
+  const [theme] = themes;
+  assert.deepEqual([theme.trust, theme.scan_only, theme.first_hand, theme.personas], ['confirmed', undefined, ['a2'], 1]);
+  assert.deepEqual(theme.evidence[0].signals, ['accessibility']);
+  assert.equal(theme.evidence[0].scan?.rule, 'color-contrast');
+});
+
+test('a theme the judge merged from a scan and a complaint counts the persona, not the scan\'s step', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.friction_reported', 'a2', friction(1, 4, 'I could not make out the words')],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Pale text', description: 'Words are pale.', group_ids: ['g1', 'g2'] }] }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.deepEqual([theme.id, theme.trust, theme.personas, theme.first_hand, theme.scan_only], ['g1+g2', 'observed', 1, ['a2'], undefined]);
+  assert.equal(theme.severity, 4, 'the one persona who met it, not the median with the scan\'s step');
+  assert.equal(theme.score, theme.prevalence!.low * 0.5, 'her reported trust alone');
+  assert.deepEqual(theme.trust_counts, { confirmed: 0, observed: 1, reported: 1 }, 'the scan still shows in the evidence');
+});
+
+/** A returning run's log: its first event freezes which complaints each persona remembers, on whichever host. */
+const returning = (remembered: Record<string, string[]>, ...entries: Parameters<typeof log>) => {
+  const memories = Object.fromEntries(Object.entries(remembered).map(([id, keys]) => [id, { pois: { poi: { outcome: 'done', pages: [], frictions: keys.map((key) => ({ key, what: 'Said before.' })), survey: null, opinion: null } } }]));
+  return log(['run.started', null, { config: { project: {}, prior: { run_id: 'r-1', memories } } }], ...entries);
+};
+const SAVE = JSON.stringify(['poi', '/jobs/new', 'element', 'button "save"']); // as a memory stores it, without the host
+
+test('a report repeating what the persona complained of on an earlier visit is not first-hand; one it never made is', () => {
+  const events = returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['persona.step', 'a2', step(1)],
+    ['persona.friction_reported', 'a2', friction(1, 3)],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first, theme.personas, theme.prevalence?.personas], [['a2'], 1, 0, 2, 1], 'a real first report beside a remembered one');
+  assert.deepEqual(theme.affected.map((a) => a.affected), [1, 0], 'the segment rows count first-hand personas only');
+  assert.equal(theme.frictions, 2, 'the report stays in the theme, as a heard one does');
+
+  const elsewhere = returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1, 'http://preview.acme.io/jobs/new')],
+    ['persona.friction_reported', 'a1', { ...friction(1, 3), where: { url: 'http://preview.acme.io/jobs/new', ref: 'e1' } }],
+  );
+  assert.deepEqual(analyseFrictions(elsewhere, ctx).themes[0].first_hand, [], 'a new build on another host is the same complaint');
+});
+
+test('a persona with one remembered report and one new complaint in a theme counts first-hand, and each persona remembers only its own', () => {
+  const judged = (events: GnomiEvent[]) => [...events, { ...events[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'Saving', description: 'd', group_ids: ['g1', 'g2'] }] } } as GnomiEvent];
+  const other = { ...step(2), target: { role: 'button', name: 'Publish', box: null } };
+  const { themes: [theme] } = analyseFrictions(judged(returning({ a1: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['persona.step', 'a1', other],
+    ['persona.friction_reported', 'a1', friction(2, 3, 'Publish is greyed out')],
+  )), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first], [['a1'], undefined, 0]);
+  const stranger = analyseFrictions(returning({ a2: [SAVE] }, ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)]), ctx).themes[0];
+  assert.deepEqual([stranger.first_hand, stranger.remembered], [['a1'], undefined], "another persona's memory says nothing about a1");
+});
+
+test('a browser signal on the persona\'s own step keeps a remembered complaint first-hand, as it does a heard one', () => {
+  const failed = { step_no: 1, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const { themes: [theme] } = analyseFrictions(returning({ a1: [SAVE] }, ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)], ['signal.failed_action', 'a1', failed]), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.trust], [['a1'], undefined, 'confirmed']);
+});
+
+test('a survey answer repeats a memory by the part of the product it names', () => {
+  const item = { kind: 'friction', where: 'Jobs page', what: 'Hard to find', severity: 2 };
+  const key = JSON.stringify(['poi', null, 'survey', 'where jobs page']);
+  const { themes: [theme] } = analyseFrictions(returning({ a1: [key] }, ['persona.step', 'a1', step(1)], ['persona.survey', 'a1', { ...survey([], []), items: [item] }]), ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered], [[], 1]);
+});
+
+test('a persona who both remembered a complaint and read about it counts once, under its memory', () => {
+  const events = returning({ a2: [SAVE] },
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['persona.step', 'a2', { ...step(2), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+    ['persona.step', 'a3', { ...step(2), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a3', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first, theme.personas], [['a1'], 1, 1, 3], 'a2 once, a3 by the feed: 1 + 1 + 1 = 3');
+});
+
+test('a report\'s own heard posts count for it when its step\'s do not, as a design\'s friction on an earlier frame, and it is marked as an echo', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['persona.step', 'a2', step(2)],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.heard_first], [['a1'], 1]);
+  assert.deepEqual(theme.echoed, [events.find((e) => e.type === 'persona.friction_reported' && e.persona_id === 'a2')!.seq]);
+});
+
+test('a log with no prior counts as it always did, and has no remembered field to show', () => {
+  const plain = log(['run.started', null, { config: { project: {} } }], ['persona.step', 'a1', step(1)], ['persona.friction_reported', 'a1', friction(1, 3)]);
+  const { themes: [theme] } = analyseFrictions(plain, ctx);
+  assert.deepEqual([theme.first_hand, theme.heard_first, 'remembered' in theme], [['a1'], 0, false]);
+});
+
+test('a complaint only a scan confirmed can still repeat a post: the scan\'s step says nothing about what she read', () => {
+  const heardThenSaid = (...own: Parameters<typeof log>) => log(
+    ['persona.step', 'a3', step(1)],
+    ['persona.friction_reported', 'a3', friction(1, 2, 'Too faint to read')],
+    ['social.post', 'a3', { post_id: 'p1', parent_id: null, text: 'Too faint to read', about_poi_id: 'poi' }],
+    ['persona.step', 'a1', step(5)],
+    ['signal.accessibility', 'a1', scanned(5)],
+    ['persona.step', 'a2', { ...step(5), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(5, 2, 'The hints are too faint to read'), heard_post_ids: ['p1'] }],
+    ...own,
+  );
+  const [theme] = analyseFrictions(heardThenSaid(), ctx).themes;
+  assert.equal(theme.evidence.find((e) => e.persona_id === 'a2')?.trust, 'confirmed');
+  assert.deepEqual([theme.first_hand, theme.heard_first, theme.personas, theme.prevalence?.personas], [['a3'], 1, 2, 1]);
+
+  const failed = { step_no: 5, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const [own] = analyseFrictions(heardThenSaid(['signal.failed_action', 'a2', failed]), ctx).themes;
+  assert.deepEqual([own.first_hand, own.heard_first], [['a3', 'a2'], 0], 'a signal on her own step is hers, whatever else backs it');
+});
+
+test('a post the team added says nothing of what the persona named on it met, so a reader handed it stays first-hand', () => {
+  const heard = (injected: boolean) => log(
+    ['persona.step', 'a3', step(1)],
+    ['persona.friction_reported', 'a3', friction(1, 2, 'Too faint to read')],
+    ['social.post', 'a3', { post_id: 'p1', parent_id: null, text: 'Too faint to read', about_poi_id: 'poi', ...(injected && { injected }) }],
+    ['persona.step', 'a2', { ...step(5), heard_post_ids: ['p1'] }],
+    ['persona.friction_reported', 'a2', { ...friction(5, 2, 'The hints are too faint to read'), heard_post_ids: ['p1'] }],
+  );
+  const [own] = analyseFrictions(heard(false), ctx).themes;
+  assert.deepEqual([own.first_hand, own.heard_first], [['a3'], 1], 'her own post is a repeat of what she met');
+  const [added] = analyseFrictions(heard(true), ctx).themes;
+  assert.deepEqual([added.first_hand, added.heard_first, added.trust, added.personas], [['a3', 'a2'], 0, own.trust, own.personas], 'the team\'s is not');
 });

@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import tailwindcss from '@tailwindcss/vite';
 import { createServer } from 'vite';
-import type { Report } from '@gnomi/simulation/types.ts';
+import type { Report, ReportTheme } from '@gnomi/simulation/types.ts';
 import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
 import { comparisonFixture } from './comparisonReport.fixture.ts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { PRIORITY_NOTE, reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
+import { WHAT_IF_NOTE } from '@gnomi/simulation/report/repeats.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -69,6 +71,39 @@ test('the JSON export round-trips the report', async () => {
   assert.deepEqual(JSON.parse(await reportFile(report, 'json', thumbnails())), report);
 });
 
+test('every export leaves a hidden finding out whole, marks a reworded one, says how many, and carries no control', async () => {
+  const report = fixture(2, 1);
+  const [gone, kept] = report.frictions;
+  Object.assign(gone, { what: 'ZZHIDDEN what', expected: 'ZZHIDDEN expected', quote: 'ZZHIDDEN quote' });
+  const theme = (id: string, rank: number, title: string, friction: Report['frictions'][number], edit?: ReportTheme['edit']): ReportTheme => ({
+    id, poi_id: 'poi-gym', rank, title, description: `${id} ${edit?.hidden ? 'ZZHIDDEN ' : ''}description`, named_by: 'judge', trust: 'reported', severity: 3, score: 1, personas: 1, frictions: 1, pages: [], elements: [],
+    affected: [], seqs: [friction.seq], evidence: [{ ...friction, step_seq: 1, trust: 'reported', signals: [] }], suggestion: { change: `${id} change`, solution: `${id} solution` }, ...(edit ? { edit } : {}),
+  });
+  report.themes = [
+    theme('g1', 1, 'ZZHIDDEN title', gone, { hidden: true, new_title: null, new_description: null }),
+    theme('g2', 2, 'ZZORIGINAL title', kept, { hidden: false, new_title: 'Our title', new_description: null }),
+  ];
+  report.unmatched_edits = [{ title: 'ZZHIDDEN from an older grouping', hidden: true, new_title: null, new_description: null }];
+  for (const format of ['html', 'pdf', 'md', 'json'] as const) {
+    const file = await reportFile(report, format, thumbnails());
+    assert.ok(!file.includes('ZZHIDDEN'), `${format} has no trace of the hidden finding`);
+    assert.ok(!file.includes('ZZORIGINAL title'), `${format} has the team's words`);
+    assert.ok(file.includes('Our title') && file.includes('g2 description'), `${format} keeps the rest of the finding`);
+    if (format === 'json') {
+      const { shared, themes } = JSON.parse(file) as Report;
+      assert.deepEqual(shared, { hidden: 1, reworded: 1 });
+      assert.deepEqual(themes!.map((t) => [t.title, t.reworded, t.edit]), [['Our title', true, undefined]]);
+    } else {
+      assert.ok(file.includes('hid 1 finding from this copy and reworded 1 finding'), `${format} says so`);
+      assert.ok(file.includes('Reworded by the team'), `${format} marks it`);
+    }
+    if (format === 'html' || format === 'pdf') assert.doesNotMatch(file, /<(?:button|select|script)\b|Hide from exports|Reword for sharing/);
+  }
+  assert.ok((await reportFile(report, 'html', thumbnails())).includes('Left out of this copy'), 'a persona whose friction went with the finding does not read as having had none');
+  const plain = fixture(2, 1);
+  assert.equal(await reportFile(plain, 'md', thumbnails()), reportToMarkdown(plain), 'with nothing edited, an export is the report');
+});
+
 test('HTML exports escape untrusted report text and reject external or active thumbnail resources', async () => {
   const report = fixture(1, 1);
   const attack = '</title><script>alert("report")</script><img src=x onerror="alert(1)">';
@@ -113,6 +148,29 @@ test('the opinion spread and homogeneity render into the export, the sentiment l
   assert.doesNotMatch(html, /<(?:button|select|script)\b/);
 });
 
+test('the box on a finding and the flow render into the export with no script, and the frame shows only over an image', async () => {
+  const report = fixture(1, 1);
+  const friction = report.frictions[0];
+  const evidence = { ...friction, step_seq: 1, trust: 'reported' as const, signals: [] };
+  report.themes = [{
+    id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Saving fails', description: 'Save does nothing.', named_by: 'rules', trust: 'reported', severity: 2, score: 0.5, personas: 1, frictions: 1, pages: [], elements: [], affected: [], seqs: [1], suggestion: null,
+    evidence: [{ ...evidence, box: { left: 25, top: 50, width: 20, height: 12.5, element: 'button "<Save>"' } }, evidence],
+  }];
+  report.flows = [{
+    poi_id: 'poi-gym', personas: 2, left_out: { pages: 3, ended: 1 },
+    pages: [{ page: 'gym.test/jobs', reached: 2, ended: { abandoned: 1 } }, { page: 'gym.test/jobs/new', reached: 1, ended: { done: 1 } }],
+    moves: [{ from: 'gym.test/jobs', to: 'gym.test/jobs/new', personas: 1 }],
+  }];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.equal(html.split('style="left:25%;top:50%;width:20%;height:12.5%"').length - 1, 1, 'one frame, in percent of the image');
+  assert.equal(html.split('aria-label="Marked on the screenshot: button &quot;&lt;Save&gt;&quot;"').length - 1, 1, 'it names the element');
+  assert.match(html, /\.report-shot:has\(img\) ?> ?\.report-shot-box/, 'without an image there is nothing for it to mark');
+  for (const text of ['Where personas went', '2 reached · 1 ended here', '1: 1 gave up', '1: 1 reached the goal', 'gym.test/jobs/new (1)', '3 less visited pages left out, where 1 persona ended.', 'where an episode ended, not why']) assert.ok(html.replaceAll('&quot;', '"').includes(text), text);
+  assert.match(html, /<svg role="img" aria-label="Moves of 2 personas between 2 pages\./);
+  assert.doesNotMatch(html, /<(?:button|select|script)\b/);
+  assert.doesNotMatch(html, /dropped off/i);
+});
+
 test("a text POI's quoted passages and the buying survey render into the HTML and Markdown exports", async () => {
   const report = fixture(1, 1);
   report.pois = [{ id: 'pricing', type: 'text', name: 'Pricing page', start_url: null }];
@@ -152,7 +210,8 @@ test('a problem one persona met is a single report, below and apart from one sev
     prevalence: { personas, exposed, share: personas / exposed, low: 0.1, high: 0.6, level: personas === 1 ? 'single' as const : 'strong' as const },
   });
   report.themes = [theme('lone', 4, 1, 10), theme('shared', 2, 4, 10), theme('doubt', 3, 3, 10, 'objection')];
-  const html = await reportFile(report, 'html', thumbnails());
+  const whole = await reportFile(report, 'html', thumbnails());
+  const html = whole.slice(whole.indexOf('At a glance')); // the summary above it names the top two as well
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Theme lone'), 'the main list leads with the problem several met');
   assert.ok(html.includes('4 of 10 personas affected (40%, likely 10%–60%)'), 'the share and its range are spelled out');
   assert.ok(html.indexOf('Theme shared') < html.indexOf('Reasons for hesitation (1)') && html.indexOf('Reasons for hesitation (1)') < html.indexOf('Theme doubt'), 'objections have their own list');
@@ -173,6 +232,40 @@ test('the share says who read about it first, trust shows its mix, and a competi
   assert.ok(html.indexOf('Theme ours') < html.indexOf('Competitor findings (1)') && html.indexOf('Competitor findings (1)') < html.indexOf('Theme rival'), "the competitor's problem stays outside the team's list");
   assert.match(html, /2 of 10 personas affected \(20%, likely 6%–51%\)<\/span>, \+2 more after reading the feed/);
   assert.ok(html.includes('1 confirmed, 3 reported'));
+});
+
+test('a finding nobody met first-hand does not say everyone read about it, when they remembered it', async () => {
+  const report = fixture(1, 1);
+  report.themes = [{
+    id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Theme remembered', description: '', named_by: 'judge', trust: 'reported', severity: 3, score: 0, personas: 2, frictions: 2, heard_first: 0, remembered: 2,
+    pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null, prevalence: { personas: 0, exposed: 2, share: 0, low: 0, high: 0.66, level: 'none' },
+  }];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.includes('None first-hand: every persona who reported it had read about it in the feed, or was repeating an earlier visit'));
+});
+
+test('with several POIs a set-aside theme names its POI, and a competitor\'s does not read as the team\'s own', async () => {
+  const report = fixture(1, 1);
+  report.pois.push({ id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  report.themes = [];
+  const aside = { id: 'g1', poi_id: 'rival', rank: 0, title: 'Aside', description: '', named_by: 'judge' as const, trust: 'reported' as const, severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'environment' as const, reason: 'Blocked.' } };
+  report.set_aside = [aside];
+  const theirs = await reportFile(report, 'html', thumbnails());
+  assert.ok(theirs.includes('1 persona, 1 report · Rival (competitor, observed only)'));
+  assert.ok(theirs.includes('No shared issues were reported in this run.'));
+  assert.ok(!theirs.includes('No shared issues are left.'));
+  report.set_aside = [{ ...aside, poi_id: 'poi-gym' }];
+  const ours = await reportFile(report, 'html', thumbnails());
+  assert.ok(ours.includes('1 persona, 1 report · Gym'));
+  assert.ok(ours.includes('No shared issues are left.'));
+});
+
+test('the methods name the model behind the evidence check', async () => {
+  const report = fixture(1, 1);
+  report.methods.models = { judge: { provider: 'deepseek', model: 'deepseek-v4-pro' } };
+  assert.ok(!(await reportFile(report, 'html', thumbnails())).includes('evidence check:'));
+  report.methods.check_model = { provider: 'openai', model: 'gpt-6.1-sol' };
+  assert.ok((await reportFile(report, 'html', thumbnails())).includes('evidence check: openai gpt-6.1-sol'));
 });
 
 test('comparison HTML leads with the scoped decision, compares every target and keeps valid denominators visible', async () => {
@@ -224,6 +317,49 @@ test('comparison text and evidence stay escaped, including target names, sources
   assert.doesNotMatch(html, /<[^>]+\b(?:src|href)="(?!data:|#)/);
 });
 
+test('themes the evidence check set aside fold into their own section, each with its reason, as a model\'s review', async () => {
+  const report = fixture(2, 1);
+  report.themes = [];
+  report.set_aside = [{ id: 'g1', poi_id: 'poi-gym', rank: 0, title: 'The <hiring manager> field', description: 'Rejected.', named_by: 'judge', trust: 'reported', severity: 2, score: 0.1, personas: 1, frictions: 1, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, check: { verdict: 'agent_mistake', reason: 'She typed her own name.' } }];
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Set aside by the evidence check (1)', 'The &lt;hiring manager&gt; field', 'The model’s review points to a persona&#x27;s mistake: She typed her own name.', 'A model reviewed the evidence behind these themes', 'No shared issues are left.']) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.doesNotMatch(html, /disprov/i);
+  assert.ok(!html.includes('1 report ·'), 'one POI needs no naming');
+  assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Set aside by the evidence check'));
+});
+
+test("the HTML export shows a team's study outcome beside its finding, whose it is, and the plan, with no way to change either", async () => {
+  const report = fixture(2, 1);
+  const prevalence = { personas: 2, exposed: 2, share: 1, low: 0.3, high: 1, level: 'strong' as const };
+  const finding = { id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge' as const, trust: 'reported' as const, severity: 3, score: 0, personas: 2, frictions: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, prevalence, category: 'friction' as const };
+  report.themes = [{ ...finding, validation: { status: 'supported', note: 'Five of <six> stalled.', study_date: '2026-10-12', title: 'An older name' } }];
+  report.study_count = { of: 1, supported: 1, contradicted: 0, unresolved: 0, not_studied: 0 };
+  report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away', poi_id: 'poi-gym' }];
+  report.study_plan = { screener: ['Do you hire?'], screener_dropped: 0, left_out: { objections: 0, competitors: 0, set_aside: 0, scan_only: 0, lower_ranked: 0 }, hypotheses: [{ title: 'Save does nothing', poi_id: 'poi-gym', tasks: ['Post a job.'], dropped: 0, observe: ['Watch the button.'] }] };
+  const html = await reportFile(report, 'html', thumbnails());
+  for (const text of ['Your team&#x27;s study, 12 Oct 2026: supported', 'Five of &lt;six&gt; stalled.', 'Recorded for &quot;An older name&quot;.', 'Of the top 1 finding, your team&#x27;s studies supported 1.', 'Merged away', 'Your team&#x27;s study, 2 Oct 2026: contradicted', 'Do not show them to participants', 'A model wrote this plan', 'Post a job.', 'Watch the button.', 'Kept apart from the simulated numbers above.']) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.ok(!html.includes('work, kept apart'), 'the section does not call a generated plan the team\'s work');
+  assert.doesNotMatch(html, /<(?:button|select|textarea|input)\b/, 'nothing to record or plan with in a file');
+  assert.ok(!(await reportFile(fixture(2, 1), 'html', thumbnails())).includes('Check with real people'), 'with none of it, no section');
+});
+
+test('the HTML export opens with the written summary and labels each finding, but no objection or competitor finding', async () => {
+  const report = fixture(2, 1);
+  report.pois.push({ id: 'poi-rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });
+  const prevalence = { personas: 2, exposed: 2, share: 1, low: 0.3, high: 1, level: 'strong' as const };
+  const finding = { id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge' as const, trust: 'reported' as const, severity: 3, score: 0, personas: 2, frictions: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, prevalence };
+  report.themes = [finding, { ...finding, id: 'g2', rank: 2, title: 'Too dear', category: 'objection' }, { ...finding, id: 'g3', poi_id: 'poi-rival', title: 'Rival breaks' }];
+  const html = await reportFile(report, 'html', thumbnails());
+  const summary = html.indexOf('The biggest problem in this run is “Save does nothing”, met by 2 of 2 personas who tried it.');
+  assert.ok(summary > 0 && summary < html.indexOf('aria-label="At a glance"'), 'the summary sits above the glance');
+  assert.equal(html.split('>Fix now</span>').length - 1, 1, 'one label: the objection and the competitor have none');
+  assert.ok(html.includes(PRIORITY_NOTE), 'the methods say what the labels mean');
+});
+
 test('the app comparison exposes transcript inspection while keeping the same decision and matrix as export', async () => {
   const report = fixture(1, 0);
   report.comparison = comparisonFixture();
@@ -252,4 +388,67 @@ test('owner studies label the focal tool and action owner; legacy comparison vot
   assert.match(legacy, /Legacy comparison:/);
   assert.match(legacy, /At a glance/);
   assert.doesNotMatch(legacy, /Side-by-side comparison/);
+});
+
+test('a what-if set shows its differences and their limits in the app and the exports, and each run says which side it is', async () => {
+  const report = fixture(1, 0);
+  const what_if = { pair: 2, post: false, text: 'Saving <is> broken', round: 3, poi_id: 'poi-gym' };
+  report.repeat = { group: 'set-a', index: 3, of: 6, what_if };
+  const number = (id: 'posted' | 'opinion', label: string, mean: number, lower: number | null, upper: number | null, note: string | null) => ({ id, label, n: 3, mean, lower, upper, note });
+  const whatIf = { post: what_if.text, round: 3, pairs: 3, of: 3, note: WHAT_IF_NOTE, numbers: [number('posted', 'People who posted', 1.5, -0.25, 3.25, null), number('opinion', 'Mean opinion at the end, -2 to +2', 0, null, null, 'no variation')] };
+  const repeats = { group: 'set-a', of: 3, compared: 3, running: false, incomplete: false, families: ['anthropic'], findings: [], what_if: whatIf };
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const page = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 3 of 6 in a repeat set, pair 2, without the added post.', 'What-if post', WHAT_IF_NOTE, 'Saving &lt;is&gt; broken', 'Added by your team in round 3', '3 of 3 pairs finished', 'People who posted', '+1.50', '-0.25 to +3.25', 'no variation', 'The runs with the added post are in no count here.']) assert.ok(page.includes(text), text);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes(WHAT_IF_NOTE));
+  const markdown = await reportFile(report, 'md', thumbnails(), repeats);
+  assert.ok(markdown.includes(`> ${WHAT_IF_NOTE}`) && markdown.includes('| People who posted | +1.50 | -0.25 to +3.25 | 3 |'));
+  assert.ok(!renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} })).includes('What-if post'), 'no set read, no section');
+  const added = { ...report, repeat: { ...report.repeat, index: 4, what_if: { ...what_if, post: true } } };
+  assert.ok(renderToStaticMarkup(createElement(Report, { report: added, repeats, onInspect: () => {} })).includes('Run 4 of 6 in a repeat set, pair 2, with the post your team added.'));
+});
+
+test('a finding personas with no traits also hit says so in the app and the exports, and a trait-free run says what it is', async () => {
+  const report = fixture(1, 0);
+  report.repeat = { group: 'set-a', index: 1, of: 3, trait_free: 3 };
+  const prevalence = { personas: 1, exposed: 2, share: 0.5, low: 0.1, high: 0.9, level: 'some' as const };
+  report.themes = [{ id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge', trust: 'reported', severity: 2, score: 0, personas: 2, frictions: 2, prevalence, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null }];
+  const finding = { poi_id: 'poi-gym', seen_in: 2, of: 2, families: ['anthropic'], titles: ['Save does nothing'], themes: { 'r-0001': 'g1' } };
+  const repeats = { group: 'set-a', of: 2, compared: 2, running: false, incomplete: false, families: ['anthropic'], trait_free: 'r-0003', findings: [{ ...finding, trait_free: true as const }] };
+  const note = 'Personas with no traits hit this too, so it may say more about the model than this audience';
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const html = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 1 of 3 in a repeat set.', '2 runs compared.', 'One more run, of personas with no traits, is in no count here.', 'Appeared in 2 of 2 runs', note]) assert.ok(html.includes(text), text);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes(note));
+  assert.ok((await reportFile(report, 'md', thumbnails(), repeats)).includes(`- Repeats: Appeared in 2 of 2 runs. ${note}`));
+
+  const plain = { ...repeats, trait_free: undefined, findings: [finding] };
+  assert.ok(!renderToStaticMarkup(createElement(Report, { report, repeats: plain, onInspect: () => {} })).includes(note), 'no match, no note');
+  const one = { ...repeats, of: 1, compared: 1, findings: [{ ...finding, seen_in: 1, of: 1, trait_free: true as const }] };
+  const alone = renderToStaticMarkup(createElement(Report, { report, repeats: one, onInspect: () => {} }));
+  assert.ok(alone.includes(note) && !alone.includes('Appeared in'), 'one run has no count to show, and still the note');
+  const control = { ...report, repeat: { group: 'set-a', index: 3, of: 3, trait_free: 3 } };
+  assert.ok(renderToStaticMarkup(createElement(Report, { report: control, repeats, onInspect: () => {} })).includes('Run 3 of 3 in a repeat set, of personas with no traits.'));
+  assert.ok((await reportFile(control, 'md', thumbnails(), repeats)).includes('run 3 of 3 in set set-a, of personas with no traits'));
+});
+
+test('a run of a repeat set shows on each finding how many runs it appeared in, and exports say the same', async () => {
+  const report = fixture(1, 0);
+  report.repeat = { group: 'set-a', index: 1, of: 3 };
+  const prevalence = { personas: 1, exposed: 2, share: 0.5, low: 0.1, high: 0.9, level: 'some' as const };
+  report.themes = [{ id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge', trust: 'reported', severity: 2, score: 0, personas: 2, frictions: 2, prevalence, pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null }];
+  const repeats = { group: 'set-a', of: 3, compared: 2, running: false, incomplete: true, families: ['anthropic', 'deepseek'], findings: [{ poi_id: 'poi-gym', seen_in: 2, of: 2, families: ['anthropic'], titles: ['Save does nothing', 'The form loses work'], themes: { 'r-0001': 'g1' } }] };
+  const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
+  const html = renderToStaticMarkup(createElement(Report, { report, repeats, onInspect: () => {} }));
+  for (const text of ['Run 1 of 3 in a repeat set.', 'Incomplete set: 2 of 3 runs finished.', 'Repeats test robustness inside the simulation', 'Appeared in 2 of 2 runs', 'Only anthropic runs produced this', 'Named in other runs: The form loses work']) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /confidence/i);
+  const alone = renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} }));
+  assert.ok(alone.includes('Run 1 of 3 in a repeat set.'));
+  assert.doesNotMatch(alone, /Appeared in/);
+  const going = renderToStaticMarkup(createElement(Report, { report, repeats: { ...repeats, running: true, incomplete: false }, onInspect: () => {} }));
+  assert.ok(going.includes('2 of 3 runs finished so far.'), 'a set still going is not called incomplete');
+  assert.doesNotMatch(going, /Incomplete set/);
+  assert.ok((await reportFile(report, 'html', thumbnails(), repeats)).includes('Appeared in 2 of 2 runs'));
+  assert.ok((await reportFile(report, 'md', thumbnails(), repeats)).includes('- Repeats: Appeared in 2 of 2 runs. Only anthropic runs produced this'));
+  assert.doesNotMatch(await reportFile(report, 'json', thumbnails(), repeats), /Appeared in/, 'the JSON stays the run\'s own report');
 });

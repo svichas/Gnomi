@@ -1,10 +1,13 @@
 import { stepBudget } from '../agent/loop.ts';
+import { firstName, priorLines } from '../agent/prompt.ts';
 import { poiBudget } from '../poi/index.ts';
 import { poisFor } from '../poi/pois.ts';
 import { socialRounds } from '../settings.ts';
-import type { Audience, ModelChoice, Persona, Poi, RunEstimate, RunSettings } from '../types.ts';
+import type { Audience, ModelChoice, Persona, Poi, PriorPoi, RunConfig, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
 import { admits, inScenario } from '../comparison/config.ts';
+import { INTERVIEW_CONTEXT_MAX, INTERVIEW_OUTPUT_TOKENS } from '../agent/interview.ts';
+import { STUDY_OUTPUT_TOKENS } from '../report/study.ts';
 import { costUsd, isPriced } from './prices.ts';
 
 // The reference figures of tech.md §10.4. A persona usually stops before her budget (done, abandon): between 40% and all of it.
@@ -14,6 +17,7 @@ const OVERHEAD_MIN = 0.5; // browser start-up, login check, report
 const PROMPT_TOKENS = 5_000;
 const SCREENSHOT_TOKENS = 1_200;
 const OUTPUT_TOKENS = 200;
+const CHARS_PER_TOKEN = 4;
 const CACHE_HIT = 0.5; // the top of the 0 to 0.5 range; the bottom is no caching at all
 const SOCIAL_PROMPT_TOKENS = 3_000; // one socialiser call per persona and social round: profile, own state and a feed of at most ~2,500 tokens
 const SURVEY = { input_tokens: 2_300, output_tokens: 700, cache_read_tokens: 0, cache_write_tokens: 0 }; // one per persona and POI, uncached; structured items with where and severity
@@ -24,10 +28,33 @@ const REPORT_CALLS: { role: 'judge' | 'author'; input: [number, number]; output:
   { role: 'author', input: [2_000, 20_000], output: [2_000, 8_000] },
 ];
 const REPORT_MINUTES = [0.2, 1] as const;
+// The finding check (report/models.ts), when on: one to five calls per POI, each up to three themes with page text and nine screenshots.
+const CHECK_CALLS = [1, 5] as const;
+const CHECK_INPUT = [1_500, 16_000] as const;
+const CHECK_OUTPUT = [500, 2_000] as const;
+// The study plan (report/study.ts): one author call on a run that has ended, with room for one retry of an invalid answer.
+const STUDY_INPUT = [1_500, 10_000] as const; // findings capped at 8k tokens, plus the product, segments and prompt
+const STUDY_OUTPUT = [1_000, STUDY_OUTPUT_TOKENS] as const;
+const STUDY_ATTEMPTS = 2;
+// A question to a persona (agent/interview.ts): one navigator call on a run that has ended, with room for one retry of an invalid answer.
+const INTERVIEW_PROMPT_TOKENS = 3_000; // the persona's profile, the rules and the question
+const INTERVIEW_CONTEXT_CHARS_PER_TOKEN = [4, 2] as const; // as for a digest: few texts get near 2, so the high figure works as a ceiling
+const INTERVIEW_INPUT = [1_000, INTERVIEW_PROMPT_TOKENS + INTERVIEW_CONTEXT_MAX / INTERVIEW_CONTEXT_CHARS_PER_TOKEN[1]] as const; // the low end: a short session
+const INTERVIEW_OUTPUT = [200, INTERVIEW_OUTPUT_TOKENS] as const;
+const INTERVIEW_ATTEMPTS = 2;
+
+// A digest of a segment's research files (engine/src/audience/ground.ts): one persona_writer call, and one retry after an invalid output.
+export const DIGEST_OUTPUT_TOKENS = 2_048;
+const DIGEST_PROMPT_TOKENS = 1_000;
+const DIGEST_BYTES_PER_TOKEN = [4, 2] as const; // 4 for English; few texts get near 2, so the high figure works as a ceiling
 
 /** One uncached call at `at`'s prices; nothing for a model with no known price, which the estimate lists as unpriced. */
 const price = (model: ModelChoice, input: number, output: number, at: Date) =>
   isPriced(model) ? costUsd(model, { input_tokens: input, output_tokens: output, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
+
+/** What a returning persona's memory adds to each step on a POI: its lines and the opinion it starts from, in the volatile part of the prompt. */
+const memoryTokens = (persona: Persona, visit: PriorPoi | undefined) =>
+  visit ? (priorLines(firstName(persona), visit).join('\n').length + JSON.stringify(visit.opinion).length) / CHARS_PER_TOKEN : 0;
 
 // Personas run side by side, but never more of them than there are.
 const parallelism = (settings: RunSettings, personas: Persona[]) => Math.max(1, Math.min(settings.concurrency, personas.length));
@@ -35,12 +62,15 @@ const parallelism = (settings: RunSettings, personas: Persona[]) => Math.max(1, 
 /**
  * The pre-run estimate (tech.md §10.4–10.5): calls, a cost range and a time range for this population and routing. Pure.
  * The navigator's steps and one end-of-episode survey per persona and POI, one socialiser call per persona and social round, plus
- * the report's judge and author calls per POI. Without `pois`, each persona uses one web POI.
+ * the report's judge and author calls per POI. Without `pois`, each persona uses one web POI. `prior`: a returning run's memories, which every step's prompt carries.
  */
-export function estimateRun({ personas, settings, audience = null, pois, comparison, at = new Date() }: { personas: Persona[]; settings: RunSettings; audience?: Audience | null; pois?: Poi[]; comparison?: ComparisonStudy | null; at?: Date }): RunEstimate {
+export function estimateRun({ personas, settings, audience = null, pois, comparison, prior, at = new Date() }: { personas: Persona[]; settings: RunSettings; audience?: Audience | null; pois?: Poi[]; comparison?: ComparisonStudy | null; prior?: RunConfig['prior']; at?: Date }): RunEstimate {
   if (comparison) return estimateComparison({ personas, settings, pois, study: comparison, at });
-  const budgets = personas.map((p) => (pois ? poisFor(pois, audience?.segments.find((s) => s.id === p.segment_id) ?? null).map((poi) => poiBudget(p, poi)) : [stepBudget(p)]));
+  const given = (p: Persona) => poisFor(pois!, audience?.segments.find((s) => s.id === p.segment_id) ?? null);
+  const budgets = personas.map((p) => (pois ? given(p).map((poi) => poiBudget(p, poi)) : [stepBudget(p)]));
   const budget = budgets.flat().reduce((n, steps) => n + steps, 0);
+  const remembered = pois && prior ? personas.reduce((sum, p) => sum + given(p).reduce((own, poi) => own + poiBudget(p, poi) * memoryTokens(p, prior.memories[p.id]?.pois[poi.id]), 0), 0) : 0;
+  const memory = budget ? remembered / budget : 0; // the mean per step, as the other prompt figures are
   const [fewest, most] = STEP_SHARE.map((share) => budget * share);
   const model = settings.routing.navigator;
   const prompt = PROMPT_TOKENS + (settings.screenshots ? SCREENSHOT_TOKENS : 0);
@@ -49,9 +79,9 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
   // With no cache the prompt is plain input. With a hit rate h, the part that misses is written to the cache at the
   // cache-write rate and the rest is read at the cache-read rate, as in the cost formula of §10.4.
   const priced = isPriced(model);
-  const uncached = priced ? costUsd(model, { input_tokens: prompt, output_tokens: OUTPUT_TOKENS, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
+  const uncached = priced ? costUsd(model, { input_tokens: prompt + memory, output_tokens: OUTPUT_TOKENS, cache_read_tokens: 0, cache_write_tokens: 0 }, at) : 0;
   const cached = priced
-    ? costUsd(model, { input_tokens: 0, output_tokens: OUTPUT_TOKENS, cache_read_tokens: prompt * CACHE_HIT, cache_write_tokens: prompt * (1 - CACHE_HIT) }, at)
+    ? costUsd(model, { input_tokens: memory, output_tokens: OUTPUT_TOKENS, cache_read_tokens: prompt * CACHE_HIT, cache_write_tokens: prompt * (1 - CACHE_HIT) }, at)
     : 0;
   const surveys = budgets.flat().length;
   const survey = priced ? surveys * costUsd(model, SURVEY, at) : 0;
@@ -74,6 +104,13 @@ export function estimateRun({ personas, settings, audience = null, pois, compari
     minutes: [minutes(fewest + surveys + social, STEP_SECONDS[0]) + report.minutes[0], minutes(most + surveys + social, STEP_SECONDS[1]) + report.minutes[1]],
     unpriced: [...new Set([...(priced ? [] : [model.model]), ...(socialPriced ? [] : [socialiser.model]), ...report.unpriced])],
   };
+}
+
+/** What a digest of `bytes` of source text costs on `model`: the high figure is two attempts at the output limit, which `audience sources` holds to its budget. */
+export function estimateDigest({ bytes, model, at = new Date() }: { bytes: number; model: ModelChoice; at?: Date }): RunEstimate {
+  const low = price(model, DIGEST_PROMPT_TOKENS + bytes / DIGEST_BYTES_PER_TOKEN[0], OUTPUT_TOKENS, at);
+  const high = 2 * price(model, DIGEST_PROMPT_TOKENS + bytes / DIGEST_BYTES_PER_TOKEN[1], DIGEST_OUTPUT_TOKENS, at);
+  return { calls: 1, cost_usd: [low, high], minutes: [0.1, 3], unpriced: isPriced(model) ? [] : [model.model] };
 }
 
 /** Comparison episodes collect evidence before assessment and optional verification; budget for both passes. */
@@ -103,7 +140,7 @@ function estimateComparison({ personas, settings, pois, study, at }: { personas:
   };
 }
 
-/** The judge and author calls after the episodes, uncached: one each per POI, none without personas. */
+/** The judge and author calls after the episodes, uncached: one each per POI, plus the finding check's when on; none without personas. */
 export function estimateReport({ personas, settings, pois = 1, at = new Date() }: { personas: Persona[]; settings: RunSettings; pois?: number; at?: Date }): RunEstimate {
   if (personas.length === 0 || pois === 0) return { calls: 0, cost_usd: [0, 0], minutes: [0, 0], unpriced: [] };
   const cost: [number, number] = [0, 0];
@@ -111,6 +148,35 @@ export function estimateReport({ personas, settings, pois = 1, at = new Date() }
     cost[0] += pois * price(settings.routing[role], input[0], output[0], at);
     cost[1] += pois * price(settings.routing[role], input[1], output[1], at);
   }
-  const unpriced = REPORT_CALLS.map(({ role }) => settings.routing[role]).filter((m) => !isPriced(m)).map((m) => m.model);
-  return { calls: pois * REPORT_CALLS.length, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
+  const checker = settings.finding_check ? (settings.check_model ?? settings.routing.judge) : null;
+  if (checker) {
+    cost[0] += pois * CHECK_CALLS[0] * price(checker, CHECK_INPUT[0], CHECK_OUTPUT[0], at);
+    cost[1] += pois * CHECK_CALLS[1] * price(checker, CHECK_INPUT[1], CHECK_OUTPUT[1], at);
+  }
+  const models = [...REPORT_CALLS.map(({ role }) => settings.routing[role]), ...(checker ? [checker] : [])];
+  const unpriced = models.filter((m) => !isPriced(m)).map((m) => m.model);
+  const calls = pois * (REPORT_CALLS.length + (checker ? Math.round((CHECK_CALLS[0] + CHECK_CALLS[1]) / 2) : 0));
+  return { calls, cost_usd: cost, minutes: [...REPORT_MINUTES], unpriced: [...new Set(unpriced)] }; // POIs run in parallel
+}
+
+/** What one question to a persona costs, on its own and not part of a run. The high end is a ceiling: the context and output have hard limits, and a call has at most two attempts. */
+export function estimateInterview({ settings, at = new Date() }: { settings: RunSettings; at?: Date }): RunEstimate {
+  const model = settings.routing.navigator;
+  return {
+    calls: 1,
+    cost_usd: [price(model, INTERVIEW_INPUT[0], INTERVIEW_OUTPUT[0], at), INTERVIEW_ATTEMPTS * price(model, INTERVIEW_INPUT[1], INTERVIEW_OUTPUT[1], at)],
+    minutes: [0.1, 1],
+    unpriced: isPriced(model) ? [] : [model.model],
+  };
+}
+
+/** What a study plan costs, on its own and not part of a run. The high end is a ceiling: output has a hard limit, and a call has at most two attempts. */
+export function estimateStudy({ settings, at = new Date() }: { settings: RunSettings; at?: Date }): RunEstimate {
+  const model = settings.routing.author;
+  return {
+    calls: 1,
+    cost_usd: [price(model, STUDY_INPUT[0], STUDY_OUTPUT[0], at), STUDY_ATTEMPTS * price(model, STUDY_INPUT[1], STUDY_OUTPUT[1], at)],
+    minutes: [...REPORT_MINUTES],
+    unpriced: isPriced(model) ? [] : [model.model],
+  };
 }

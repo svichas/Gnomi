@@ -65,7 +65,7 @@ function SpreadBody({ stats, personas, onInspect }: { stats: SpreadStats; person
               <p className="flex flex-wrap gap-x-2 text-xs text-stone-500">
                 <PersonaLink id={post.persona_id} name={post.persona_name} seq={post.seq} onInspect={onInspect} />
                 <span>round {post.round}</span>
-                {post.injected && <span className="font-medium text-amber-800">injected by the test harness</span>}
+                {post.injected && <span className="font-medium text-amber-800">added by your team</span>}
               </p>
               <p className="text-stone-900">&ldquo;{post.text}&rdquo;</p>
             </li>

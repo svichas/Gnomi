@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { apportion, personaId, sampleTraits, slotSeed } from '../audience/sample.ts';
 import { sampleProfile } from '../profile/sample.ts';
+import { traitFree } from '../persona.ts';
 import { getPersonaSchema } from '../profile/schema.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { Audience, InjectedPost, Persona, PersonaSchema, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Audience, Grounding, InjectedPost, Persona, PersonaSchema, ProjectConfig, Segment, WebPoi } from '../types.ts';
 
-export const FIXTURE_VERSION = 1;
+export const FIXTURE_VERSION = 2; // 2: the coordination goal no longer needs a candidate list the Gym does not have
 export const SEED = 20261015;
 export const M4_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // run seeds: the population stays frozen, the follow graph varies
 export const M3_SEEDS = [SEED, SEED + 1, SEED + 2]; // the roadmap's three seeds for theme stability
@@ -12,6 +14,8 @@ export const M5_SEEDS = [SEED, SEED + 1, SEED + 2, SEED + 3, SEED + 4]; // the r
 export interface Fixture { project: ProjectConfig; personas: Persona[] }
 /** The fixture's one POI, the Gym as a web app. */
 export const gym = (base: Fixture) => base.project.pois[0] as WebPoi;
+/** The same project pointed at the Gym's no-defect control build. */
+export const controlBuild = (base: Fixture, url: string): Fixture => ({ ...base, project: { ...base.project, pois: [{ ...gym(base), name: 'Gym control', start_url: `${url}/` }] } });
 const FIRST = ['Alex', 'Robin', 'Sam', 'Jordan', 'Kai', 'Noor', 'Rowan', 'Ari', 'Quinn', 'Sasha'];
 const LAST = ['Meyer', 'Wilson', 'Fischer', 'Reed', 'Schneider', 'Okafor', 'Lindgren', 'Haddad', 'Costa', 'Novak']; // the first five name the fifty; M5's buyers take the rest
 
@@ -44,7 +48,7 @@ export function fixture(url: string): Fixture {
       segmentOf('seg-1', 'Recruiting', 40, 'Post a job for a backend engineer in Engineering, with a detailed description and a hiring manager.'),
       segmentOf('seg-2', 'Hiring management', 30, 'Review a candidate and leave a hiring decision and feedback.'),
       segmentOf('seg-3', 'Workspace administration', 20, 'Invite a hiring manager and check how job approvals are configured.'),
-      segmentOf('seg-4', 'Department coordination', 10, 'Find the open jobs and review the candidate list.'),
+      segmentOf('seg-4', 'Department coordination', 10, 'Find the open jobs and check which candidates are waiting for a review.'),
     ],
   };
   const schema = getPersonaSchema();
@@ -114,21 +118,15 @@ export function withBuyers(base: Fixture, count: number, goal: string): Fixture 
   };
 }
 
+/** The generic-persona control (new_simulation.md §9), on the fixture. */
+export const generic = (base: Fixture): Fixture => ({ ...base, personas: traitFree(base.personas, base.project) });
+
 /**
- * The generic-persona control (new_simulation.md §9): the same people and seeds, with every prompt-visible trait set to one
- * constant and the biography stripped to the segment, so prompts differ by segment alone. Names stay distinct because the
- * social feed attributes posts by name; they are assigned by index, not sampled from traits.
+ * The same people on segments grounded in the Gym's research pack (demo/GymSite/research), through its stored digest, so the arm makes no
+ * extraction call. The fixture's prose is authored, so the digest reaches these personas through their remarks alone. The pack is invented.
  */
-export function generic(base: Fixture): Fixture {
-  const segments = new Map(base.project.audience!.segments.map((s) => [s.id, s]));
-  const middle = ([lo, hi]: [number, number]) => Math.round((lo + hi) / 2);
-  return { ...base, personas: base.personas.map((persona) => {
-    const segment = segments.get(persona.segment_id!)!;
-    return {
-      ...persona, attributes: {}, job_title: `${segment.name} team member`, industry: 'Business services', background: segment.description,
-      context_of_use: 'At work.', voice: 'Plain and brief.', tech_skill: middle(segment.tech_skill), patience: middle(segment.patience),
-      device: 'desktop', accessibility_needs: 'none', pronouns: 'they', seniority: 'mid', motivation: 3, familiarity_with_category: 'medium', company_size: 500,
-      country: 'US', city: 'New York', timezone: 'America/New_York', languages: ['en-US'], language: 'en-US', employer: 'Example Works',
-    };
-  }) };
+export function grounded(base: Fixture): Fixture {
+  const digest: Record<string, Grounding> = JSON.parse(readFileSync(new URL('../../../demo/GymSite/research/digest.json', import.meta.url), 'utf8'));
+  const audience = base.project.audience!;
+  return { ...base, project: { ...base.project, audience: { ...audience, segments: audience.segments.map((segment) => ({ ...segment, grounding: digest[segment.id] })) } } };
 }

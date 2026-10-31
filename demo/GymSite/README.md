@@ -1,6 +1,6 @@
 # Gym
 
-A deliberately flawed demo ATS (`server.ts`) plus, for Gnomi's M5 text and static-design POIs, design frames and copy (`assets/`). The defect catalogue is `defects.yaml`: each entry has a `poi` (`web`, `text` or `design`) and a `toggle`, and `none` is the defect-free control.
+A deliberately flawed demo ATS (`server.ts`) plus, for Gnomi's M5 text and static-design POIs, design frames and copy (`assets/`). The defect catalogue is `defects.yaml`: each entry has a `poi` (`web`, `text` or `design`), a `toggle` and `hints`, the words that identify its element or symptom, and `none` is the defect-free control.
 
 ## Design frames and copy (Gym v3)
 
@@ -19,6 +19,10 @@ gymAssets({ defects: "none" }); // the control build; "all" (default) switches o
 ```
 
 Files are `assets/frames/<sequence>/<control|Dxx>/NN.png` (1280 px wide) and `assets/copy/<sample>/<control|Dxx>.md`. Web defects (D01 to D25) are accepted by `gymAssets` and ignored. The M5 acceptance mode ([guide](../../docs/m5-acceptance.md)) runs D26 and D28 against these controls.
+
+## Research pack
+
+`research/` holds invented interview notes and support tickets for the four segments of the acceptance fixture, and `digest.json`, a stored digest of them. Gnomi's `grounded` evaluation arm reads the digest, so it makes no extraction call. The pack shows that the pipeline works; it cannot show greater realism, because the Gym has no real users.
 
 ## Regenerating
 

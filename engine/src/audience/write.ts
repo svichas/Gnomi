@@ -7,6 +7,7 @@ import { fnv1a, mulberry32, postingPropensity, type Traits } from '@gnomi/simula
 import { getPersonaSchema, isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { profileSignature } from '@gnomi/simulation/profile/signature.ts';
 import { latin } from '@gnomi/simulation/llm/english.ts';
+import { groundingLines } from './ground.ts';
 
 const text = latin(z.string().trim().min(1));
 const candidate = z.object({
@@ -87,6 +88,7 @@ export function writerUser(project: ProjectConfig, segment: Segment, traits: Tra
     `Their segment: ${segment.name}. ${segment.description}`,
     `They use the product ${FREQUENCY[segment.usage_frequency]}, usually arriving ${ENTRY[segment.entry]}, ${ACCOUNT[segment.account_state]}.${goals}`,
     `The task they will attempt: "${segment.goal_override ?? project.goal}"`,
+    ...groundingLines(segment),
     '',
     `${TRAITS_LABEL}${JSON.stringify(values)}`,
     `${WRITTEN_LABEL}${JSON.stringify(['name', 'job_title', 'industry', 'background', 'context_of_use', 'goal_interpretation', 'voice'].filter((id) => isAttributeEnabled(schema, id, 'prompt')))}`,

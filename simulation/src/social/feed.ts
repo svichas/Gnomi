@@ -11,6 +11,7 @@ export interface FeedPost {
   parent_id: string | null;
   text: string;
   about_poi_id: string | null;
+  injected?: boolean; // the team added it in this author's name
   seq: number;
   agree: number;
   disagree: number;
@@ -33,8 +34,8 @@ export function readBoard(events: GnomiEvent[]): Board {
   for (const e of events) {
     if (!e.persona_id) continue;
     if (e.type === 'social.post') {
-      const { post_id, parent_id, text, about_poi_id } = e.payload;
-      posts.set(post_id, { post_id, author: e.persona_id, parent_id, text, about_poi_id, seq: e.seq, agree: 0, disagree: 0 });
+      const { post_id, parent_id, text, about_poi_id, injected } = e.payload;
+      posts.set(post_id, { post_id, author: e.persona_id, parent_id, text, about_poi_id, injected, seq: e.seq, agree: 0, disagree: 0 });
       saw(e.persona_id, [post_id]);
     } else if (e.type === 'social.reaction') {
       (reactions.get(e.payload.post_id) ?? reactions.set(e.payload.post_id, new Map()).get(e.payload.post_id)!).set(e.persona_id, e.payload.kind);

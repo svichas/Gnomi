@@ -9,6 +9,9 @@ import { postsAbout, type Context, type Post } from './themes.ts';
 
 const SEEDS = 3;
 
+/** A post the team added stands in a persona's name so feeds can show it: it is no report of that persona's. */
+const ownPost = (p: Post) => !p.payload.injected;
+
 type Opinion = EventOf<'persona.opinion_changed'>;
 
 function segmentOf(id: string, ctx: Context) {
@@ -27,11 +30,19 @@ export function sentimentByRound(opinions: Opinion[], rounds: number, who: Set<s
   });
 }
 
+/** Each POI's mean opinion at the end of the run. The spread list has only POIs with posts; this needs none, so a quiet run has one too. */
+export function endOpinions(events: GnomiEvent[]): Record<string, number> {
+  const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
+  const rounds = events.reduce((max, e) => Math.max(max, e.round), 1);
+  const pois = [...new Set(opinions.map((e) => e.payload.poi_id))];
+  return Object.fromEntries(pois.map((poi_id) => [poi_id, sentimentByRound(opinions.filter((e) => e.payload.poi_id === poi_id), rounds, null).at(-1)!.mean!]));
+}
+
 /** Seeds, first- and second-hand personas, posters, readers and the segments they are in, influence and sentiment for one set of posts. */
 function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<string>>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
   const firstRound = Math.min(...talk.map((p) => p.round));
-  const seeds: ReportPost[] = talk
-    .filter((p) => p.round === firstRound)
+  // A post the team added is always named, whichever round it went in.
+  const seeds: ReportPost[] = [...talk.filter((p) => p.payload.injected), ...talk.filter((p) => p.round === firstRound && !p.payload.injected)]
     .slice(0, SEEDS)
     .map((p) => ({
       seq: p.seq,
@@ -43,7 +54,7 @@ function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<st
       text: p.payload.text,
       injected: p.payload.injected === true,
     }));
-  const posters = [...new Set(talk.map((p) => p.persona_id))];
+  const posters = [...new Set(talk.filter(ownPost).map((p) => p.persona_id))];
   const ids = new Set(talk.map((p) => p.payload.post_id));
   const readers = [...shown].filter(([, posts]) => [...posts].some((id) => ids.has(id))).map(([id]) => id);
   const seedSegments = new Set(seeds.map((s) => s.segment_id));
@@ -69,7 +80,7 @@ function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<st
 }
 
 /** The opinion spread per POI with posts about it, and per theme the judge tagged posts with. */
-export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>): ReportSpread[] {
+export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTheme[], tagged: Map<string, string[]>, names: Map<string, string>, setAside: ReportTheme[] = []): ReportSpread[] {
   const firstHandOf = (t: ReportTheme) => new Set(t.first_hand);
   const edges = influenceEdges(events).filter((e) => e.kind !== 'formed'); // a formed first opinion is not a shift
   const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
@@ -88,7 +99,9 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
     const own = themes.filter((t) => t.poi_id === poi_id);
     const about = opinions.filter((e) => e.payload.poi_id === poi_id);
     const poiEdges = edges.filter((e) => e.poi_id === poi_id);
-    const spread = statsOf(talk, new Set(own.flatMap((t) => [...firstHandOf(t)])), shown, poiEdges, sentimentByRound(about, rounds, null), ctx);
+    // A persona who met a theme the check set aside still met it first-hand, so its posts are not repeats.
+    const met = [...own, ...setAside.filter((t) => t.poi_id === poi_id)];
+    const spread = statsOf(talk, new Set(met.flatMap((t) => [...firstHandOf(t)])), shown, poiEdges, sentimentByRound(about, rounds, null), ctx);
     return {
       poi_id,
       name: names.get(poi_id) ?? poi_id,
@@ -99,7 +112,7 @@ export function buildSpread(events: GnomiEvent[], ctx: Context, themes: ReportTh
         const ids = new Set(posts.map((p) => p.payload.post_id));
         const themeEdges = poiEdges.filter((e) => ids.has(e.post_id));
         const firstHand = firstHandOf(t);
-        const who = new Set([...firstHand, ...posts.map((p) => p.persona_id), ...themeEdges.filter((e) => e.kind === 'influence').map((e) => e.to)]);
+        const who = new Set([...firstHand, ...posts.filter(ownPost).map((p) => p.persona_id), ...themeEdges.filter((e) => e.kind === 'influence').map((e) => e.to)]);
         return [{ theme_id: t.id, rank: t.rank, title: t.title, ...statsOf(posts, firstHand, shown, themeEdges, sentimentByRound(about, rounds, who), ctx) }];
       }),
     };

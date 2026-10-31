@@ -24,7 +24,7 @@ function Post({ post, ...props }: Props & { post: FeedPost }) {
         )}
         <span>Round {post.round}</span>
         {post.about_poi_id && <span>About {pois?.find((poi) => poi.id === post.about_poi_id)?.name ?? post.about_poi_id}</span>}
-        {post.injected && <span className="rounded border border-amber-300 bg-amber-50 px-1.5 text-amber-900">Injected by the test harness</span>}
+        {post.injected && <span className="rounded border border-amber-300 bg-amber-50 px-1.5 text-amber-900">Added by your team</span>}
       </p>
       <p className="whitespace-pre-wrap break-words text-sm text-stone-800">{post.text}</p>
       <p className="text-xs text-stone-500">{post.reactions.agree} agree · {post.reactions.disagree} disagree</p>

@@ -6,6 +6,7 @@ import type { Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { EventPayloads, GnomiEvent, LlmRole, Persona, RunConfig, Segment } from '../types.ts';
 import { buildReport } from './build.ts';
+import { groupKey } from './friction.ts';
 import { reportToMarkdown } from './markdown.ts';
 import { JUDGE_POSTS, JUDGE_SYSTEM, runReportModels } from './models.ts';
 import { homogeneity } from './spread.ts';
@@ -150,6 +151,20 @@ test('first-hand personas had their own friction in the theme; second-hand ones 
   assert.deepEqual(poi.second_hand, ['a2', 'b2', 'a3']);
 });
 
+test('a theme the check set aside leaves the per-theme list, but who met it is still first-hand for the POI', () => {
+  const { events, record } = socialRun();
+  record({ ...at(3, null), type: 'report.themes', payload: judged });
+  const keys = Object.fromEntries(frictionGroups(events, 'poi').map((g) => [g.id, groupKey(g.members[0])]));
+  record({ ...at(3, null), type: 'report.checks', payload: { poi_id: 'poi', checks: [{ theme_id: 'g2', verdict: 'environment', reason: 'The fixture has no jobs.' }], keys } });
+  const report = buildReport(events);
+  assert.deepEqual(report.set_aside?.map((t) => t.id), ['g2']);
+  const [poi] = report.spread!;
+  assert.deepEqual(poi.themes.map((t) => t.theme_id), ['g1']);
+  assert.deepEqual([...poi.first_hand].sort(), ['a1', 'b1']);
+  assert.deepEqual(poi.second_hand, ['a2', 'b2', 'a3']);
+  assert.ok(report.methods.limitations?.includes('The judge tagged unknown post or group ids (g9, nope); they were ignored.'), 'a tag on the set-aside theme is still a known id');
+});
+
 test("sentiment by round carries each persona's latest opinion forward; a theme counts only its own personas", () => {
   const [poi] = tagged().spread!;
   const line = [
@@ -197,7 +212,8 @@ async function withModels(social: boolean, judge: Responder) {
     requests.push({ role: req.role, system: req.system, user: JSON.parse(req.user.map((p) => (p.type === 'text' ? p.text : '')).join('')) });
     return respond(req);
   };
-  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), record, events: () => events });
+  const blobs = { put: async () => {}, get: () => Promise.reject(new Error('no file')) };
+  await runReportModels({ config, round: 1, llm: createScriptedGateway({ judge: spy(judge), author: spy(DEMO_AUTHOR) }, record), blobs, record, events: () => events });
   return { events, requests, report: buildReport(events) };
 }
 
@@ -265,4 +281,41 @@ test('a parent quoted above a reply in the feed reaches its reader too', () => {
   record({ ...at(3, null), type: 'report.themes', payload: judged });
   const home = buildReport(events).spread![0].themes[1];
   assert.deepEqual(home.readers, ['a2', 'a3']); // Abe was shown a feed before Ari was
+});
+
+test('a post the team added is named as such, in any round, and counts for nobody: not as a post, a repeat or a theme of the persona named on it', () => {
+  const build = (added: boolean) => {
+    const { events, record } = recorder();
+    record({ ...at(1, null), poi_id: null, type: 'run.started', payload: { config } });
+    for (const p of POPULATION) record({ ...at(1, p.id), type: 'persona.created', payload: { persona: p } });
+    record({ ...at(1, 'a1'), type: 'persona.friction_reported', payload: friction('Save does nothing', JOBS) });
+    record({ ...at(1, 'b1'), type: 'social.post', payload: post('own', 'Mine.') });
+    if (added) record({ ...at(2, 'a2'), type: 'social.post', payload: post('inj-r2-1', 'Saving a job fails for everyone.', 'poi', true) });
+    record({ ...at(2, 'b2'), type: 'social.feed_viewed', payload: { post_ids: added ? ['own', 'inj-r2-1'] : ['own'], parent_ids: [] } });
+    return buildReport(events);
+  };
+  const [without, withPost] = [build(false), build(true)];
+  const [spread] = withPost.spread!;
+  assert.deepEqual(spread.seeds.map((p) => [p.post_id, p.persona_id, p.round, p.injected]), [['inj-r2-1', 'a2', 2, true], ['own', 'b1', 1, false]], 'named though it is not of the first round');
+  assert.deepEqual([spread.posters, spread.second_hand, spread.first_hand], [without.spread![0].posters, without.spread![0].second_hand, without.spread![0].first_hand]);
+  assert.ok(!spread.posters!.includes('a2'));
+  assert.deepEqual(withPost.themes, without.themes, 'themes, first-hand counts and trust are the same');
+  assert.deepEqual(withPost.personas, without.personas);
+  assert.match(reportToMarkdown(withPost), /- Post added by your team, shown as Abe's, round 2: "Saving a job fails for everyone\." \(#\d+\)/);
+});
+
+test('a what-if run has each POI\'s mean opinion at the end though nobody posted, and no other report gains the field', () => {
+  const build = (repeat?: RunConfig['repeat']) => {
+    const { events, record } = recorder();
+    record({ ...at(1, null), poi_id: null, type: 'run.started', payload: { config: { ...config, repeat } } });
+    for (const p of POPULATION) record({ ...at(1, p.id), type: 'persona.created', payload: { persona: p } });
+    record({ ...at(1, 'a1'), type: 'persona.opinion_changed', payload: changed(null, -2) });
+    record({ ...at(1, 'a2'), type: 'persona.opinion_changed', payload: changed(null, 1) });
+    record({ ...at(3, 'a1'), type: 'persona.opinion_changed', payload: changed(-2, 0) });
+    return buildReport(events);
+  };
+  const report = build({ group: 'g', index: 1, of: 2, what_if: { pair: 1, post: false, text: 'A post.', round: 1, poi_id: 'poi' } });
+  assert.equal(report.spread, undefined, 'no post, so no spread');
+  assert.deepEqual(report.end_opinions, { poi: 0.5 }, 'each persona\'s latest');
+  assert.equal('end_opinions' in build(), false);
 });

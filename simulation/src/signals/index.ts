@@ -1,13 +1,13 @@
-import type { PageError } from '../seams.ts';
-import type { Device, EventPayloads, SignalBase, SignalThresholds } from '../types.ts';
+import type { PageDriver, PageError } from '../seams.ts';
+import type { AccessibilityViolation, Device, EventOf, EventPayloads, GnomiEvent, PageSnapshot, SignalBase, SignalThresholds } from '../types.ts';
 
 // Objective friction signals (tech.md §8.1): pure rules over one persona's steps. The agent loop runs them right after each
 // step and writes what they find to the log, so a report cites what was detected under the run's frozen thresholds.
 
-export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 40 };
+export const DEFAULT_SIGNALS: SignalThresholds = { loop_visits: 3, loop_window: 10, back_count: 2, back_window: 5, revisit_window: 4, small_target_px: 24, interference_s: 60 };
 
 export type Step = Pick<EventPayloads['persona.step'], 'step_no' | 'action' | 'target' | 'result' | 'snapshot_hash'>;
-type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target';
+type Detected = 'signal.failed_action' | 'signal.loop' | 'signal.backtrack' | 'signal.error' | 'signal.validation_error' | 'signal.small_target' | 'signal.accessibility';
 export type Signal = { [K in Detected]: { type: K; payload: EventPayloads[K] } }[Detected];
 type SignalOf<K extends Detected> = Extract<Signal, { type: K }>;
 
@@ -19,6 +19,26 @@ const ERRORISH = /\b(?:error|invalid|required|incorrect|failed|went wrong|alread
 const base = (step: Step): SignalBase => ({ step_no: step.step_no, url: step.result.url_before, ref: step.action.ref });
 /** A page's identity for loops and revisits: its URL without the fragment. */
 const pageKey = (url: string) => url.split('#')[0];
+
+// Path segments that name a record rather than a page: numbers, UUIDs, long hex, long tokens with a digit.
+const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|(?=[^/]*\d)[\w-]{16,})$/i;
+
+/**
+ * host + path with ids replaced by :id; query and fragment dropped. A URL that does not parse is its own pattern. A text's
+ * or design's stored file is its readable name when `places` knows it, so titles and pages never show a file id.
+ */
+export function pagePattern(url: string, places?: Map<string, string>): string {
+  const place = places?.get(url);
+  if (place) return place;
+  try {
+    const { host, pathname } = new URL(url);
+    const path = pathname.split('/').map((part) => (ID_SEGMENT.test(part) ? ':id' : part)).join('/').replace(/\/+$/, '');
+    return `${host}${path || '/'}`;
+  } catch {
+    return url;
+  }
+}
+
 /** The steps among `steps` in the `window` steps ending at `end`, end included. */
 const within = (steps: Step[], end: Step, window: number) => steps.filter((s) => s.step_no > end.step_no - window && s.step_no <= end.step_no);
 /** A click on a button: the only action here that can submit a form, so the only one that takes a snapshot after it. */
@@ -94,17 +114,83 @@ export function smallTarget(step: Step, device: Device, t: SignalThresholds): Si
   return width > 0 && height > 0 && Math.min(width, height) < t.small_target_px ? { type: 'signal.small_target', payload: { ...base(step), box } } : null;
 }
 
+/** What one scan adds to the log, or null when there was nothing to scan. */
+export type PageAudit = Pick<EventPayloads['accessibility.scanned'], 'audit' | 'error'> & { signals: AccessibilityViolation[] };
+
+// Weak signals that became themes are the report's main noise, so only these signal; the rest go to the methods appendix.
+const SIGNALLED = new Set<AccessibilityViolation['impact']>(['critical', 'serious']);
+
+/**
+ * One run's accessibility scans, shared by its personas. Each page state is scanned once, as the result is the same for everyone, and
+ * each rule signals once per page pattern, however many states of the page break it. Each is claimed with no await after its check,
+ * so personas reaching a page together scan it once. A scan that fails is reported, not thrown: it costs the persona nothing.
+ */
+export function pageAudits() {
+  const scanned = new Set<string>(); // snapshot hashes
+  const raised = new Set<string>(); // rule and page pattern of each signal so far
+  return async (page: PageDriver, { hash, url }: PageSnapshot): Promise<PageAudit | null> => {
+    if (!page.audit || !/^https?:/.test(url) || scanned.has(hash)) return null; // a browser's own error page is not the product's
+    scanned.add(hash);
+    try {
+      const found = await page.audit();
+      const signals = found.filter(({ rule, impact }) => {
+        const key = JSON.stringify([rule, pagePattern(url)]);
+        if (!SIGNALLED.has(impact) || raised.has(key)) return false;
+        raised.add(key);
+        return true;
+      });
+      return { audit: found.filter(({ impact }) => !SIGNALLED.has(impact)), error: null, signals };
+    } catch (err) {
+      return { audit: [], error: (err instanceof Error ? err.message : String(err)).split('\n')[0].slice(0, 200), signals: [] };
+    }
+  };
+}
+
+/**
+ * Whether a step changed the element it acted on (assumed, odd.md): a value typed or chosen, or a click on anything but a link that
+ * did something. Reading, hovering and following a link write nothing. A draft counts too: the log cannot tell it from a shared record.
+ */
+const changedTarget = (step: Step) => step.result.ok && !failedAction(step) && (step.action.type === 'type' || step.action.type === 'select' || (step.action.type === 'click' && step.target?.role !== 'link'));
+
+/**
+ * The failed-action signals (by seq) another persona may have caused (tech.md §9.2): the step's target has the name of something a
+ * different persona changed on the same POI at most interference_s earlier. A fold over the log and its times, so a rebuild agrees;
+ * a run from before this froze no window, so it keeps no tag.
+ * shortcut: names match whole, so a "Save" on another page matches and a renamed record does not; the tag only says possibly, match on the record if readers stop trusting it.
+ */
+export function possibleInterference(events: GnomiEvent[]): Set<number> {
+  const found = new Set<number>();
+  const seconds = events.find((e): e is EventOf<'run.started'> => e.type === 'run.started')?.payload.config.signals?.interference_s;
+  if (!seconds) return found;
+  const nameOf = (e: GnomiEvent, step?: Step) => (step?.target?.name.trim() ? `${e.poi_id}\u0000${step.target.name.trim().toLowerCase()}` : null);
+  const latest = new Map<string, Step>(); // each persona's last step: a signal follows its own step in the log
+  const changes = new Map<string, Map<string, number>>(); // POI and name → persona → when that persona last changed it
+  for (const e of events) {
+    if (e.persona_id === null) continue;
+    if (e.type === 'persona.step') {
+      latest.set(e.persona_id, e.payload);
+      const name = nameOf(e, e.payload);
+      if (name && changedTarget(e.payload)) changes.set(name, (changes.get(name) ?? new Map<string, number>()).set(e.persona_id, e.ts));
+    } else if (e.type === 'signal.failed_action') {
+      const by = changes.get(nameOf(e, latest.get(e.persona_id)) ?? '');
+      for (const [persona, at] of by ?? []) if (persona !== e.persona_id && e.ts - at <= seconds * 1000) found.add(e.seq);
+    }
+  }
+  return found;
+}
+
 /**
  * Every signal one step raises. `history` is the episode's earlier steps; `errors` what the page captured since the last step;
- * `before`/`after` the snapshot texts around a submit (after is null for other actions). A done or abandon step did nothing
- * on the page, so only errors captured meanwhile count.
+ * `before`/`after` the snapshot texts around a submit (after is null for other actions); `violations` what a scan of the page found.
+ * A done or abandon step did nothing on the page, so only errors captured meanwhile, and what the scan saw, count.
  */
-export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds }): Signal[] {
-  const { history, step, device, errors, before, after, thresholds: t } = input;
+export function detectSignals(input: { history: Step[]; step: Step; device: Device; errors: PageError[]; before: string | null; after: string | null; thresholds: SignalThresholds; violations?: AccessibilityViolation[] }): Signal[] {
+  const { history, step, device, errors, before, after, thresholds: t, violations = [] } = input;
   const ended = step.action.type === 'done' || step.action.type === 'abandon';
   const found: (Signal | null)[] = ended ? [] : [failedAction(step, history.at(-1)), loop(history, step, t), backtrack(history, step, t)];
   // An error belongs to the page it happened on: after a navigation, the one the step landed on.
   for (const error of errors) found.push({ type: 'signal.error', payload: { ...base(step), url: step.result.url_after, ...error } });
   if (!ended) found.push(validationError(step, before, after), smallTarget(step, device, t));
+  for (const violation of violations) found.push({ type: 'signal.accessibility', payload: { ...base(step), ref: null, ...violation } });
   return found.filter((signal): signal is Signal => signal !== null);
 }

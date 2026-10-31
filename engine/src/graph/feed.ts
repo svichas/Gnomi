@@ -7,7 +7,7 @@ export interface FeedPost {
   author: string | null; // persona id
   text: string;
   about_poi_id: string | null;
-  injected: boolean; // put in the persona's name by the test harness, not written by the model
+  injected: boolean; // added by the team in the persona's name, not written by the model
   round: number;
   seq: number;
   reactions: { agree: number; disagree: number };

@@ -1,4 +1,4 @@
-import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Persona, PersonaSchema, RunConfig, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
+import type { Action, ActionTarget, AttributeValue, EventOf, GnomiEvent, Perception, Persona, PersonaSchema, RunConfig, RunRow, Segment, SessionInfo } from '@gnomi/simulation/types.ts';
 import { profileEntries } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey } from '@gnomi/simulation/report/dimensions.ts';
 import { placesOf } from '@gnomi/simulation/report/friction.ts';
@@ -32,6 +32,7 @@ export interface Row {
   detail?: string;
   quote?: string;
   screenshot?: string | null; // a step's evidence, a blob path
+  page?: string; // the page a step's screenshot shows, as a reader names it
   source?: { type: GnomiEvent['type']; round: number | null; poi_id: string | null; step?: number };
 }
 
@@ -142,6 +143,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
         badge: action.type === 'done' || action.type === 'abandon' ? undefined : result.ok ? { ok: true, text: 'ok' } : { ok: false, text: `error: ${error || 'failed'}` },
         quote: thought,
         screenshot: event.payload.screenshot,
+        page: place(result.url_before),
       };
     }
     case 'persona.friction_reported': {
@@ -168,7 +170,7 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
     }
     case 'social.post': {
       const { post_id, parent_id, text, injected } = event.payload;
-      const title = `${parent_id ? `Replied to post ${parent_id}` : 'Posted in the feed'}${injected ? ' (put there by the test harness)' : ''}`;
+      const title = `${parent_id ? `Replied to post ${parent_id}` : 'Posted in the feed'}${injected ? ' (added by your team)' : ''}`;
       return { seq, label: parent_id ? 'Reply' : 'Post', tone: 'plain', title, detail: `Post ${post_id}`, quote: text };
     }
     case 'social.reaction':
@@ -228,6 +230,8 @@ function describe(event: GnomiEvent, places: Map<string, string> = new Map()): O
       const [, , width, height] = event.payload.box;
       return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Detected: tapped a small target, ${Math.round(width)}×${Math.round(height)} px`, detail: place(event.payload.url) };
     }
+    case 'signal.accessibility':
+      return { seq, label: `Step ${event.payload.step_no}`, tone: 'notice', title: `Page scan: ${event.payload.help}`, detail: place(event.payload.url) };
     case 'llm.call':
       return event.payload.status === 'ok'
         ? null
@@ -292,9 +296,26 @@ export function foldRows(fold: RowFold, events: GnomiEvent[]): { added: Row[]; r
   return { added, replaced };
 }
 
-/** The activity feed, newest first. */
-export function toRows(events: GnomiEvent[]): Row[] {
-  const fold = emptyRows();
+// A stored screenshot is what a vision persona saw, not the page as designed, and a screen-reader persona was never shown it.
+const SHOT_LABEL: Record<Perception, string> = {
+  deuteranopia: 'Simulated red–green colour blindness: the colours here are not the page’s own.',
+  blurredVision: 'Simulated low vision: the blur here is not on the page.',
+  screen_reader: 'Not shown to this persona, who got the page as text.',
+};
+
+/** The note under a step's screenshot, from one persona's events. Perception is per POI: a design's frame is as designed, whoever looks. */
+export function shotLabels(events: GnomiEvent[]): (row: Row) => string | undefined {
+  const perceptions = new Map<string | null | undefined, Perception>();
+  for (const event of events) if (event.type === 'persona.episode_started' && event.payload.perception) perceptions.set(event.payload.poi_id, event.payload.perception);
+  return (row) => {
+    const perception = perceptions.get(row.source?.poi_id);
+    return perception && SHOT_LABEL[perception];
+  };
+}
+
+/** The activity feed, newest first. `places` names texts and designs when `events` has no run.started, as one persona's events do not. */
+export function toRows(events: GnomiEvent[], places = new Map<string, string>()): Row[] {
+  const fold = { ...emptyRows(), places };
   foldRows(fold, events);
   return fold.rows;
 }
@@ -303,6 +324,16 @@ export const isEnd = (event: GnomiEvent) => event.type === 'run.finished' || eve
 
 // The events that end a persona's episode: after one of these she is no longer waiting for anyone.
 const ENDS_EPISODE = new Set(['persona.goal_done', 'persona.abandoned', 'signal.budget_exceeded', 'signal.repeated_failure']);
+
+/**
+ * Whether a run's page reads its repeat set again for an event of any run: a report of the set may have changed, such as a judge's
+ * answers, with no run ending to say so. A run missing from the list has only just started, and the list catches up later.
+ */
+export function rereadsSet(event: GnomiEvent, group: string | undefined, runs: RunRow[]): boolean {
+  if (!group || event.type !== 'report.generated') return false;
+  const run = runs.find(({ run_id }) => run_id === event.run_id);
+  return !run || run.config.repeat?.group === group;
+}
 
 /** What the run page reads from the whole log, folded batch by batch like the feed. */
 export interface LogFold {
@@ -403,6 +434,7 @@ const CATEGORY_OF: Partial<Record<GnomiEvent['type'], Category>> = {
   'signal.error': 'signals',
   'signal.validation_error': 'signals',
   'signal.small_target': 'signals',
+  'signal.accessibility': 'signals',
   'persona.opinion_changed': 'opinions',
   'persona.survey': 'opinions',
   'social.feed_viewed': 'social',
