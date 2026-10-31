@@ -8,7 +8,7 @@ import type { BlobStore, LlmGateway, Recorder, Responder } from '../seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '../settings.ts';
 import type { EventPayloads, GnomiEvent, NewEvent, Poi, Report, ReportTheme, RunConfig, StudyStatus } from '../types.ts';
 import { buildReport } from './build.ts';
-import { reportToMarkdown, studyCountText, studyPlanToMarkdown } from './markdown.ts';
+import { priorNotice, reportToMarkdown, studyCountText, studyPlanToMarkdown } from './markdown.ts';
 import { runReportModels } from './models.ts';
 import { combineReports } from './repeats.ts';
 import { complaintOf, foldStudy, isCalendarDate, localDate, quotesFinding, runStudyPlan, STUDY_SYSTEM, studyPlan, topFindings } from './study.ts';
@@ -96,7 +96,7 @@ test("a task is checked against every finding in the plan, not only its own, and
 });
 
 test('a plan with nothing left says so, in the file too, and an unanswered finding reads the same', () => {
-  const report = { goal: 'Post a job', run_id: 'r-1' } as Report;
+  const report = { goal: 'Post a job', run_id: 'r-1', methods: {} } as unknown as Report;
   const empty = studyPlan(plan({ screener: ['Is the salary range hidden behind a form?'], themes: [{ theme_id: 'g1', tasks: ['Find why the salary range is hidden.'], observe: [] }] }, [{}, { id: 'g2', title: 'Other', description: 'Other.', quotes: [] }]));
   assert.deepEqual([empty.screener, empty.hypotheses[0].tasks, empty.hypotheses[1].tasks], [[], [], []]);
   const file = studyPlanToMarkdown(report, empty);
@@ -107,12 +107,19 @@ test('a plan with nothing left says so, in the file too, and an unanswered findi
 
 test('the plan file opens with the warning, escapes model text and says what was left out', () => {
   const made = studyPlan({ ...plan({ screener: ['Do you use <b>this</b>?'], themes: [{ theme_id: 'g1', tasks: ['Post [a job](http://evil.test).'], observe: ['Watch the form.'] }] }), left_out: { objections: 2, competitors: 1, set_aside: 1, scan_only: 1, lower_ranked: 3 } });
-  const file = studyPlanToMarkdown({ goal: 'Post a job', run_id: 'r-1' } as Report, made);
+  const file = studyPlanToMarkdown({ goal: 'Post a job', run_id: 'r-1', methods: {} } as unknown as Report, made);
   assert.ok(file.startsWith('# Study plan: Post a job\n\n> These hypotheses come from simulated users and are unproven. Do not show them to participants'), file);
   assert.match(file.split('\n')[2], /A model wrote this plan/, 'nobody takes it for the team\'s own work');
   assert.match(file, /&lt;b&gt;this&lt;\/b&gt;/);
   assert.doesNotMatch(file, /(?<!\\)\]\(http/, 'a link is escaped');
   assert.match(file, /Left out of this plan: 3 lower-ranked findings; 2 objections; 1 competitor finding; 1 set aside by the evidence check; 1 found by the accessibility scan alone, which needs an audit rather than a study with people\./);
+});
+
+test('a plan from a returning run says so on its own, as a plan is read away from its report', () => {
+  const made = studyPlan(plan({ screener: [], themes: [] }));
+  const prior = { run_id: 'r-1', fresh: 0 };
+  assert.ok(studyPlanToMarkdown({ goal: 'Post a job', run_id: 'r-2', methods: { prior } } as unknown as Report, made).includes(`> ${priorNotice(prior)}`));
+  assert.doesNotMatch(studyPlanToMarkdown({ goal: 'Post a job', run_id: 'r-2', methods: {} } as unknown as Report, made), /used the product before/);
 });
 
 test('the top findings are the five best frictions of the team across its POIs, without objections, competitors or what the scan found alone', () => {

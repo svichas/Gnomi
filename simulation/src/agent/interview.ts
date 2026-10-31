@@ -5,7 +5,7 @@ import { placesOf, poiNamesOf } from '../report/friction.ts';
 import { PAGE_MARKS } from '../report/themes.ts';
 import type { BlobStore, LlmGateway, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent, Persona, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { clip, describeAction, describeResult, personaSection, taskSection, where, wordsFor } from './prompt.ts';
+import { clip, describeAction, describeResult, personaSection, priorLines, taskSection, where, wordsFor } from './prompt.ts';
 
 // One question to a persona after the run (features_roadmap.md item 14). Personas are stateless functions of the log, so the context is
 // rebuilt from it, and the answer is a new generation, not a memory of a reason. It goes in the log and reaches nothing else: no fold
@@ -52,7 +52,16 @@ function surveyEntry(name: string, { payload: { reason, sentiment, would_continu
   return inert([`Survey on ${name}: sentiment ${sentiment} of -2 to +2, ${would_continue ? 'would' : 'would not'} keep using it. "${reason}"`, ...answers.map((answer) => `- ${answer}`)].join('\n'));
 }
 
-/** What the log holds of one persona, oldest first: its steps and the pages they showed, its frictions, ending, survey and posts, and the feed it read. */
+/** What a returning persona's prompts held of its earlier visit, as the run froze it: what it did rests on this, and without it a question could get "this was my first time". */
+function memoryOf(events: GnomiEvent[], persona_id: string, pois: Map<string, string>): string[] {
+  const config = events.find((e) => e.type === 'run.started')?.payload.config;
+  const persona = config?.personas.find(({ id }) => id === persona_id);
+  if (!config || !persona) return [];
+  const { p } = wordsFor(persona, config.project);
+  return Object.entries(config.prior?.memories[persona_id]?.pois ?? {}).map(([poi_id, visit]) => `Before this session, on ${inert(pois.get(poi_id) ?? poi_id)}:\n${priorLines(p, visit).join('\n').trimEnd()}`);
+}
+
+/** What the log holds of one persona, oldest first: a memory of an earlier visit, its steps and the pages they showed, its frictions, ending, survey and posts, and the feed it read. */
 async function logEntries(events: GnomiEvent[], persona_id: string, run_id: string, blobs: BlobStore): Promise<string[]> {
   const places = placesOf(events);
   const pois = poiNamesOf(events);
@@ -82,7 +91,7 @@ async function logEntries(events: GnomiEvent[], persona_id: string, run_id: stri
       if (unseen.length) entries.push(`Read in the feed in round ${e.round}:\n<feed>\n${unseen.map((id) => inert(clip(posts.get(id)!.payload.text, POST_MAX))).join('\n')}\n</feed>`);
     }
   }
-  return entries;
+  return entries.length ? [...memoryOf(events, persona_id, pois), ...entries] : entries; // a memory alone is nothing this persona did in this run
 }
 
 /** The persona's own record for one question, newest kept: null when the log has nothing of it, and what it holds says so when the oldest went. */

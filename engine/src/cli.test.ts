@@ -870,6 +870,7 @@ test('--what-if runs matched pairs: the post reaches feeds in one run of each, a
   assert.equal(JSON.parse(cli('report', lone, '--run', loneAdded, '--json')).report.run_id, loneAdded, 'a named run still reaches it');
 
   assert.match(refused('rerun', project, '--base', added[0]).stderr, /is a what-if run, with a post your team added/);
+  assert.match(refused('rerun', project, '--base', added[0], '--returning').stderr, /is a what-if run, with a post your team added/, 'nobody remembers a run with a post they never had');
   assert.match(refused('compare', project, '--base', added[0], '--run', counted[0]).stderr, /is a what-if run, with a post your team added/);
   assert.equal(refused('gate', project, '--base', added[0], '--run', counted[0]).status, 2, 'a gate cannot decide on it');
 

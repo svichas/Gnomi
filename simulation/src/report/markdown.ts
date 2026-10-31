@@ -131,7 +131,7 @@ function studyPlanLines(plan: ReportStudyPlan, heading: string): string[] {
 
 /** The plan on its own, as runs/<id>/study-plan.md: a team can hand a researcher this without the findings. */
 export const studyPlanToMarkdown = (report: Report, plan: ReportStudyPlan): string =>
-  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []), `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
+  [`# Study plan: ${line(report.goal)}`, '', `> ${STUDY_WARNING}`, '', ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []), ...(report.methods.prior ? [`> ${priorNotice(report.methods.prior)}`, ''] : []), `From Gnomi run ${report.run_id}.`, '', ...studyPlanLines(plan, '##'), ''].join('\n');
 
 /** Why containment blocked requests, for the methods appendix; no reason means a host outside the allowed ones. */
 export const BLOCK_REASON_TEXT = { observe_only: 'writes refused, observed only', robots: 'disallowed by robots.txt' } as const;
