@@ -6,6 +6,7 @@ import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
 import { buildCoverage } from './coverage.ts';
 import { buildDimensions, reportAttributes, themeDrivers } from './dimensions.ts';
+import { foldEdits } from './edits.ts';
 import { buildFlow } from './flow.ts';
 import { buildSpread, homogeneity } from './spread.ts';
 import { foldStudy } from './study.ts';
@@ -245,13 +246,15 @@ export function buildReport(events: GnomiEvent[]): Report {
   const total = (pick: (e: EventOf<'llm.call'>) => number) => calls.reduce((sum, e) => sum + pick(e), 0);
   // Runs before M2 have no routing, so the call itself names the model it used.
   const routing: Routing | null = settings?.routing ?? null;
+  // A question after the run counts in the cost, but `methods` describes the run: an alias may answer as a newer model by then, which compare and the gate would read as a change.
+  const runCalls = calls.filter((e) => e.payload.purpose !== 'interview');
   const models: Partial<Routing> = {};
-  for (const call of calls) {
+  for (const call of runCalls) {
     const { role, provider, model } = call.payload;
     models[role] ??= routing?.[role] ?? { provider: provider as ProviderId, model };
   }
   const response_models: NonNullable<Report['methods']['response_models']> = {};
-  for (const { payload: { role, response_model } } of calls) {
+  for (const { payload: { role, response_model } } of runCalls) {
     if (response_model && !response_models[role]?.includes(response_model)) (response_models[role] ??= []).push(response_model);
   }
   const checkCall = calls.find((e) => e.payload.purpose === 'report_check')?.payload;
@@ -346,6 +349,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     ...(buyers.length > 0 ? { buyers } : {}),
     ...(flows.length > 0 ? { flows } : {}),
     ...foldStudy(events, analysis.themes, analysis.set_aside ?? [], competitors),
+    ...foldEdits(events, analysis.themes, analysis.set_aside ?? [], analysis.tagged),
     cost_usd: total((e) => e.payload.cost_usd),
     unreported_usage_calls: calls.filter((e) => e.payload.usage_reported === false).length,
     llm_calls: calls.length,

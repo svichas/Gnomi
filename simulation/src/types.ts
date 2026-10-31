@@ -1,6 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, ThemeEdit, UnmatchedEdit, UnmatchedOutcome, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -491,6 +491,11 @@ export interface EventPayloads {
   };
   // What a team's own study with real people found, never a model's. keys: theme ids change after a rejudge. The envelope's poi_id is the theme's.
   'finding.validated': { keys: string[]; category?: 'friction' | 'objection'; title: string; status: StudyStatus; note: string | null; study_date: string }; // title: at the time; study_date: YYYY-MM-DD
+  // What a team changed for sharing, stored as finding.validated is: exports read it, and no model, count or rank does (report/edits.ts).
+  'finding.hidden': { keys: string[]; category?: 'friction' | 'objection'; title: string; hidden: boolean }; // hidden: false shows it again
+  'finding.edited': { keys: string[]; category?: 'friction' | 'objection'; title: string; new_title: string | null; new_description: string | null }; // null: back to the original
+  // A question to a persona after the run and the model's new answer, not a memory (agent/interview.ts). Only the Inspector reads it: no fold, export or later prompt. The envelope's persona_id is who was asked.
+  'persona.interviewed': { question: string; answer: string };
 }
 
 /** The human outcome words of docs/interpreting-simulations.md. */

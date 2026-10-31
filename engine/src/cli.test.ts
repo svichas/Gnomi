@@ -260,6 +260,103 @@ test('outcome records what a team found, refuses what is wrong, survives a rejud
   assert.deepEqual(unmatched_outcomes.map((o: { title: string }) => o.title), [gone.title], "an agent's summary lists what has no finding left");
 });
 
+test('edit hides and rewords for sharing only: report and its files keep what the run found, and --for-sharing gives the copy', () => {
+  const project = join(dir, 'edit');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const report = (...args: string[]) => JSON.parse(cli('report', project, '--format', 'json', '--json', ...args)).report;
+  const before = report();
+  const [first, second] = before.themes;
+  const edit = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'edit', project, ...args], { encoding: 'utf8' });
+  const on = (theme: { id: string }) => ['--run', 'r-0001', '--theme', theme.id];
+
+  assert.match(edit('--run', 'r-0001').stderr, /edit needs --run, --theme and exactly one of --hide, --show, --title, --description or --reset/);
+  assert.match(edit('--run', 'r-0001').stderr, /Leave out names and contact details\. A rewording stays in this project's log, even after a reset, and appears in exports\./, 'the usage warns what a rewording must not hold');
+  assert.match(edit(...on(first)).stderr, /exactly one of/);
+  assert.match(edit(...on(first), '--hide', '--show').stderr, /exactly one of/);
+  assert.match(edit(...on(first), '--title', 'A', '--description', 'B').stderr, /exactly one of/);
+  assert.match(edit(...on({ id: 'g99' }), '--hide').stderr, /has no finding "g99"/);
+  assert.match(edit('--run', 'r-0009', '--theme', first.id, '--hide').stderr, /There is no run r-0009/);
+  assert.match(edit(...on(first), '--title', 'x'.repeat(121)).stderr, /121 characters, and the limit is 120/);
+
+  const done = JSON.parse(edit(...on(first), '--hide', '--json').stdout.trim().split('\n').at(-1)!);
+  assert.deepEqual([done.kind, done.theme_id, done.hidden], ['edit', first.id, true]);
+  assert.equal(JSON.parse(edit(...on(second), '--title', 'Our words', '--json').stdout.trim().split('\n').at(-1)!).new_title, 'Our words');
+  const after = report();
+  assert.deepEqual([after.themes[0].title, after.themes[1].title], [first.title, second.title], 'report reads what the run found');
+  assert.equal(after.llm_calls, before.llm_calls, 'no model call');
+  assert.equal(after.shared, undefined);
+  assert.ok(readFileSync(done.report_md, 'utf8').includes(first.title), 'report.md stays the record');
+
+  const shared = report('--for-sharing');
+  assert.deepEqual(shared.shared, { hidden: 1, reworded: 1 });
+  assert.equal(shared.themes.find((t: { id: string }) => t.id === second.id).title, 'Our words');
+  assert.ok(!shared.themes.some((t: { id: string }) => t.id === first.id));
+  const markdown = cli('report', project, '--format', 'md', '--for-sharing');
+  assert.match(markdown, /hid 1 finding from this copy and reworded 1 finding/);
+  assert.match(markdown, /Our words\n\nReworded by the team\./);
+  assert.ok(!markdown.includes(first.title));
+  assert.deepEqual(JSON.parse(cli('report', project, '--json', '--for-sharing')).report.shared, { hidden: 1, reworded: 1 }, "an agent's summary carries the line");
+
+  const repeat = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'report', project, '--repeat', 'set-a', '--for-sharing'], { encoding: 'utf8' });
+  assert.match(repeat.stderr, /--for-sharing is for one run's report/);
+
+  edit(...on(first), '--show');
+  edit(...on(second), '--reset');
+  assert.deepEqual(report('--for-sharing').themes, before.themes, 'back as it was');
+});
+
+test('ask answers from the log under rejudge\'s budget rule, says what the answer is, and stays out of every report', () => {
+  const project = join(dir, 'ask');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const persona = JSON.parse(cli('report', project, '--format', 'json', '--json')).report.personas[0].id;
+  const ask = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'ask', project, '--fake-llm', ...args], { encoding: 'utf8' });
+  const good = ['--run', 'r-0001', '--persona', persona, '--question', 'Why did you stop?'];
+
+  assert.match(ask('--run', 'r-0001').stderr, /ask needs --run, --persona and --question/);
+  assert.match(ask('--run', 'r-0001').stderr, /Leave out names and contact details\. A question goes to the model and stays in this project's log\./, 'the usage warns what a question must not hold');
+  assert.match(ask('--run', 'r-0009', '--persona', persona, '--question', 'Why?').stderr, /There is no run r-0009/);
+  assert.match(ask('--run', 'r-0001', '--persona', 'nobody', '--question', 'Why?').stderr, /r-0001 has no persona nobody/);
+  assert.match(ask('--run', 'r-0001', '--persona', persona, '--question', ' ').stderr, /Write a question first/);
+
+  const lines = ask(...good, '--json').stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.match(lines.find((l) => l.kind === 'note').text, /One call to .*about \$.*with \$5\.00 to spend/, 'what it will cost, before it runs');
+  assert.deepEqual(lines.filter((l) => l.kind === 'event').map((l) => l.type), ['llm.call', 'persona.interviewed', 'report.generated']);
+  const done = lines.at(-1);
+  assert.deepEqual([done.kind, done.persona_id, done.question], ['ask', persona, 'Why did you stop?']);
+  assert.match(done.answer, /Scripted demo answer/);
+  assert.match(done.label, /^Generated after the run\. This is a new answer from the model, not a memory of why this persona acted\.$/);
+  assert.match(ask(...good).stdout, /Generated after the run\./, 'a person reads the label too');
+
+  const files = ['json', 'md'].map((format) => readFileSync(join(project, `runs/r-0001/report.${format}`), 'utf8'));
+  assert.ok(files.every((file) => !file.includes('Why did you stop') && !file.includes('Scripted demo answer')), 'report.json and report.md hold no interview');
+  assert.ok(!cli('report', project, '--format', 'md', '--for-sharing').includes('Why did you stop'));
+
+  const db = new DatabaseSync(join(project, 'project.sqlite'));
+  try {
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.cost_usd', 5) WHERE type = 'llm.call'`); // the run spent its $5 budget
+    const spent = ask(...good);
+    assert.equal(spent.status, 1);
+    assert.match(spent.stderr, /has spent its \$5\.00 budget; pass --budget <usd> to let ask spend more/);
+    assert.match(ask(...good, '--budget', 'nothing').stderr, /--budget must be a positive amount/);
+    assert.equal(ask(...good, '--budget', '0.5').status, 0);
+    db.exec(`UPDATE event SET payload_json = json_set(payload_json, '$.provider', 'anthropic') WHERE type = 'llm.call'`);
+    assert.match(ask(...good, '--budget', '0.5').stderr, /analysed by real models/);
+    db.exec(`DELETE FROM event WHERE type IN ('run.finished', 'run.stopped')`);
+    assert.match(ask(...good, '--budget', '0.5').stderr, /has not ended/);
+  } finally {
+    db.close();
+  }
+});
+
+test('ask names the key it needs, and calls nothing without it', () => {
+  const project = join(dir, 'ask-key');
+  cli('run', '--pois', join(dir, 'pois.json'), '--settings', join(dir, 'settings.json'), '--goal', 'Pick a plan', '--project', project);
+  const { ANTHROPIC_API_KEY: _, ...env } = process.env;
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'ask', project, '--run', 'r-0001', '--persona', 'p', '--question', 'Why?'], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set ANTHROPIC_API_KEY \(the navigator runs on anthropic\)/);
+});
+
 test('audience analytics reports the changes, keeps the file on a dry run, and stores only the name and hash of the export', () => {
   const file = join(dir, 'analytics.json');
   cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '2');

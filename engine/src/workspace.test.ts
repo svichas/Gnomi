@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { cappedGateway, checkRun, credential, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { askPersona, cappedGateway, checkRun, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatRuns, rerunProject, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -13,6 +14,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
 import { createRecorder } from '@gnomi/simulation/run.ts';
 import type { LlmGateway, Recorder } from '@gnomi/simulation/seams.ts';
 import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
@@ -307,6 +309,94 @@ test('an outcome is refused at the boundary for each thing that can be wrong, an
   const log = store.events(run_id, { types: ['finding.validated'] });
   assert.deepEqual(log.map((e) => e.type === 'finding.validated' && e.payload.note?.length), [2_000, undefined], 'today and the longest note pass, and a blank note is none');
   assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0, 'no model call');
+});
+
+test('an edit is refused at the boundary for each thing that can be wrong, and nothing is recorded', async (t) => {
+  const { store, place, run_id, end, themes } = loggedRun(t);
+  await assert.rejects(editFinding(place, { run_id, theme_id: 'g1', hidden: true }), /has not ended/);
+  end();
+  const [{ id: theme_id }] = themes();
+  const good = { run_id, theme_id };
+  await assert.rejects(editFinding(place, good), /Say what to change/);
+  await assert.rejects(editFinding(place, { ...good, title: 'x'.repeat(EDIT_TITLE_MAX + 1) }), /121 characters, and the limit is 120/);
+  await assert.rejects(editFinding(place, { ...good, description: 'x'.repeat(EDIT_DESCRIPTION_MAX + 1) }), /601 characters, and the limit is 600/);
+  await assert.rejects(editFinding(place, { ...good, theme_id: 'g99', hidden: true }), /has no finding "g99"/);
+  await assert.rejects(editFinding(place, { ...good, run_id: 'r-9999', hidden: true }), /There is no run r-9999/);
+  assert.equal(store.events(run_id, { types: ['finding.hidden', 'finding.edited', 'report.generated'] }).length, 0);
+  await editFinding(place, { ...good, title: 'x'.repeat(EDIT_TITLE_MAX), description: 'y'.repeat(EDIT_DESCRIPTION_MAX) });
+  assert.equal(themes()[0].edit?.new_title?.length, EDIT_TITLE_MAX, 'the longest pass');
+  assert.equal(store.events(run_id, { types: ['llm.call'] }).length, 0, 'no model call');
+});
+
+test('an edit keeps the other field, blank goes back to the original, and the run\'s files keep what it found', async (t) => {
+  const { dir, store, place, run_id, end, themes } = loggedRun(t);
+  end();
+  await rewriteReport(place, run_id);
+  const [theme] = themes();
+  const good = { run_id, theme_id: theme.id };
+  const markdown = () => readFileSync(join(dir, `runs/${run_id}/report.md`), 'utf8');
+  const before = markdown();
+  await editFinding(place, { ...good, title: '  Our title  ' });
+  await editFinding(place, { ...good, description: 'Our description' });
+  assert.deepEqual(themes()[0].edit, { hidden: false, new_title: 'Our title', new_description: 'Our description' });
+  await editFinding(place, { ...good, hidden: true });
+  assert.deepEqual(themes()[0].edit, { hidden: true, new_title: 'Our title', new_description: 'Our description' });
+  assert.equal(store.events(run_id).at(-1)?.type, 'report.generated', 'an open app reloads');
+  assert.equal(markdown(), before, 'report.md stays the run\'s record');
+  assert.equal(JSON.parse(readFileSync(join(dir, `runs/${run_id}/report.json`), 'utf8')).themes[0].title, theme.title);
+
+  await editFinding(place, { ...good, title: '   ' });
+  assert.deepEqual(themes()[0].edit, { hidden: true, new_title: null, new_description: 'Our description' });
+  await editFinding(place, { ...good, hidden: false, description: '' });
+  assert.equal(themes()[0].edit, undefined, 'back to what the run found');
+});
+
+test('a question is refused at the boundary for each thing that can be wrong, before anything is spent', async (t) => {
+  const { store, place, run_id, end, row } = loggedRun(t);
+  end();
+  const llm = createScriptedGateway({ navigator: () => ({ answer: 'Never asked.' }) }, place.record);
+  const ask = (question: string, persona = BUILTIN_PERSONA.id) => askPersona(place, row(), persona, question, llm);
+  await assert.rejects(ask('   '), /Write a question first/);
+  await assert.rejects(ask('x'.repeat(QUESTION_MAX + 1)), /501 characters, and the limit is 500/);
+  await assert.rejects(ask('Why?', 'nobody'), new RegExp(`${run_id} has no persona nobody`));
+  const quiet = { ...row(), config: { ...row().config, personas: [{ ...BUILTIN_PERSONA, id: 'quiet', name: 'Quinn Quiet' }] } };
+  await assert.rejects(askPersona(place, quiet, 'quiet', 'Why?', llm), /Quinn Quiet did nothing the log of r-0001 records, so there is nothing to draw on/);
+  assert.equal(store.events(run_id, { types: ['llm.call', 'persona.interviewed', 'report.generated'] }).length, 0);
+  assert.equal(await ask('y'.repeat(QUESTION_MAX)), 'Never asked.', 'the longest question passes');
+});
+
+test('an answer goes in the log and no report file, and a failed call adds none and leaves the report as it was', async (t) => {
+  const { dir, store, place, run_id, end, row } = loggedRun(t);
+  end();
+  const plain = buildReport(store.events(run_id));
+  const failing = createScriptedGateway({ navigator: () => { throw new Error('The provider is down'); } }, place.record);
+  await assert.rejects(askPersona(place, row(), BUILTIN_PERSONA.id, 'Why?', failing), /The provider is down/);
+  assert.deepEqual(buildReport(store.events(run_id)), plain, 'every number as it was');
+  assert.equal(store.events(run_id, { types: ['persona.interviewed'] }).length, 0);
+
+  const invalid = createScriptedGateway({ navigator: () => ({ nonsense: true }) }, place.record, { costPerCall: 0.01 });
+  await assert.rejects(askPersona(place, row(), BUILTIN_PERSONA.id, 'Why?', invalid), /Invalid output twice/);
+  const failed = buildReport(store.events(run_id));
+  assert.deepEqual(failed.themes, plain.themes);
+  assert.equal(failed.cost_usd, 0.02, 'what failed attempts cost is on the record');
+  assert.equal(store.listRuns()[0].cost_usd, 0.02, 'and in the run row');
+
+  const answering = createScriptedGateway({ navigator: () => ({ answer: 'A generated answer about saving.' }) }, place.record, { costPerCall: 0.01 });
+  assert.equal(await askPersona(place, row(), BUILTIN_PERSONA.id, '  Why did you stop?  ', answering), 'A generated answer about saving.');
+  const [event] = store.events(run_id, { types: ['persona.interviewed'] });
+  assert.deepEqual([event.persona_id, event.payload], [BUILTIN_PERSONA.id, { question: 'Why did you stop?', answer: 'A generated answer about saving.' }]);
+  assert.equal(store.events(run_id).at(-1)?.type, 'report.generated', 'an open app hears of it');
+  assert.equal(store.listRuns()[0].cost_usd, 0.03);
+  const [json, markdown] = ['json', 'md'].map((format) => readFileSync(join(dir, `runs/${run_id}/report.${format}`), 'utf8'));
+  for (const file of [json, markdown]) assert.ok(!file.includes('A generated answer') && !file.includes('Why did you stop'), 'the report files hold no interview');
+});
+
+test('a comparison study and a run that has not ended take no question', async (t) => {
+  const study = loggedRun(t, { ...gym, comparison: { targets: [] } as unknown as ProjectConfig['comparison'] });
+  study.end();
+  assert.throws(() => modelRun(study.store, study.run_id, true, 'asked about'), /comparison study/);
+  const live = loggedRun(t);
+  assert.throws(() => modelRun(live.store, live.run_id, true, 'asked about'), /has not ended/);
 });
 
 test('a study plan writes its own file and report, and a failed call leaves the report as it was, an earlier plan included', async (t) => {

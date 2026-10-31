@@ -86,7 +86,7 @@ test('a plan drops what quotes the finding and counts it; the notes for the rese
   }));
   assert.deepEqual(made.screener, ['Do you hire at least once a quarter?']);
   assert.equal(made.screener_dropped, 1);
-  assert.deepEqual(made.hypotheses, [{ title: 'Salary range is hidden behind a form', poi_id: 'poi', tasks: ['Find out what this role pays.'], dropped: 1, observe: ['Watch whether the salary range is hidden behind a form for them.'] }]);
+  assert.deepEqual(made.hypotheses, [{ title: 'Salary range is hidden behind a form', poi_id: 'poi', keys: [], tasks: ['Find out what this role pays.'], dropped: 1, observe: ['Watch whether the salary range is hidden behind a form for them.'] }]);
 });
 
 test("a task is checked against every finding in the plan, not only its own, and an evidence quote counts as much as a title", () => {
@@ -261,7 +261,7 @@ test('two studied findings that a rejudge merges are two studies: the older is l
   const report = buildReport(events);
   assert.equal(report.themes!.length, 1);
   assert.equal(report.themes![0].validation?.title, 'Study B on /users', 'the newer one sits on the theme');
-  assert.deepEqual(report.unmatched_outcomes, [{ status: 'supported', note: 'Five of six stalled.', study_date: '2026-10-12', title: 'Study A on /jobs' }]);
+  assert.deepEqual(report.unmatched_outcomes, [{ status: 'supported', note: 'Five of six stalled.', study_date: '2026-10-12', title: 'Study A on /jobs', keys: jobs.keys, category: jobs.category, poi_id: 'poi' }], 'with its keys, as its title dates from then');
   assert.deepEqual(report.study_count, { of: 1, supported: 0, contradicted: 1, unresolved: 0, not_studied: 0 }, 'a listed outcome counts towards no finding');
   assert.match(reportToMarkdown(report), /- \*\*Study A on \/jobs\*\*: Your team's study, 12 Oct 2026: supported\. Five of six stalled\./);
 });
@@ -273,7 +273,7 @@ test('an outcome whose finding is gone is listed with its title, never dropped, 
   record(stale('supported'));
   record(stale('unresolved'));
   const report = buildReport(events);
-  assert.deepEqual(report.unmatched_outcomes, [{ status: 'unresolved', note: null, study_date: '2026-10-12', title: 'A finding from an older grouping' }]);
+  assert.deepEqual(report.unmatched_outcomes?.map(({ status, note, title }) => ({ status, note, title })), [{ status: 'unresolved', note: null, title: 'A finding from an older grouping' }]);
   assert.equal(report.themes![0].validation, undefined);
   assert.deepEqual(report.study_count, { of: 1, supported: 0, contradicted: 0, unresolved: 0, not_studied: 1 }, 'it counts towards no finding');
   const markdown = reportToMarkdown(report);

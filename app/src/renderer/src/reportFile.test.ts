@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import tailwindcss from '@tailwindcss/vite';
 import { createServer } from 'vite';
-import type { Report } from '@gnomi/simulation/types.ts';
+import type { Report, ReportTheme } from '@gnomi/simulation/types.ts';
 import { HYPOTHESIS_BANNER } from '@gnomi/simulation/report/build.ts';
 import { comparisonFixture } from './comparisonReport.fixture.ts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { PRIORITY_NOTE } from '@gnomi/simulation/report/markdown.ts';
+import { PRIORITY_NOTE, reportToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 
 // Node cannot load TSX or CSS, so Vite transforms the export module as the app build does, Tailwind included.
 // The engine client in ui.tsx listens for its port when it loads, so it needs a window.
@@ -68,6 +68,39 @@ test('a 50-persona report with screenshots stays under 25 MB, leaving out screen
 test('the JSON export round-trips the report', async () => {
   const report = fixture(3, 2);
   assert.deepEqual(JSON.parse(await reportFile(report, 'json', thumbnails())), report);
+});
+
+test('every export leaves a hidden finding out whole, marks a reworded one, says how many, and carries no control', async () => {
+  const report = fixture(2, 1);
+  const [gone, kept] = report.frictions;
+  Object.assign(gone, { what: 'ZZHIDDEN what', expected: 'ZZHIDDEN expected', quote: 'ZZHIDDEN quote' });
+  const theme = (id: string, rank: number, title: string, friction: Report['frictions'][number], edit?: ReportTheme['edit']): ReportTheme => ({
+    id, poi_id: 'poi-gym', rank, title, description: `${id} ${edit?.hidden ? 'ZZHIDDEN ' : ''}description`, named_by: 'judge', trust: 'reported', severity: 3, score: 1, personas: 1, frictions: 1, pages: [], elements: [],
+    affected: [], seqs: [friction.seq], evidence: [{ ...friction, step_seq: 1, trust: 'reported', signals: [] }], suggestion: { change: `${id} change`, solution: `${id} solution` }, ...(edit ? { edit } : {}),
+  });
+  report.themes = [
+    theme('g1', 1, 'ZZHIDDEN title', gone, { hidden: true, new_title: null, new_description: null }),
+    theme('g2', 2, 'ZZORIGINAL title', kept, { hidden: false, new_title: 'Our title', new_description: null }),
+  ];
+  report.unmatched_edits = [{ title: 'ZZHIDDEN from an older grouping', hidden: true, new_title: null, new_description: null }];
+  for (const format of ['html', 'pdf', 'md', 'json'] as const) {
+    const file = await reportFile(report, format, thumbnails());
+    assert.ok(!file.includes('ZZHIDDEN'), `${format} has no trace of the hidden finding`);
+    assert.ok(!file.includes('ZZORIGINAL title'), `${format} has the team's words`);
+    assert.ok(file.includes('Our title') && file.includes('g2 description'), `${format} keeps the rest of the finding`);
+    if (format === 'json') {
+      const { shared, themes } = JSON.parse(file) as Report;
+      assert.deepEqual(shared, { hidden: 1, reworded: 1 });
+      assert.deepEqual(themes!.map((t) => [t.title, t.reworded, t.edit]), [['Our title', true, undefined]]);
+    } else {
+      assert.ok(file.includes('hid 1 finding from this copy and reworded 1 finding'), `${format} says so`);
+      assert.ok(file.includes('Reworded by the team'), `${format} marks it`);
+    }
+    if (format === 'html' || format === 'pdf') assert.doesNotMatch(file, /<(?:button|select|script)\b|Hide from exports|Reword for sharing/);
+  }
+  assert.ok((await reportFile(report, 'html', thumbnails())).includes('Left out of this copy'), 'a persona whose friction went with the finding does not read as having had none');
+  const plain = fixture(2, 1);
+  assert.equal(await reportFile(plain, 'md', thumbnails()), reportToMarkdown(plain), 'with nothing edited, an export is the report');
 });
 
 test('HTML exports escape untrusted report text and reject external or active thumbnail resources', async () => {
@@ -292,7 +325,7 @@ test("the HTML export shows a team's study outcome beside its finding, whose it 
   const finding = { id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge' as const, trust: 'reported' as const, severity: 3, score: 0, personas: 2, frictions: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, prevalence, category: 'friction' as const };
   report.themes = [{ ...finding, validation: { status: 'supported', note: 'Five of <six> stalled.', study_date: '2026-10-12', title: 'An older name' } }];
   report.study_count = { of: 1, supported: 1, contradicted: 0, unresolved: 0, not_studied: 0 };
-  report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away' }];
+  report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away', poi_id: 'poi-gym' }];
   report.study_plan = { screener: ['Do you hire?'], screener_dropped: 0, left_out: { objections: 0, competitors: 0, set_aside: 0, scan_only: 0, lower_ranked: 0 }, hypotheses: [{ title: 'Save does nothing', poi_id: 'poi-gym', tasks: ['Post a job.'], dropped: 0, observe: ['Watch the button.'] }] };
   const html = await reportFile(report, 'html', thumbnails());
   for (const text of ['Your team&#x27;s study, 12 Oct 2026: supported', 'Five of &lt;six&gt; stalled.', 'Recorded for &quot;An older name&quot;.', 'Of the top 1 finding, your team&#x27;s studies supported 1.', 'Merged away', 'Your team&#x27;s study, 2 Oct 2026: contradicted', 'Do not show them to participants', 'A model wrote this plan', 'Post a job.', 'Watch the button.', 'Kept apart from the simulated numbers above.']) {

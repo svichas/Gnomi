@@ -3,7 +3,7 @@ import type { AnalyticsResult } from './audience/analytics.ts';
 import type { FigmaFile, FigmaFrameRef, FigmaImport } from './figma/frames.ts';
 import type { ReportDiff } from '@gnomi/simulation/report/diff.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
-import type { StudyOutcome } from './workspace.ts';
+import type { FindingEdit, StudyOutcome } from './workspace.ts';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type {
   Audience,
@@ -122,6 +122,12 @@ export interface Api {
   plan_study: { params: { run_id: string }; result: null };
   /** What a team's own study found about a finding, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
   record_outcome: { params: StudyOutcome; result: null };
+  /** Hides a finding from exports or rewords it there, by theme id as the report shows it. Makes no model call. The report reloads on report.generated. */
+  edit_finding: { params: FindingEdit; result: null };
+  /** What ask_persona would cost: one call on the run's own navigator model. `cost_usd[1]` is the most it can spend. */
+  estimate_interview: { params: { run_id: string }; result: RunEstimate };
+  /** Spends money, so only a person's click calls it, for at most estimate_interview's high end, and one question at a time per run. The answer reaches clients as a persona.interviewed event. */
+  ask_persona: { params: { run_id: string; persona_id: string; question: string }; result: null };
   /** A run's screenshot (runs/…) or a project asset (assets/<id>). */
   get_blob: { params: { path: string }; result: { mime: string; base64: string } };
 }

@@ -92,6 +92,12 @@ export function describe(e: GnomiEvent): string {
       return `study plan for ${e.payload.themes.length} finding${e.payload.themes.length === 1 ? '' : 's'}`;
     case 'finding.validated':
       return `study outcome, ${e.payload.study_date}: ${e.payload.status} for "${e.payload.title}"`;
+    case 'persona.interviewed':
+      return `asked after the run: "${e.payload.question}"`;
+    case 'finding.hidden':
+      return `${e.payload.hidden ? 'hidden from exports' : 'back in exports'}: "${e.payload.title}"`;
+    case 'finding.edited':
+      return `${e.payload.new_title === null && e.payload.new_description === null ? 'wording back to the original' : 'reworded for exports'}: "${e.payload.title}"`;
     case 'comparison.episode_started':
       return `${e.payload.target_id}, ${e.payload.task_id}: position ${e.payload.order + 1}`;
     case 'comparison.episode_finished':

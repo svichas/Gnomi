@@ -28,7 +28,7 @@ const EVIDENCE = 3;
 const TITLE_MAX = 120;
 export const TEXT_MAX = 600; // also the judge schema's cap (models.ts), so a description the report keeps whole is never invalid
 // The navigator's handles on a page: half its characters, and nothing a suggestion should quote.
-const PAGE_MARKS = / \[(?:ref|box|cursor)=[^\]]*\]/g;
+export const PAGE_MARKS = / \[(?:ref|box|cursor)=[^\]]*\]/g;
 
 const tokens = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
 const clip = (text: string, max: number) => {

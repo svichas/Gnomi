@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { english, ENGLISH } from '../llm/english.ts';
 import type { LlmGateway, Recorder } from '../seams.ts';
-import type { EventOf, EventPayloads, GnomiEvent, Report, ReportStudyPlan, ReportTheme, RunConfig, StudyCount, StudyStatus, ThemeValidation } from '../types.ts';
+import type { EventOf, EventPayloads, GnomiEvent, Report, ReportStudyPlan, ReportTheme, RunConfig, StudyCount, StudyStatus, ThemeValidation, UnmatchedOutcome } from '../types.ts';
 import { themeByKeys } from './match.ts';
 import { authorThemes, rankOrder } from './themes.ts';
 
@@ -98,10 +98,10 @@ export function studyPlan({ answer, themes, left_out }: EventPayloads['report.st
   return {
     screener,
     screener_dropped: answer.screener.length - screener.length,
-    hypotheses: themes.map(({ id, title, poi_id }) => {
+    hypotheses: themes.map(({ id, title, poi_id, keys }) => {
       const drafted = answer.themes.find((t) => t.theme_id === id);
       const tasks = clean(drafted?.tasks ?? []);
-      return { title, poi_id, tasks, dropped: (drafted?.tasks.length ?? 0) - tasks.length, observe: drafted?.observe ?? [] };
+      return { title, poi_id, keys, tasks, dropped: (drafted?.tasks.length ?? 0) - tasks.length, observe: drafted?.observe ?? [] };
     }),
     left_out,
   };
@@ -109,22 +109,34 @@ export function studyPlan({ answer, themes, left_out }: EventPayloads['report.st
 
 const validationOf = ({ payload: { status, note, study_date, title } }: EventOf<'finding.validated'>): ThemeValidation => ({ status, note, study_date, title });
 
+type ThemeRecord = EventOf<'finding.validated' | 'finding.hidden' | 'finding.edited'>;
+
+/** What a record of a theme names it by: its keys, as ids change after a rejudge. */
+export const refOf = ({ poi_id, payload: { keys, category } }: ThemeRecord) => ({ keys, category, poi_id: poi_id ?? '' });
+
+/** Only the same keys make a correction, which replaces what it corrects; the newest come first. */
+export const latestByKeys = <E extends ThemeRecord>(records: E[]) => [...new Map(records.map((e) => [JSON.stringify([e.poi_id, [...e.payload.keys].sort()]), e])).values()].sort((a, b) => b.seq - a.seq);
+
 /**
- * Hands each theme its latest outcome and returns those with none to sit on. An outcome names a theme by its keys, as ids change after
- * a rejudge. Only the same keys make a correction, which replaces what it corrects; then the newest come first, each taking a theme of
- * its own while one is free, so a split theme keeps its outcome on one part. One left over overlaps at most a theme with a newer
- * outcome, which may be a study of another finding, so it stays in view.
+ * Hands each theme its latest outcome and returns those with none to sit on. Each takes a theme of its own while one is free, so a
+ * split theme keeps its outcome on one part. One left over overlaps at most a theme with a newer outcome, which may be a study of
+ * another finding, so it stays in view.
  */
-function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTheme[]): ThemeValidation[] {
-  const refOf = ({ poi_id, payload: { keys, category } }: EventOf<'finding.validated'>) => ({ keys, category, poi_id: poi_id ?? '' });
-  const latest = new Map(outcomes.map((e) => [JSON.stringify([e.poi_id, [...e.payload.keys].sort()]), e]));
-  const unmatched: ThemeValidation[] = [];
-  for (const outcome of [...latest.values()].sort((a, b) => b.seq - a.seq)) {
+function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTheme[]): UnmatchedOutcome[] {
+  const unmatched: UnmatchedOutcome[] = [];
+  for (const outcome of latestByKeys(outcomes)) {
     const theme = themeByKeys(refOf(outcome), themes.filter((t) => !t.validation));
     if (theme) theme.validation = validationOf(outcome);
-    else unmatched.push(validationOf(outcome));
+    else unmatched.push({ ...validationOf(outcome), ...refOf(outcome) });
   }
   return unmatched;
+}
+
+/** How the top of these themes stands with the team's studies. */
+export function studyCount(themes: ReportTheme[], competitors: Set<string>): StudyCount {
+  const top = topFindings(themes, competitors);
+  const counted = (status: StudyStatus) => top.filter((t) => t.validation?.status === status).length;
+  return { of: top.length, supported: counted('supported'), contradicted: counted('contradicted'), unresolved: counted('unresolved'), not_studied: top.filter((t) => !t.validation).length };
 }
 
 /** The newest plan and every recorded outcome, folded into the report. It writes only the new fields, and nothing simulated reads them. */
@@ -132,13 +144,11 @@ export function foldStudy(events: GnomiEvent[], themes: ReportTheme[], setAside:
   const planned = events.findLast((e): e is EventOf<'report.study'> => e.type === 'report.study');
   const outcomes = events.filter((e): e is EventOf<'finding.validated'> => e.type === 'finding.validated');
   const unmatched = foldOutcomes(outcomes, [...themes, ...setAside]);
-  const top = topFindings(themes, competitors);
-  const counted = (status: StudyStatus) => top.filter((t) => t.validation?.status === status).length;
-  const study_count: StudyCount = { of: top.length, supported: counted('supported'), contradicted: counted('contradicted'), unresolved: counted('unresolved'), not_studied: top.filter((t) => !t.validation).length };
+  const study_count = studyCount(themes, competitors);
   return {
     ...(planned ? { study_plan: { ...studyPlan(planned.payload), ...(events.some((e) => e.type === 'report.themes' && e.seq > planned.seq) && { outdated: true as const }) } } : {}),
     ...(unmatched.length > 0 ? { unmatched_outcomes: unmatched } : {}),
-    ...(outcomes.length > 0 && top.length > 0 ? { study_count } : {}),
+    ...(outcomes.length > 0 && study_count.of > 0 ? { study_count } : {}),
   };
 }
 

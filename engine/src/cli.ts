@@ -10,11 +10,12 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { audienceDeps, cappedGateway, checkRun, compareRuns, credential, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
-import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
+import { estimateInterview, estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
 import { describe } from '@gnomi/simulation/log/describe.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -22,6 +23,7 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, EDIT_WARNING, forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
 import { gateDecision, type GateDecision } from '@gnomi/simulation/report/gate.ts';
 import { diffToMarkdown, gateToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
@@ -57,8 +59,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       trait stripped to their segment, which no count of the set includes: a finding it matches may say more about the model than
       the audience. It needs --audience, and takes a share of the budget. A run that stops ends the set.
   runs <project dir>
-  report <project dir> [--run <run id> | --repeat <group>] [--format summary|md|json]
-      --repeat compares the runs of a repeat set; each run keeps its own report.
+  report <project dir> [--run <run id> | --repeat <group>] [--format summary|md|json] [--for-sharing]
+      --repeat compares the runs of a repeat set; each run keeps its own report. --for-sharing gives one run's copy for sharing, as
+      the app exports it: without the findings "edit" hid, with its wording, and saying how many it hid and reworded. Without it you
+      read what the run found.
   rerun <project dir> --base <run id> [--repeats <n>] [--url <poi id>=<url>]... [--fake-llm] [--headed]
       runs a finished run again with its frozen settings, personas and goal, under a new run id. --url gives a web point of interest
       a new address, such as a PR preview, and its host joins the allowed hosts. --repeats makes a set, as run does.
@@ -80,6 +84,16 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       records what your team's own study found about a finding. No model call. It changes no simulated number and stays with this
       run; record another to correct it, as the latest counts.
       ${NOTE_WARNING}
+  edit <project dir> --run <run id> --theme <theme id> (--hide | --show | --title <text> | --description <text> | --reset)
+      changes a finding for sharing only: runs/<run id>/report.json and report.md, "report" and every model keep the original. --hide
+      leaves it out of exports and --show puts it back. --title (up to ${EDIT_TITLE_MAX} characters) and --description (up to ${EDIT_DESCRIPTION_MAX}) reword it there, blank
+      going back to the original, and --reset puts both back. No model call. Numbers from the run cannot be edited.
+      ${EDIT_WARNING}
+  ask <project dir> --run <run id> --persona <persona id> --question "<text>" [--budget <usd>] [--fake-llm]
+      asks one persona of an ended run one question of up to ${QUESTION_MAX} characters, with one text-only call on the run's navigator model,
+      under rejudge's budget rule. The context comes from that persona's log, and earlier answers are not sent back. It stays in the log,
+      apart from every report, export and later model call. ${INTERVIEW_LABEL}
+      ${QUESTION_WARNING}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
@@ -116,7 +130,15 @@ const OPTIONS = {
   status: { type: 'string' },
   date: { type: 'string' },
   note: { type: 'string' },
+  hide: { type: 'boolean', default: false },
+  show: { type: 'boolean', default: false },
+  title: { type: 'string' },
+  description: { type: 'string' },
+  reset: { type: 'boolean', default: false },
+  persona: { type: 'string' },
+  question: { type: 'string' },
   format: { type: 'string', default: 'summary' },
+  'for-sharing': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
   'fake-llm': { type: 'boolean', default: false },
   headed: { type: 'boolean', default: false },
@@ -278,10 +300,11 @@ function summarize(report: Report) {
       name: poi.name,
       themes: (report.themes ?? []).filter((t) => t.poi_id === poi.id).sort((a, b) => a.rank - b.rank).slice(0, 5)
         // A scan-only theme's prevalence of 0 is not a count of those who met it, so it gives none.
-        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }) })),
+        .map((t) => ({ rank: t.rank, title: t.title, severity: t.severity, personas: t.scan_only ? null : t.prevalence?.personas ?? null, share: t.scan_only ? null : t.prevalence?.share ?? null, evidence: t.prevalence?.level ?? null, trust: t.trust, ...(t.scan_only && { scan_only: true }), ...(t.validation && { validation: t.validation }), ...(t.reworded && { reworded: true }) })),
     })),
     ...(report.study_count && { study_count: report.study_count }),
     ...(report.unmatched_outcomes && { unmatched_outcomes: report.unmatched_outcomes }),
+    ...(report.shared && { shared: report.shared }),
     sentiment: (report.sentiment ?? []).map(({ name, surveyed, sentiment, would_continue }) => ({ segment: name, surveyed, sentiment, would_continue })),
     cost_usd: report.cost_usd,
     duration_ms: report.duration_ms,
@@ -615,6 +638,8 @@ function pickRun(store: ProjectStore, v: Values, dir: string | undefined): RunRo
 
 function showReport(v: Values, dir: string | undefined): void {
   if (!['summary', 'md', 'json'].includes(v.format)) throw new Error('--format is summary, md or json.');
+  const sharing = v['for-sharing'];
+  if (sharing && v.repeat) throw new Error('--for-sharing is for one run\'s report, and --repeat lists every run\'s own titles.');
   const store = existingProject(dir);
   try {
     if (v.repeat) {
@@ -625,8 +650,12 @@ function showReport(v: Values, dir: string | undefined): void {
       return void console.log(json ? JSON.stringify({ kind: 'repeats', ...set }) : JSON.stringify(set, null, 2));
     }
     const run = pickRun(store, v, dir);
-    const report = buildReport(store.events(run.run_id));
-    if (v.format === 'md') return void console.log(reportToMarkdown(report, run.config.repeat && combineReports(repeatReports(store, run.config.repeat.group))));
+    const built = buildReport(store.events(run.run_id));
+    const report = sharing ? forSharing(built) : built;
+    if (v.format === 'md') {
+      const set = run.config.repeat && combineReports(repeatReports(store, run.config.repeat.group));
+      return void console.log(reportToMarkdown(report, set && sharing ? setForSharing(set, built) : set));
+    }
     const body = v.format === 'json' ? report : summarize(report);
     console.log(json ? JSON.stringify({ kind: 'report', format: v.format, report: body }) : JSON.stringify(body, null, 2));
   } finally {
@@ -772,6 +801,47 @@ async function outcome(v: Values, dir: string | undefined): Promise<void> {
   }
 }
 
+/** One navigator call on an ended run, under rejudge's refusals and budget rule. The other refusals are the app's too, so they live in askPersona. */
+async function ask(v: Values, dir: string | undefined): Promise<void> {
+  if (!v.run || !v.persona || v.question === undefined) throw new Error(`ask needs --run, --persona and --question.\n\n${USAGE}`);
+  // Writes new events, beside a run the app may have live.
+  const store = existingProject(dir, { recover: false });
+  try {
+    const fake = v['fake-llm'];
+    const run = modelRun(store, v.run, fake, 'asked about');
+    const { run_id, config } = run;
+    const settings = config.project.settings;
+    requireKey(settings, 'navigator', fake);
+    const log = store.events(run_id);
+    const budget = spendable(log, run_id, settings, v, 'ask');
+    const { cost_usd: [low, high] } = estimateInterview({ settings });
+    note(`One call to ${settings.routing.navigator.model}: about $${low.toFixed(2)}–${high.toFixed(2)}, with $${budget.toFixed(2)} to spend.`);
+    const record = timeline(store);
+    const llm = cappedGateway(projectGateway({ fake, secrets: envSecrets, config: config.project, record }), budget, stopOnSigint());
+    const answer = await askPersona({ store, blobs: createFsBlobStore(dir!), record }, run, v.persona, v.question, llm);
+    const cost_usd = spent(store.events(run_id).slice(log.length));
+    out(`${answer}\n\n${INTERVIEW_LABEL} ($${cost_usd.toFixed(4)})`, { kind: 'ask', run_id, persona_id: v.persona, question: v.question, answer, label: INTERVIEW_LABEL, cost_usd });
+  } finally {
+    store.close();
+  }
+}
+
+/** The refusals are the app's too, so they live in editFinding. */
+async function edit(v: Values, dir: string | undefined): Promise<void> {
+  const changes = [v.hide, v.show, v.title !== undefined, v.description !== undefined, v.reset].filter(Boolean).length;
+  if (!v.run || !v.theme || changes !== 1) throw new Error(`edit needs --run, --theme and exactly one of --hide, --show, --title, --description or --reset.\n\n${USAGE}`);
+  const store = existingProject(dir, { recover: false });
+  try {
+    const { run: run_id, theme: theme_id } = v;
+    const change = v.reset ? { title: '', description: '' } : v.title !== undefined || v.description !== undefined ? { title: v.title, description: v.description } : { hidden: v.hide };
+    const report = await editFinding({ store, blobs: createFsBlobStore(dir!), record: timeline(store) }, { run_id, theme_id, ...change });
+    const edited = [...(report.themes ?? []), ...(report.set_aside ?? [])].find((t) => t.id === theme_id)?.edit;
+    out(`${run_id}: ${theme_id} ${edited?.hidden ? 'hidden from exports' : 'in exports'}${edited?.new_title || edited?.new_description ? ', reworded there' : ''}`, { kind: 'edit', run_id, theme_id, hidden: edited?.hidden ?? false, new_title: edited?.new_title ?? null, new_description: edited?.new_description ?? null, ...reportFiles(dir!, run_id) });
+  } finally {
+    store.close();
+  }
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = args();
   json = values.json;
@@ -788,6 +858,8 @@ async function main(): Promise<void> {
   if (command === 'rejudge') return rejudge(values, sub);
   if (command === 'study') return study(values, sub);
   if (command === 'outcome') return outcome(values, sub);
+  if (command === 'edit') return edit(values, sub);
+  if (command === 'ask') return ask(values, sub);
   if (command === 'rerun') return rerun(values, sub);
   if (command === 'compare') return compare(values, sub);
   if (command === 'gate') return gate(values, sub);

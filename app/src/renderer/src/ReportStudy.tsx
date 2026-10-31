@@ -1,4 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react';
+import { forSharing } from '@gnomi/simulation/report/edits.ts';
 import { droppedText, leftOutText, NO_SCREENER, NO_TASKS, OUTCOME_NOTE, outcomeDetails, outcomeText, OUTDATED_PLAN, STUDY_WARNING, studyCountText, studyPlanToMarkdown, UNMATCHED_NOTE } from '@gnomi/simulation/report/markdown.ts';
 import { isTraitFree } from '@gnomi/simulation/report/repeats.ts';
 import { competitorsOf, localDate, NOTE_MAX, NOTE_WARNING, topFindings } from '@gnomi/simulation/report/study.ts';
@@ -93,10 +94,11 @@ function Plan({ plan }: { plan: ReportStudyPlan }) {
   );
 }
 
-/** The plan's words, as study-plan.md has them, so what is copied is what the CLI would hand over. */
+/** The plan's words, as study-plan.md has them, except that this leaves the app: what the team hid or reworded goes as in any export. */
 function PlanActions({ report, plan }: { report: ReportData; plan: ReportStudyPlan }) {
   const { busy, outcome, run } = useAction();
-  const markdown = studyPlanToMarkdown(report, plan);
+  const shared = forSharing(report);
+  const markdown = studyPlanToMarkdown(shared, shared.study_plan ?? plan);
   const copy = () => run(async () => { await navigator.clipboard.writeText(markdown); return { ok: true, text: 'Study plan copied.' }; });
   const save = () =>
     run(async () => {
@@ -112,22 +114,29 @@ function PlanActions({ report, plan }: { report: ReportData; plan: ReportStudyPl
   );
 }
 
-/** Spends money, so it says how much at most and waits for a click. */
-function PlanButton({ runId, again }: { runId: string; again: boolean }) {
-  const [estimate, setEstimate] = useState<RunEstimate | { error: string } | null>(null);
-  const { busy, outcome, run } = useAction();
+/** What one model call after a run can cost at most, in words, and whether it may run. Such a call spends money, so a control states this and waits for a click. */
+export function useCallCost(estimate: 'estimate_study' | 'estimate_interview', runId: string) {
+  const [result, setResult] = useState<RunEstimate | { error: string } | null>(null);
   useEffect(() => {
     let current = true;
-    call('estimate_study', { run_id: runId }).then(
-      (result) => current && setEstimate(result),
-      (err) => current && setEstimate({ error: errorText(err) }),
+    call(estimate, { run_id: runId }).then(
+      (value) => current && setResult(value),
+      (err) => current && setResult({ error: errorText(err) }),
     );
     return () => {
       current = false;
     };
-  }, [runId]);
-  const unpriced = estimate && !('error' in estimate) ? unpricedText(estimate) : null;
-  const cost = estimate === null ? 'Working out the cost…' : 'error' in estimate ? estimate.error : unpriced ?? `One model call. It costs at most ${usd(estimate.cost_usd[1])}, added to this run's cost.`;
+  }, [estimate, runId]);
+  const unpriced = result && !('error' in result) ? unpricedText(result) : null;
+  return {
+    cost: result === null ? 'Working out the cost…' : 'error' in result ? result.error : unpriced ?? `One model call. It costs at most ${usd(result.cost_usd[1])}, added to this run's cost.`,
+    ready: result !== null && !('error' in result) && unpriced === null,
+  };
+}
+
+function PlanButton({ runId, again }: { runId: string; again: boolean }) {
+  const { cost, ready } = useCallCost('estimate_study', runId);
+  const { busy, outcome, run } = useAction();
   const plan = () =>
     run(async () => {
       await call('plan_study', { run_id: runId }); // the plan arrives with the report, on report.generated
@@ -136,7 +145,7 @@ function PlanButton({ runId, again }: { runId: string; again: boolean }) {
   return (
     <div className="report-export">
       <div className="report-export-copy"><Icon name="spark" size={20} /><div><strong>{again ? 'Plan the study again' : 'Turn the top findings into a study'}</strong><p>{cost}</p></div></div>
-      <Button onClick={() => void plan()} loading={busy} disabled={estimate === null || 'error' in estimate || unpriced !== null}>{again ? 'Plan again' : 'Plan a study'}</Button>
+      <Button onClick={() => void plan()} loading={busy} disabled={!ready}>{again ? 'Plan again' : 'Plan a study'}</Button>
       <OutcomeNote outcome={outcome} />
     </div>
   );

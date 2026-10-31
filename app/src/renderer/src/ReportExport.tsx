@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { forSharing } from '@gnomi/simulation/report/edits.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import type { Report as ReportData } from '@gnomi/simulation/types.ts';
 import { REPORT_FORMATS } from '../../reports.ts';
@@ -10,6 +11,7 @@ import { Icon } from './Icon.tsx';
 export function ExportReport({ report, repeats }: { report: ReportData; repeats?: RepeatSet }) {
   const [format, setFormat] = useState<ReportFormat>('html');
   const { busy, outcome, run } = useAction();
+  const { shared } = forSharing(report);
   const save = () =>
     run(async () => {
       const { reportFile } = await import('./reportFile.tsx');
@@ -18,7 +20,7 @@ export function ExportReport({ report, repeats }: { report: ReportData; repeats?
     });
   return (
     <div className="report-export">
-      <div className="report-export-copy"><Icon name="report" size={20} /><div><strong>Keep a copy of the findings</strong><p>Export the full report with its simulation records.</p></div></div>
+      <div className="report-export-copy"><Icon name="report" size={20} /><div><strong>Keep a copy of the findings</strong><p>{shared ? `Exports leave out ${shared.hidden} hidden and use your wording for ${shared.reworded}, and the file says so.` : 'Export the full report with its simulation records.'}</p></div></div>
       <div className="report-export-actions">
         <select
           aria-label="Export format"

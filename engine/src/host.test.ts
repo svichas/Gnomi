@@ -124,6 +124,11 @@ test('a study plan and an outcome reach the app through report.generated, and a 
   const studied = await call('get_report', { run_id });
   assert.deepEqual(studied.themes![0].validation, { status: 'unresolved', note: 'Too few sessions.', study_date: '2026-10-12', title: report.themes![0].title });
   await assert.rejects(call('plan_study', { run_id: 'r-9999' }), /There is no run r-9999/);
+
+  await assert.rejects(call('edit_finding', { run_id, theme_id }), /Say what to change/);
+  await call('edit_finding', { run_id, theme_id, hidden: true, title: 'Our words' });
+  assert.equal(generated(), 4, 'an edit reaches the app the same way');
+  assert.deepEqual((await call('get_report', { run_id })).themes![0].edit, { hidden: true, new_title: 'Our words', new_description: null });
 });
 
 test('a second plan for a run is refused while the first is written, so leaving the report and clicking again cannot spend twice', async () => {
@@ -140,6 +145,32 @@ test('a second plan for a run is refused while the first is written, so leaving 
   assert.equal(plans(), 1, 'one call was paid for');
   await call('plan_study', { run_id });
   assert.equal(plans(), 2, 'the refusal ends with the plan');
+});
+
+test('a question costs at most its estimate, one at a time per run, and its answer reaches the app as an event', async () => {
+  const { id } = await call('import_asset', { text: '# Pricing\n\nStarter is $10 a month.', name: 'ask.md' });
+  await call('save_project', { project: project({}, { pois: [{ id: 'poi-text', type: 'text', name: 'Pricing', asset: id, segments: null }] }) });
+  const { run_id } = await call('start_run', { reset: false });
+  await new Promise<void>((resolve) => {
+    const poll = setInterval(() => events.some((e) => e.run_id === run_id && e.type === 'report.generated') && (clearInterval(poll), resolve()), 50);
+  });
+  const answers = () => events.filter((e) => e.run_id === run_id && e.type === 'persona.interviewed');
+  assert.equal(answers().length, 0, 'nothing is asked unasked');
+  const estimate = await call('estimate_interview', { run_id });
+  assert.deepEqual([estimate.calls, estimate.unpriced], [1, []]);
+  assert.ok(estimate.cost_usd[1] > estimate.cost_usd[0]);
+
+  const { personas: [{ id: persona_id }], ...before } = await call('get_report', { run_id });
+  const first = call('ask_persona', { run_id, persona_id, question: 'Why did you stop?' });
+  await assert.rejects(call('ask_persona', { run_id, persona_id, question: 'And again?' }), /still being answered/);
+  await first;
+  assert.equal(answers().length, 1, 'one call was paid for');
+  await call('ask_persona', { run_id, persona_id, question: 'And again?' });
+  assert.equal(answers().length, 2, 'the refusal ends with the answer');
+  await assert.rejects(call('ask_persona', { run_id, persona_id: 'nobody', question: 'Why?' }), /has no persona nobody/);
+  await assert.rejects(call('ask_persona', { run_id: 'r-9999', persona_id, question: 'Why?' }), /There is no run r-9999/);
+  const { personas: _, ...after } = await call('get_report', { run_id });
+  assert.deepEqual(after.themes, before.themes, 'no finding moves');
 });
 
 test('record_session refuses a role the session store cannot name, and a production target, before any browser opens', async () => {
