@@ -1,6 +1,6 @@
 # Gnomi — features roadmap
 
-*Status: in progress, updated 2026-10-30. See [Progress](#progress) for what is built. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
+*Status: in progress, updated 2026-10-31. See [Progress](#progress) for what is built. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
 
 ## Summary
 
@@ -59,16 +59,20 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 | 8. Which traits drive each issue | Built | Tests of each limit, and the report smoke test | Its proof: segment attribution on the Gym |
 | 10. Before/after comparison | Built | The M6 test passes on the real Gym with a scripted navigator: with D01, D14 and D16 switched off, exactly those three read as fixed. On the saved runs against the control build, all three themes read as fixed are real defects (D12, D13) | A live run. The 0.6 overlap for a duplicated run is unmeasured |
 | 11. CI gate | Built | Tests of every decision, each exit code through the real CLI, and the guide's commands run locally on `--fake-llm` | Neither GitHub workflow has run on GitHub. Two limits from theme clustering remain, listed under item 11 |
+| 12. Returning personas | Built | Scripted tests, a scripted `returning` arm, the report smoke test at 320 px, and a `--fake-llm` walk: the base run was recorded, the notice showed, and the gate could not decide against a first-use run | Whether returning personas behave like returning people. The scripted arm cannot show that |
+| 13. What-if social runs | Built | Scripted tests of pairing, every refusal, the left-out runs and the wording, the text and report smoke tests at 320 px, and a `--fake-llm` walk of three pairs | Whether a post's effect can be read above model noise is unmeasured |
+| 14. Ask a persona | Built | Tests that an answer changes no finding and reaches no later model call, the report smoke test, and a `--fake-llm` walk | No real model has answered, so whether "say you do not know" holds is unmeasured |
 | 15. Written summary | Built | Tests of ten report shapes, and the report smoke test | How it reads on real reports |
 | 16. Plain priority labels | Built | Tests of the rule, and the report smoke test | How the labels read on real reports |
 | 17. Drop-off flow | Built | Tests, plus the report smoke test at 320 px and in the HTML export | Usefulness on real logs is unmeasured |
 | 18. Findings on the screenshot | Built, for new runs | Real-browser tests put the box within 2 px of the element, on desktop, scrolled, on a phone, zoomed out and panned | Usefulness on real logs is unmeasured |
+| 19. Edit before sharing | Built | A no-leak test across HTML, Markdown and JSON, including a rejudge followed by a hide, the report smoke test at 320 px and in the exports, and a `--fake-llm` walk | Counts from the run can still include a hidden finding, by design. Other limits are listed under item 19 |
 | 20. Replay from step screenshots | Built | The report smoke test flips through steps by button and keyboard, at 320 px | Not tried with a real screen reader |
 | Block A: theme matching | Built | On the rebuilt M3 seeds, D03, D04, D13 and D18 match with no false pair | D12 does not match, and one false pair remains against the control build, now marked as weak in comparisons |
 | Block B: page text | Built, and the author now reads it | Unit tests, on scripted runs | Whether suggestions improve is unmeasured |
 | Block C: changes after a run has ended | Built | Scripted tests of each refusal, and `rejudge` behaves as before | None |
 
-Items 9, 12, 13, 14 and 19 have not started. All 1,325 tests pass on the branch, with typecheck and lint clean, and the Electron main, report, audience, text and UI smoke tests pass. No live run has used these changes. GitHub CI is blocked by a billing problem, so these checks ran locally. CI's smoke job now runs the report smoke test too, but that change has not run on Linux or GitHub.
+Item 9 has not started. It waits for `abandonment_rate` from the live baseline, because the 16 October data does not show that personas are too patient. All 1,427 tests pass on the branch, with typecheck and lint clean, and the Electron main, report, audience, text and UI smoke tests pass. No live run has used these changes. A default live evaluation now has two more arms than the 16 October one had, `grounded` and `returning`, and `returning` pays for its own first visit in each replicate, so it costs more. GitHub CI is blocked by a billing problem, so these checks ran locally. CI's smoke job now runs the report smoke test too, but that change has not run on Linux or GitHub.
 
 ## What "better results" means
 
@@ -443,6 +447,21 @@ Neither GitHub workflow in the guide has run on GitHub, and its cache limits wer
 
 **Risk.** Personas may anchor on their earlier opinion. Remembered complaints can also repeat in the new run, so treat them like heard posts and exclude them from first-hand counts.
 
+**Built**, through `gnomi rerun --returning`, `returning` on `duplicate_run` and an option in Run again that says prior knowledge can hide first-use problems. The memory reaches web, text and design POIs. It holds the persona's outcome, pages, own complaints, survey and opinion, within the limits in [odd.md](odd.md), and leaves out anything written with another persona's post in the prompt. Memory goes one visit deep, and a persona's own remembered repeats stay in the next memory.
+
+A report that repeats a complaint from the memory, matched on its group key, leaves first-hand counts and shows as "2 more reported it after remembering it from an earlier visit". A report backed by a browser signal stays first-hand, as it does for heard posts. A persona with both a remembered and a heard report counts once, under remembered.
+
+Each run's report, a repeat set and a study plan carry a notice, and `methods.prior` names the base. A returning side against a first-use side, or two returning sides with different bases, gives a note in a comparison and "could not decide" at the gate. A base that left no persona a memory is refused, because the notice would be false.
+
+The `returning` arm shows the pipeline works: prompts carry the memory, opinions start from the earlier run, and remembered complaints leave first-hand counts. It cannot show that returning personas behave like returning people.
+
+Four limits remain:
+
+- Group keys are coarse in both directions. A complaint repeated at another element reads as first-hand, and a new complaint that shares a key reads as a repeat.
+- A memory can still paraphrase another persona through a survey reason or a later uncited opinion, because the log cannot separate those. [odd.md](odd.md) says so.
+- A complaint cut by `PRIOR_FRICTIONS` is not in the prompt, so saying it again counts as a first report.
+- `gnomi runs` and the run history do not mark a run as returning.
+
 ### 13. What-if social runs
 
 **Why.** Artificial Societies sells this, and it builds on Gnomi's most distinctive layer: replay the social rounds with a different launch message or an injected complaint.
@@ -451,11 +470,32 @@ Neither GitHub workflow in the guide has run on GitHub, and its cache limits wer
 
 **Risk.** Spread is relative and uncalibrated ([tech.md §15](tech.md#15-known-limitations)), so this is the easiest feature here to over-read.
 
+**Built**, through `--what-if "<post>"` and `--what-if-round <n>` on `gnomi run` and `gnomi estimate`, and a What-if post option in the Review step. `--repeats N` gives N matched pairs, so 2N runs, and each pair shares one audience and seed. The seed also picks which run of a pair goes first and which persona the post stands under, per pair, so no number leans on one account's followers.
+
+The post is shown to the others as that persona's post, and the report names it as added by your team. It stays out of that persona's own feed and posts, and out of posters, second-hand counts and the first-hand check. Runs with the post are in no count, and `uncounted` replaces `isTraitFree` to cover them and trait-free runs. `report`, `rejudge` and `study` with no `--run` pass over them, and `study`, `rerun`, `compare` and `gate` refuse one.
+
+The result compares four numbers over pairs where both runs finished: people who posted, second-hand reach, mean opinion at the end and people who abandoned. It shows the mean difference, the interval from three pairs up, and the number of pairs, in `gnomi report --repeat <group>`. The app has no repeat-set page, so the result is a section on the report of each run in the set, and in its exports. Every result says: "Inside the simulator, adding this post moved these numbers. That does not establish a real-world effect. Spread is relative and uncalibrated."
+
+Four limits remain:
+
+- The post goes on the project's first own POI, because nothing lets a team choose. With several POIs the numbers are for that POI, except abandonment, which covers the whole run.
+- Influence edges in a run with the post still name the persona shown as its author, and the judge is not told the post is the team's. The judge's tag on it stays useful, because it is what marks a reader who repeats the post as heard.
+- A post the team added no longer has an author in the first-hand check. That also applies to the evaluation's injected complaint, so rebuilding an old harness log can give a slightly different `first_hand`. The live baseline has not run, so no published target moves.
+- The check for fewer than two personas reads the audience's size, so a project cut to one persona by hand passes it. The Review step hides the option in that case.
+
 ### 14. Ask a persona
 
 **Why.** UXAgent, Synthetic Users and Sybil-Swarm let people question a persona after the run. It helps a team explore why something happened, but the answer is a new generation and not a memory of a reason, so it does not make findings more correct.
 
 **How.** Personas are stateless functions of the log ([tech.md §6.1](tech.md#61-one-persona-one-agent-one-prompt-layout)), so an interview can rebuild context from the persona's events. Add `ask_persona` to `Api`, a `purpose: 'interview'` call on the navigator route, and a `persona.interviewed` event through Block C. Show it in [Inspector.tsx](../app/src/renderer/src/Inspector.tsx), labelled as generated after the run. Never feed answers into themes or counts.
+
+**Built**, through `gnomi ask`, `ask_persona` and `estimate_interview`, with answers in the inspector, each labelled every time as a new answer from the model and not a memory of why the persona acted. It is one text-only call on the run's own navigator route, capped at its estimate in the app and under `rejudge`'s budget rule in the CLI. A second question for a run is refused while the first is being answered.
+
+The context is rebuilt from the log and clipped to `INTERVIEW_CONTEXT_MAX`, oldest first, and it says so when clipped. A returning persona's record opens with its memory, because the prompt says it has no memory beyond that record. Each question stands alone, so an answer cannot build on an earlier one.
+
+No fold reads an answer, so it reaches no theme, count, summary, study plan or later model call. Answers are left out of the HTML, PDF, Markdown and JSON exports and `report.md`, because a reader of a file could take one for a finding. A question's cost counts in the run's cost, but its model stays out of `methods.models`, so asking cannot add a model gap to a comparison or the gate.
+
+The app's cap is one line of wiring around `cappedGateway`. `cappedGateway` has its own tests, but nothing tests that line, and the same is true of `plan_study`. `INTERVIEW_OUTPUT_TOKENS` has not been tried on a model that always thinks.
 
 ## Tier 4: reading the results
 
@@ -488,6 +528,20 @@ Add `box` to `ReportEvidence` and draw it over the screenshot in `Evidence`. Ste
 ### 19. Edit before sharing
 
 Add `finding.hidden` and `finding.edited` events through Block C, keyed by Block A. Apply them to exports only, and keep the original visible in the app, so the log stays truthful. Mark an exported report as edited.
+
+**Built**, through `gnomi edit`, `gnomi report --for-sharing` and `ReportEdit.tsx`. The pure `forSharing` in [report/edits.ts](../simulation/src/report/edits.ts) makes the shared copy, and all four app exports, Copy the plan and Export the plan go through it. `report.json` gains only optional fields, and `report.md` does not change. Edits reach no model, repeat set, comparison or gate.
+
+A shared copy always says how many findings the team hid and reworded, and nothing the team can do removes that line. When a finding is hidden, the written summary says "the biggest problem left in this copy" rather than making a claim about the run.
+
+Hides fold key by key, so one hidden key hides its theme after a rejudge splits or merges it. An edit that shares no key with any theme is listed in the app, which says that finding is back in exports. Hide, reword and reset all survive a rejudge in the tests.
+
+Five limits remain:
+
+- Only what belongs to the finding is removed. Coverage counts, flows and rates still include it, and a persona's other words, such as a later step's thought, can touch the same problem.
+- An evidence quote shared with a kept finding is blanked there too, so hiding one objection can blank the quote on others from the same survey.
+- `report.md` and `study-plan.md` on disk keep the originals, a study plan still covers a hidden finding, and `rerun --returning` still remembers one. All three are by design.
+- A reset, followed by a rejudge that changes which part ranks first on a tie, can bring an older rewording back on the other part.
+- The warning hints under the app's edit and question fields have no test.
 
 ### 20. Replay from step screenshots
 
