@@ -630,8 +630,8 @@ function listRuns(dir: string | undefined): void {
 /** --run, or the newest run in the counts: a set's trait-free control or what-if run is no report on the audience, so only a named run reaches it. */
 function pickRun(store: ProjectStore, v: Values, dir: string | undefined): RunRow {
   const runs = store.listRuns(); // newest first
-  const run = v.run ? runs.find((r) => r.run_id === v.run) : (runs.find((r) => !uncounted(r.config)) ?? runs[0]);
-  if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : `${dir} has no runs yet.`);
+  const run = runs.find((r) => (v.run ? r.run_id === v.run : !uncounted(r.config)));
+  if (!run) throw new Error(v.run ? `There is no run ${v.run} in ${dir}.` : runs.length ? `${dir} has no run in the counts: name one with --run.` : `${dir} has no runs yet.`);
   return run;
 }
 

@@ -262,6 +262,7 @@ export interface Report {
   went_well?: ReportLike[];
   comparisons?: ReportComparison[]; // competitor POIs compared with the team's product; only in runs with such answers
   spread?: ReportSpread[]; // M4 opinion spread per POI; only in runs with social posts
+  end_opinions?: Record<string, number>; // POI id → mean opinion at the end, whether or not anyone posted; only in the runs of a what-if set
   buyers?: ReportBuyers[]; // M5 buying survey per POI and segment; only in runs where a buyer answered one
   flows?: ReportFlow[]; // the team's own web POIs with a step; absent in older reports
   study_plan?: ReportStudyPlan; // the newest plan; only once one was made

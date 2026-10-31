@@ -78,10 +78,11 @@ export function pairedDifference(arm: (number | null)[], baseline: (number | nul
 }
 
 /** What a what-if compares, from what each report already has on the post's POI. Never themes: the two runs of a pair name them apart. */
-const WHAT_IF_NUMBERS: { id: WhatIfNumber['id']; label: string; read(run: Report, about: ReportSpread | undefined): number | null }[] = [
+const WHAT_IF_NUMBERS: { id: WhatIfNumber['id']; label: string; read(run: Report, about: ReportSpread | undefined, poi_id: string): number | null }[] = [
   { id: 'posted', label: 'People who posted', read: (_, about) => about?.posters?.length ?? 0 }, // a run nobody posted in has no spread
   { id: 'second_hand', label: 'Second-hand reach: posted without meeting a problem first-hand', read: (_, about) => about?.second_hand.length ?? 0 },
-  { id: 'opinion', label: 'Mean opinion at the end, -2 to +2', read: (_, about) => about?.sentiment.at(-1)?.mean ?? null },
+  // Not from the spread: the post gives its own run one, so a pair would drop exactly when the run without the post was quiet.
+  { id: 'opinion', label: 'Mean opinion at the end, -2 to +2', read: (run, _, poi_id) => run.end_opinions?.[poi_id] ?? null },
   { id: 'abandoned', label: 'People who abandoned', read: (run) => run.personas.filter((persona) => persona.outcome === 'abandoned').length },
 ];
 
@@ -95,7 +96,7 @@ function whatIfResult(reports: Report[], { text, round, poi_id }: WhatIf, of: nu
     round,
     pairs: pairs.length,
     of,
-    numbers: WHAT_IF_NUMBERS.map(({ id, label, read }) => ({ id, label, ...pairedDifference(pairs.map(({ added }) => read(added, about(added))), pairs.map(({ without }) => read(without, about(without)))) })),
+    numbers: WHAT_IF_NUMBERS.map(({ id, label, read }) => ({ id, label, ...pairedDifference(pairs.map(({ added }) => read(added, about(added), poi_id)), pairs.map(({ without }) => read(without, about(without), poi_id))) })),
     note: WHAT_IF_NOTE,
   };
 }
@@ -139,8 +140,10 @@ export function combineReports(reports: Report[], live = false): RepeatSet {
   const compared = runs.filter((report) => report.status === 'finished');
   const repeat = reports[0]?.repeat;
   const of = repeat ? plannedRuns(repeat) : reports.length;
+  // A what-if set's runs with the post are in no count, but the set goes on through them.
+  const [going, planned] = repeat?.what_if ? [reports, repeat.of] : [runs, of];
   // `live` only bridges the gap between two runs: the host holds a set until its last report is written, long after its runs say it is over.
-  const running = runs.some((report) => report.status === 'running') || (live && compared.length === runs.length && runs.length < of);
+  const running = going.some((report) => report.status === 'running') || (live && going.every((report) => report.status === 'finished') && going.length < planned);
   const clusters = clusterThemes(compared).sort((a, b) => b.members.length - a.members.length || a.first.rank - b.first.rank);
   const control = reports.find((report) => uncounted(report) === 'trait_free' && report.status === 'finished');
   // One shared key is often chance, and this note must not lean on chance. Against each cluster's first theme, as clusterThemes matches runs: a miss only leaves the note out.

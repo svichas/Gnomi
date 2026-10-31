@@ -30,6 +30,14 @@ export function sentimentByRound(opinions: Opinion[], rounds: number, who: Set<s
   });
 }
 
+/** Each POI's mean opinion at the end of the run. The spread list has only POIs with posts; this needs none, so a quiet run has one too. */
+export function endOpinions(events: GnomiEvent[]): Record<string, number> {
+  const opinions = events.filter((e): e is Opinion => e.type === 'persona.opinion_changed' && e.persona_id !== null);
+  const rounds = events.reduce((max, e) => Math.max(max, e.round), 1);
+  const pois = [...new Set(opinions.map((e) => e.payload.poi_id))];
+  return Object.fromEntries(pois.map((poi_id) => [poi_id, sentimentByRound(opinions.filter((e) => e.payload.poi_id === poi_id), rounds, null).at(-1)!.mean!]));
+}
+
 /** Seeds, first- and second-hand personas, posters, readers and the segments they are in, influence and sentiment for one set of posts. */
 function statsOf(talk: Post[], firstHand: Set<string>, shown: Map<string, Set<string>>, edges: InfluenceEdge[], sentiment: SpreadStats['sentiment'], ctx: Context): SpreadStats {
   const firstRound = Math.min(...talk.map((p) => p.round));

@@ -303,3 +303,19 @@ test('a post the team added is named as such, in any round, and counts for nobod
   assert.deepEqual(withPost.personas, without.personas);
   assert.match(reportToMarkdown(withPost), /- Post added by your team, shown as Abe's, round 2: "Saving a job fails for everyone\." \(#\d+\)/);
 });
+
+test('a what-if run has each POI\'s mean opinion at the end though nobody posted, and no other report gains the field', () => {
+  const build = (repeat?: RunConfig['repeat']) => {
+    const { events, record } = recorder();
+    record({ ...at(1, null), poi_id: null, type: 'run.started', payload: { config: { ...config, repeat } } });
+    for (const p of POPULATION) record({ ...at(1, p.id), type: 'persona.created', payload: { persona: p } });
+    record({ ...at(1, 'a1'), type: 'persona.opinion_changed', payload: changed(null, -2) });
+    record({ ...at(1, 'a2'), type: 'persona.opinion_changed', payload: changed(null, 1) });
+    record({ ...at(3, 'a1'), type: 'persona.opinion_changed', payload: changed(-2, 0) });
+    return buildReport(events);
+  };
+  const report = build({ group: 'g', index: 1, of: 2, what_if: { pair: 1, post: false, text: 'A post.', round: 1, poi_id: 'poi' } });
+  assert.equal(report.spread, undefined, 'no post, so no spread');
+  assert.deepEqual(report.end_opinions, { poi: 0.5 }, 'each persona\'s latest');
+  assert.equal('end_opinions' in build(), false);
+});

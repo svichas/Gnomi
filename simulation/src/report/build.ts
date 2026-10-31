@@ -7,7 +7,7 @@ import { buildComparison } from './comparison.ts';
 import { buildCoverage } from './coverage.ts';
 import { buildDimensions, reportAttributes, themeDrivers } from './dimensions.ts';
 import { buildFlow } from './flow.ts';
-import { buildSpread, homogeneity } from './spread.ts';
+import { buildSpread, endOpinions, homogeneity } from './spread.ts';
 import { foldStudy } from './study.ts';
 import { buyerResults } from './buyers.ts';
 import { stepEvidence, stepReader } from './friction.ts';
@@ -343,6 +343,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     went_well: competitors.size ? wentWell(ours, ctx) : analysis.went_well,
     ...(comparisons.length ? { comparisons } : {}),
     ...(social ? { spread: buildSpread(events, ctx, analysis.themes, analysis.tagged ?? new Map(), new Map(pois.map((poi) => [poi.id, poi.name])), analysis.set_aside) } : {}),
+    ...(config.repeat?.what_if ? { end_opinions: endOpinions(events) } : {}),
     ...(buyers.length > 0 ? { buyers } : {}),
     ...(flows.length > 0 ? { flows } : {}),
     ...foldStudy(events, analysis.themes, analysis.set_aside ?? [], competitors),

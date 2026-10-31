@@ -685,6 +685,7 @@ test('--what-if runs matched pairs: the post reaches feeds in one run of each, a
   assert.deepEqual([done.kind, done.of, done.compared, done.incomplete, done.run_ids.length], ['repeats', pairs, pairs, false, pairs * 2]);
   assert.deepEqual([done.what_if.post, done.what_if.round, done.what_if.pairs, done.what_if.of, done.what_if.numbers.map((n: { id: string }) => n.id)], [post, 1, pairs, pairs, ['posted', 'second_hand', 'opinion', 'abandoned']]);
   assert.match(done.what_if.note, /does not establish a real-world effect/);
+  assert.equal(done.what_if.numbers.find((n: { id: string }) => n.id === 'opinion').n, pairs, 'the scripted runs without the post have no posts, and their pairs stay');
   assert.ok(out.some((line) => line.kind === 'note' && /Estimate for 4 personas in \d+ runs/.test(line.text)));
   assert.ok(pairs >= 3 || out.some((line) => line.kind === 'note' && /no interval/.test(line.text)));
 
@@ -719,6 +720,16 @@ test('--what-if runs matched pairs: the post reaches feeds in one run of each, a
   assert.match(cli('study', project), new RegExp(`${newestCounted} study plan: `), 'study passes it over too');
   assert.match(cli('rejudge', project), new RegExp(`${newestCounted} judged again`), 'and so does rejudge');
   assert.match(refused('study', project, '--run', added[0]).stderr, /is a what-if run, with a post your team added/);
+  // The seed can put the post first and a run that stops ends the set, which leaves a project like this one.
+  const lone = join(dir, 'what-if-lone');
+  cli('run', ...base, '--project', lone, '--repeats', '1', ...plan);
+  const loneDb = new DatabaseSync(join(lone, 'project.sqlite'), { enableForeignKeyConstraints: false });
+  const [loneAdded, loneWithout] = (loneDb.prepare('SELECT id, snapshot_json FROM run').all() as { id: string; snapshot_json: string }[]).sort((a, b) => Number(JSON.parse(b.snapshot_json).repeat.what_if.post) - Number(JSON.parse(a.snapshot_json).repeat.what_if.post)).map(({ id }) => id);
+  loneDb.prepare('DELETE FROM run WHERE id = ?').run(loneWithout);
+  loneDb.close();
+  for (const command of ['report', 'rejudge', 'study']) assert.match(refused(command, lone).stderr, /has no run in the counts: name one with --run/, `${command} never lands on it by default`);
+  assert.equal(JSON.parse(cli('report', lone, '--run', loneAdded, '--json')).report.run_id, loneAdded, 'a named run still reaches it');
+
   assert.match(refused('rerun', project, '--base', added[0]).stderr, /is a what-if run, with a post your team added/);
   assert.match(refused('compare', project, '--base', added[0], '--run', counted[0]).stderr, /is a what-if run, with a post your team added/);
   assert.equal(refused('gate', project, '--base', added[0], '--run', counted[0]).status, 2, 'a gate cannot decide on it');

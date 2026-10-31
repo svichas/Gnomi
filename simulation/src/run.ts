@@ -431,8 +431,13 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
     if (!beginStep()) return null;
     try {
       const post_ids = feed.map((p) => p.post_id);
+      // A post the team added in this persona's name was never its own, and a reply must not tell it otherwise.
+      const parentOf = ({ parent_id }: FeedPost) => {
+        const parent = parent_id ? posts.get(parent_id) : undefined;
+        return parent?.injected && parent.author === persona.id ? undefined : parent;
+      };
       // A reply shows its parent's text too, so the parent reached the persona as well.
-      const parent_ids = [...new Set(feed.flatMap((p) => (p.parent_id && posts.has(p.parent_id) ? [p.parent_id] : [])))];
+      const parent_ids = [...new Set(feed.flatMap((p) => parentOf(p)?.post_id ?? []))];
       record({ ...base, persona_id: persona.id, type: 'social.feed_viewed', payload: { post_ids, parent_ids } });
       const opinionOf = (poi_id: string) => opinions.get(JSON.stringify([persona.id, poi_id])) ?? null;
       const pois = assigned.get(persona.id)!;
@@ -461,8 +466,8 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
           pois: pois.map((poi) => ({ name: poi.name, opinion: opinionOf(poi.id) })),
           posted: own.flatMap((e) => (e.type === 'social.post' && !e.payload.injected ? [e.payload.text] : [])), // a post the team added was never this persona's
           feed: feed.map((p) => {
-            const { post_id, author, text, agree, disagree, parent_id } = p;
-            const parent = parent_id ? posts.get(parent_id) : undefined;
+            const { post_id, author, text, agree, disagree } = p;
+            const parent = parentOf(p);
             return { post_id, author: name(author), about: about(p.about_poi_id), text, agree, disagree, parent: parent ? { author: name(parent.author), text: parent.text } : null };
           }),
         }),

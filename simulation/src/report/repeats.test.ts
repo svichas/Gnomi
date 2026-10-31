@@ -175,12 +175,12 @@ const figures = (posted: number, second_hand: number, opinion: number | null, ab
 function side(pair: number, post: boolean, pairs: number, { posted, second_hand, opinion, abandoned }: ReturnType<typeof figures>, themes: ReportTheme[] = [], over: Partial<Report> = {}) {
   const index = (pair - 1) * 2 + (post ? 2 : 1);
   const spread = [
-    { poi_id: 'other', posters: ['x'], second_hand: ['x'], sentiment: [{ round: 1, mean: 2, personas: 1 }] },
-    { poi_id: 'web', posters: Array.from({ length: posted }, (_, i) => `p${i}`), second_hand: Array.from({ length: second_hand }, (_, i) => `p${i}`), sentiment: [{ round: 1, mean: 2, personas: 2 }, { round: 2, mean: opinion, personas: 2 }] },
+    { poi_id: 'other', posters: ['x'], second_hand: ['x'] },
+    { poi_id: 'web', posters: Array.from({ length: posted }, (_, i) => `p${i}`), second_hand: Array.from({ length: second_hand }, (_, i) => `p${i}`) },
   ] as unknown as ReportSpread[];
   return run(index, themes, {
     repeat: { group: 'set-a', index, of: pairs * 2, what_if: { pair, post, text: POST, round: 2, poi_id: 'web' } },
-    spread, personas: Array.from({ length: 4 }, (_, i) => ({ outcome: i < abandoned ? 'abandoned' : 'done' })) as Report['personas'], ...over,
+    spread, end_opinions: { other: 2, ...(opinion === null ? {} : { web: opinion }) }, personas: Array.from({ length: 4 }, (_, i) => ({ outcome: i < abandoned ? 'abandoned' : 'done' })) as Report['personas'], ...over,
   });
 }
 /** Pairs as [without, with]. */
@@ -225,19 +225,42 @@ test('three pairs give an interval, and differences that never vary give the not
   assert.match(repeatsToMarkdown(set), /\| Mean opinion at the end, -2 to \+2 \| \+1\.00 \| no variation \| 3 \|/);
 });
 
-test('a stopped run drops its pair, and a run nobody posted in counts as nobody, with no opinion to compare', () => {
+test('a stopped run drops its pair, a run nobody posted in counts as nobody, and its opinion still counts', () => {
   const reports = whatIfSet([[figures(1, 0, 0), figures(2, 0, 1)], [figures(1, 0, 0), figures(9, 9, 9)], [figures(1, 0, 0), figures(3, 0, 1)]]);
   const stopped = reports.map((report) => (report.run_id === 'r-4' ? { ...report, status: 'stopped' as const } : report));
   const set = combineReports(stopped);
   assert.deepEqual([set.what_if!.pairs, set.what_if!.of, numbers(set).posted.n, numbers(set).posted.mean], [2, 3, 2, 1.5], 'the pair without its other half says nothing');
   assert.deepEqual([set.compared, set.of, set.incomplete], [3, 3, false], 'its ordinary run still counts');
-  assert.match(repeatsToMarkdown(set), /2 of 3 pairs finished; a pair with a stopped run is left out\./);
+  assert.match(repeatsToMarkdown(set), /2 of 3 pairs finished; a pair with a run still going or stopped is left out\./);
 
   const none = combineReports(reports.slice(0, 1));
   assert.deepEqual([none.what_if!.pairs, numbers(none).posted.mean, numbers(none).posted.note], [0, null, 'no pairs']);
 
-  const silent = combineReports([{ ...side(1, false, 1, figures(0, 0, null)), spread: undefined }, side(1, true, 1, figures(2, 1, 1))]);
-  assert.deepEqual([numbers(silent).posted.mean, numbers(silent).second_hand.mean, numbers(silent).opinion.n, numbers(silent).opinion.note], [2, 1, 0, 'no pairs']);
+  // The post itself gives its run a spread, so reading opinions there would keep only the pairs whose baseline swarm talked.
+  const silent = combineReports([{ ...side(1, false, 1, figures(0, 0, -1)), spread: undefined }, side(1, true, 1, figures(2, 1, 1))]);
+  assert.deepEqual([numbers(silent).posted.mean, numbers(silent).second_hand.mean, numbers(silent).opinion.n, numbers(silent).opinion.mean], [2, 1, 1, 2]);
+
+  const unformed = combineReports([side(1, false, 1, figures(0, 0, null)), side(1, true, 1, figures(2, 1, 1))]);
+  assert.deepEqual([numbers(unformed).opinion.n, numbers(unformed).opinion.note], [0, 'no pairs'], 'only a run where nobody holds an opinion has none');
+});
+
+test('a what-if set is going while any of its runs is, the runs with the post too, though they are in no count', () => {
+  const without = (pair: number) => side(pair, false, 2, figures(1, 0, 0));
+  const added = (pair: number, over: Partial<Report> = {}) => side(pair, true, 2, figures(2, 0, 1), [], over);
+  const state = (set: ReturnType<typeof combineReports>) => [set.compared, set.running, set.incomplete];
+  const running = { status: 'running' as const };
+  for (const live of [false, true]) {
+    // The seed puts the post first in about half the pairs, so a run with it is often the one in flight.
+    const inFlight = combineReports([without(1), added(1), added(2, running)], live);
+    assert.deepEqual(state(inFlight), [1, true, false]);
+    assert.match(repeatsToMarkdown(inFlight), /1 of 2 runs finished so far\./);
+    const last = combineReports([without(1), added(1), without(2), added(2, running)], live);
+    assert.deepEqual(state(last), [2, true, false], 'its counted runs are done, the set is not');
+    assert.match(repeatsToMarkdown(last), /2 of 2 runs finished so far\..*1 of 2 pairs finished; a pair with a run still going or stopped is left out\./s);
+    assert.deepEqual(state(combineReports([without(1), added(1), without(2), added(2)], live)), [2, false, false], 'over');
+  }
+  assert.deepEqual(state(combineReports([without(1), added(1), without(2)], true)), [2, true, false], 'the holder bridges the gap before a last run with the post');
+  assert.deepEqual(state(combineReports([without(1), added(1, { status: 'stopped' })], true)), [1, false, true], 'a run that stops ends the set, even one in no count');
 });
 
 test('the result carries its limits every time, in every form, and promises nothing', () => {

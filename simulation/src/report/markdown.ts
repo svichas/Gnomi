@@ -149,7 +149,7 @@ export const WHAT_IF_COLUMNS = ['Number', 'Mean difference, with the post minus 
 export const whatIfCells = ({ mean, lower, upper, note, n }: WhatIfNumber) => [mean === null ? '-' : signed(mean), lower === null || upper === null ? note! : `${signed(lower)} to ${signed(upper)}`, String(n)];
 
 /** Where the post stood and how many pairs count. */
-export const whatIfText = ({ round, pairs, of }: WhatIfResult) => `Added by your team in round ${round}, shown to the others as one persona's post, which it never wrote. ${pairs} of ${count(of, 'pair')} finished; a pair with a stopped run is left out.`;
+export const whatIfText = ({ round, pairs, of }: WhatIfResult) => `Added by your team in round ${round}, shown to the others as one persona's post, which it never wrote. ${pairs} of ${count(of, 'pair')} finished; a pair with a run still going or stopped is left out.`;
 
 function whatIfLines(whatIf: WhatIfResult): string[] {
   return [
