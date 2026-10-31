@@ -153,6 +153,7 @@ export function repeatsToMarkdown(set: RepeatSet): string {
   return [
     `# Gnomi repeat set ${set.group ?? ''}`.trimEnd(), '',
     `> ${setNote(set)}`, '',
+    ...(set.prior ? [`> ${priorNotice(set.prior)}`, ''] : []),
     `Model families: ${set.families.map(line).join(', ') || 'none'}.`, '',
     '| Finding | Appeared in | Model families | Also named |',
     '| --- | --- | --- | --- |',

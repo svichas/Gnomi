@@ -144,6 +144,7 @@ export interface ReportTheme {
   heard_first?: number; // personas who reported it only after a feed showed them a post about it; absent before echo counting
   remembered?: number; // personas who only repeated what they complained of on an earlier visit, beside heard_first, never in both; absent with none
   first_hand?: string[]; // the persona ids counted in prevalence; absent before it was stored
+  echoed?: number[]; // the first seq of each member report that may hold another persona's words, which a memory of this run leaves out (report/prior.ts); absent with none
   scan_only?: true; // found by the page scan alone: its prevalence of 0 says no persona reported it, not that none met it
   trust: Trust; // the highest among member frictions
   trust_counts?: Record<Trust, number>; // member frictions per trust; absent in older reports

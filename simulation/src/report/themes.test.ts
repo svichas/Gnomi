@@ -272,7 +272,7 @@ test('echoes: a report after a feed showed a post about the theme is heard first
   };
   assert.deepEqual(counts([...social, judged]), [3, 2, 1, 'some', false], 'by the judge’s tags');
   assert.deepEqual(counts(social), [3, 2, 1, 'some', false], 'by the heard ids, without the judge');
-  const unrecorded = social.map((e) => (e.type === 'persona.step' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
+  const unrecorded = social.map((e) => (e.type === 'persona.step' || e.type === 'persona.friction_reported' ? { ...e, payload: { ...e.payload, heard_post_ids: undefined } } : e)) as GnomiEvent[];
   assert.deepEqual(counts(unrecorded), [3, 3, 0, 'strong', true], 'neither: every report counts, and the report says so');
   const taggedNothing = { ...judged, payload: { ...judged.payload, posts: [] } } as GnomiEvent;
   assert.deepEqual(counts([...social, taggedNothing]), [3, 2, 1, 'some', false], 'a judge that tagged nothing leaves the heard ids in charge');
@@ -668,6 +668,19 @@ test('a persona who both remembered a complaint and read about it counts once, u
   );
   const { themes: [theme] } = analyseFrictions(events, ctx);
   assert.deepEqual([theme.first_hand, theme.remembered, theme.heard_first, theme.personas], [['a1'], 1, 1, 3], 'a2 once, a3 by the feed: 1 + 1 + 1 = 3');
+});
+
+test('a report\'s own heard posts count for it when its step\'s do not, as a design\'s friction on an earlier frame, and it is marked as an echo', () => {
+  const events = log(
+    ['persona.step', 'a1', step(1)],
+    ['persona.friction_reported', 'a1', friction(1, 3)],
+    ['social.post', 'a1', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'poi' }],
+    ['persona.step', 'a2', step(2)],
+    ['persona.friction_reported', 'a2', { ...friction(2, 3), heard_post_ids: ['p1'] }],
+  );
+  const { themes: [theme] } = analyseFrictions(events, ctx);
+  assert.deepEqual([theme.first_hand, theme.heard_first], [['a1'], 1]);
+  assert.deepEqual(theme.echoed, [events.find((e) => e.type === 'persona.friction_reported' && e.persona_id === 'a2')!.seq]);
 });
 
 test('a log with no prior counts as it always did, and has no remembered field to show', () => {

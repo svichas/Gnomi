@@ -168,3 +168,14 @@ test('a run marked with no trait-free index is an ordinary run, on old logs and 
   assert.deepEqual(Object.keys(combineReports([run(1, [save], { of: 1 })])).sort(), ['compared', 'families', 'findings', 'group', 'incomplete', 'of', 'running'], 'a set without it has no new field');
   assert.equal('trait_free' in combineReports([run(1, [save], { of: 1 })]).findings[0], false);
 });
+
+test('a returning set names the run its personas remember, in Markdown and JSON, and any other set says nothing of it', () => {
+  const prior = { run_id: 'r-0', fresh: 1 };
+  const returning = (index: number) => run(index, [theme('g1', 'Save does nothing', ['save'])], { methods: { models: { navigator: ANTHROPIC }, prior } } as never);
+  const set = combineReports([returning(1), returning(2), returning(3)]);
+  assert.deepEqual(set.prior, prior);
+  assert.match(repeatsToMarkdown(set), /> These personas used the product before, in r-0, so this run says little about first use\. 1 persona had no earlier visit/);
+  const plain = combineReports([run(1, [theme('g1', 'Save does nothing', ['save'])])]);
+  assert.equal('prior' in plain, false);
+  assert.doesNotMatch(repeatsToMarkdown(plain), /used the product before/);
+});

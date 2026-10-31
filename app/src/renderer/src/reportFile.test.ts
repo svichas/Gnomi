@@ -200,6 +200,16 @@ test('the share says who read about it first, trust shows its mix, and a competi
   assert.ok(html.includes('1 confirmed, 3 reported'));
 });
 
+test('a finding nobody met first-hand does not say everyone read about it, when they remembered it', async () => {
+  const report = fixture(1, 1);
+  report.themes = [{
+    id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Theme remembered', description: '', named_by: 'judge', trust: 'reported', severity: 3, score: 0, personas: 2, frictions: 2, heard_first: 0, remembered: 2,
+    pages: [], elements: [], affected: [], evidence: [], seqs: [], suggestion: null, prevalence: { personas: 0, exposed: 2, share: 0, low: 0, high: 0.66, level: 'none' },
+  }];
+  const html = await reportFile(report, 'html', thumbnails());
+  assert.ok(html.includes('None first-hand: every persona who reported it had read about it in the feed, or was repeating an earlier visit'));
+});
+
 test('with several POIs a set-aside theme names its POI, and a competitor\'s does not read as the team\'s own', async () => {
   const report = fixture(1, 1);
   report.pois.push({ id: 'rival', type: 'web', name: 'Rival', start_url: 'http://rival.test/', competitor: true });

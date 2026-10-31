@@ -72,7 +72,7 @@ const EVIDENCE_LEVEL = {
   strong: { text: 'Strong evidence', plain: 'three or more personas, and at least a quarter of those who used it' },
   some: { text: 'Some evidence', plain: 'two or more personas' },
   single: { text: 'One persona', plain: 'only one persona met it: worth a look, not yet a pattern' },
-  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed first' },
+  none: { text: 'None first-hand', plain: 'every persona who reported it had read about it in the feed, or was repeating an earlier visit' },
 } as const satisfies Record<EvidenceLevel, { text: string; plain: string }>;
 const evidenceOf = (finding: { prevalence?: Prevalence; personas: number }): EvidenceLevel => finding.prevalence?.level ?? (finding.personas <= 1 ? 'single' : 'some');
 // One persona or none met it first-hand: worth a look, not a reason to fix something first.

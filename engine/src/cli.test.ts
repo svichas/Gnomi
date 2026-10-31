@@ -532,6 +532,9 @@ test('rerun --returning has personas remember the named run, every run of a set 
 
   const set = lines('rerun', project, '--base', 'r-0001', '--returning', '--repeats', '2');
   assert.deepEqual(set.at(-1).run_ids, ['r-0002', 'r-0003']);
+  assert.deepEqual(set.at(-1).prior, { run_id: 'r-0001', fresh: 0 }, "the set's own line names the run they remember");
+  assert.deepEqual(lines('report', project, '--repeat', set.at(-1).group).at(-1).prior, { run_id: 'r-0001', fresh: 0 });
+  assert.match(cli('report', project, '--repeat', set.at(-1).group, '--format', 'md'), /> These personas used the product before, in r-0001/);
   const runs = configs();
   assert.equal(runs['r-0001'].prior, undefined);
   assert.equal(runs['r-0002'].prior!.run_id, 'r-0001');

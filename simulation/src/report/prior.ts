@@ -3,7 +3,7 @@ import { isUnrated } from '../types.ts';
 import type { EventOf, GnomiEvent, Opinion, PriorPoi, PriorVisit, Report, RunConfig, SignalKind } from '../types.ts';
 import { buildReport } from './build.ts';
 import { buildCandidates, groupKey, SIGNAL_KINDS, type Candidate } from './friction.ts';
-import { hostless, pathOf } from './themes.ts';
+import { echoesOf, hostless, othersPosts, pathOf, type Echoes } from './themes.ts';
 
 // What a returning persona remembers (features_roadmap.md item 12): a pure fold over the earlier run's log, frozen into the next run's
 // config, so that run never reads this log. docs/odd.md has the policy.
@@ -17,26 +17,30 @@ export const PRIOR_TEXT = 200; // characters of any one text
 
 const short = (texts: string[], most: number) => texts.slice(0, most).map((text) => clip(text, PRIOR_TEXT));
 
-/** The opinion the persona came to itself: a change that cites another persona's post is that persona's words as much as its own. */
-function ownOpinion(events: GnomiEvent[], persona_id: string, poi_id: string): Opinion | null {
-  const last = events.findLast((e): e is EventOf<'persona.opinion_changed'> => e.type === 'persona.opinion_changed' && e.persona_id === persona_id && e.payload.poi_id === poi_id && e.payload.cause.post_ids.length === 0)?.payload.after;
+/** The last opinion before another persona's words could reach one: a change citing such a post or at a step handed one, as an opinion is a full snapshot that every later one inherits. */
+function ownOpinion(events: GnomiEvent[], echoes: Echoes, persona_id: string, poi_id: string): Opinion | null {
+  const changes = events.filter((e): e is EventOf<'persona.opinion_changed'> => e.type === 'persona.opinion_changed' && e.persona_id === persona_id && e.payload.poi_id === poi_id);
+  const reached = changes.findIndex(({ payload: { cause } }) => othersPosts([...cause.post_ids, ...cause.step_ids.flatMap((seq) => echoes.heard.get(seq) ?? [])], persona_id, echoes).length > 0);
+  const last = changes.slice(0, reached < 0 ? undefined : reached).at(-1)?.payload.after;
   return last ? { ...last, likes: short(last.likes, PRIOR_OPINION_ITEMS), frictions: short(last.frictions, PRIOR_OPINION_ITEMS) } : null;
 }
 
-/** Its complaints in a run: its reports in themes it met first-hand, one per group key, worst first. Signals are not complaints. */
+/** Its complaints in a run, repeats of its own earlier ones too: one per group key, worst first, of the reports that hold no one else's words. Signals are not complaints. */
 function ownFrictions(candidates: Candidate[], persona_id: string, poi_id: string, report: Report): PriorPoi['frictions'] {
-  const met = new Set([...(report.themes ?? []), ...(report.set_aside ?? [])].filter((theme) => theme.first_hand?.includes(persona_id)).flatMap((theme) => theme.seqs));
+  const themes = [...(report.themes ?? []), ...(report.set_aside ?? [])];
+  // A theme's key names the report: every item of one survey shares a seq, and may sit in another theme.
+  const echoed = (c: Candidate) => themes.find((theme) => theme.keys?.includes(groupKey(c)))?.echoed?.includes(c.seqs[0]);
   const said = candidates
-    .filter((c) => c.persona_id === persona_id && c.poi_id === poi_id && met.has(c.seqs[0]) && !SIGNAL_KINDS.includes(c.kind as SignalKind))
+    .filter((c) => c.persona_id === persona_id && c.poi_id === poi_id && !SIGNAL_KINDS.includes(c.kind as SignalKind) && !echoed(c))
     .toSorted((a, b) => b.severity - a.severity || a.seqs[0] - b.seqs[0]);
   return [...Map.groupBy(said, (c) => hostless(groupKey(c)))].slice(0, PRIOR_FRICTIONS).map(([key, [worst]]) => ({ key, what: clip(worst.text, PRIOR_TEXT) }));
 }
 
 /**
  * What one persona keeps of a run, or null when it used none of the team's POIs: a run that never got to it, or a model that never
- * answered, left it nothing to remember. Nothing here comes from another persona. Pure; `report` and `candidates` save the work per persona.
+ * answered, left it nothing to remember. Nothing here comes from another persona. Pure; the last three arguments save the work per persona.
  */
-export function priorVisit(events: GnomiEvent[], persona_id: string, report = buildReport(events), candidates = buildCandidates(events, report.pois[0]?.id ?? '')): PriorVisit | null {
+export function priorVisit(events: GnomiEvent[], persona_id: string, report = buildReport(events), candidates = buildCandidates(events, report.pois[0]?.id ?? ''), echoes = echoesOf(events)): PriorVisit | null {
   const persona = report.personas.find((p) => p.id === persona_id);
   if (!persona) return null;
   const pois = report.pois.filter((poi) => !poi.competitor).flatMap(({ id }): [string, PriorPoi][] => {
@@ -49,7 +53,7 @@ export function priorVisit(events: GnomiEvent[], persona_id: string, report = bu
       pages: short([...new Set(reached.map(([page]) => pathOf(page)))], PRIOR_PAGES),
       frictions: ownFrictions(candidates, persona_id, id, report),
       survey: survey ? { sentiment: survey.sentiment, would_continue: survey.would_continue, reason: clip(survey.reason, PRIOR_TEXT), likes: short(survey.likes, PRIOR_LIKES) } : null,
-      opinion: ownOpinion(events, persona_id, id),
+      opinion: ownOpinion(events, echoes, persona_id, id),
     }]];
   });
   return pois.length ? { pois: Object.fromEntries(pois) } : null;
@@ -59,8 +63,9 @@ export function priorVisit(events: GnomiEvent[], persona_id: string, report = bu
 export function priorOf(events: GnomiEvent[]): NonNullable<RunConfig['prior']> {
   const report = buildReport(events);
   const candidates = buildCandidates(events, report.pois[0]?.id ?? '');
+  const echoes = echoesOf(events);
   const visits = report.personas.flatMap(({ id }) => {
-    const visit = priorVisit(events, id, report, candidates);
+    const visit = priorVisit(events, id, report, candidates, echoes);
     return visit ? [[id, visit] as const] : [];
   });
   return { run_id: report.run_id, memories: Object.fromEntries(visits) };

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { EventPayloads, EventType, GnomiEvent, Opinion, ProjectConfig, RunConfig, WebPoi } from '../types.ts';
+import { buildReport } from './build.ts';
 import { groupKey, type Candidate } from './friction.ts';
 import { PRIOR_FRICTIONS, PRIOR_LIKES, PRIOR_OPINION_ITEMS, PRIOR_PAGES, PRIOR_TEXT, priorOf, priorVisit } from './prior.ts';
 import { hostless } from './themes.ts';
@@ -106,6 +107,60 @@ test('what came from another persona stays out: a repeated post, and an opinion 
   assert.doesNotMatch(JSON.stringify(memory), /Bo says|I hear/);
 });
 
+test('an opinion changed at a step handed another persona\'s post is not its own, and nor is any after it, which inherits that text', () => {
+  const atStep = (after: Opinion, seq: number): EventPayloads['persona.opinion_changed'] => ({ poi_id: 'app', before: null, after, cause: { step_ids: [seq], post_ids: [] } });
+  const heardFirst = (seed: Entry[]) => logOf([
+    ['social.post', 'b', { post_id: 'p1', parent_id: null, text: 'Save does nothing!', about_poi_id: 'app' }],
+    ...seed,
+    ['persona.step', 'a', step(1, JOBS, ['p1'])], // seq 4 + seed.length + 1
+    ['persona.opinion_changed', 'a', atStep({ ...OPINION, frictions: ['Bo says Save does nothing'] }, 5 + seed.length)],
+    ['persona.step', 'a', step(2)],
+    ['persona.opinion_changed', 'a', atStep({ ...OPINION, sentiment: 1, frictions: ['Bo says Save does nothing', 'Also slow'] }, 7 + seed.length)],
+  ]);
+  assert.deepEqual(priorVisit(heardFirst([['persona.opinion_changed', 'a', changed(OPINION)]]), 'a')!.pois.app.opinion, OPINION, 'the last one before the first heard change, though a later event cites no heard step');
+  assert.equal(priorVisit(heardFirst([]), 'a')!.pois.app.opinion, null, 'it held none of its own');
+
+  const mine = logOf([
+    ['social.post', 'a', { post_id: 'p2', parent_id: null, text: 'Save does nothing!', about_poi_id: 'app' }],
+    ['persona.step', 'a', step(1, JOBS, ['p2'])],
+    ['persona.opinion_changed', 'a', atStep(OPINION, 5)],
+  ]);
+  assert.deepEqual(priorVisit(mine, 'a')!.pois.app.opinion, OPINION, 'its own post is its own words');
+});
+
+test('each report is judged alone: a heard one neither gets in beside an own one nor gives the wording, even with a browser signal behind it', () => {
+  const post: Entry = ['social.post', 'b', { post_id: 'p1', parent_id: null, text: 'Save lost my draft', about_poi_id: 'app' }];
+  const events = logOf([
+    post,
+    ['persona.step', 'a', step(1)],
+    ['persona.friction_reported', 'a', friction(1, 'Save is a bit slow', 2)],
+    ['persona.step', 'a', step(2, JOBS, ['p1'])],
+    ['persona.friction_reported', 'a', friction(2, 'Bo says Save lost a draft', 4, JOBS, ['p1'])],
+  ]);
+  assert.deepEqual(priorVisit(events, 'a')!.pois.app.frictions.map(({ what }) => what), ['Save is a bit slow']);
+
+  const failed = { step_no: 1, url: JOBS, ref: 'e1', action: 'click', error: 'no_effect' };
+  const backed = logOf([post, ['persona.step', 'a', step(1, JOBS, ['p1'])], ['persona.friction_reported', 'a', friction(1, 'Bo says Save lost a draft', 4, JOBS, ['p1'])], ['signal.failed_action', 'a', failed]]);
+  assert.deepEqual(buildReport(backed).themes![0].first_hand, ['a'], 'the browser shows it met this');
+  assert.deepEqual(priorVisit(backed, 'a')!.pois.app.frictions, [], 'but the words were written with the post in the prompt');
+
+  const later = logOf([post, ['persona.step', 'a', step(1)], ['persona.friction_reported', 'a', friction(1, 'Bo says Save lost a draft', 4, JOBS, ['p1'])]]);
+  assert.deepEqual(priorVisit(later, 'a')!.pois.app.frictions, [], "a report's own heard posts count when its step's do not, as a design's friction on an earlier frame");
+});
+
+test('a theme reaches one item of a survey, not every item of it, though all of them share a seq', () => {
+  const items = [{ kind: 'friction' as const, where: 'Pricing', what: 'I hear pricing is hidden', severity: 3 }, { kind: 'friction' as const, where: 'Jobs', what: 'Jobs is hard to find', severity: 2 }];
+  const events = logOf([
+    ['social.post', 'b', { post_id: 'p1', parent_id: null, text: 'Pricing is hidden', about_poi_id: 'app' }],
+    ['social.feed_viewed', 'a', { post_ids: ['p1'] }],
+    ['persona.step', 'a', step(1)],
+    ['persona.survey', 'a', survey({ items, frictions: items.map(({ what }) => what) })],
+    ['report.themes', null, { poi_id: 'app', themes: [{ title: 'Pricing', description: 'd', group_ids: ['g1'] }, { title: 'Jobs', description: 'd', group_ids: ['g2'] }], posts: [{ post_id: 'p1', group_ids: ['g1'] }] }],
+  ]);
+  assert.deepEqual(buildReport(events).themes!.map(({ title, echoed }) => [title, echoed?.length ?? 0]).sort(), [['Jobs', 0], ['Pricing', 1]]);
+  assert.deepEqual(priorVisit(events, 'a')!.pois.app.frictions.map(({ what }) => what), ['Jobs is hard to find']);
+});
+
 test('a persona the run never reached, that the model never answered, or that was not in it has no memory', () => {
   const events = logOf([
     ['persona.step', 'a', step(1)],
@@ -140,19 +195,22 @@ test('each of the team\'s POIs is remembered on its own, and a competitor\'s not
   assert.deepEqual(visited.docs.frictions.map(({ what }) => what), ['No search box'], 'giving up says why, in its own words');
 });
 
-test('memory is one visit deep: a complaint a returning persona only repeated is gone from the next memory', () => {
+test('memory is one visit deep: it holds all of the latest visit, the persona\'s own repeats too, and nothing it did not say again', () => {
+  const seeded = (prior: RunConfig['prior']): Entry[] => [['persona.opinion_changed', 'a', { poi_id: 'app', before: null, after: prior!.memories.a.pois.app.opinion!, cause: { step_ids: [], post_ids: [] } }]];
+  const visit = (what: string, reason: string): Entry[] => [['persona.step', 'a', step(1)], ['persona.friction_reported', 'a', friction(1, what)], ['persona.survey', 'a', survey({ reason })]];
   const first = priorOf(logOf([['persona.step', 'a', step(1)], ['persona.friction_reported', 'a', friction(1, 'Save does nothing')], ['persona.opinion_changed', 'a', changed(OPINION)], ['persona.survey', 'a', survey({ reason: 'First visit.' })]]));
-  const second = logOf([
-    ['persona.opinion_changed', 'a', { poi_id: 'app', before: null, after: first.memories.a.pois.app.opinion!, cause: { step_ids: [], post_ids: [] } }],
-    ['persona.step', 'a', step(1)],
-    ['persona.friction_reported', 'a', friction(1, 'Save still does nothing')],
-    ['persona.survey', 'a', survey({ reason: 'Second visit.' })],
-  ], { run_id: 'r-2', prior: first });
+  const second = logOf([...seeded(first), ...visit('Save still does nothing', 'Second visit.')], { run_id: 'r-2', prior: first });
   const { run_id, memories } = priorOf(second);
   assert.equal(run_id, 'r-2');
   const memory = memories.a.pois.app;
-  assert.deepEqual(memory.frictions, [], 'only repeated, so not first-hand');
+  assert.deepEqual(memory.frictions, [{ key: first.memories.a.pois.app.frictions[0].key, what: 'Save still does nothing' }], 'a repeat of its own is still its own');
   assert.equal(memory.survey?.reason, 'Second visit.');
   assert.deepEqual(memory.opinion, OPINION, 'the opinion it left the latest visit with');
   assert.doesNotMatch(JSON.stringify(memories), /First visit/);
+
+  const third = buildReport(logOf([...seeded(priorOf(second)), ...visit('Save still does nothing', 'Third visit.')], { run_id: 'r-3', prior: priorOf(second) })).themes![0];
+  assert.deepEqual([third.first_hand, third.remembered], [[], 1], 'a chain of runs never reads an old complaint as new');
+
+  const moved = logOf([...seeded(first), ['persona.step', 'a', { ...step(1), target: { role: 'button', name: 'Publish', box: null } }], ['persona.friction_reported', 'a', friction(1, 'Publish is greyed out')]], { run_id: 'r-2', prior: first });
+  assert.deepEqual(priorOf(moved).memories.a.pois.app.frictions.map(({ what }) => what), ['Publish is greyed out'], 'what it did not say again is gone');
 });
