@@ -56,6 +56,15 @@ const pages: Record<string, string> = {
 <header><div><button aria-label="menu button" onclick="const n = document.querySelector('nav'); n.style.height = 'auto'; n.style.pointerEvents = 'auto'">☰</button></div>
 <nav style="height:0;overflow:hidden;pointer-events:none"><div><a href="/next">Pricing</a></div></nav></header>
 <main><div><h1>Home</h1></div></main></body></html>`,
+  // A phone header as a real marketing site builds it: fixed and overflow: hidden around a 0-high nav whose logo and button are absolute.
+  '/mobile-header': `<!doctype html><html><head>${head}<title>Mobile header</title></head><body>
+<header style="position:fixed;top:0;left:0;right:0;height:68px;overflow:hidden"><nav><div><a href="/next" style="position:absolute;left:16px;top:0;width:46px;height:68px">Logo</a>
+<button aria-label="menu button" style="position:absolute;right:16px;top:24px;width:18px;height:18px">☰</button></div></nav></header>
+<main style="margin-top:80px"><h1>Home</h1></main></body></html>`,
+  // A client-side router as Next.js runs one: the click starts no request, and the URL moves once the route's code has loaded.
+  '/router': `<!doctype html><html><head>${head}<title>Router</title></head><body>
+<a href="/next" onclick="event.preventDefault(); this.dataset.loading = ''; setTimeout(() => { history.pushState(null, '', '/next'); document.body.innerHTML = '<h1>Routed page</h1>'; }, 1500)">Pricing</a>
+<a href="#top" onclick="this.dataset.opened = ''">Menu</a></body></html>`,
   // Custom selects as react-select builds them, opening on mousedown: a searchable one's search box covers its placeholder,
   // and a plain one's input is a 0×0 dummy pushed off to the left.
   '/react-select': `<!doctype html><html><head>${head}<title>React select</title></head><body>
@@ -532,6 +541,13 @@ test('a collapsed menu stays out of the snapshot, and a ref the persona was not 
   assert.match((await act(page, 'click', refOf(opened, /link "Pricing" \[ref=(\w+)\]/))).url_after, /\/next$/);
 });
 
+test('what overflows a 0-high nav inside a fixed header stays in the snapshot, so a persona can tap the menu it sees', async (t) => {
+  const page = await open(t, '/mobile-header', 'mobile');
+  const { text } = await page.snapshot();
+  assert.match(text, /link "Logo"/);
+  assert.equal((await act(page, 'click', refOf(text, /button "menu button" \[ref=(\w+)\]/))).ok, true);
+});
+
 test('personas can type passwords while existing and entered values stay out of snapshots', async (t) => {
   const page = await open(t);
   const { text } = await page.snapshot();
@@ -687,6 +703,15 @@ test('a link that opens a new tab takes the persona there; a slow response marks
   assert.equal((await page.snapshot()).title, 'Next page');
   const plain = await act(page, 'wait');
   assert.equal(plain.pending, undefined, 'only a step that started something carries the flag');
+});
+
+test('a click on a link waits for a client-side router to get there, and a link on the same page is not waited for', async (t) => {
+  const page = await open(t, '/router');
+  const { text } = await page.snapshot();
+  const clicked = Date.now();
+  assert.match((await act(page, 'click', refOf(text, /link "Menu" \[ref=(\w+)\]/))).url_after, /\/router#top$/);
+  assert.ok(Date.now() - clicked < 2_000);
+  assert.deepEqual([(await act(page, 'click', refOf(text, /link "Pricing" \[ref=(\w+)\]/))).url_after, (await page.snapshot()).text.includes('Routed page')], [`${origin}/next`, true]);
 });
 
 test('a new tab opens in front of the form, which waits behind it as the persona left it until back or the tab\'s own Close returns there', async (t) => {
