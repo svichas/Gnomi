@@ -74,7 +74,7 @@ report.themes[0].drivers = [{ id: 'seniority', name: 'Seniority', value: 'Lead',
 // What the team's own study found, beside a finding that a rejudge renamed; an outcome with no finding left; and a plan with something the quote check took out.
 report.themes[0].validation = { status: 'supported', note: 'Five of six participants could not tell whether the job went live.', study_date: '2026-10-12', title: 'An earlier name for this finding' };
 report.study_count = { of: 5, supported: 1, contradicted: 0, unresolved: 0, not_studied: 4 };
-report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'A finding the judge has since merged away' }];
+report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'A finding the judge has since merged away', poi_id: report.pois[0].id }];
 report.unmatched_edits = [{ title: 'A hidden finding the judge has since merged away', hidden: true, new_title: null, new_description: null }, { title: 'Another finding', hidden: false, new_title: 'Words nobody needs now', new_description: null }];
 report.study_plan = {
   screener: ['Do you hire for your company at least once a quarter?'], screener_dropped: 1, left_out: { objections: 1, competitors: 0, set_aside: 1, scan_only: 1, lower_ranked: 2 }, outdated: true,

@@ -11,7 +11,7 @@ import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
 import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, rewriteReport, runPersonas, runRoles, runSet, type Secrets } from './workspace.ts';
-import { INTERVIEW_LABEL, QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
@@ -23,7 +23,7 @@ import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { getPersonaSchema } from '@gnomi/simulation/profile/schema.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
-import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, EDIT_WARNING, forSharing, setForSharing } from '@gnomi/simulation/report/edits.ts';
 import { gateDecision, type GateDecision } from '@gnomi/simulation/report/gate.ts';
 import { diffToMarkdown, gateToMarkdown, reportToMarkdown, repeatsToMarkdown } from '@gnomi/simulation/report/markdown.ts';
 import { runReportModels } from '@gnomi/simulation/report/models.ts';
@@ -88,10 +88,12 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       changes a finding for sharing only: runs/<run id>/report.json and report.md, "report" and every model keep the original. --hide
       leaves it out of exports and --show puts it back. --title (up to ${EDIT_TITLE_MAX} characters) and --description (up to ${EDIT_DESCRIPTION_MAX}) reword it there, blank
       going back to the original, and --reset puts both back. No model call. Numbers from the run cannot be edited.
+      ${EDIT_WARNING}
   ask <project dir> --run <run id> --persona <persona id> --question "<text>" [--budget <usd>] [--fake-llm]
       asks one persona of an ended run one question of up to ${QUESTION_MAX} characters, with one text-only call on the run's navigator model,
       under rejudge's budget rule. The context comes from that persona's log, and earlier answers are not sent back. It stays in the log,
       apart from every report, export and later model call. ${INTERVIEW_LABEL}
+      ${QUESTION_WARNING}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a

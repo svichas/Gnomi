@@ -112,6 +112,9 @@ export interface ThemeValidation {
   title: string; // the finding's title when this was recorded, which a rejudge may have changed since
 }
 
+/** An outcome with no finding to sit on. It keeps its record's keys, as its title may be one a rejudge has changed since. */
+export type UnmatchedOutcome = ThemeValidation & Pick<ReportTheme, 'keys' | 'category' | 'poi_id'>;
+
 /** What a team changed about a finding for sharing (report/edits.ts). The finding keeps its own text: exports apply this, and no count, rank, label or model reads it. */
 export interface ThemeEdit {
   hidden: boolean;
@@ -285,7 +288,7 @@ export interface Report {
   flows?: ReportFlow[]; // the team's own web POIs with a step; absent in older reports
   study_plan?: ReportStudyPlan; // the newest plan; only once one was made
   study_count?: StudyCount; // only once an outcome is recorded and there are findings to count
-  unmatched_outcomes?: ThemeValidation[]; // outcomes whose finding this report no longer has, newest first; shown, never dropped
+  unmatched_outcomes?: UnmatchedOutcome[]; // outcomes whose finding this report no longer has, newest first; shown, never dropped
   unmatched_edits?: UnmatchedEdit[]; // edits whose finding this report no longer has; shown in the app, never dropped
   shared?: { hidden: number; reworded: number }; // only in a copy for sharing, whenever the team changed something in it
   cost_usd: number;

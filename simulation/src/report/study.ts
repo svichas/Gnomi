@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { english, ENGLISH } from '../llm/english.ts';
 import type { LlmGateway, Recorder } from '../seams.ts';
-import type { EventOf, EventPayloads, GnomiEvent, Report, ReportStudyPlan, ReportTheme, RunConfig, StudyCount, StudyStatus, ThemeValidation } from '../types.ts';
+import type { EventOf, EventPayloads, GnomiEvent, Report, ReportStudyPlan, ReportTheme, RunConfig, StudyCount, StudyStatus, ThemeValidation, UnmatchedOutcome } from '../types.ts';
 import { themeByKeys } from './match.ts';
 import { authorThemes, rankOrder } from './themes.ts';
 
@@ -122,12 +122,12 @@ export const latestByKeys = <E extends ThemeRecord>(records: E[]) => [...new Map
  * split theme keeps its outcome on one part. One left over overlaps at most a theme with a newer outcome, which may be a study of
  * another finding, so it stays in view.
  */
-function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTheme[]): ThemeValidation[] {
-  const unmatched: ThemeValidation[] = [];
+function foldOutcomes(outcomes: EventOf<'finding.validated'>[], themes: ReportTheme[]): UnmatchedOutcome[] {
+  const unmatched: UnmatchedOutcome[] = [];
   for (const outcome of latestByKeys(outcomes)) {
     const theme = themeByKeys(refOf(outcome), themes.filter((t) => !t.validation));
     if (theme) theme.validation = validationOf(outcome);
-    else unmatched.push(validationOf(outcome));
+    else unmatched.push({ ...validationOf(outcome), ...refOf(outcome) });
   }
   return unmatched;
 }

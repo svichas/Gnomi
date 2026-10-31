@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Segment } from '@gnomi/simulation/types.ts';
-import { INTERVIEW_LABEL, QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
+import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
@@ -66,7 +66,7 @@ function AskPersona({ runId, persona, name }: { runId: string; persona: Persona;
     });
   return (
     <div className="space-y-2">
-      <Field label={`Ask ${name} about this run`} hint={cost}><textarea className={inputClass} rows={2} maxLength={QUESTION_MAX} value={question} onChange={(e) => setQuestion(e.target.value)} /></Field>
+      <Field label={`Ask ${name} about this run`} hint={`${cost} ${QUESTION_WARNING}`}><textarea className={inputClass} rows={2} maxLength={QUESTION_MAX} value={question} onChange={(e) => setQuestion(e.target.value)} /></Field>
       <Button small onClick={() => void ask()} loading={busy} disabled={!ready || !question.trim()}>Ask</Button>
       <OutcomeNote outcome={outcome} />
     </div>

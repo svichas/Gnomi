@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX } from '@gnomi/simulation/report/edits.ts';
+import { EDIT_DESCRIPTION_MAX, EDIT_TITLE_MAX, EDIT_WARNING } from '@gnomi/simulation/report/edits.ts';
 import { REWORDED_TEXT } from '@gnomi/simulation/report/markdown.ts';
 import type { ReportTheme, UnmatchedEdit } from '@gnomi/simulation/types.ts';
 import { call } from './engine.ts';
@@ -54,8 +54,8 @@ export function EditFinding({ runId, theme }: { runId: string; theme: ReportThem
       {hidden && <p className="text-xs text-stone-500">Hidden findings stay here and are left out of every export, which says how many your team hid.</p>}
       {open && <div className="space-y-3">
         <p className="text-xs text-stone-500">Only exports use these words, and they mark the finding as reworded by your team. Leave a field blank to keep the run's wording.</p>
-        <Field label="Title for exports"><input className={inputClass} maxLength={EDIT_TITLE_MAX} value={title} placeholder={theme.title} onChange={(e) => setTitle(e.target.value)} /></Field>
-        <Field label="Description for exports"><textarea className={inputClass} rows={3} maxLength={EDIT_DESCRIPTION_MAX} value={description} placeholder={theme.description} onChange={(e) => setDescription(e.target.value)} /></Field>
+        <Field label="Title for exports" hint={EDIT_WARNING}><input className={inputClass} maxLength={EDIT_TITLE_MAX} value={title} placeholder={theme.title} onChange={(e) => setTitle(e.target.value)} /></Field>
+        <Field label="Description for exports" hint={EDIT_WARNING}><textarea className={inputClass} rows={3} maxLength={EDIT_DESCRIPTION_MAX} value={description} placeholder={theme.description} onChange={(e) => setDescription(e.target.value)} /></Field>
         <Button small onClick={() => void change({ title, description })} loading={busy}>Save wording</Button>
       </div>}
       <OutcomeNote outcome={outcome} />

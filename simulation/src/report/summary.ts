@@ -47,6 +47,7 @@ export function writtenSummary(report: Report): string | null {
   const aside = report.set_aside?.filter(own).length ?? 0;
   const started = report.personas.filter((p) => p.outcome !== 'not_started').length; // model_failed began, and can have met a theme
   const verb = problems.length ? 'met' : 'raised';
+  const left = report.shared?.hidden ? ' left in this copy' : ''; // what leads a team's selection need not be what led the run
   return [
     ...(report.status === 'finished' ? [] : [`The run did not finish: ${started} of ${count(report.personas.length, 'persona')} started, so this covers only what they got to.`]),
     ...(problems.length ? [] : [report.shared?.hidden ? HIDDEN_ALL : aside
@@ -55,7 +56,7 @@ export function writtenSummary(report: Report): string | null {
         ? 'This run tried only competitor sites, so it has no finding on your product.'
         : 'No friction theme came up on your product, which does not show that it works for real people.']),
     ...(lead ? [
-      `${problems.length ? 'The biggest problem in this run is' : 'The top objection is'} ${named(lead)}, ${reach(lead, verb, poiOf(lead))}.`,
+      `${problems.length ? `The biggest problem${left || ' in this run'}` : `The top objection${left}`} is ${named(lead)}, ${reach(lead, verb, poiOf(lead))}.`,
       ...((lead.prevalence?.personas ?? lead.personas) === 1 ? ['That is one persona, so it is worth a look but not yet a pattern.'] : []),
       ...segments(lead),
       next ? `Next, look at ${named(next)}.` : 'Next, open its evidence, then check it with real people.',

@@ -270,6 +270,7 @@ test('edit hides and rewords for sharing only: report and its files keep what th
   const on = (theme: { id: string }) => ['--run', 'r-0001', '--theme', theme.id];
 
   assert.match(edit('--run', 'r-0001').stderr, /edit needs --run, --theme and exactly one of --hide, --show, --title, --description or --reset/);
+  assert.match(edit('--run', 'r-0001').stderr, /Leave out names and contact details\. A rewording stays in this project's log, even after a reset, and appears in exports\./, 'the usage warns what a rewording must not hold');
   assert.match(edit(...on(first)).stderr, /exactly one of/);
   assert.match(edit(...on(first), '--hide', '--show').stderr, /exactly one of/);
   assert.match(edit(...on(first), '--title', 'A', '--description', 'B').stderr, /exactly one of/);
@@ -312,6 +313,7 @@ test('ask answers from the log under rejudge\'s budget rule, says what the answe
   const good = ['--run', 'r-0001', '--persona', persona, '--question', 'Why did you stop?'];
 
   assert.match(ask('--run', 'r-0001').stderr, /ask needs --run, --persona and --question/);
+  assert.match(ask('--run', 'r-0001').stderr, /Leave out names and contact details\. A question goes to the model and stays in this project's log\./, 'the usage warns what a question must not hold');
   assert.match(ask('--run', 'r-0009', '--persona', persona, '--question', 'Why?').stderr, /There is no run r-0009/);
   assert.match(ask('--run', 'r-0001', '--persona', 'nobody', '--question', 'Why?').stderr, /r-0001 has no persona nobody/);
   assert.match(ask('--run', 'r-0001', '--persona', persona, '--question', ' ').stderr, /Write a question first/);

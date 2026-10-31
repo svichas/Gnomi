@@ -246,13 +246,15 @@ export function buildReport(events: GnomiEvent[]): Report {
   const total = (pick: (e: EventOf<'llm.call'>) => number) => calls.reduce((sum, e) => sum + pick(e), 0);
   // Runs before M2 have no routing, so the call itself names the model it used.
   const routing: Routing | null = settings?.routing ?? null;
+  // A question after the run counts in the cost, but `methods` describes the run: an alias may answer as a newer model by then, which compare and the gate would read as a change.
+  const runCalls = calls.filter((e) => e.payload.purpose !== 'interview');
   const models: Partial<Routing> = {};
-  for (const call of calls) {
+  for (const call of runCalls) {
     const { role, provider, model } = call.payload;
     models[role] ??= routing?.[role] ?? { provider: provider as ProviderId, model };
   }
   const response_models: NonNullable<Report['methods']['response_models']> = {};
-  for (const { payload: { role, response_model } } of calls) {
+  for (const { payload: { role, response_model } } of runCalls) {
     if (response_model && !response_models[role]?.includes(response_model)) (response_models[role] ??= []).push(response_model);
   }
   const checkCall = calls.find((e) => e.payload.purpose === 'report_check')?.payload;

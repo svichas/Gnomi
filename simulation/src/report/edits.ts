@@ -1,4 +1,4 @@
-import type { EventOf, GnomiEvent, Report, ReportTheme, UnmatchedEdit } from '../types.ts';
+import type { EventOf, GnomiEvent, Report, ReportTheme, UnmatchedEdit, UnmatchedOutcome } from '../types.ts';
 import { normaliseText } from './friction.ts';
 import { themeByKeys } from './match.ts';
 import type { RepeatSet } from './repeats.ts';
@@ -9,21 +9,18 @@ import { competitorsOf, latestByKeys, refOf, studyCount } from './study.ts';
 
 export const EDIT_TITLE_MAX = 120;
 export const EDIT_DESCRIPTION_MAX = 600;
+export const EDIT_WARNING = "Leave out names and contact details. A rewording stays in this project's log, even after a reset, and appears in exports.";
 
 const isHide = (e: GnomiEvent): e is EventOf<'finding.hidden'> => e.type === 'finding.hidden';
 const isRewording = (e: GnomiEvent): e is EventOf<'finding.edited'> => e.type === 'finding.edited';
 
-/** Every theme that shares a key with `ref`: themeByKeys names the best one at a time. */
-function themesByKeys(ref: Parameters<typeof themeByKeys>[0], themes: ReportTheme[]): ReportTheme[] {
-  const found: ReportTheme[] = [];
-  for (let theme = themeByKeys(ref, themes); theme; theme = themeByKeys(ref, themes.filter((t) => !found.includes(t)))) found.push(theme);
-  return found;
-}
-
 /**
- * Hands each theme its latest rewording and hide, matched as outcomes are (report/study.ts), and returns those with no theme left.
- * A rewording was written for one finding, so it takes one theme. A hide takes every part of a finding a rejudge split: a part left
- * over would be back in exports with nobody asking. It writes only the new fields, and nothing simulated reads them.
+ * Hands each theme its latest rewording and hide, by keys as outcomes are matched (report/study.ts), and returns the edits that share a
+ * key with no theme at all. One that overlaps a theme is settled there, so a team that undid it is not told to check it.
+ * A rewording was written for one finding, so it goes to the theme it fits best. A newer record on that theme, a reset included, replaces
+ * it, and its words do not move to another part of a split finding. A hide holds key by key, the latest record naming a key deciding, and
+ * one hidden key hides its theme: a part left over would be back in exports with nobody asking. It writes only the new fields, and
+ * nothing simulated reads them.
  */
 export function foldEdits(events: GnomiEvent[], themes: ReportTheme[], setAside: ReportTheme[], tagged?: Map<string, string[]>): Pick<Report, 'unmatched_edits'> {
   const all = [...themes, ...setAside];
@@ -32,21 +29,16 @@ export function foldEdits(events: GnomiEvent[], themes: ReportTheme[], setAside:
   for (const e of latestByKeys(events.filter(isRewording))) {
     const { title, new_title, new_description } = e.payload;
     const wording = new_title !== null || new_description !== null;
-    const theme = themeByKeys(refOf(e), all.filter((t) => !worded.has(t)));
-    if (theme) worded.add(theme);
-    if (theme && wording) theme.edit = { hidden: false, new_title, new_description };
+    const theme = themeByKeys(refOf(e), all);
     if (!theme && wording) unmatched.push({ title, hidden: false, new_title, new_description });
+    if (!theme || worded.has(theme)) continue;
+    worded.add(theme);
+    if (wording) theme.edit = { hidden: false, new_title, new_description };
   }
-  const settled = new Set<ReportTheme>();
-  for (const e of latestByKeys(events.filter(isHide))) {
-    const parts = themesByKeys(refOf(e), all.filter((t) => !settled.has(t)));
-    for (const theme of parts) {
-      settled.add(theme);
-      if (e.payload.hidden) (theme.edit ??= { hidden: false, new_title: null, new_description: null }).hidden = true;
-    }
-    // Two hidden findings a rejudge merged are one hidden finding, so the older hide has nothing to tell.
-    if (e.payload.hidden && parts.length === 0 && !themeByKeys(refOf(e), all.filter((t) => t.edit?.hidden))) unmatched.push({ title: e.payload.title, hidden: true, new_title: null, new_description: null });
-  }
+  const hides = events.filter(isHide);
+  const hiddenKeys = new Map(hides.flatMap((e) => e.payload.keys.map((key) => [key, e.payload.hidden] as const)));
+  for (const theme of all) if (theme.keys?.some((key) => hiddenKeys.get(key))) (theme.edit ??= { hidden: false, new_title: null, new_description: null }).hidden = true;
+  for (const e of latestByKeys(hides)) if (e.payload.hidden && !themeByKeys(refOf(e), all)) unmatched.push({ title: e.payload.title, hidden: true, new_title: null, new_description: null });
   for (const theme of all.filter((t) => t.edit?.hidden)) {
     const members = new Set(theme.seqs);
     const posts = events.flatMap((e) => (e.type === 'social.post' && tagged?.get(e.payload.post_id)?.includes(theme.id) ? [e.seq] : []));
@@ -57,6 +49,9 @@ export function foldEdits(events: GnomiEvent[], themes: ReportTheme[], setAside:
 }
 
 const some = <T>(list: T[] | undefined) => (list?.length ? list : undefined);
+
+/** The finding of `themes` an outcome left over from a rejudge touches. Its title dates from when it was recorded, so keys come first; a title alike is the same words, and all an older report has. */
+const touches = (outcome: UnmatchedOutcome, themes: ReportTheme[]) => themeByKeys(outcome, themes) ?? themes.find((t) => t.title === outcome.title);
 
 /**
  * The copy of a report for sharing: hidden findings gone from everything that names them, reworded ones in the team's words and marked,
@@ -90,8 +85,7 @@ export function forSharing(report: Report): Report {
   const study_plan = plan && { ...plan, hypotheses: plan.hypotheses.filter((h) => !themeByKeys(h, hidden)).map((h) => ({ ...h, title: themeByKeys(h, titled)?.edit?.new_title ?? h.title })) };
   const studied = [...(themes ?? []), ...(set_aside ?? [])].some((t) => t.validation);
   const study_count = report.study_count && studied ? studyCount(themes ?? [], competitorsOf(report)) : undefined;
-  const renamed = new Map(titled.map((t) => [t.title, t.edit!.new_title!]));
-  const unmatched_outcomes = some(report.unmatched_outcomes?.filter((o) => !hidden.some((t) => t.title === o.title)).map((o) => ({ ...o, title: renamed.get(o.title) ?? o.title })));
+  const unmatched_outcomes = some(report.unmatched_outcomes?.filter((o) => !touches(o, hidden)).map((o) => ({ ...o, title: touches(o, titled)?.edit?.new_title ?? o.title })));
 
   const posts = new Set(hidden.flatMap((t) => t.edit?.posts ?? []));
   const unposted = <T extends { seeds: { seq: number }[] }>(stats: T): T => ({ ...stats, seeds: stats.seeds.filter((post) => !posts.has(post.seq)) });

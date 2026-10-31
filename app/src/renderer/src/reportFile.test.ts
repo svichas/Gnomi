@@ -325,7 +325,7 @@ test("the HTML export shows a team's study outcome beside its finding, whose it 
   const finding = { id: 'g1', poi_id: 'poi-gym', rank: 1, title: 'Save does nothing', description: 'Save fails.', named_by: 'judge' as const, trust: 'reported' as const, severity: 3, score: 0, personas: 2, frictions: 2, pages: [], elements: [], affected: [], evidence: [], seqs: [1], suggestion: null, prevalence, category: 'friction' as const };
   report.themes = [{ ...finding, validation: { status: 'supported', note: 'Five of <six> stalled.', study_date: '2026-10-12', title: 'An older name' } }];
   report.study_count = { of: 1, supported: 1, contradicted: 0, unresolved: 0, not_studied: 0 };
-  report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away' }];
+  report.unmatched_outcomes = [{ status: 'contradicted', note: null, study_date: '2026-10-02', title: 'Merged away', poi_id: 'poi-gym' }];
   report.study_plan = { screener: ['Do you hire?'], screener_dropped: 0, left_out: { objections: 0, competitors: 0, set_aside: 0, scan_only: 0, lower_ranked: 0 }, hypotheses: [{ title: 'Save does nothing', poi_id: 'poi-gym', tasks: ['Post a job.'], dropped: 0, observe: ['Watch the button.'] }] };
   const html = await reportFile(report, 'html', thumbnails());
   for (const text of ['Your team&#x27;s study, 12 Oct 2026: supported', 'Five of &lt;six&gt; stalled.', 'Recorded for &quot;An older name&quot;.', 'Of the top 1 finding, your team&#x27;s studies supported 1.', 'Merged away', 'Your team&#x27;s study, 2 Oct 2026: contradicted', 'Do not show them to participants', 'A model wrote this plan', 'Post a job.', 'Watch the button.', 'Kept apart from the simulated numbers above.']) {

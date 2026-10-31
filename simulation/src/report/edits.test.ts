@@ -111,6 +111,84 @@ test('two hidden findings a rejudge merged are one hidden finding, with nothing 
   assert.equal(report.unmatched_edits, undefined);
 });
 
+test('two reworded findings a rejudge merged are one reworded finding: the newer words stand, and the older are replaced, not listed', () => {
+  const { events, record } = logOf(['/jobs', '/users']);
+  const [jobs, users] = buildReport(events).themes!;
+  record(edit(jobs, 'OLDER-WORDS'));
+  record(edit(users, 'NEWER-WORDS'));
+  record(judged(events, [['g1', 'g2']]));
+  const report = buildReport(events);
+  assert.equal(report.themes![0].edit?.new_title, 'NEWER-WORDS');
+  assert.equal(report.unmatched_edits, undefined, 'the finding is still there under the team\'s words, so it is not back in exports as an entry would say');
+});
+
+test('a reset on the part of a split finding that holds its words takes them off, and they do not move to the other part', () => {
+  const split = () => {
+    const { events, record } = logOf(['/jobs', '/users']);
+    record(judged(events, [['g1', 'g2']]));
+    record(edit(buildReport(events).themes![0], 'WORDS-FOR-THE-WHOLE'));
+    record(judged(events, [['g1'], ['g2']]));
+    const themes = buildReport(events).themes!;
+    return { events, record, worded: themes.find((t) => t.edit)!, other: themes.find((t) => !t.edit)! };
+  };
+  const titles = (events: GnomiEvent[]) => buildReport(events).themes!.map((t) => t.edit?.new_title ?? null).sort();
+
+  const reset = split();
+  reset.record(edit(reset.worded, null));
+  const report = buildReport(reset.events);
+  assert.ok(report.themes!.every((t) => !t.edit), 'nobody wrote those words for the other part');
+  assert.equal(report.unmatched_edits, undefined);
+
+  const elsewhere = split();
+  elsewhere.record(edit(elsewhere.other, null));
+  assert.equal(titles(elsewhere.events).filter(Boolean).length, 1, 'a reset on the other part leaves them where they are');
+
+  const both = split();
+  both.record(edit(both.other, 'WORDS-FOR-THE-OTHER'));
+  assert.deepEqual(titles(both.events), ['WORDS-FOR-THE-OTHER', 'WORDS-FOR-THE-WHOLE'], 'and so does a rewording of it');
+});
+
+test('what a team undid after a rejudge is no orphan, whichever way the rejudge went', () => {
+  const merged = logOf(['/jobs', '/users']);
+  for (const theme of buildReport(merged.events).themes!) merged.record(hide(theme));
+  merged.record(judged(merged.events, [['g1', 'g2']]));
+  merged.record(hide(buildReport(merged.events).themes![0], false));
+  assert.deepEqual([buildReport(merged.events).unmatched_edits, buildReport(merged.events).themes![0].edit], [undefined, undefined], 'shown after a merge');
+
+  const grown = logOf(['/jobs', '/users', '/teams']);
+  grown.record(judged(grown.events, [['g1', 'g2'], ['g3']]));
+  const whole = buildReport(grown.events).themes!.find((t) => t.id === 'g1+g2')!;
+  grown.record(hide(whole));
+  grown.record(edit(whole, 'Our words'));
+  grown.record(judged(grown.events, [['g1', 'g2', 'g3']]));
+  const [bigger] = buildReport(grown.events).themes!;
+  assert.equal(buildReport(grown.events).themes![0].edit?.hidden, true);
+  grown.record(hide(bigger, false));
+  grown.record(edit(bigger, null));
+  assert.deepEqual([buildReport(grown.events).unmatched_edits, buildReport(grown.events).themes![0].edit], [undefined, undefined], 'shown and reset after a finding grew');
+
+  const split = logOf(['/jobs', '/users']);
+  split.record(judged(split.events, [['g1', 'g2']]));
+  split.record(hide(buildReport(split.events).themes![0]));
+  split.record(judged(split.events, [['g1'], ['g2']]));
+  for (const part of buildReport(split.events).themes!) split.record(hide(part, false));
+  assert.deepEqual([buildReport(split.events).unmatched_edits, buildReport(split.events).themes!.filter((t) => t.edit)], [undefined, []], 'shown part by part');
+});
+
+test('a merge brings no hidden part back: a key stays hidden until a record names it, whatever happened to its neighbour', () => {
+  const { events, record } = logOf(['/jobs', '/users']);
+  const [jobs, users] = buildReport(events).themes!;
+  record(hide(jobs));
+  record(hide(users));
+  record(hide(users, false));
+  record(judged(events, [['g1', 'g2']]));
+  const [merged] = buildReport(events).themes!;
+  assert.equal(merged.edit?.hidden, true, 'showing /users said nothing about /jobs');
+  assert.equal(buildReport(events).unmatched_edits, undefined);
+  record(hide(merged, false));
+  assert.equal(buildReport(events).themes![0].edit, undefined, 'and the team can show the whole');
+});
+
 test('an edit with no matching theme is listed and never dropped, the finding is back in exports, and a reset leaves no entry', () => {
   const { events, record } = logOf(['/jobs']);
   const [theme] = buildReport(events).themes!;
@@ -239,6 +317,49 @@ test('a hidden theme survives nowhere in the copy, in Markdown or JSON, and what
   assert.ok(studyPlanToMarkdown(shared, shared.study_plan!).includes(sharedText(shared.shared!)), 'the plan on its own says so too');
   assert.deepEqual(shared.personas, report.personas.map((p) => ({ ...p, outcome_text: null })), 'a persona keeps its outcome, without words that belong to the hidden finding');
   for (const field of ['weighted', 'segments', 'steps', 'cost_usd', 'coverage', 'flows', 'reach', 'sentiment'] as const) assert.deepEqual(shared[field], report[field], `${field} is from the run`);
+});
+
+test('a hidden theme survives nowhere: an outcome a rejudge left over goes with the finding its keys overlap, whatever title it was recorded under', () => {
+  const studied = () => {
+    const { events, record } = logOf(['/jobs', '/users', '/teams']);
+    record(judged(events, [['g1'], ['g2'], ['g3']], (i) => `STUDIED-OLD-TITLE ${i}`));
+    const [a, b] = buildReport(events).themes!;
+    for (const [theme, note] of [[a, 'NOTE-ABOUT-A'], [b, 'NOTE-ABOUT-B']] as const) {
+      const { payload, ...e } = finding(theme);
+      record({ ...e, type: 'finding.validated', payload: { ...payload, status: 'supported', note, study_date: '2026-10-12' } });
+    }
+    record(judged(events, [['g1', 'g2'], ['g3']], (i) => `Later name ${i}`));
+    return { events, record, merged: buildReport(events).themes!.find((t) => t.id === 'g1+g2')! };
+  };
+  const hidden = studied();
+  assert.deepEqual(buildReport(hidden.events).unmatched_outcomes?.map((o) => o.title), ['STUDIED-OLD-TITLE 0'], 'the newest sits on the merged theme, and the other is left over');
+  hidden.record(hide(hidden.merged));
+  const shared = forSharing(buildReport(hidden.events));
+  for (const text of [JSON.stringify(shared), reportToMarkdown(shared)]) assert.deepEqual([...text.matchAll(/STUDIED-OLD-TITLE \d|NOTE-ABOUT-\w/g)].map(([word]) => word), []);
+  assert.equal(shared.unmatched_outcomes, undefined);
+
+  const reworded = studied();
+  reworded.record(edit(reworded.merged, 'OUR-WORDS'));
+  const report = buildReport(reworded.events);
+  const copy = forSharing(report);
+  assert.deepEqual(copy.unmatched_outcomes?.map((o) => [o.title, o.note]), [['OUR-WORDS', 'NOTE-ABOUT-A']], 'a reworded finding takes its words there too');
+  assert.ok(!reportToMarkdown(copy).includes('STUDIED-OLD-TITLE'));
+
+  const older = { ...report, unmatched_outcomes: [{ status: 'supported' as const, note: null, study_date: '2026-10-12', title: reworded.merged.title, poi_id: 'poi' }] };
+  assert.equal(forSharing(older).unmatched_outcomes?.[0].title, 'OUR-WORDS', 'a report from before these keys goes by its title');
+});
+
+test('with a finding hidden the summary speaks of the copy, as what leads it need not be what led the run', () => {
+  const { events, record } = logOf(['/jobs', '/users']);
+  const [top, second] = buildReport(events).themes!;
+  record(edit(second, 'Our words'));
+  assert.match(writtenSummary(forSharing(buildReport(events)))!, /^The biggest problem in this run is “/, 'a rewording leaves nothing out');
+  record(hide(top));
+  const shared = forSharing(buildReport(events));
+  assert.match(writtenSummary(shared)!, /^The biggest problem left in this copy is “Our words”/);
+  assert.doesNotMatch(writtenSummary(shared)!, /in this run/);
+  const objections = { ...shared, themes: shared.themes!.map((t) => ({ ...t, category: 'objection' as const })) };
+  assert.match(writtenSummary(objections)!, /The top objection left in this copy is “Our words”/);
 });
 
 test('a copy keeps its ranks, and a thought shared with a kept finding goes with the hidden one', () => {
