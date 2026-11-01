@@ -1,6 +1,6 @@
 # Gnomi — features roadmap
 
-*Status: in progress, updated 2026-10-31. See [Progress](#progress) for what is built. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
+*Status: in progress, updated 2026-11-01. See [Progress](#progress) for what is built. Companion documents: [roadmap.md](roadmap.md) (milestones), [tech.md](tech.md) (architecture) and [new_simulation.md](new_simulation.md) (evaluation rules). Sizes are estimates for one engineer: S is up to a few days, M is one to two weeks, L is three weeks or more.*
 
 ## Summary
 
@@ -44,7 +44,7 @@ The research produced three conclusions that shape this order:
 
 ## Progress
 
-Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and nothing here has had a live run.
+This work is on `main`, merged in [PR 86](https://github.com/svichas/Gnomi/pull/86). Nothing here has had a live run.
 
 | Item | Status | Verified | Left to do |
 |---|---|---|---|
@@ -171,7 +171,18 @@ Size: S.
 4. Fix the fixture goal that no Gym build supports ([acceptance/fixture.ts](../simulation/src/acceptance/fixture.ts)).
 5. Run a baseline with a vision-capable navigator at 20 personas or more.
 
-**Cost.** The 16 October runs cost a little over 2 cents per persona. Pro rata, 20 personas cost about $0.45 a run, and 5 repeats of 3 arms on 2 builds cost about $14. Images and social rounds will raise that, so set `--allowance-usd`.
+**Cost.** Worked out on 1 November from saved logs, with nothing spent. The figures assume DeepSeek with screenshots and social rounds, and the range in brackets is `estimateRun`'s.
+
+| Scope | Runs | Expected cost | Time |
+|---|---|---|---|
+| Baseline, 5 replicates on both builds, 20 personas | 10 | About $6 ($4–17) | About 1 hour |
+| The same at 50 personas | 10 | About $12 ($11–41) | 1–3 hours |
+| Default `--evaluate`, every arm, 20 personas | 135 | About $75 ($58–223) | 4–18 hours |
+| Default `--evaluate`, every arm, 50 personas | 135 | About $165 ($144–546) | 8–41 hours |
+
+The expected figures use the 16 October Gym logs for steps and tokens, and the 28 October 20-person run for a screenshot, which adds about 1,600 tokens a step. No Gym run has used images yet, so treat them as rough and set `--allowance-usd`. Mapping themes with a judge from another family adds about $0.05 per defect-build run. With a DeepSeek navigator that judge is Claude, so `ANTHROPIC_API_KEY` must be set.
+
+`estimateRun` prices one author call per POI, but the author now works in batches. The 28 October run made 63 author calls on 4 POIs for $0.35, above the estimate's $0.23 high end, so the ranges above run a little low. A failed call with no usage stops a live evaluation, as it did twice on 16 October, once at a 60-second judge timeout that is now 180 seconds. There is no resume, so a stopped evaluation starts again in a new folder.
 
 **Overlap.** This is largely the outstanding M3 live acceptance in [roadmap.md](roadmap.md#implementation-status--16-october-2026), so it closes that too.
 
