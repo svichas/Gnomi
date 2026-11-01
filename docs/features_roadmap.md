@@ -50,12 +50,12 @@ Work lands on the `claude/features-roadmap` branch. It is not on `main` yet, and
 |---|---|---|---|
 | 0. Results scoreboard | Steps 1–4 built, reviewer findings closed | Scripted rehearsal passes. Scoring the saved mapping reproduces the published 0.4, 0.71 and 0.67. A person's corrections now change the numbers through `--rescore` | Step 5, the live baseline, which needs a spending decision |
 | 1. Noise cuts | Built, reviewer findings closed | Rebuilding the saved control report gives 4 themes, down from 6. The interference tag has unit tests on constructed logs only | The tag has never fired on a real run, because the Gym cannot show personas breaking each other's work |
-| 2. Finding check | Built, off by default | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision. No settings control in the app yet |
+| 2. Finding check | Built, off by default, with a control in Settings | Scripted tests of each verdict, stale answers and failed calls | Its proof: `gnomi rejudge --check` on the saved logs, which needs a spending decision |
 | 3. Repeat-run reliability | Built | Scripted tests, including a stopped set, the CLI path and a trait-free run. `--evaluate` now reports stability per arm | Whether real findings repeat, and what the trait-free run shows on a real audience, are unmeasured |
 | 4. Personas grounded in real data | All three stages built | Scripted tests, and a `--fake-llm` run through audience create, analytics, sources, update and run named both files in its report. The audience smoke test covers the import preview and the notes dialog at 320 px | A live extraction, including how much of a real digest survives the word-for-word rule. Its proof needs item 5 and real data |
 | 5. Real-user validation loop | Steps 1–3 built, and the top-five count | Scripted tests, including that outcomes change no simulated number and reach no model. The report smoke test records a plan and an outcome on a real report at 320 px and in the export | No real model has written a plan. No team has recorded an outcome, so `TRUST_WEIGHT` and `BENCHMARK` stay as they are |
 | 6. Coverage and saturation | Built | Tests of curves, short runs, stopped runs, several POIs and old logs, and the report smoke test at 320 px | Its proof: the curve against known Gym defects across run sizes |
-| 7. Accessibility scan and perception limits | Built, off by default | On the real Gym with no model, the scan finds D10 and D24, and the control build has no violations at all. It does not find D06. `blurredVision` passed a pixel test on real text | Recall in the `accessibility` arm, and whether colour and low-vision personas notice D22 more. No settings control in the app yet |
+| 7. Accessibility scan and perception limits | Built, off by default, with a control in Settings | On the real Gym with no model, the scan finds D10 and D24, and the control build has no violations at all. It does not find D06. `blurredVision` passed a pixel test on real text | Recall in the `accessibility` arm, and whether colour and low-vision personas notice D22 more |
 | 8. Which traits drive each issue | Built | Tests of each limit, and the report smoke test | Its proof: segment attribution on the Gym |
 | 10. Before/after comparison | Built | The M6 test passes on the real Gym with a scripted navigator: with D01, D14 and D16 switched off, exactly those three read as fixed. On the saved runs against the control build, all three themes read as fixed are real defects (D12, D13) | A live run. The 0.6 overlap for a duplicated run is unmeasured |
 | 11. CI gate | Built | Tests of every decision, each exit code through the real CLI, and the guide's commands run locally on `--fake-llm` | Neither GitHub workflow has run on GitHub. Two limits from theme clustering remain, listed under item 11 |
@@ -219,7 +219,7 @@ Without an image-capable model, send text only and add a line to `limitations`.
 
 **Built.** The check is off unless `finding_check` is set, so nothing changes for existing runs or their cost. `gnomi rejudge --check` runs it on a finished run whatever that run's setting was. A check that fails leaves the findings as they were and says how many themes it did not review, because a report of all `product` verdicts looks the same as one whose check never ran.
 
-The app has no control for it yet, so it can only be set through settings JSON. Repeat sets read only ranked themes, so a theme set aside in one run but kept in another counts as not seen in the first. This matters once the check is on by default.
+It is set under Extra checks in the app's Settings or through settings JSON, and `check_model` under Model choices. Comparison studies skip it, so the app does not offer it there. Repeat sets read only ranked themes, so a theme set aside in one run but kept in another counts as not seen in the first. This matters once the check is on by default.
 
 ### 3. Repeat-run reliability
 
@@ -347,7 +347,7 @@ Keep the automatic stop off. With social rounds, personas run in shared slices, 
 
 **Risk.** `axe-core` is a new dependency, licensed MPL-2.0, so check how it combines with AGPL-3.0 and how it bundles in Electron. Test `page.evaluate` injection on pages with a strict content security policy. Stored screenshots will show the simulated vision, so label them in the inspector.
 
-**Built** behind `accessibility_checks`, off by default and set through settings JSON only, with an `accessibility` arm. With it off, a run behaves as before.
+**Built** behind `accessibility_checks`, off by default and set under Extra checks in the app's Settings or through settings JSON, with an `accessibility` arm. With it off, a run behaves as before. A comparison study's task loop has no scan or vision emulation, so the app does not offer it there and clears it when saving one.
 
 The scan through the real page driver, on 12 Gym pages at desktop and phone widths, plus a failed job-form submit:
 

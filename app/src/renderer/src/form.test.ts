@@ -34,6 +34,32 @@ test('comparison setup survives form round trips and rejects removed target refe
   assert.match(String(toConfig(draft)), /comparison/i);
 });
 
+test('the run checks stay off unless set, and a set check model is held to what a route is', () => {
+  const saved = (settings: Partial<RunSettings>) => toConfig(form({}, { settings: { ...DEFAULT_SETTINGS, ...settings } }));
+  const check_model = { provider: 'openai', model: ' gpt-5.5 ' } as const;
+  const off = saved({});
+  assert.ok(typeof off !== 'string');
+  assert.ok(!('finding_check' in off.settings) && !('accessibility_checks' in off.settings) && !('check_model' in off.settings), 'an untouched project saves as before');
+  const on = saved({ finding_check: true, accessibility_checks: true, check_model });
+  assert.ok(typeof on !== 'string');
+  assert.deepEqual([on.settings.finding_check, on.settings.accessibility_checks, on.settings.check_model], [true, true, { provider: 'openai', model: 'gpt-5.5' }]);
+  assert.equal(saved({ finding_check: true, check_model: { ...check_model, model: ' ' } }), 'Settings: name a model for the evidence check.');
+  assert.equal(saved({ finding_check: true, check_model: { provider: 'openai_compatible', model: 'qwen' } }), 'Settings: the evidence check uses the local endpoint, so give its address.');
+  assert.ok(typeof saved({ check_model: { ...check_model, model: '' } }) !== 'string', 'a route the check will not use blocks nothing');
+});
+
+test('a comparison keeps neither run check, even one set before it became a comparison, and its route blocks nothing', () => {
+  const config = toConfig(form());
+  assert.ok(typeof config !== 'string');
+  config.pois.push({ ...config.pois[0]!, id: 'poi-2', name: 'Alternative' });
+  const draft = initialDraft({ ...config, comparison: draftComparison(config) });
+  draft.settings = { ...DEFAULT_SETTINGS, finding_check: true, accessibility_checks: true, check_model: { provider: 'openai', model: '' } };
+  const saved = toConfig(draft);
+  assert.ok(typeof saved !== 'string', String(saved));
+  assert.ok(!('finding_check' in saved.settings) && !('accessibility_checks' in saved.settings));
+  assert.equal(draft.settings.finding_check, true, 'turning the comparison off again finds them as they were');
+});
+
 test('comparison uses only target-bound sessions, independently of audience roles', () => {
   const config = toConfig(form({ role: 'legacy-role' }));
   assert.ok(typeof config !== 'string');

@@ -74,10 +74,11 @@ export function withAvailableProvider(settings: RunSettings, entries: ProviderEn
   if (configured.length !== 1) return settings;
   const provider = configured[0];
   const missing = (Object.keys(settings.routing) as LlmRole[]).filter((role) => settings.routing[role].provider !== provider);
-  if (!missing.length) return settings;
+  const lostChecker = settings.check_model && settings.check_model.provider !== provider;
+  if (!missing.length && !lostChecker) return settings;
   const routing = { ...settings.routing };
   for (const role of missing) routing[role] = { ...PROVIDER_DEFAULTS[provider][role] };
-  return { ...settings, routing };
+  return { ...settings, routing, ...(lostChecker && { check_model: undefined }) }; // without one, the check takes the judge's route
 }
 
 /** What a route needs before its provider can answer, or null. */

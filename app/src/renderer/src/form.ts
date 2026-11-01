@@ -2,7 +2,7 @@ import { logsIn, withPois } from '@gnomi/simulation/poi/pois.ts';
 import { validateComparison } from '@gnomi/simulation/comparison/config.ts';
 import type { ComparisonStudy } from '@gnomi/simulation/comparison/types.ts';
 import { DEFAULT_SETTINGS, MAX_ROUNDS } from '@gnomi/simulation/settings.ts';
-import type { Audience, LlmRole, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
+import type { Audience, LlmRole, ModelChoice, PersonaSchema, Poi, ProjectConfig, RunSettings } from '@gnomi/simulation/types.ts';
 import { audienceProblem, cleanAudience } from './audience.ts';
 import { draftOf, poiOf, poiTitle, POI_KINDS, type PoiDraft } from './poi/index.ts';
 import { profileProblem } from './profile.ts';
@@ -60,11 +60,13 @@ export const ROLE_TEXT: Record<LlmRole, { label: string; hint: string; used: boo
 
 /** What is wrong with the run settings, as a sentence, or null. */
 export function settingsProblem(settings: RunSettings): string | null {
-  const { routing, local_base_url, concurrency, cost_budget_usd, wall_clock_budget_min } = settings;
+  const { routing, local_base_url, concurrency, cost_budget_usd, wall_clock_budget_min, finding_check, check_model } = settings;
   const endpoint = local_base_url?.trim() ?? '';
-  for (const role of ROLES) {
-    if (!routing[role].model.trim()) return `Settings: name a model for the ${role.replace('_', ' ')}.`;
-    if (routing[role].provider === 'openai_compatible' && !endpoint) return `Settings: the ${role.replace('_', ' ')} uses the local endpoint, so give its address.`;
+  const routes: [string, ModelChoice][] = ROLES.map((role) => [role.replace('_', ' '), routing[role]]);
+  if (finding_check && check_model) routes.push(['evidence check', check_model]);
+  for (const [name, { provider, model }] of routes) {
+    if (!model.trim()) return `Settings: name a model for the ${name}.`;
+    if (provider === 'openai_compatible' && !endpoint) return `Settings: the ${name} uses the local endpoint, so give its address.`;
   }
   if (endpoint && startHost(endpoint) === null) return 'Settings: the local endpoint needs a full web address, such as http://localhost:11434/v1.';
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) return 'Settings: concurrency must be a whole number from 1 to 32.';
@@ -78,7 +80,10 @@ export function settingsProblem(settings: RunSettings): string | null {
 }
 
 /** The project as the tabs describe it, or the sentence telling what is missing. */
-export function toConfig({ form, settings, audience, persona_schema }: Draft): ProjectConfig | string {
+export function toConfig({ form, settings: edited, audience, persona_schema }: Draft): ProjectConfig | string {
+  // A comparison's own task loop has no scan and no vision emulation, and Settings stops showing both checks, so neither stays on unseen.
+  const { finding_check, accessibility_checks, ...plain } = edited;
+  const settings: RunSettings = form.comparison ? plain : edited;
   const name = form.name.trim();
   const goal = form.goal.trim();
   if (!name) return 'Give the project a name.';
@@ -108,6 +113,7 @@ export function toConfig({ form, settings, audience, persona_schema }: Draft): P
       ...settings,
       local_base_url: settings.local_base_url?.trim() || null,
       routing: Object.fromEntries(ROLES.map((role) => [role, { ...settings.routing[role], model: settings.routing[role].model.trim() }])) as RunSettings['routing'],
+      ...(settings.check_model && { check_model: { ...settings.check_model, model: settings.check_model.model.trim() } }),
     },
   };
   if (config.comparison) {

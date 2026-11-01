@@ -45,6 +45,12 @@ test('the start check needs a key for every role the run will use, and none with
   // Unused roles need no key: no social rounds, and the persona writer has already written everyone.
   assert.doesNotThrow(() => check(on('socialiser', { social: false })));
   assert.doesNotThrow(() => check(on('persona_writer')));
+  // The evidence check's calls are the judge's, so a model of its own needs its own key, but only while the check is on.
+  const check_model = PROVIDER_DEFAULTS.openai.judge;
+  assert.throws(() => check({ ...base, settings: { ...DEFAULT_SETTINGS, finding_check: true, check_model } }), /OpenAI key in Settings: the judge runs on it/);
+  assert.doesNotThrow(() => check({ ...base, settings: { ...DEFAULT_SETTINGS, finding_check: true, check_model } }, true));
+  assert.doesNotThrow(() => check({ ...base, settings: { ...DEFAULT_SETTINGS, finding_check: true } }));
+  assert.doesNotThrow(() => check({ ...base, settings: { ...DEFAULT_SETTINGS, check_model } }));
 });
 
 test('a capped gateway makes no call once its own calls have spent the cap, nor after its signal aborts', async () => {

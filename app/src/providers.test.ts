@@ -42,6 +42,17 @@ test('connected routes keep their selected models while unavailable routes are r
   assert.equal(withAvailableProvider(result, [entry('deepseek')]), result, 'reconciling again is a no-op');
 });
 
+test('a check model on a provider that is gone falls back to the judge, and one still connected stays', () => {
+  const check_model = { provider: 'openai' as const, model: 'my-check-model' };
+  const settings = { ...DEFAULT_SETTINGS, finding_check: true, routing: PROVIDER_DEFAULTS.deepseek, check_model };
+  const moved = withAvailableProvider(settings, [entry('deepseek')]);
+  assert.equal(moved.check_model, undefined);
+  assert.equal(moved.finding_check, true);
+  assert.equal(withAvailableProvider(moved, [entry('deepseek')]), moved, 'reconciling again is a no-op');
+  assert.deepEqual(withAvailableProvider(settings, [entry('openai')]).check_model, check_model);
+  assert.equal(withAvailableProvider(settings, [entry('deepseek'), entry('openai')]), settings, 'with two connected nothing is chosen for you');
+});
+
 test('no provider or multiple connected providers do not silently choose a replacement', () => {
   assert.equal(withAvailableProvider(DEFAULT_SETTINGS, []), DEFAULT_SETTINGS);
   assert.equal(withAvailableProvider(DEFAULT_SETTINGS, [entry('deepseek'), entry('openai')]), DEFAULT_SETTINGS);

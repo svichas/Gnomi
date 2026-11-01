@@ -309,7 +309,7 @@ export function App() {
             <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{PAGES[tab].eyebrow}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{PAGES[tab].title}</h1><p>{PAGES[tab].intro}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <OpenSettings.Provider value={null}>
-                <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} />
+                <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} comparison={!!draft.form.comparison} />
               </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
