@@ -67,7 +67,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 export function Check({ checked, onChange, children }: { checked: boolean; onChange(checked: boolean): void; children: ReactNode }) {
   return (
     <label className="flex items-start gap-2 text-sm text-stone-800">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600" />
       <span>{children}</span>
     </label>
   );

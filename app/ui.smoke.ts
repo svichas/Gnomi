@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { syntheticRun } from '@gnomi/simulation/graph/synthetic.ts';
+import { openProject } from '@gnomi/simulation/log/sqlite.ts';
+import { DEFAULT_SETTINGS, PROVIDER_DEFAULTS } from '@gnomi/simulation/settings.ts';
+import { startGym } from '../demo/GymSite/server.ts';
 import { toRows } from './src/renderer/src/activity.ts';
 import { roundMoments, selectMoments } from './src/renderer/src/swarm-moments.ts';
-import { assertFits, collectErrors, deadline, launchApp, scratch, seedFinishedRun, shots } from './electron.fixture.ts';
+import { assertFits, collectErrors, deadline, launchApp, scratch, seedFinishedRun, seedProject, shots } from './electron.fixture.ts';
 
 const dir = scratch('ui');
 const projectDir = join(dir, 'perspectives.gnomi');
@@ -14,8 +17,9 @@ synthetic.project.name = 'Hiring app';
 const config = seedFinishedRun(projectDir, synthetic, events);
 const launch = () => launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: projectDir });
 let app = await launch();
-deadline('UI smoke timed out.', 180_000);
+deadline('UI smoke timed out.', 300_000);
 let passed = false;
+const gym = await startGym({ port: 0, defects: 'all' });
 try {
   let page = await app.firstWindow();
   page.setDefaultTimeout(15_000);
@@ -218,12 +222,95 @@ try {
   await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
   assert.equal(await page.getByLabel('Project name', { exact: true }).inputValue(), 'Hiring app');
   console.log('ok    320/768/1024/1440px layouts, reduced motion, no runtime or console errors, and remembered project after restart');
+
+  // The two extra checks at 320 px, on a project that already names a check model, through real runs on Gym with scripted models.
+  await app.close();
+  const checksDir = join(dir, 'checks.gnomi');
+  const check_model = PROVIDER_DEFAULTS.openai.judge;
+  seedProject(checksDir, {
+    name: 'Gym checks', description: '', goal: 'Look around the site', role: null, audience: null,
+    pois: [{ id: 'gym', type: 'web', mode: 'full', segments: null, name: 'Gym', start_url: `${gym.url}/`, allowed_hosts: [], production_domains: [], reset_hook_url: null }],
+    settings: { ...DEFAULT_SETTINGS, social: false, check_model },
+  });
+  app = await launchApp(join(dir, 'user-data'), { GNOMI_PROJECT_DIR: checksDir });
+  page = await app.firstWindow();
+  page.setDefaultTimeout(15_000);
+  const checkErrors = collectErrors(page, { console: true });
+  await page.getByRole('heading', { name: 'What to test', exact: true }).waitFor();
+  await page.setViewportSize({ width: 320, height: 900 });
+  const panel = page.locator('#panel-settings');
+  const evidence = panel.getByRole('checkbox', { name: /^Evidence check/ });
+  const scan = panel.getByRole('checkbox', { name: /^Accessibility scan/ });
+  const review = page.locator('#panel-review');
+  const estimatedCalls = async () => {
+    await page.locator('#tab-review').click();
+    return Number((await review.getByText(/about [\d,]+ model calls/).innerText()).match(/about ([\d,]+) model calls/)![1].replace(',', ''));
+  };
+  /** Starts a run from the Review step and returns its log once its report is in. */
+  const runLog = async (id: string) => {
+    await review.getByRole('button', { name: 'Start run', exact: true }).click();
+    await page.getByRole('tab', { name: 'Report', exact: true }).waitFor();
+    await page.locator('.run-history-context code').getByText(id, { exact: true }).waitFor();
+    const log = openProject(checksDir, { readOnly: true });
+    try {
+      for (let wait = 0; wait < 600 && log.listRuns().find((run) => run.run_id === id)?.status === 'running'; wait++) await new Promise((done) => setTimeout(done, 100));
+      assert.equal(log.listRuns().find((run) => run.run_id === id)?.status, 'finished');
+      return log.events(id);
+    } finally {
+      log.close();
+    }
+  };
+  const callsOff = await estimatedCalls();
+  await page.locator('#tab-settings').click();
+  assert.ok(!(await evidence.isChecked()) && !(await scan.isChecked()), 'both are off by default');
+  assert.equal(await panel.getByLabel('Evidence check provider').count(), 0, 'no check model to choose while the check is off');
+  await evidence.check();
+  await evidence.uncheck();
+  await page.locator('.save-state[data-dirty="false"]').waitFor(); // off again is the project as it was
+  await evidence.check();
+  await scan.check();
+  await assertFits(page, 'the extra checks fit 320 px');
+  for (const box of [evidence, scan]) assert.equal(await box.evaluate((input) => input.getBoundingClientRect().width), 16, 'a long label leaves the checkbox its size');
+  await panel.locator('summary', { hasText: 'Model choices' }).click();
+  assert.equal(await panel.getByLabel('Evidence check provider').inputValue(), 'openai');
+  assert.equal(await panel.getByLabel('Evidence check model').inputValue(), check_model.model);
+  await panel.getByText('The selected AI provider is not connected', { exact: false }).last().waitFor();
+  await assertFits(page, 'the check model row fits 320 px');
+  await page.screenshot({ path: join(shots, 'settings-checks-320.png'), fullPage: true });
+
+  assert.equal(await estimatedCalls(), callsOff + 3, 'the estimate counts the check\'s calls');
+  await review.getByText('The estimate includes the evidence check after the run.').waitFor();
+  await review.getByText('The accessibility scan makes no model calls', { exact: false }).waitFor();
+  await review.getByRole('region', { name: 'Models', exact: true }).getByText(`OpenAI · ${check_model.model}`).waitFor();
+  await assertFits(page, 'the review fits 320 px with both checks on');
+  const on = await runLog('r-0001');
+  const started = on.find((event) => event.type === 'run.started');
+  assert.ok(started?.type === 'run.started');
+  assert.equal(started.payload.config.project.settings.finding_check, true);
+  assert.equal(started.payload.config.project.settings.accessibility_checks, true);
+  assert.deepEqual(started.payload.config.project.settings.check_model, check_model);
+  assert.ok(on.some((event) => event.type === 'accessibility.scanned'), 'the run scanned its pages');
+
+  await page.locator('#tab-settings').click();
+  await evidence.uncheck();
+  await scan.uncheck();
+  await panel.getByLabel('Evidence check provider').waitFor({ state: 'detached' });
+  assert.equal(await estimatedCalls(), callsOff, 'the estimate drops the check again');
+  assert.equal(await review.getByText('Evidence check', { exact: true }).count(), 0);
+  const off = await runLog('r-0002');
+  const offStarted = off.find((event) => event.type === 'run.started');
+  assert.ok(offStarted?.type === 'run.started');
+  assert.ok(!('finding_check' in offStarted.payload.config.project.settings) && !('accessibility_checks' in offStarted.payload.config.project.settings));
+  assert.ok(!off.some((event) => event.type === 'accessibility.scanned' || event.type === 'report.checks'), 'nothing of either ran');
+  assert.deepEqual(checkErrors, []);
+  console.log('ok    the extra checks fit 320 px, count in the estimate, reach a run from the app, and leave a run with them off as before');
   passed = true;
 } catch (error) {
   await (await app.firstWindow()).screenshot({ path: join(shots, 'revamp-failure.png') });
   throw error;
 } finally {
   await app.close();
+  await gym.close();
   if (passed) rmSync(dir, { recursive: true, force: true });
   else console.error(`UI fixture retained: ${dir}`);
 }

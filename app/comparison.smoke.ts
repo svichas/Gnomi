@@ -62,6 +62,11 @@ try {
   assert.equal(await page.getByLabel('Evidence verifier', { exact: true }).inputValue(), 'navigator');
   assert.equal(await page.getByLabel('Tool name', { exact: true }).count(), 2);
   await page.screenshot({ path: join(shots, 'comparison-setup.png'), fullPage: true });
+  await page.locator('#tab-settings').click();
+  const settings = page.locator('#panel-settings');
+  await settings.getByText('Neither applies to a comparison study', { exact: false }).waitFor();
+  assert.equal(await settings.getByRole('checkbox', { name: /^(Evidence check|Accessibility scan)/ }).count(), 0, 'neither check is offered');
+  await page.locator('#tab-project').click();
   await page.getByRole('button', { name: 'Review & start', exact: true }).click();
   const review = page.locator('#panel-review');
   await review.getByRole('region', { name: 'Comparison brief', exact: true }).waitFor();

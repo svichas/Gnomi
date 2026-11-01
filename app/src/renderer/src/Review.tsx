@@ -73,6 +73,7 @@ export function Review(props: {
   const profilesStale = useMemo(() => !!saved?.audience && staleProfiles(personas, saved).size > 0, [saved, personas]);
   const audienceReady = personas.length > 0 && !countChanged && !profilesStale;
   const rounds = saved && !saved.comparison ? socialRounds(saved.settings, saved.audience) : 0;
+  const checker = saved?.settings.finding_check ? saved.settings.check_model ?? saved.settings.routing.judge : null;
   const canAddPost = rounds > 0 && personas.length > 1;
   const postText = canAddPost ? post : null;
   const round = Math.min(postRound, rounds);
@@ -260,6 +261,8 @@ export function Review(props: {
             </Fact>}
           </>}
           <p className="review-note">At the cost limit, new work stops and outstanding model requests are canceled. Browser actions already started can finish. Providers may still charge for requests in flight, so billed cost can exceed the limit. Persona generation is charged separately.</p>
+          {checker && <p className="review-note">The estimate includes the evidence check after the run.</p>}
+          {saved.settings.accessibility_checks && <p className="review-note">The accessibility scan makes no model calls, so it adds no cost to the estimate.</p>}
           {saved.comparison && <p className="review-note">The estimate includes evidence assessment and verification for each tool/task. {Math.round(saved.comparison.execution.analysis_reserve_fraction * 100)}% of the allowance is reserved for analysis; incomplete coverage is reported if the run stops early.</p>}
         </Section>
 
@@ -267,6 +270,7 @@ export function Review(props: {
           {(['navigator', ...(!saved.comparison && socialRounds(saved.settings, saved.audience) ? ['socialiser' as const] : []), 'judge', ...(!saved.comparison ? ['author' as const] : [])] satisfies LlmRole[]).map((role) => (
             <Fact key={role} label={ROLE_TEXT[role].label}>{PROVIDER_LABELS[saved.settings.routing[role].provider]} · {saved.settings.routing[role].model}</Fact>
           ))}
+          {checker && <Fact label="Evidence check">{PROVIDER_LABELS[checker.provider]} · {checker.model}</Fact>}
         </Section>
 
         <Section title="Where they can go" edit={fix('project', 'Edit access')} wide>

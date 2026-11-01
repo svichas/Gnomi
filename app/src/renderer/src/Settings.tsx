@@ -126,11 +126,10 @@ function AddFigmaToken({ disabled, onAdd }: { disabled: boolean; onAdd(token: st
   );
 }
 
-function ModelSelect({ role, choice, onChange }: { role: LlmRole; choice: ModelChoice; onChange(model: string): void }) {
+function ModelSelect({ task, label = ROLE_TEXT[task].label, choice, onChange }: { task: LlmRole; label?: string; choice: ModelChoice; onChange(model: string): void }) {
   const models = [...new Set(Object.values(PROVIDER_DEFAULTS[choice.provider]).map((route) => route.model))];
   const [custom, setCustom] = useState(!models.includes(choice.model));
-  const label = ROLE_TEXT[role].label;
-  const recommended = PROVIDER_DEFAULTS[choice.provider][role].model;
+  const recommended = PROVIDER_DEFAULTS[choice.provider][task].model;
   return (
     <div className="space-y-2">
       <select
@@ -151,8 +150,37 @@ function ModelSelect({ role, choice, onChange }: { role: LlmRole; choice: ModelC
   );
 }
 
-export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean }) {
-  const { settings, onSettings, save, list, reloadProviders, workspace } = props;
+/** The evidence check's route: the judge's unless it names its own, which can be another model family. */
+function CheckModelRow({ settings, configured, onChange }: { settings: RunSettings; configured: ProviderId[] | null; onChange(choice: ModelChoice | undefined): void }) {
+  const choice = settings.check_model;
+  const route = choice ?? settings.routing.judge;
+  const warning = choice && configured && routeProblem(choice.provider, configured);
+  return (
+    <div className="settings-model-row">
+      <div>
+        <p className="text-sm font-medium text-stone-800">Evidence check</p>
+        <p className="text-xs text-stone-500">Reviews the top findings against their evidence.</p>
+      </div>
+      <select
+        aria-label="Evidence check provider"
+        value={choice?.provider ?? ''}
+        onChange={(e) => { const provider = e.target.value as ProviderId | ''; onChange(provider ? PROVIDER_DEFAULTS[provider].judge : undefined); }}
+        className={inputClass}
+      >
+        <option value="">Same as the judge</option>
+        {(configured ? routeOptions(configured, route.provider) : [route.provider]).map((id) => <option key={id} value={id}>{PROVIDER_LABELS[id]}</option>)}
+      </select>
+      <div>
+        {choice && <ModelSelect key={choice.provider} task="judge" label="Evidence check" choice={choice} onChange={(model) => onChange({ ...choice, model })} />}
+        {warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
+        {!readsImages(route) && <p className="mt-1 text-xs text-stone-500">This model reads text only, so the evidence check will not see the screenshots.</p>}
+      </div>
+    </div>
+  );
+}
+
+export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean; comparison?: boolean }) {
+  const { settings, onSettings, save, list, reloadProviders, workspace, comparison } = props;
   const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
@@ -339,6 +367,23 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         </div>
       </Card>
 
+      <Card title="Extra checks">
+        {comparison ? (
+          <p className="text-sm text-stone-600">Neither applies to a comparison study: it reviews evidence with its own assessment and verification, and does not scan pages.</p>
+        ) : (
+          <div className="space-y-4">
+            <Check checked={settings.finding_check ?? false} onChange={(on) => set('finding_check', on || undefined)}>
+              Evidence check: review the top findings against their evidence
+            </Check>
+            <p className="pl-6 text-xs text-stone-500">After the run, a model reads the steps and screenshots behind the top findings and sets aside those that point to a persona’s mistake or the test environment. It can be wrong, so each one stays in the report with its reason. Adds model calls, which the estimate on the Review step includes. Uses the judge’s model and key unless you choose another in Model choices.</p>
+            <Check checked={settings.accessibility_checks ?? false} onChange={(on) => set('accessibility_checks', on || undefined)}>
+              Accessibility scan: scan pages and apply personas’ access needs in the browser
+            </Check>
+            <p className="pl-6 text-xs text-stone-500">Scans each page of your own web apps with axe-core and puts critical and serious problems in the report. Personas with colour or low-vision needs browse through simulated vision, and screen-reader personas work without screenshots. Makes no model calls, so it adds no cost to the estimate. A scan cannot find every problem, and a simulated need is not a person’s experience.</p>
+          </div>
+        )}
+      </Card>
+
       </div>}
       </div>
       {!workspace && <details className="disclosure settings-models"><summary><Icon name="settings" />Model choices<span>Choose the AI model for each task</span></summary><div className="disclosure-body"><Card title="This project's models">
@@ -368,13 +413,14 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
                   ))}
                 </select>
                 <div>
-                  <ModelSelect key={`${role}-${choice.provider}`} role={role} choice={choice} onChange={(model) => set('routing', { ...settings.routing, [role]: { ...choice, model } })} />
+                  <ModelSelect key={`${role}-${choice.provider}`} task={role} choice={choice} onChange={(model) => set('routing', { ...settings.routing, [role]: { ...choice, model } })} />
                   {warning && <p className="mt-1 text-xs text-amber-800">{warning}</p>}
                   {blind && <p className="mt-1 text-xs text-stone-500">This model reads text only, so the navigator will not see the screenshots.</p>}
                 </div>
               </div>
             );
           })}
+          {settings.finding_check && !comparison && <CheckModelRow settings={settings} configured={configured} onChange={(choice) => set('check_model', choice)} />}
         </div>
       </Card>
 
