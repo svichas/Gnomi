@@ -219,8 +219,9 @@ function hideTransparent(hide: boolean) {
     const wheels = style.overflowY === 'hidden' && !!wheel?.has(el); // perfect-scrollbar, a virtual list: what it holds is scrolled to as in a list that scrolls
     const [cx, cy] = [/hidden|clip/.test(style.overflowX), /hidden|clip/.test(style.overflowY) && !wheels];
     const r = outer.length || cx || cy ? el.getBoundingClientRect() : null; // a box is read only where a clip is in play
-    // What is 1 px or less stays: a visually hidden control (react-select's dummy input, an sr-only checkbox) is its widget's handle.
-    if (r && (r.width > 1 || r.height > 1) && outer.some(({ box, x, y }) => (x && (r.right <= box.left || r.left >= box.right)) || (y && (r.bottom <= box.top || r.top >= box.bottom)))) {
+    // What is 1 px or less on a side stays: a visually hidden control (react-select's dummy input, an sr-only checkbox) is its
+    // widget's handle, and a 0-high box (a fixed header's nav) holds what overflows it, which is checked on its own.
+    if (r && r.width > 1 && r.height > 1 && outer.some(({ box, x, y }) => (x && (r.right <= box.left || r.left >= box.right)) || (y && (r.bottom <= box.top || r.top >= box.bottom)))) {
       hidden.push(el);
       continue;
     }
@@ -414,6 +415,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
   let popup: Page | null = null; // a tab the current action opened
   let downloaded = false; // the current action started a download
   let formClick = false; // the current action clicked something inside a form
+  let linkTo: string | null = null; // where the link the current action clicked goes
   let chosen: Promise<string | null> | null = null; // the file the current action chose in a file chooser
   let submitting = false; // the last action was a click or a key, which can submit a form the browser then refuses
   const inflight = new Set<Request>(); // page loads and script writes the current action started that have not finished
@@ -603,6 +605,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
         const target = await locate(ref);
         const from = page.url();
         formClick = await target.evaluate((el) => el.closest('form') !== null, null, { timeout }).catch(() => false);
+        linkTo = await target.evaluate((el) => el.closest('a')?.href ?? null, null, { timeout }).catch(() => null);
         // A skinned checkbox or radio is ticked through its label at once, as a person taps it, not after Playwright's timeout.
         const label = await target.evaluate(reach, null, { timeout }).catch(() => 'plain');
         if (label !== 'plain') {
@@ -858,6 +861,7 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       popup = null;
       downloaded = false;
       formClick = false;
+      linkTo = null;
       chosen = null;
       inflight.clear();
       started.clear();
@@ -884,6 +888,14 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
       });
       if (picked) {
         text = `File chosen: ${picked}`;
+        await settle(page, started);
+      }
+      // A client-side router (Next.js) moves only once the route's code has loaded, often from a prefetch this action did not
+      // start, so the page read as quiet: a person waits for the page the link goes to.
+      // shortcut: a link followed with Enter gets no such wait, upgrade if personas use the keyboard there.
+      const link = linkTo as string | null; // set by perform()
+      if (error === null && /^https?:/.test(link ?? '') && link!.split('#')[0] !== url_before.split('#')[0] && page.url() === url_before) {
+        for (let waited = 0; waited < ACTION_MS && page.url() === url_before && !popup && !downloaded && !failedNavigation && inflight.size === 0; waited += POLL_MS) await sleep(POLL_MS);
         await settle(page, started);
       }
       const opened = popup as Page | null; // set by the popup listener while the action ran
