@@ -76,9 +76,9 @@ export const ACCESSIBILITY: Record<Persona['accessibility_needs'], ((w: Words) =
 // motor has no emulation.
 const PERCEPTION: Partial<Record<Persona['accessibility_needs'], Perception>> = { low_vision: 'blurredVision', colour_blind: 'deuteranopia', screen_reader: 'screen_reader' };
 
-/** What code limits about what this persona perceives on a web page: nothing unless the run has accessibility_checks and its prompt keeps the need. */
+/** What code limits about what this persona perceives on a web page: nothing unless the run has accessibility_checks and its prompt keeps the need, and nothing in a comparison, which ignores the setting. */
 export const perceptionOf = (project: ProjectConfig, persona: Persona): Perception | undefined =>
-  project.settings.accessibility_checks && isAttributeEnabled(project.persona_schema, 'accessibility_needs', 'prompt') ? PERCEPTION[persona.accessibility_needs] : undefined;
+  !project.comparison && project.settings.accessibility_checks && isAttributeEnabled(project.persona_schema, 'accessibility_needs', 'prompt') ? PERCEPTION[persona.accessibility_needs] : undefined;
 
 const ACTION_HELP: Record<ActionType, string> = {
   click: 'click: ref = the element',

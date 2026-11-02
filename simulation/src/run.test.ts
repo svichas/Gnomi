@@ -1561,6 +1561,26 @@ function comparisonAnswer(req: LlmRequest<unknown>) {
   return step('done', null, 'Found Jobs.');
 }
 
+test('a comparison with accessibility_checks on runs exactly as one with it off: no emulation, screenshots for all, no perception logged', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
+  const compared = async (accessibility_checks: boolean) => {
+    const images: boolean[] = [];
+    const needs: Persona['accessibility_needs'][] = ['screen_reader', 'colour_blind', 'low_vision'];
+    const r = begin(comparisonAnswer, {
+      project: publicComparison(), settings: { concurrency: 1, accessibility_checks },
+      personas: needs.map((need) => persona(need, { segment_id: 'buyers', accessibility_needs: need })),
+      onCall: (req) => { if (req.role === 'navigator') images.push(req.user.some((part) => part.type === 'image')); },
+    });
+    await r.run.done;
+    return { types: r.types(), images, vision: r.pages.map((page) => page.options.vision), started: of(r.events, 'persona.episode_started').map((e) => e.payload) };
+  };
+  const on = await compared(true);
+  assert.ok(on.images.length > 0 && on.images.every(Boolean), 'the screen-reader persona keeps its screenshots');
+  assert.ok(on.started.length > 0 && on.started.every((payload) => !('perception' in payload)));
+  assert.ok(on.vision.length > 0 && on.vision.every((vision) => vision === undefined));
+  assert.deepEqual(on, await compared(false));
+});
+
 test('comparison initial matched-block admission uses the optional verifier model price', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('User-agent: *\nAllow: /'));
   for (const verifier of ['judge', 'navigator'] as const) {

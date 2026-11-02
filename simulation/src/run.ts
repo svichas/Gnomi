@@ -259,7 +259,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
   // Loaded on every open, so a persona resumed after a re-recording logs in with the new session. Observe-only POIs are browsed logged out.
   const openPage = (persona: Persona, role: string | null, target?: ComparisonTarget) => async (poi: WebPoi, state?: StorageState) => {
     const login = poi.mode === 'full' ? role : null;
-    const perception = target ? undefined : perceptionOf(project, persona); // a comparison's own loop has no such step (comparison/runtime.ts)
+    const perception = perceptionOf(project, persona);
     const saved = login ? await sessions?.load(login) : null;
     if (target && saved && saved.info.target_id !== target.id) throw new ComparisonEnvironmentError(`The recorded session is not bound to ${target.name}; record its own test account.`);
     const observing = await observe(poi);
