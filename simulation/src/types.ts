@@ -116,7 +116,7 @@ export interface RunSettings {
   feed_policy?: FeedPolicy; // how feeds are chosen (social/feed.ts); absent means 'ranked'
   finding_check?: boolean; // review friction themes against their evidence before the author writes (report/models.ts); absent means off
   check_model?: ModelChoice; // the model for that review, which may be another family; absent means the judge's route
-  accessibility_checks?: boolean; // the page scan, and what accessibility needs do in code: vision emulation and no screenshots for screen readers; absent means off
+  accessibility_checks?: boolean; // the page scan, and what accessibility needs do in code: vision emulation and no screenshots for screen readers; absent means off, and a comparison ignores it
 }
 
 // The null and alternative networks are evaluation controls for the segment-biased legacy graph (new_simulation.md §4).
