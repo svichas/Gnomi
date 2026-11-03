@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Source for social-preview.png (1280 × 640), the repository's GitHub social preview. -->
+<!-- Source for social-preview.png (1280 × 640), the repository's GitHub social preview. Render it at 1280 × 640 with a headless browser. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -7,42 +7,62 @@
   @font-face { font-family: 'Inter'; src: url('./fonts/InterVariable.woff2') format('woff2'); font-weight: 100 900; }
   html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
   body { background: #f6f5f0; color: #222823; font-family: 'Inter', sans-serif; position: relative; }
-  .text { position: absolute; left: 96px; top: 112px; width: 620px; }
-  .logo { width: 220px; display: block; }
-  h1 { font-size: 68px; line-height: 1.04; font-weight: 600; letter-spacing: -0.035em; margin: 56px 0 24px; }
-  p { font-size: 26px; line-height: 1.4; color: #686d65; margin: 0; }
-  .graph { position: absolute; right: 56px; top: 64px; }
+  .text { position: absolute; left: 96px; top: 96px; width: 580px; }
+  .logo { width: 200px; display: block; }
+  h1 { font-size: 72px; line-height: 1.04; font-weight: 500; letter-spacing: -0.035em; margin: 64px 0 24px; }
+  .lede { font-size: 26px; line-height: 1.4; color: #686d65; margin: 0; }
+  .meta { position: absolute; left: 96px; bottom: 72px; font-size: 18px; font-weight: 500; color: #58684e; display: flex; gap: 10px; align-items: center; }
+  .meta span + span::before { content: '·'; color: #87917d; margin-right: 10px; }
+  .graph { position: absolute; left: 0; top: 0; }
+  .bubble { position: absolute; background: #fff; border: 1.5px solid #d8dcd2; border-radius: 12px; padding: 12px 16px 13px; }
+  .bubble::after { content: ''; position: absolute; right: -8px; top: 26px; width: 13px; height: 13px; background: #fff; border: 1.5px solid #d8dcd2; border-left: 0; border-bottom: 0; transform: rotate(45deg); }
+  .who { font-size: 14px; color: #686d65; display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+  .who i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .quote { font-size: 20px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; }
+  .card { position: absolute; right: 56px; top: 452px; width: 360px; background: #fff; border: 1.5px solid #d8dcd2; border-radius: 12px; padding: 18px 20px 20px; }
+  .chip { display: inline-block; background: #e7ebdd; color: #47573e; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; padding: 5px 8px; border-radius: 4px; }
+  .card h2 { font-size: 22px; line-height: 1.25; font-weight: 500; letter-spacing: -0.015em; margin: 12px 0 8px; }
+  .card p { font-size: 15px; color: #686d65; margin: 0; font-feature-settings: 'tnum'; }
 </style>
 </head>
 <body>
   <div class="text">
     <img class="logo" src="./gnomi-logo.svg" alt="Gnomi">
     <h1>Perspective before you ship.</h1>
-    <p>Simulated people explore your product, talk about it, and show you where they get stuck.</p>
+    <p class="lede">Simulated people explore your product,<br>talk about it, and show you where they get stuck.</p>
   </div>
-  <svg class="graph" width="512" height="512" viewBox="0 0 512 512" aria-hidden="true">
+  <div class="meta"><span>Open source</span><span>macOS, Windows, Linux</span><span>Bring your own model</span></div>
+
+  <svg class="graph" width="1280" height="640" viewBox="0 0 1280 640" aria-hidden="true">
     <g stroke="#d8dcd2" stroke-width="2.5">
-      <line x1="256" y1="236" x2="128" y2="140"/><line x1="256" y1="236" x2="380" y2="118"/>
-      <line x1="256" y1="236" x2="412" y2="282"/><line x1="256" y1="236" x2="316" y2="412"/>
-      <line x1="256" y1="236" x2="128" y2="356"/><line x1="128" y1="140" x2="70" y2="250"/>
-      <line x1="70" y1="250" x2="128" y2="356"/><line x1="380" y1="118" x2="412" y2="282"/>
-      <line x1="412" y1="282" x2="452" y2="402"/><line x1="316" y1="412" x2="452" y2="402"/>
-      <line x1="128" y1="356" x2="198" y2="462"/><line x1="198" y1="462" x2="316" y2="412"/>
-      <line x1="128" y1="140" x2="236" y2="64"/><line x1="236" y1="64" x2="380" y2="118"/>
+      <line x1="1040" y1="140" x2="1150" y2="62"/><line x1="1150" y1="62" x2="1212" y2="170"/>
+      <line x1="1040" y1="140" x2="1212" y2="170"/><line x1="1130" y1="260" x2="1212" y2="170"/>
+      <line x1="1130" y1="260" x2="1212" y2="370"/><line x1="1212" y1="370" x2="1124" y2="414"/>
+      <line x1="1050" y1="352" x2="1124" y2="414"/><line x1="1130" y1="260" x2="1124" y2="414"/>
     </g>
-    <g stroke="#58684e" stroke-width="4"><line x1="256" y1="236" x2="412" y2="282"/><line x1="256" y1="236" x2="128" y2="140"/></g>
-    <circle cx="256" cy="236" r="34" fill="#58684e"/>
-    <circle cx="128" cy="140" r="22" fill="#56768a"/><circle cx="380" cy="118" r="18" fill="#8a6a83"/>
-    <circle cx="412" cy="282" r="24" fill="#a27b36"/><circle cx="316" cy="412" r="20" fill="#417f78"/>
-    <circle cx="128" cy="356" r="18" fill="#58684e" opacity="0.7"/><circle cx="70" cy="250" r="13" fill="#56768a" opacity="0.7"/>
-    <circle cx="452" cy="402" r="14" fill="#8a6a83" opacity="0.7"/><circle cx="198" cy="462" r="13" fill="#a27b36" opacity="0.7"/>
-    <circle cx="236" cy="64" r="13" fill="#417f78" opacity="0.7"/>
-    <g font-family="Inter, sans-serif" font-size="17" font-weight="500">
-      <rect x="296" y="168" width="196" height="44" rx="12" fill="#ffffff" stroke="#d8dcd2" stroke-width="1.5"/>
-      <text x="314" y="196" fill="#222823">“Where’s the price?”</text>
-      <rect x="24" y="52" width="176" height="44" rx="12" fill="#ffffff" stroke="#d8dcd2" stroke-width="1.5"/>
-      <text x="42" y="80" fill="#222823">“Same, I gave up.”</text>
-    </g>
+    <g stroke="#58684e" stroke-width="4"><line x1="1040" y1="140" x2="1130" y2="260"/><line x1="1130" y1="260" x2="1050" y2="352"/></g>
+    <circle cx="1130" cy="260" r="30" fill="#58684e"/>
+    <circle cx="1040" cy="140" r="20" fill="#56768a"/>
+    <circle cx="1050" cy="352" r="20" fill="#a27b36"/>
+    <circle cx="1212" cy="170" r="15" fill="#8a6a83"/>
+    <circle cx="1212" cy="370" r="16" fill="#417f78"/>
+    <circle cx="1150" cy="62" r="11" fill="#56768a" opacity="0.6"/>
+    <circle cx="1124" cy="414" r="11" fill="#8a6a83" opacity="0.6"/>
   </svg>
+
+  <div class="bubble" style="right: 274px; top: 107px;">
+    <div class="who"><i style="background:#56768a"></i>Maya · simulated founder</div>
+    <div class="quote">“Where’s the pricing?”</div>
+  </div>
+  <div class="bubble" style="right: 264px; top: 319px;">
+    <div class="who"><i style="background:#a27b36"></i>Jonas · simulated recruiter</div>
+    <div class="quote">“Same. I gave up at sign-up.”</div>
+  </div>
+
+  <div class="card">
+    <span class="chip">HYPOTHESIS</span>
+    <h2>Pricing is hard to find before sign-up</h2>
+    <p>Raised by 5 of 8 simulated users · 4 screenshots</p>
+  </div>
 </body>
 </html>
