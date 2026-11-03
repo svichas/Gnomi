@@ -3,88 +3,199 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f5f0" />
-    <title>Gnomi — Perspective before you ship.</title>
-    <meta name="description" content="Social simulation for product teams. Let simulated users explore your idea, app, or design, follow their conversations, and discover what to test next." />
+    <meta name="theme-color" content="#f6f5f0" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#222823" media="(prefers-color-scheme: dark)" />
+    <title>Gnomi — Open-source social simulation for product teams</title>
+    <meta name="description" content="Gnomi is a free, open-source desktop app. Simulated users explore your idea, staging app or Figma design, talk about it, and show you where they get stuck. Runs locally with your own model keys." />
+    <link rel="canonical" href="https://svichas.github.io/Gnomi/" />
     <meta property="og:title" content="Gnomi — Perspective before you ship." />
-    <meta property="og:description" content="Simulated users. Different perspectives. A clearer idea of what to test next." />
+    <meta property="og:description" content="Open-source social simulation for product teams. Simulated users. Different perspectives. A clearer idea of what to test next." />
     <meta property="og:type" content="website" />
-    <link rel="icon" href="./brand/gnomi-icon.svg" type="image/svg+xml" />
-    <link rel="icon" href="./brand/gnomi-icon-reversed.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
-    <link rel="preload" href="./brand/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="./brand/brand-tokens.css" />
-    <script type="module" crossorigin src="./assets/index-fsxgC6nw.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DhipC0fQ.css">
+    <meta property="og:url" content="https://svichas.github.io/Gnomi/" />
+    <meta property="og:image" content="https://svichas.github.io/Gnomi/brand/social-preview.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="brand/gnomi-icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="brand/gnomi-icon-reversed.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
+    <link rel="preload" href="brand/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="brand/brand-tokens.css" />
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="main.js"></script>
   </head>
   <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.01 8.01 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m-5-5 5 5 5-5M5 20h14" /></symbol>
+    </svg>
+
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header wrap">
-      <a class="brand" href="#" aria-label="Gnomi home"><img src="./brand/gnomi-logo.svg" width="130" height="40" alt="Gnomi" /></a>
+      <a class="brand" href="#" aria-label="Gnomi home">
+        <picture>
+          <source srcset="brand/gnomi-logo-light.svg" media="(prefers-color-scheme: dark)" />
+          <img src="brand/gnomi-logo.svg" width="130" height="40" alt="Gnomi" />
+        </picture>
+      </a>
       <nav aria-label="Main navigation">
         <a class="nav-section" href="#how-it-works">How it works</a>
-        <a class="nav-section" href="#our-approach">Our approach</a>
-        <a class="nav-github" href="https://github.com/svichas/Gnomi">GitHub <span aria-hidden="true">↗</span></a>
+        <a class="nav-section" href="#open-source">Open source</a>
+        <a class="nav-section" href="#contribute">Contribute</a>
+        <a class="nav-github" href="https://github.com/svichas/Gnomi"><svg width="18" height="18" aria-hidden="true"><use href="#i-github" /></svg> GitHub</a>
       </nav>
     </header>
 
     <main id="main">
       <section class="hero wrap" aria-labelledby="hero-title">
         <div class="hero-intro">
-          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Social simulation for product teams</p>
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source social simulation for product teams</p>
           <h1 id="hero-title">Perspective<br class="small-break" /> before you ship.</h1>
-          <p class="hero-description">Let simulated users explore what you’re building.<br class="wide-break" /> Find the friction. Follow the conversation. Know what to test next.</p>
-          <a class="button" href="https://github.com/svichas/Gnomi#run-locally">Get started <span aria-hidden="true">↗</span></a>
+          <p class="hero-description">Gnomi is a free, open-source desktop app. Simulated users explore your idea, staging app or Figma design, talk about it with each other, and show you where they got stuck.</p>
+          <div class="actions">
+            <a class="button" href="https://github.com/svichas/Gnomi/releases/latest"><svg width="20" height="20" aria-hidden="true"><use href="#i-download" /></svg> Download Gnomi</a>
+            <a class="button button-secondary" href="https://github.com/svichas/Gnomi"><svg width="18" height="18" aria-hidden="true"><use href="#i-github" /></svg> Star on GitHub</a>
+          </div>
+          <ul class="facts" aria-label="At a glance">
+            <li>macOS, Windows, Linux</li>
+            <li>AGPL-3.0</li>
+            <li>Bring your own model</li>
+          </ul>
         </div>
 
-        <figure class="film" id="film">
-          <div class="film-stage">
-            <video id="hero-film" controls playsinline preload="none" poster="./media/film-poster.jpg" width="1920" height="1080" aria-label="Introducing Gnomi: social simulation for product teams" aria-describedby="film-caption">
-              <source src="./media/Gnomi-master.mp4" type="video/mp4" />
-              <track kind="captions" src="./media/Gnomi.en.vtt" srclang="en" label="English" />
-              Your browser cannot play this video. <a href="./media/Gnomi-master.mp4">Download the introduction.</a>
-            </video>
-            <button class="film-play" type="button" aria-controls="hero-film" hidden>
+        <figure class="film">
+          <a class="film-stage" href="https://www.youtube.com/watch?v=qgSt7nscow4" data-youtube="qgSt7nscow4">
+            <img src="media/film-poster.jpg" width="1920" height="1080" alt="" />
+            <span class="film-play">
               <span class="play-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z" fill="currentColor" /></svg></span>
-              <span>Play introduction</span> <span class="film-duration">1:48</span>
-            </button>
-          </div>
-          <figcaption id="film-caption"><span>A little perspective goes a long way.</span><span>The Gnomi introduction</span></figcaption>
-          <p class="film-error" role="status" hidden>The film couldn’t load. <a href="./media/Gnomi-master.mp4">Open the video directly</a> or read the transcript below.</p>
-          <details class="transcript"><summary>Read the film transcript <span aria-hidden="true">+</span></summary><div class="transcript-body">
-            <p>You know your product. But what happens when someone sees it for the first time? Meet Gnomi. Social simulation for product teams. Perspective before you ship.</p>
-            <p>You define audience segments and their shares. Gnomi samples traits such as language, device, and patience using a saved random seed. A language model proposes fictional profiles from those traits. Gnomi selects one candidate and expands its biography. You review and edit the personas before a run. They represent your assumptions about an audience.</p>
-            <p>Share your idea, staging app, or your Figma design. Set a goal and a budget. Each persona explores from a different perspective. They click. They pause. They encounter friction. Follow their actions, generated comments, and screenshots to inspect what happened in the simulation.</p>
-            <p>Then the conversation starts. Personas post, reply, and react. Watch how a complaint travels through this simulated community, and whose generated opinion changes.</p>
-            <p>Gnomi brings it together in a report: ranked friction hypotheses, affected simulated segments, screenshots, and generated quotes. These records show what the agents did. They do not establish what real users need or how often a problem occurs.</p>
-            <p>Projects run on your machine, with your own model keys. Model inputs go to the provider you configure. Simulated findings are hypotheses, not evidence about real users. Choose what to investigate, then test it with real people before drawing conclusions.</p>
-            <p>Find the friction. Follow the conversation. Know what to test next. Gnomi.</p>
-          </div></details>
+              <span>Play introduction</span> <span class="film-duration"><span class="visually-hidden">, </span>1:27</span>
+            </span>
+          </a>
+          <figcaption><span>Meet Gnomi. Social simulation for product teams.</span><span>Loads from YouTube when you press play</span></figcaption>
         </figure>
-        <div class="input-strip" aria-label="Supported product inputs"><span>Start with what you have</span><ul><li>Your idea</li><li>Your staging app</li><li>Your design frames</li></ul></div>
+        <div class="input-strip" aria-label="Supported product inputs">
+          <span>Start with what you have</span>
+          <ul><li>An idea or copy</li><li>Your staging app</li><li>Design frames</li><li>A Figma file</li><li>A competitor’s site</li></ul>
+        </div>
       </section>
 
       <section class="workflow wrap section-space" id="how-it-works" aria-labelledby="workflow-title">
-        <div class="section-heading"><p class="eyebrow">From first impression to next step</p><h2 id="workflow-title">A fresh set of eyes.<br />A clearer way forward.</h2><p>You know your product inside out.<br />Explore how a different perspective might see it.</p></div>
+        <div class="section-heading">
+          <p class="eyebrow">From first impression to next step</p>
+          <h2 id="workflow-title">A fresh set of eyes.<br />A clearer way forward.</h2>
+          <p>You know your product inside out.<br />Explore how a different perspective might see it.</p>
+        </div>
         <ol class="steps">
-          <li><span class="step-number">01 <span aria-hidden="true">/</span></span><h3>Bring your product.</h3><p>Share an idea, a staging app, or design frames. Choose the experience you want to explore and set a goal.</p><span class="step-note">A question worth exploring</span></li>
-          <li><span class="step-number">02 <span aria-hidden="true">/</span></span><h3>Meet your audience.</h3><p>Define segments and review your fictional personas. Watch them explore, encounter friction, and exchange opinions.</p><span class="step-note">Different views, in conversation</span></li>
-          <li><span class="step-number">03 <span aria-hidden="true">/</span></span><h3>Find your next question.</h3><p>Review friction hypotheses alongside screenshots, recorded actions, and generated quotes. Choose what to test with real people.</p><span class="step-note">Something concrete to investigate</span></li>
+          <li><span class="step-number">01 <span aria-hidden="true">/</span></span><h3>Bring your product.</h3><p>Share an idea, a staging app, design frames or a Figma file. Choose the experience you want to explore and set a goal.</p><span class="step-note">A question worth exploring</span></li>
+          <li><span class="step-number">02 <span aria-hidden="true">/</span></span><h3>Meet your audience.</h3><p>Define segments and review your simulated personas. Watch them explore, run into friction, and post, reply and react to each other.</p><span class="step-note">Different views, in conversation</span></li>
+          <li><span class="step-number">03 <span aria-hidden="true">/</span></span><h3>Find your next question.</h3><p>Review ranked friction hypotheses with screenshots, recorded actions and generated quotes. Choose what to test with real people.</p><span class="step-note">Something concrete to investigate</span></li>
         </ol>
       </section>
 
-      <section class="approach" id="our-approach" aria-labelledby="approach-title">
-        <div class="wrap approach-layout">
-          <div><p class="eyebrow">Built for a thoughtful process</p><h2 id="approach-title">More perspective.<br />Room for uncertainty.</h2></div>
-          <div class="principles">
-            <div><h3>A starting point for research.</h3><p>Simulated findings are hypotheses. Use them to ask better questions, then validate important decisions with real people.</p></div>
-            <div><h3>Your workspace. Your model keys.</h3><p>Projects live on your machine. Model inputs go to the provider you configure. You choose the audience, the goal, and the budget.</p></div>
+      <section class="open-source" id="open-source" aria-labelledby="open-title">
+        <div class="wrap">
+          <div class="section-heading">
+            <p class="eyebrow">Open by design</p>
+            <h2 id="open-title">Yours to run, read<br />and change.</h2>
+            <p>No account and no hosted service. Gnomi is a desktop app you run yourself, and every line of it is on GitHub.</p>
+          </div>
+          <ul class="principles">
+            <li><h3>Free and open source.</h3><p>Licensed under <a href="https://github.com/svichas/Gnomi/blob/main/LICENSE">AGPL-3.0</a>. Use, study, modify and share it. If you distribute a modified version, or run one for others over a network, share its source too.</p></li>
+            <li><h3>Local first.</h3><p>Projects, run history and evidence stay in a folder on your machine. Model inputs go only to the provider you configure, and web runs only reach the hosts you allow.</p></li>
+            <li><h3>Bring your own model.</h3><p>Use Anthropic, OpenAI, Google or DeepSeek with your own key, or a local OpenAI-compatible server such as Ollama or LM Studio.</p></li>
+            <li><h3>Inspect every run.</h3><p>Persona traits are sampled from a saved seed. Actions, screenshots and posts are recorded, and reports export as HTML, PDF, Markdown and JSON.</p></li>
+            <li><h3>Script it.</h3><p>A command-line interface with JSON output covers audiences, estimates, runs and reports. Gate pull requests in CI, or let a coding agent run a study for you.</p></li>
+            <li><h3>Honest about simulation.</h3><p>Findings are hypotheses, not facts about real users. <a href="https://github.com/svichas/Gnomi/blob/main/docs/interpreting-simulations.md">Interpreting simulations</a> explains what a run can and cannot tell you.</p></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="get-started wrap section-space" id="get-started" aria-labelledby="start-title">
+        <div class="section-heading">
+          <p class="eyebrow">Get started</p>
+          <h2 id="start-title">Two ways in.</h2>
+          <p>Install the desktop app, or clone the repository and try the bundled demo without an API key.</p>
+        </div>
+        <div class="start-grid">
+          <article class="card">
+            <h3>Download the app</h3>
+            <p>Installers for macOS (Apple silicon and Intel), Windows and Linux. Open <strong>Settings</strong> and add a provider key to start.</p>
+            <a class="button" href="https://github.com/svichas/Gnomi/releases/latest"><svg width="20" height="20" aria-hidden="true"><use href="#i-download" /></svg> Latest release</a>
+            <p class="card-note">The installers are not code-signed yet, so your system asks you to confirm the first launch. <a href="https://github.com/svichas/Gnomi#download-the-app">How to open it</a></p>
+          </article>
+          <article class="card">
+            <h3>Run it from source</h3>
+            <p>Needs <a href="https://nodejs.org/">Node.js 24.15</a> or newer. Starts Gym, a small demo app with deliberately seeded UX defects.</p>
+            <div class="code">
+              <pre><code>git clone https://github.com/svichas/Gnomi.git
+cd Gnomi
+npm ci
+npx playwright-core install chromium
+npm run gym</code></pre>
+              <button class="copy" type="button" aria-live="polite" hidden>Copy</button>
+            </div>
+            <p class="card-note">Then send scripted personas through it from a second terminal, or open the app with <code>npm run dev</code>. <a href="https://github.com/svichas/Gnomi#quick-start">Full quick start</a></p>
+          </article>
+        </div>
+      </section>
+
+      <section class="contribute" id="contribute" aria-labelledby="contribute-title">
+        <div class="wrap contribute-layout">
+          <div>
+            <p class="eyebrow">Built in the open</p>
+            <h2 id="contribute-title">Help shape Gnomi.</h2>
+            <p class="contribute-intro">Gnomi is early and changes quickly. Bug reports, ideas and pull requests are welcome. Open an issue before starting anything large.</p>
+            <ul class="link-list">
+              <li><a href="https://github.com/svichas/Gnomi/blob/main/CONTRIBUTING.md"><span>Contributing guide</span><span>Set up, run the checks, open a focused pull request.</span></a></li>
+              <li><a href="https://github.com/svichas/Gnomi/issues/new/choose"><span>Issues</span><span>Report a bug or suggest a feature.</span></a></li>
+              <li><a href="https://github.com/svichas/Gnomi/discussions"><span>Discussions</span><span>Ask questions and share what you found.</span></a></li>
+              <li><a href="https://github.com/svichas/Gnomi/blob/main/docs/roadmap.md"><span>Roadmap</span><span>Milestones, measured progress and what comes next.</span></a></li>
+              <li><a href="https://github.com/svichas/Gnomi/blob/main/SECURITY.md"><span>Security</span><span>Report vulnerabilities privately.</span></a></li>
+            </ul>
+          </div>
+          <div class="repo-map">
+            <h3>Inside the repository</h3>
+            <p>A TypeScript monorepo: Electron and React for the app, Playwright for the browser, SQLite for the event log.</p>
+            <dl>
+              <div><dt><a href="https://github.com/svichas/Gnomi/tree/main/app">app/</a></dt><dd>Desktop shell and UI: audience editor, live graph, activity and reports.</dd></div>
+              <div><dt><a href="https://github.com/svichas/Gnomi/tree/main/engine">engine/</a></dt><dd>Host process and CLI: projects, audiences and Figma import.</dd></div>
+              <div><dt><a href="https://github.com/svichas/Gnomi/tree/main/simulation">simulation/</a></dt><dd>Runtime: browser actions, provider routing, social rounds and reports.</dd></div>
+              <div><dt><a href="https://github.com/svichas/Gnomi/tree/main/demo/GymSite">demo/GymSite/</a></dt><dd>Demo app with a catalogue of seeded defects.</dd></div>
+              <div><dt><a href="https://github.com/svichas/Gnomi/tree/main/docs">docs/</a></dt><dd>Technical design, behavioural model and guides.</dd></div>
+            </dl>
           </div>
         </div>
       </section>
 
-      <section class="closing wrap section-space" aria-labelledby="closing-title"><img src="./brand/gnomi-icon.svg" width="48" height="48" alt="" /><p class="eyebrow">A new perspective starts here</p><h2 id="closing-title">What will you discover<br />before you ship?</h2><a class="button" href="https://github.com/svichas/Gnomi#run-locally">Get started with Gnomi <span aria-hidden="true">↗</span></a><p class="closing-note">A local desktop app. Available to run from source.</p></section>
+      <section class="closing wrap section-space" aria-labelledby="closing-title">
+        <picture>
+          <source srcset="brand/gnomi-icon-reversed.svg" media="(prefers-color-scheme: dark)" />
+          <img src="brand/gnomi-icon.svg" width="48" height="48" alt="" />
+        </picture>
+        <p class="eyebrow">A new perspective starts here</p>
+        <h2 id="closing-title">What will you discover<br />before you ship?</h2>
+        <div class="actions">
+          <a class="button" href="https://github.com/svichas/Gnomi/releases/latest"><svg width="20" height="20" aria-hidden="true"><use href="#i-download" /></svg> Download Gnomi</a>
+          <a class="button button-secondary" href="https://github.com/svichas/Gnomi"><svg width="18" height="18" aria-hidden="true"><use href="#i-github" /></svg> Star on GitHub</a>
+        </div>
+        <p class="closing-note">Free and open source under the AGPL-3.0 license.</p>
+      </section>
     </main>
 
-    <footer class="site-footer wrap"><a class="brand" href="#" aria-label="Gnomi home"><img src="./brand/gnomi-logo.svg" width="104" height="32" alt="Gnomi" /></a><p><span lang="el">γνώμη</span> <span aria-hidden="true">/</span> Greek for opinion.</p><a href="https://github.com/svichas/Gnomi">Explore on GitHub <span aria-hidden="true">↗</span></a></footer>
+    <footer class="site-footer wrap">
+      <a class="brand" href="#" aria-label="Gnomi home">
+        <picture>
+          <source srcset="brand/gnomi-logo-light.svg" media="(prefers-color-scheme: dark)" />
+          <img src="brand/gnomi-logo.svg" width="104" height="32" alt="Gnomi" />
+        </picture>
+      </a>
+      <p><span lang="el">γνώμη</span> <span aria-hidden="true">/</span> Greek for opinion.</p>
+      <nav aria-label="Project links">
+        <a href="https://github.com/svichas/Gnomi">GitHub</a>
+        <a href="https://github.com/svichas/Gnomi/releases">Releases</a>
+        <a href="https://github.com/svichas/Gnomi#documentation">Docs</a>
+        <a href="https://github.com/svichas/Gnomi/blob/main/LICENSE">License</a>
+        <a href="https://github.com/svichas/Gnomi/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>
+      </nav>
+    </footer>
   </body>
 </html>
