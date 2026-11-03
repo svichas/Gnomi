@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, safeStorage, session, shell, utilityProcess } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, net, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
 import appIcon from '../../../assets/brand/gnomi-app-icon.png?asset';
 import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
@@ -13,6 +13,7 @@ import type { Startup } from '../startup.ts';
 import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { keyedProvider, ProviderKeys } from './providers.ts';
+import { LATEST_RELEASE_API, newerRelease, RELEASES_PAGE } from './release.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -131,9 +132,9 @@ async function startEngine(): Promise<Startup> {
       })(),
       providers.load(),
     ]);
-    return { startupError: null, sessionsPersist };
+    return { startupError: null, sessionsPersist, version: app.getVersion() };
   } catch (err) {
-    return { startupError: err instanceof Error ? err.message : String(err), sessionsPersist };
+    return { startupError: err instanceof Error ? err.message : String(err), sessionsPersist, version: app.getVersion() };
   }
 }
 
@@ -158,6 +159,18 @@ ipcMain.handle('test-figma-token', async (): Promise<KeyTest> => {
   providers.recordTest('figma', test);
   return test;
 });
+
+// Installed builds ask GitHub for the latest release number once per launch (listed in Settings under Where Gnomi connects).
+ipcMain.handle('latest-release', async (): Promise<string | null> => {
+  if (!app.isPackaged) return null; // dev and smoke runs are not releases
+  try {
+    const response = await net.fetch(LATEST_RELEASE_API, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(10_000) });
+    return response.ok ? newerRelease((await response.json()).tag_name, app.getVersion()) : null;
+  } catch {
+    return null; // offline or rate-limited: no banner
+  }
+});
+ipcMain.handle('open-releases', () => shell.openExternal(RELEASES_PAGE));
 
 ipcMain.handle('list-audiences', () => audiences.list());
 ipcMain.handle('save-audience', (_event, name: unknown, audience: unknown, schema: unknown) => audiences.save(name, audience, schema));

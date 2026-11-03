@@ -179,8 +179,8 @@ function CheckModelRow({ settings, configured, onChange }: { settings: RunSettin
   );
 }
 
-export function Settings(props: { settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean; comparison?: boolean }) {
-  const { settings, onSettings, save, list, reloadProviders, workspace, comparison } = props;
+export function Settings(props: { version: string; settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean; comparison?: boolean }) {
+  const { version, settings, onSettings, save, list, reloadProviders, workspace, comparison } = props;
   const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
@@ -318,6 +318,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
         ) : (
           <p className="text-sm text-stone-500">Nowhere yet: no provider is connected.</p>
         ))}
+        <p className="mt-3 text-xs text-stone-500">Once per launch, Gnomi also asks api.github.com for the latest release number to tell you when an update is out. It sends nothing from your projects.</p>
       </Card>
 
       </div>
@@ -426,7 +427,7 @@ export function Settings(props: { settings: RunSettings; onSettings(next: RunSet
 
       </div></details>}
 
-      <p className="text-xs text-stone-500">Gnomi is free software under the GNU AGPL v3.0. Source: github.com/svichas/Gnomi</p>
+      <p className="text-xs text-stone-500">Gnomi {version} is free software under the GNU AGPL v3.0. Source: github.com/svichas/Gnomi</p>
 
       {!workspace && <ActionBar notice={saving.outcome && !saving.outcome.ok && <Note tone="error">{saving.outcome.text}</Note>}>
         <p className="settings-save-hint">Provider keys save immediately. Save to apply this project’s run settings.</p>

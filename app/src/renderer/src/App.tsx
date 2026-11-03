@@ -46,6 +46,12 @@ function rememberedProject(): string | null {
 function rememberProject(id: string) {
   try { localStorage.setItem('gnomi.open-project', id); } catch { /* The main process still remembers the current project. */ }
 }
+function dismissedRelease(): string | null {
+  try { return localStorage.getItem('gnomi.dismissed-release'); } catch { return null; }
+}
+function dismissRelease(version: string) {
+  try { localStorage.setItem('gnomi.dismissed-release', version); } catch { /* It shows again next launch. */ }
+}
 /** Prefer the live run when revisiting a project. */
 const liveRun = (project: ProjectInfo | null) => project?.runs.find((run) => run.status === 'running');
 
@@ -57,6 +63,8 @@ export function App() {
   const [runId, setRunId] = useState<string | null>(null);
   const [comparing, setComparing] = useState<{ base: string; run: string } | null>(null);
   const [sessionsPersist, setSessionsPersist] = useState(true);
+  const [version, setVersion] = useState('');
+  const [newRelease, setNewRelease] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
   const [homePage, setHomePage] = useState<'projects' | 'runs' | 'settings'>('projects');
@@ -118,8 +126,10 @@ export function App() {
   useEffect(() => {
     void stopped.then(setProblem);
     void (async () => {
-      const { startupError, sessionsPersist } = await connected;
+      const { startupError, sessionsPersist, version } = await connected;
       setSessionsPersist(sessionsPersist);
+      setVersion(version);
+      void window.gnomi.latestRelease().then((latest) => { if (latest && latest !== dismissedRelease()) setNewRelease(latest); });
       if (startupError) setProblem(`Gnomi could not start properly: ${startupError}`);
       let loaded: ProjectInfo | null = null;
       try {
@@ -277,6 +287,16 @@ export function App() {
       </header>
 
       <main ref={main} id="main-content" tabIndex={-1} className={`app-main ${home ? 'projects-main' : ''}`}>
+        {newRelease && (
+          <div className="mb-5">
+            <div role="status" className="note" data-tone="info">
+              <span className="note-icon"><Icon name="spark" size={16} /></span>
+              <div className="note-copy"><p className="note-title">Gnomi {newRelease} is available</p><p>You have {version}. Download the new version from GitHub and install it over this one; your projects stay.</p></div>
+              <Button small className="note-action" onClick={() => void window.gnomi.openReleases()}>Download<Icon name="arrow" size={14} /></Button>
+              <Button small variant="quiet" aria-label="Dismiss update notice" onClick={() => { dismissRelease(newRelease); setNewRelease(null); }}><Icon name="close" size={14} /></Button>
+            </div>
+          </div>
+        )}
         {problem && (
           <div className="mb-5">
             <Note tone="error">{problem}</Note>
@@ -290,7 +310,7 @@ export function App() {
             : <div className="page-heading"><p className="eyebrow">Preferences</p><h1 tabIndex={-1}>Connections</h1><p>AI providers and Figma, shared by all your projects. Budgets and models are set in each project’s Settings.</p></div>}
           {homePage === 'runs'
             ? allRuns ? <section aria-label="All project runs"><ProjectRunHistory runs={allRuns} selected={null} onSelect={(run) => void openSessionRun(run).catch((err) => setProblem(errorText(err)))} /></section> : <p className="text-sm text-stone-500">Loading your runs…</p>
-            : draft && <OpenSettings.Provider value={null}><Settings workspace settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} /></OpenSettings.Provider>}
+            : draft && <OpenSettings.Provider value={null}><Settings workspace version={version} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} /></OpenSettings.Provider>}
         </div>}
         {!draft ? (
           <p className="text-sm text-stone-500">Starting Gnomi...</p>
@@ -309,7 +329,7 @@ export function App() {
             <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{PAGES[tab].eyebrow}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{PAGES[tab].title}</h1><p>{PAGES[tab].intro}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <OpenSettings.Provider value={null}>
-                <Settings settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} comparison={!!draft.form.comparison} />
+                <Settings version={version} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} comparison={!!draft.form.comparison} />
               </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>

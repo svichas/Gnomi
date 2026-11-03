@@ -54,7 +54,7 @@ export const connected = new Promise<Startup>((resolve) => {
       if (data.ok) waiting?.resolve(data.result);
       else waiting?.reject(new Error(data.error));
     };
-    resolve({ startupError: e.data.startupError, sessionsPersist: e.data.sessionsPersist });
+    resolve({ startupError: e.data.startupError, sessionsPersist: e.data.sessionsPersist, version: e.data.version });
   });
 });
 
