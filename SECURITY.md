@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Gnomi has no releases yet. Security fixes go to the `main` branch.
+Security fixes go to the `main` branch and the next release. Only the [latest release](https://github.com/svichas/Gnomi/releases/latest) is supported.
 
 ## Reporting a vulnerability
 
