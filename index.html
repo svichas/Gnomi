@@ -113,7 +113,7 @@
         <div class="section-heading">
           <p class="eyebrow">Get started</p>
           <h2 id="start-title">Two ways in.</h2>
-          <p>Install the desktop app, or clone the repository and try the bundled demo without an API key.</p>
+          <p>Install the desktop app, or clone the repository and run it from source.</p>
         </div>
         <div class="start-grid">
           <article class="card">
@@ -124,16 +124,16 @@
           </article>
           <article class="card">
             <h3>Run it from source</h3>
-            <p>Needs <a href="https://nodejs.org/">Node.js 24.15</a> or newer. Starts Gym, a small demo app with deliberately seeded UX defects.</p>
+            <p>Needs <a href="https://nodejs.org/">Node.js 24.15</a> or newer. Builds the desktop app and opens it, rebuilding as you edit.</p>
             <div class="code">
               <pre><code>git clone https://github.com/svichas/Gnomi.git
 cd Gnomi
 npm ci
 npx playwright-core install chromium
-npm run gym</code></pre>
+npm run dev</code></pre>
               <button class="copy" type="button" aria-live="polite" hidden>Copy</button>
             </div>
-            <p class="card-note">Then send scripted personas through it from a second terminal, or open the app with <code>npm run dev</code>. <a href="https://github.com/svichas/Gnomi#quick-start">Full quick start</a></p>
+            <p class="card-note">No API key yet? <code>npm run gym</code> starts a demo app with seeded UX defects to try scripted personas on. <a href="https://github.com/svichas/Gnomi#quick-start">Full quick start</a></p>
           </article>
         </div>
       </section>
