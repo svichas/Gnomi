@@ -140,6 +140,7 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   const [momentView, setMomentView] = useState<MomentView>('all');
   const [bubbles, setBubbles] = useState(true);
   const [shown, setShown] = useState<SwarmGraph>(emptyGraph); // what is drawn, for the counts and the hover card
+  const [webgl2] = useState(() => document.createElement('canvas').getContext('webgl2') !== null); // without it sigma throws, which blanks the app
   const latest = useRef(events);
   latest.current = events;
   const rounds = useMemo(() => events.reduce((most, event) => Math.max(most, event.round), 1), [events]);
@@ -289,15 +290,15 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
           <Check checked={bubbles} onChange={setBubbles}>Show bubbles</Check>
         </div>
         <div className="swarm-canvas" role="group" aria-label="Interactive map. Use the focus selector below to explore people and product areas with a keyboard.">
-          <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
+          {webgl2 ? <SigmaContainer ref={sigma} graph={graph} style={{ height: '100%', width: '100%', background: 'transparent' }} options={options}>
             <Interaction focus={focus} onOpen={onOpen} onHover={setHovered} onFocus={setFocus} />
             {bubbles && <MomentBubbles moments={highlights} name={name} onOpen={onOpen} showConversations={types.has('talked')} />}
             <ControlsContainer position="bottom-right">
               <ZoomControl labels={{ zoomIn: 'Zoom in', zoomOut: 'Zoom out', reset: 'Fit the whole graph' }} />
             </ControlsContainer>
-          </SigmaContainer>
+          </SigmaContainer> : <div className="swarm-empty"><Icon name="alert" size={28} /><strong>This computer cannot draw the map</strong><p>The map needs WebGL 2, which this computer’s graphics do not offer. The moments and activity still update.</p></div>}
           {hovered && hoveredNode && <NodeCard key={hovered.key} node={hoveredNode} segments={segments} at={hovered} />}
-          {shown.nodes.size === 0 && <div className="swarm-empty"><Icon name="people" size={28} /><strong>Your simulation map is taking shape</strong><p>{expectedPersonas ? `${expectedPersonas} simulated ${expectedPersonas === 1 ? 'person' : 'people'} will appear as they join.` : 'People and product areas appear as the simulation starts.'}</p></div>}
+          {webgl2 && shown.nodes.size === 0 && <div className="swarm-empty"><Icon name="people" size={28} /><strong>Your simulation map is taking shape</strong><p>{expectedPersonas ? `${expectedPersonas} simulated ${expectedPersonas === 1 ? 'person' : 'people'} will appear as they join.` : 'People and product areas appear as the simulation starts.'}</p></div>}
           {shown.nodes.size > 0 && <div className="swarm-canvas-caption"><span />{momentView === 'social' ? 'Arrows show who replied or reacted to whom' : 'Each bubble is a recorded persona moment'}</div>}
         </div>
         <div className="swarm-moments">

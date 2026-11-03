@@ -406,8 +406,13 @@ export async function newPageDriver(context: BrowserContext, allows: HostRule, r
     if (vision) await (await context.newCDPSession(tab)).send('Emulation.setEmulatedVisionDeficiency', { type: vision });
   };
   await emulate(page);
-  // A phone is tapped: touch handlers (a menu on touchend) never hear a mouse click.
-  const tap = (locator: Locator, options: { force?: boolean; timeout: number }) => (device === 'mobile' ? locator.tap(options) : locator.click(options));
+  // A phone is tapped: touch handlers (a menu on touchend) never hear a mouse click. A phone keeps :hover on what it tapped, which
+  // Chromium on Linux drops within a moment, so the pointer then rests there; a tap that navigated leaves nothing to rest on.
+  const tap = async (locator: Locator, options: { force?: boolean; timeout: number }) => {
+    if (device !== 'mobile') return locator.click(options);
+    await locator.tap(options);
+    if (await locator.count().catch(() => 0)) await locator.hover({ ...options, force: true }).catch(() => {});
+  };
   let targets = new Map<string, ActionTarget>();
   let shown = ''; // the snapshot text the persona was last given
   let seen = ''; // the raw snapshot behind it, without what moves on every look (refs, boxes, focus): a change only CSS makes shows against it
