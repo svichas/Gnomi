@@ -50,7 +50,7 @@ try {
   // Stand in for the engine's port and stream the remaining rounds as the engine would: frames of 100 events every 100 ms.
   await page.evaluate((events) => {
     const { port1, port2 } = new MessageChannel();
-    window.postMessage({ gnomi: 'port', startupError: null, sessionsPersist: true }, '*', [port2]);
+    window.postMessage({ gnomi: 'port', startupError: null, sessionsPersist: true, version: '0.0.0' }, '*', [port2]);
     let at = 0;
     const timer = setInterval(() => {
       for (const event of events.slice(at, at + 100)) port1.postMessage({ kind: 'event', event });

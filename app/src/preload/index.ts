@@ -24,4 +24,6 @@ contextBridge.exposeInMainWorld('gnomi', {
   reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
   saveReport: (format, runId, content) => ipcRenderer.invoke('save-report', format, runId, content),
   pathForFile: (file) => webUtils.getPathForFile(file),
+  latestRelease: () => ipcRenderer.invoke('latest-release'),
+  openReleases: () => ipcRenderer.invoke('open-releases'),
 } satisfies Window['gnomi']);

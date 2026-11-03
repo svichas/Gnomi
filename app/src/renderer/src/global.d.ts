@@ -33,5 +33,9 @@ interface Window {
     saveReport(format: import('../../reports.ts').ReportFormat, runId: string, content: string): Promise<string | null>;
     /** The local path of a file the user picked or dropped, for import_asset { path }. */
     pathForFile(file: File): string;
+    /** The newer release's version when GitHub has one, else null (also offline and in development builds). */
+    latestRelease(): Promise<string | null>;
+    /** Opens the latest release's download page in the default browser. */
+    openReleases(): Promise<void>;
   };
 }
