@@ -31,7 +31,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @gnomi/app
-      - run: npx electron-builder ${{ matrix.platform }} --publish always
+      - run: |
+          # An unset secret arrives as an empty string, which electron-builder reads as a certificate path and fails on.
+          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          npx electron-builder ${{ matrix.platform }} --publish always
+        shell: bash
         working-directory: app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
