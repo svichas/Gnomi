@@ -12,7 +12,7 @@ npx playwright-core install chromium
 npm run dev
 ```
 
-The [README](README.md#run-locally) covers providers, the Gym demo and the CLI. Scripted runs (`GNOMI_FAKE_LLM=1`, or `--fake-llm` on the CLI) need no provider key and cost nothing; use them for everything except live acceptance.
+The [README](README.md#quick-start) covers providers, the Gym demo and the CLI. Scripted runs (`GNOMI_FAKE_LLM=1`, or `--fake-llm` on the CLI) need no provider key and cost nothing; use them for everything except live acceptance.
 
 ## Before you open a pull request
 
