@@ -129,7 +129,7 @@ function NodeCard({ node, segments, at }: { node: SwarmNode; segments: Segment[]
 }
 
 /** An event-backed map of product use, friction, and social influence. */
-export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: GnomiEvent[]; segments: Segment[]; expectedPersonas?: number; onOpen(personaId: string, seq?: number): void }) {
+export function Swarm({ active, events, segments, onOpen, expectedPersonas }: { active: boolean; events: GnomiEvent[]; segments: Segment[]; expectedPersonas?: number; onOpen(personaId: string, seq?: number): void }) {
   const [graph] = useState(() => new Graph({ multi: true, type: 'mixed' }));
   const [scrub, setScrub] = useState<number | null>(null); // null follows the run as it happens
   const [types, setTypes] = useState<Set<EdgeType>>(() => new Set(DEFAULT_CONNECTIONS));
@@ -151,8 +151,9 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
   const layout = useRef<FA2Layout | null>(null);
   const settle = useRef<number | undefined>(undefined);
   const easing = useRef<Easing | null>(null);
-  const movingRef = useRef(moving);
-  movingRef.current = moving;
+  const laidOut = moving && active; // a hidden map keeps its positions
+  const movingRef = useRef(laidOut);
+  movingRef.current = laidOut;
 
   useEffect(() => {
     // graphology's inferred ForceAtlas2 settings for a few hundred nodes; log weights so a 60-step edge does not swallow its persona.
@@ -165,11 +166,11 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
 
   useEffect(() => {
     window.clearTimeout(settle.current);
-    if (moving && graph.order > SMALL_GRAPH_LIMIT) {
+    if (laidOut && graph.order > SMALL_GRAPH_LIMIT) {
       layout.current?.start();
       settle.current = window.setTimeout(() => layout.current?.stop(), SETTLE_MS);
     } else layout.current?.stop();
-  }, [graph, moving]);
+  }, [graph, laidOut]);
 
   useEffect(() => {
     const changed = () => {
@@ -252,10 +253,10 @@ export function Swarm({ events, segments, onOpen, expectedPersonas }: { events: 
       }],
     },
   }));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sigma reads the filter and graph through refs, so it is told to repaint when they change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sigma reads the filter and graph through refs, so it is told to repaint when they change, and when shown again since a hidden canvas has no size
   useEffect(() => {
-    sigma.current?.refresh();
-  }, [filter, shown]);
+    if (active) sigma.current?.refresh();
+  }, [filter, shown, active]);
 
   const nodes = useMemo(() => [...shown.nodes.values()], [shown]);
   const personas = nodes.filter((node) => node.kind === 'persona').length;

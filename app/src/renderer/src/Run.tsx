@@ -237,11 +237,12 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           </button>
         ))}
       </div>}
+      {/* Hidden rather than unmounted behind the report and other tabs: rebuilding the map (WebGL context, shaders, graph, layout) froze every visit. */}
       {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-labelledby is set only while the role is tabpanel */}
-      {view === 'activity' && <div role={ended ? 'tabpanel' : undefined} id="run-panel-activity" aria-labelledby={ended ? 'run-tab-activity' : undefined} className="simulation-overview">
+      <div hidden={view !== 'activity'} role={ended ? 'tabpanel' : undefined} id="run-panel-activity" aria-labelledby={ended ? 'run-tab-activity' : undefined} className="simulation-overview">
         <div className="simulation-workspace">
-          {active && <Swarm events={events} segments={segments} expectedPersonas={personas.length} onOpen={openPersona} />}
-          {statusPanel}
+          <Swarm active={active && view === 'activity'} events={events} segments={segments} expectedPersonas={personas.length} onOpen={openPersona} />
+          {view === 'activity' && statusPanel}
         </div>
         <Activity
           rows={feed.rows.rows}
@@ -261,7 +262,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           <PersonaGrid personas={shownPersonas} schema={setup.schema} segments={segments} states={states} steps={log.progress} ended={ended} onOpen={openPersona} />
           {groups.length > 0 && <details className="disclosure profile-filter-disclosure"><summary><Icon name="filter" />Audience filters<span>{profileFilter.dimension && profileFilter.value ? 'Filter applied to activity and people' : 'Explore a particular group'}</span></summary><div className="disclosure-body"><ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => { setFilters((current) => ({ ...current, ...next, persona: '' })); setInspecting(null); }} /></div></details>}
         </div>
-      </div>}
+      </div>
       {ended && view === 'report' && <div role="tabpanel" id="run-panel-report" aria-labelledby="run-tab-report" className="space-y-5">
         {report ? <Report
           report={report}

@@ -188,6 +188,7 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   assert.equal(await activity.locator('.timeline-item').first().evaluate((element) => getComputedStyle(element).transitionDuration), '0s');
   await page.setViewportSize({ width: 1100, height: 900 });
+  await page.locator('.sigma-container').evaluate((element) => { (element as HTMLElement).dataset.kept = 'yes'; });
   await page.getByRole('tab', { name: 'Simulation', exact: true }).focus();
   await page.keyboard.press('End');
   assert.equal(await page.getByRole('tab', { name: 'Report', exact: true }).getAttribute('aria-selected'), 'true');
@@ -200,6 +201,12 @@ try {
   await page.locator('#tab-run').click();
   await page.getByRole('region', { name: 'Swarm graph' }).waitFor();
   assert.ok(await page.locator('.sigma-container').evaluate((element) => element.clientWidth > 0));
+  // Rebuilding the map on each visit froze the window; it is kept across the Report view and other tabs, and resized when shown.
+  assert.equal(await page.locator('.sigma-container').getAttribute('data-kept'), 'yes', 'the map was rebuilt');
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.sigma-container') as HTMLElement & { sigma: { getDimensions(): { width: number } } };
+    return element.sigma.getDimensions().width === element.offsetWidth;
+  });
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
   for (const width of [1440, 1024, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
