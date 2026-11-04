@@ -15,7 +15,9 @@ Installers for macOS, Windows and Linux are built by the [Release workflow](../.
 3. Each platform builds its installer and uploads it to one draft release on GitHub.
 4. Once every job is green, edit the draft, write the release notes, and publish it.
 
-The app's **Settings** shows the running version and offers newer published releases, so a release reaches existing users only once it is published.
+Installed apps check for a newer published release on launch, download it in the background and install it when the user restarts from the banner or quits, so a release reaches existing users only once it is published. The update reads the `latest*.yml` files each job uploads next to its installers, so keep them in the release; macOS updates from the `.zip`, not the `.dmg`.
+
+On macOS the update installs only when the installed app and the new release are signed with the same Developer ID (see below). An unsigned build skips the download and shows a **Download** button that opens the release page instead, so users of unsigned builds install the first signed release by hand.
 
 ## Code signing
 

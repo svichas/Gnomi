@@ -1,9 +1,12 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import type { Api, EngineToClient, Method } from '@gnomi/engine/protocol.ts';
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, net, safeStorage, session, shell, utilityProcess } from 'electron';
+import { app, autoUpdater as squirrel, BrowserWindow, dialog, ipcMain, MessageChannelMain, nativeImage, safeStorage, session, shell, utilityProcess } from 'electron';
 import type { UtilityProcess } from 'electron';
+import electronUpdater from 'electron-updater';
 import appIcon from '../../../assets/brand/gnomi-app-icon.png?asset';
 import type { ProjectAction, ProjectActionResult, ProjectCatalog } from '../projects.ts';
 import type { KeyTest } from '../providers.ts';
@@ -13,7 +16,8 @@ import type { Startup } from '../startup.ts';
 import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { keyedProvider, ProviderKeys } from './providers.ts';
-import { LATEST_RELEASE_API, newerRelease, RELEASES_PAGE } from './release.ts';
+import { fetchUpdate, RELEASES_PAGE } from './release.ts';
+import type { Release } from './release.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -160,15 +164,33 @@ ipcMain.handle('test-figma-token', async (): Promise<KeyTest> => {
   return test;
 });
 
-// Installed builds ask GitHub for the latest release number once per launch (listed in Settings under Where Gnomi connects).
-ipcMain.handle('latest-release', async (): Promise<string | null> => {
+// Installed builds check GitHub's releases once per launch and download a newer one, which installs when Gnomi restarts
+// or quits (listed in Settings under Where Gnomi connects). A page reload gets the same answer.
+let update: Promise<Release | null> | undefined;
+let installing = false;
+const installable = () => process.platform === 'darwin'
+  ? new Promise((resolve, reject) => squirrel.once('update-downloaded', resolve).once('error', reject))
+  : Promise.resolve();
+ipcMain.handle('latest-release', () => {
   if (!app.isPackaged) return null; // dev and smoke runs are not releases
-  try {
-    const response = await net.fetch(LATEST_RELEASE_API, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(10_000) });
-    return response.ok ? newerRelease((await response.json()).tag_name, app.getVersion()) : null;
-  } catch {
-    return null; // offline or rate-limited: no banner
-  }
+  update ??= (async () => {
+    const updater = electronUpdater.autoUpdater;
+    // electron-updater sends a per-install ID for staged rollouts, which Gnomi does not use; a fixed one identifies no one.
+    updater.requestHeaders = { 'x-user-staging-id': '00000000-0000-0000-0000-000000000000' };
+    // Squirrel.Mac installs only into a signed app, so an unsigned build skips the download and offers the release page.
+    const bundle = join(app.getPath('exe'), '../../..');
+    updater.autoDownload = process.platform !== 'darwin' || (await promisify(execFile)('codesign', ['--verify', bundle]).then(() => true, () => false));
+    return fetchUpdate(updater, installable);
+  })();
+  return update;
+});
+// The update's own quit does not wait for the engine, so it stops first. No installer wizard on Windows (an install for
+// all users still asks for admin rights), then Gnomi opens again.
+ipcMain.handle('install-update', async () => {
+  if (installing || !(await update)?.ready) return; // once, and only for a download the platform accepted
+  installing = true;
+  await stopEngine();
+  electronUpdater.autoUpdater.quitAndInstall(true, true);
 });
 ipcMain.handle('open-releases', () => shell.openExternal(RELEASES_PAGE));
 
@@ -310,19 +332,26 @@ app.whenReady().then(() => {
   });
   createWindow(startEngine());
 });
-app.on('window-all-closed', () => app.quit()); // macOS apps usually stay open here; quitting also stops the engine
+// macOS apps usually stay open here; quitting also stops the engine. An update's restart quits on its own (Squirrel.Mac).
+app.on('window-all-closed', () => { if (!installing) app.quit(); });
 
 // The engine closes its Chrome and the project when asked, so nothing is orphaned; kill() only if it has not exited in two seconds.
+function stopEngine(): Promise<void> {
+  const child = engine;
+  if (!child) return Promise.resolve();
+  return new Promise((resolve) => {
+    const fallback = setTimeout(() => child.kill(), 2000);
+    child.once('exit', () => {
+      clearTimeout(fallback);
+      resolve();
+    });
+    child.postMessage({ kind: 'shutdown' });
+  });
+}
 let quitting = false;
 app.on('before-quit', (event) => {
-  const child = engine;
-  if (quitting || !child) return;
+  if (quitting || !engine) return;
   quitting = true;
   event.preventDefault();
-  const fallback = setTimeout(() => child.kill(), 2000);
-  child.once('exit', () => {
-    clearTimeout(fallback);
-    app.quit();
-  });
-  child.postMessage({ kind: 'shutdown' });
+  void stopEngine().then(() => app.quit());
 });

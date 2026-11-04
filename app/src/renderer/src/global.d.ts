@@ -33,8 +33,13 @@ interface Window {
     saveReport(format: import('../../reports.ts').ReportFormat, runId: string, content: string): Promise<string | null>;
     /** The local path of a file the user picked or dropped, for import_asset { path }. */
     pathForFile(file: File): string;
-    /** The newer release's version when GitHub has one, else null (also offline and in development builds). */
-    latestRelease(): Promise<string | null>;
+    /**
+     * A newer release on GitHub, downloaded in the background; ready when it installs on restart or quit, else only the
+     * download page offers it. Null when there is none, offline and in development builds.
+     */
+    latestRelease(): Promise<import('../../main/release.ts').Release | null>;
+    /** Quits, installs the downloaded release and opens Gnomi again. */
+    installUpdate(): Promise<void>;
     /** Opens the latest release's download page in the default browser. */
     openReleases(): Promise<void>;
   };

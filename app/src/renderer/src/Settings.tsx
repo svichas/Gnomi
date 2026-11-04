@@ -318,7 +318,7 @@ export function Settings(props: { version: string; settings: RunSettings; onSett
         ) : (
           <p className="text-sm text-stone-500">Nowhere yet: no provider is connected.</p>
         ))}
-        <p className="mt-3 text-xs text-stone-500">Once per launch, Gnomi also asks api.github.com for the latest release number to tell you when an update is out. It sends nothing from your projects.</p>
+        <p className="mt-3 text-xs text-stone-500">Once per launch, Gnomi also checks github.com for a newer release and, when it can install it for you, downloads it from release-assets.githubusercontent.com. It sends nothing from your projects and nothing that identifies you.</p>
       </Card>
 
       </div>
