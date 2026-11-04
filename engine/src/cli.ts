@@ -96,8 +96,9 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       ${EDIT_WARNING}
   ask <project dir> --run <run id> --persona <persona id> --question "<text>" [--budget <usd>] [--fake-llm]
       asks one persona of an ended run one question of up to ${QUESTION_MAX} characters, with one text-only call on the run's navigator model,
-      under rejudge's budget rule. The context comes from that persona's log, and earlier answers are not sent back. It stays in the log,
-      apart from every report, export and later model call. ${INTERVIEW_LABEL}
+      under rejudge's budget rule. The context comes from that persona's log, with the earlier questions to that persona in that run and their
+      answers, marked as generated. It stays in the log, apart from every report, export and model call but a later question to that
+      persona. ${INTERVIEW_LABEL}
       ${QUESTION_WARNING}
 Every command takes --json: one JSON object per stdout line, the last being the result.
 
