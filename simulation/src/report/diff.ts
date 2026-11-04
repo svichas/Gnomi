@@ -4,7 +4,7 @@ import { matchThemes, type ThemeMatch } from './match.ts';
 import { clusterThemes, plannedRuns, type ThemeCluster } from './repeats.ts';
 import { isSevere, pathOf } from './themes.ts';
 
-// What changed between two builds (features_roadmap.md item 10). Each side is one report or the finished runs of a repeat set, so
+// What changed between two builds. Each side is one report or the finished runs of a repeat set, so
 // there is one path, and it is computed when read, as a rejudge can change either side. Calling a live problem fixed is the worst
 // error here, so every doubt below falls on the side of "not fixed". Competitor POIs stay out, as they do of every other figure.
 

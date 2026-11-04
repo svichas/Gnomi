@@ -69,7 +69,7 @@ test('largest remainder splits by share, ties to the earlier segment, at least 3
   assert.deepEqual(apportion([60, 30, 10], 50, 0), [30, 15, 5]);
   assert.deepEqual(apportion([1, 1, 1], 10, 0), [4, 3, 3]);
   assert.deepEqual(apportion([50, 30, 30], 100, 1), [46, 27, 27]);
-  // The idea.md §8.3 example: the 5% segments are lifted to 3 and the rest is split again by share.
+  // The 5% segments are lifted to 3 and the rest is split again by share.
   assert.deepEqual(apportion([55, 25, 10, 5, 5], 50, 3), [27, 12, 5, 3, 3]);
   assert.deepEqual(apportion([97, 1, 1, 1], 20, 3), [11, 3, 3, 3]);
   assert.deepEqual(apportion([100, 0], 20, 3), [20, 0], 'a segment without a share gets nobody');

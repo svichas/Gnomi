@@ -7,7 +7,7 @@ import type { BlobStore, LlmGateway, Recorder } from '../seams.ts';
 import type { EventOf, GnomiEvent, Persona, ProjectConfig, RunConfig, Segment } from '../types.ts';
 import { clip, describeAction, describeResult, personaSection, priorLines, taskSection, where, wordsFor } from './prompt.ts';
 
-// One question to a persona after the run (features_roadmap.md item 14). Personas are stateless functions of the log, so the context is
+// One question to a persona after the run. Personas are stateless functions of the log, so the context is
 // rebuilt from it, and the answer is a new generation, not a memory of a reason. It goes in the log and reaches nothing else: no fold
 // reads it, and the context below never does, so an answer cannot build on an earlier one.
 

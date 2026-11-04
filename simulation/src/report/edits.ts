@@ -4,7 +4,7 @@ import { themeByKeys } from './match.ts';
 import type { RepeatSet } from './repeats.ts';
 import { competitorsOf, latestByKeys, refOf, studyCount } from './study.ts';
 
-// What a team changes before sharing a report (features_roadmap.md item 19). The report keeps what the run found, so the log stays
+// What a team changes before sharing a report. The report keeps what the run found, so the log stays
 // truthful: only a copy for sharing applies the edits, and repeat sets, comparisons, the gate and every model read the originals.
 
 export const EDIT_TITLE_MAX = 120;

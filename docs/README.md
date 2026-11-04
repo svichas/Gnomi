@@ -26,6 +26,4 @@ Gnomi is under active development. Some design documents describe intended or fu
 
 | Guide | Covers |
 | --- | --- |
-| [Product idea](idea.md) | The problem, intended users and simulation design. |
-| [Roadmap](roadmap.md) · [Features roadmap](features_roadmap.md) | Milestones, measured progress and what comes next. |
 | Acceptance: [audience](m2-acceptance.md) · [friction](m3-acceptance.md) · [social](m4-acceptance.md) · [text/design](m5-acceptance.md) | What has been measured, and what still needs review. |

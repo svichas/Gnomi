@@ -64,7 +64,7 @@ function PersonaCount({ audience, onChange, estimate, written }: { audience: Aud
   );
 }
 
-/** The audience tab: who the product is for, in proportions the team controls (idea.md §5.1 step 3). */
+/** The audience tab: who the product is for, in proportions the team controls. */
 export function AudienceTab(props: {
   audience: Audience | null;
   onAudience(audience: Audience | null): void;

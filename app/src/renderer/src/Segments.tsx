@@ -130,7 +130,7 @@ function RealData({ audience, segment, onAudience, onChange }: { audience: Audie
   );
 }
 
-/** One segment of the audience (idea.md §8.1): who they are, what they do, and their share of the population. */
+/** One segment of the audience: who they are, what they do, and their share of the population. */
 export function SegmentCard(props: {
   segment: Segment;
   audience: Audience;

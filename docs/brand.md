@@ -1,6 +1,6 @@
 # Gnomi — brand foundation
 
-*Version 1 · 2026-10-15. A minimal identity grounded in [idea.md](idea.md), [tech.md](tech.md), and [roadmap.md](roadmap.md).*
+*Version 1 · 2026-10-15. A minimal identity grounded in [tech.md](tech.md).*
 
 ![Gnomi visual identity: opinion-inspired G mark, lowercase wordmark, warm neutrals and muted olive](../assets/brand/brand-board.png)
 
@@ -191,7 +191,4 @@ This document establishes the design direction. The asset kit is ready to use; i
 
 ### Product grounding
 
-- [Product pitch, audiences, and journey](idea.md): approachable setup, simulated opinions, and evidence attached to friction.
-- [Product non-goals and risks](idea.md#10-non-goals): research support, honest uncertainty, and no predictive conversion claims.
 - [Technical design](tech.md): local desktop operation, configured providers, replayable evidence, and readable reports.
-- [Roadmap](roadmap.md): usable increments, explicit evaluation, and clear separation between current capabilities and later ambitions.

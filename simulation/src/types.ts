@@ -37,7 +37,7 @@ export interface PersonaSchema {
   attributes: ProfileAttribute[];
 }
 
-// One simulated person (idea.md §8.2). Traits are sampled in code from the segment's ranges first; the
+// One simulated person. Traits are sampled in code from the segment's ranges first; the
 // written fields (name, job title, background, context, goal interpretation, voice) come from the model after.
 export interface Persona {
   id: string; // stable per slot, e.g. 'p-2-07' (segment 2, persona 7), so edits keep identities
@@ -127,7 +127,7 @@ export type FeedPolicy = 'ranked' | 'chronological';
 
 export type UsageFrequency = 'daily' | 'weekly' | 'monthly' | 'rarely' | 'never';
 
-// A type of user with a share of the population (idea.md §8.1). Segments drive behaviour; job titles are flavour.
+// A type of user with a share of the population. Segments drive behaviour; job titles are flavour.
 export interface Segment {
   id: string; // stable across edits, e.g. 'seg-2'
   name: string;
@@ -165,7 +165,7 @@ export interface Audience {
   persona_count: number; // 20–200, default 50; each segment with a share gets at least 3
   segments: Segment[];
   company_size: [min: number, max: number]; // employees at the companies the product sells to
-  // Population-wide distributions the user can see (idea.md §11, "Bias in personas"); each sums to 1.
+  // Population-wide distributions the user can see; each sums to 1.
   languages: Record<string, number>; // first language → share
   countries?: Record<string, number>; // supported ISO country code → weight; replaces language-only sampling when set
   accessibility: Record<AccessibilityNeed, number>;

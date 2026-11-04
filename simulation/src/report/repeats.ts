@@ -2,7 +2,7 @@ import { mean, sampleVariance } from 'simple-statistics';
 import { matchThemes, type ThemeMatch } from './match.ts';
 import type { Report, ReportMethods, ReportSpread, ReportTheme, RunConfig, WhatIf } from '../types.ts';
 
-// What the runs of a repeat set have in common (features_roadmap.md item 3). Repeats test robustness inside the simulation; they
+// What the runs of a repeat set have in common. Repeats test robustness inside the simulation; they
 // are not evidence about real users. Each run keeps its own report, and this is computed when read, so a rejudge needs no rewrite.
 
 /** One problem across the runs of a set. */

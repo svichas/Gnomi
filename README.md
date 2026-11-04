@@ -114,7 +114,7 @@ Coding agents such as Claude Code, Codex and Cursor can drive it for you through
 - [Command line](docs/cli.md): every CLI command, and running Gnomi from AI agents
 - [Development](docs/development.md): run from source, test, and find your way around the code
 - [Releasing](docs/releasing.md): cut a release and sign installers
-- [All docs](docs/README.md), including the technical design, behavioural model and roadmap
+- [All docs](docs/README.md), including the technical design and behavioural model
 
 ## Contributing
 

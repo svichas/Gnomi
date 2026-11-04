@@ -306,7 +306,7 @@ export interface Report {
   methods: ReportMethods;
 }
 
-// The methods appendix (idea.md §6.5): what the run was allowed to do and what got in its way.
+// The methods appendix: what the run was allowed to do and what got in its way.
 export interface ReportMethods {
   seed: number; // the audience seed, or the run seed without an audience
   roles: string[]; // the logins personas used

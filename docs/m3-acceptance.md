@@ -49,7 +49,7 @@ npm run acceptance -w @gnomi/simulation -- --evaluate --repeats 1 --arms baselin
 |---|---|
 | `recall_high` | A hint-based estimate, not a reviewed mapping. `defectScores` pairs a theme with a defect only when they share a catalogue page and one of the defect's `hints` in `defects.yaml` appears, as whole words with a regular ending (`s`, `es`, `d`, `ed` or `ing`), in the theme's title, description, elements or evidence. Pairs are one-to-one. |
 | `precision` | The same estimate, over the report's top 20 themes. |
-| `control_themes` | Themes on the control build with trust confirmed or observed: the false-positive definition in [the evaluation plan](roadmap.md#evaluation-plan). |
+| `control_themes` | Themes on the control build with trust confirmed or observed: the false-positive definition in [the evaluation plan](tech.md#97-evaluating-gnomi-itself). |
 
 They also give each arm a `stability`: the Jaccard overlap of the top ten themes of two replicates, averaged over every pair of complete replicates, with themes paired by `matchThemes` in [report/match.ts](../simulation/src/report/match.ts). It is a single number per arm, so it has no paired interval, and it needs at least two complete replicates. It differs from the M3 `stability` criterion above, which overlaps reviewed defect mappings, and `matchThemes` can pair two themes that only share one key, so it can read a little high.
 

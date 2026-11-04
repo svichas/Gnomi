@@ -12,7 +12,7 @@ export { defaultAudience };
 export { diversityReport } from './diversity.ts';
 export { DEMO_PERSONA_WRITER } from './demo.ts';
 
-// The audience builder (idea.md §8, tech.md §2.4): traits are sampled in code from seeded distributions first,
+// The audience builder (tech.md §2.4): traits are sampled in code from seeded distributions first,
 // and only then written up by the persona_writer model, so diversity comes from sampling, not from asking.
 
 export interface AudienceDeps {
@@ -31,7 +31,7 @@ export interface AudienceDeps {
 const PREFERRED_MIN_PER_SEGMENT = 3;
 export const MAX_PERSONAS = 200;
 
-/** Proposes segments from the product sentence, the POI and the goal (idea.md §5.1 step 3). */
+/** Proposes segments from the product sentence, the POI and the goal. */
 export async function proposeAudience(deps: AudienceDeps): Promise<{ audience: Audience; cost_usd: number }> {
   const roles = deps.roles ?? (deps.project.role ? [deps.project.role] : []);
   try {

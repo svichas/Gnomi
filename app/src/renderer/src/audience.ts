@@ -5,7 +5,7 @@ import { validateAudienceCountries } from '@gnomi/simulation/audience/locations.
 import { apportion as splitByShare } from '@gnomi/simulation/audience/sample.ts';
 import { personaProfileIsCurrent } from '@gnomi/simulation/profile/signature.ts';
 
-// The audience builder's rules, kept free of React so they can be tested on their own (idea.md §8.1).
+// The audience builder's rules, kept free of React so they can be tested on their own.
 
 /** Apportions `total` whole units in proportion to `weights` (largest remainder, earlier index first on ties); equal when all weights are 0. */
 function apportion(weights: number[], total: number): number[] {

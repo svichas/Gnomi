@@ -203,13 +203,13 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | Name | Unit or range | Value | Rationale | Provenance | Status |
 | --- | --- | --- | --- | --- | --- |
 | `RETEST_REACH` | personas | 3 | How many must reach all of a theme's pages in one later run before its absence reads as "Not seen again" rather than not retested. With fewer, it may just not have been tried. A report's coverage lists pages and screens below it as barely tested. | `report/diff.ts`, `report/coverage.ts` | assumed |
-| `GATE_RUNS` | finished runs per side | 3 | The regression plan's rolling window over three runs. | `report/gate.ts`; roadmap.md, evaluation plan | assumed |
+| `GATE_RUNS` | finished runs per side | 3 | The regression plan's rolling window over three runs. | `report/gate.ts`; tech.md §14 | assumed |
 | `GATE_SIGHTINGS` | later runs | 2 | How many a new theme must be high severity in before the gate fails. One run is one sample of a noisy model. | `report/gate.ts` | assumed |
 | high severity | rounded severity | 3 or more of 4 | The priority labels' rule, so a median of 2.5 counts. | `report/themes.ts` (`isSevere`) | assumed |
 | `WHAT_IF_POST_MAX` | characters | 500 | As long as a persona's own post, so the team's reads like one and fits the feed's token cap. | `report/repeats.ts`, `agent/social.ts` | assumed |
 | `MIN_PAIRS` | pairs | 3 | Fewer give no interval, as with the evaluation's replicates; the run still starts, after saying so. | `report/repeats.ts` (`pairedDifference`); new_simulation.md §9 | assumed |
 | what-if numbers | named list | people who posted, second-hand reach, mean opinion at the end, people who abandoned | Numbers each report already has for the post's POI. Themes are left out, because the two runs of a pair name them apart. | `report/repeats.ts` | assumed |
-| trait-free match | how a run of personas with no traits ties to a finding | keys or title, never one shared key alone, against the finding's first theme | One shared key is often chance. A theme matching only a later run's wording shows no note, which only leaves the note out. | `report/repeats.ts`; features_roadmap.md item 3 | assumed |
+| trait-free match | how a run of personas with no traits ties to a finding | keys or title, never one shared key alone, against the finding's first theme | One shared key is often chance. A theme matching only a later run's wording shows no note, which only leaves the note out. | `report/repeats.ts` | assumed |
 
 ### Reading one run
 
@@ -217,11 +217,11 @@ Status for every row is **assumed**, except where the Provenance column cites a 
 | --- | --- | --- | --- | --- | --- |
 | `CURVE_MIN` | personas | 10 | Under this the discovery curve is too short to read, so the report says so and claims nothing from it. | `report/coverage.ts` | assumed |
 | last fifth | personas | `ceil(n / 5)` | The window whose new themes the hint counts. | `report/coverage.ts`; tech.md §6.7 | assumed |
-| `DRIVER_HOLDERS` | personas | 5 | How many must hold a value and have reached a theme's pages before it can read as "more common among". | `report/dimensions.ts`; features_roadmap.md item 8 | assumed |
+| `DRIVER_HOLDERS` | personas | 5 | How many must hold a value and have reached a theme's pages before it can read as "more common among". | `report/dimensions.ts` | assumed |
 | `DRIVER_AFFECTED` | personas | 2 | Of those, how many must have met the theme first-hand, so one persona is never a pattern. | `report/dimensions.ts` | assumed |
 | `DRIVER_GAP` | difference of two rates | 0.25 | The least gap against those without the value. No p-value is given, as connected personas are not independent. | `report/dimensions.ts`; new_simulation.md §9 | assumed |
 | `DRIVER_MAX` | values per theme | 2 | Keeps a finding readable, the largest gap first. | `report/dimensions.ts` | assumed |
-| `STUDY_FINDINGS` | themes | 5 | How many top friction themes a study plan covers and the study count reports. | `report/study.ts`; roadmap.md, Confirmed findings | assumed |
+| `STUDY_FINDINGS` | themes | 5 | How many top friction themes a study plan covers and the study count reports. | `report/study.ts` | assumed |
 | `QUOTE_WORDS` | consecutive words | 4 | A task or screener entry sharing this many in a row with a finding quotes it. Fewer are ordinary words. Its false positives and misses are unmeasured. | `report/study.ts`; interpreting-simulations.md | assumed |
 
 ### Friction signals
