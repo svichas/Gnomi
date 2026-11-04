@@ -64,7 +64,7 @@ export function App() {
   const [comparing, setComparing] = useState<{ base: string; run: string } | null>(null);
   const [sessionsPersist, setSessionsPersist] = useState(true);
   const [version, setVersion] = useState('');
-  const [newRelease, setNewRelease] = useState<string | null>(null);
+  const [newRelease, setNewRelease] = useState<Awaited<ReturnType<Window['gnomi']['latestRelease']>>>(null);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
   const [homePage, setHomePage] = useState<'projects' | 'runs' | 'settings'>('projects');
@@ -129,7 +129,7 @@ export function App() {
       const { startupError, sessionsPersist, version } = await connected;
       setSessionsPersist(sessionsPersist);
       setVersion(version);
-      void window.gnomi.latestRelease().then((latest) => { if (latest && latest !== dismissedRelease()) setNewRelease(latest); });
+      void window.gnomi.latestRelease().then((latest) => { if (latest && latest.version !== dismissedRelease()) setNewRelease(latest); });
       if (startupError) setProblem(`Gnomi could not start properly: ${startupError}`);
       let loaded: ProjectInfo | null = null;
       try {
@@ -291,9 +291,14 @@ export function App() {
           <div className="mb-5">
             <div role="status" className="note" data-tone="info">
               <span className="note-icon"><Icon name="spark" size={16} /></span>
-              <div className="note-copy"><p className="note-title">Gnomi {newRelease} is available</p><p>You have {version}. Download the new version from GitHub and install it over this one; your projects stay.</p></div>
-              <Button small className="note-action" onClick={() => void window.gnomi.openReleases()}>Download<Icon name="arrow" size={14} /></Button>
-              <Button small variant="quiet" aria-label="Dismiss update notice" onClick={() => { dismissRelease(newRelease); setNewRelease(null); }}><Icon name="close" size={14} /></Button>
+              {newRelease.ready ? <>
+                <div className="note-copy"><p className="note-title">Gnomi {newRelease.version} is ready to install</p><p>You have {version}. Restart to update now, or it updates the next time you quit; your projects stay.</p></div>
+                <Button small className="note-action" onClick={() => void window.gnomi.installUpdate()}>Restart<Icon name="arrow" size={14} /></Button>
+              </> : <>
+                <div className="note-copy"><p className="note-title">Gnomi {newRelease.version} is available</p><p>You have {version}. Download the new version from GitHub and install it over this one; your projects stay.</p></div>
+                <Button small className="note-action" onClick={() => void window.gnomi.openReleases()}>Download<Icon name="arrow" size={14} /></Button>
+              </>}
+              <Button small variant="quiet" aria-label="Dismiss update notice" onClick={() => { dismissRelease(newRelease.version); setNewRelease(null); }}><Icon name="close" size={14} /></Button>
             </div>
           </div>
         )}

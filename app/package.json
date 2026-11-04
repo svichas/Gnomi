@@ -32,7 +32,8 @@
   },
   "dependencies": {
     "@gnomi/engine": "0.0.0",
-    "@gnomi/simulation": "0.0.0"
+    "@gnomi/simulation": "0.0.0",
+    "electron-updater": "6.8.11"
   },
   "devDependencies": {
     "@react-sigma/core": "6.0.0",
