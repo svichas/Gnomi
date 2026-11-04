@@ -524,7 +524,7 @@ export interface EventPayloads {
   // What a team changed for sharing, stored as finding.validated is: exports read it, and no model, count or rank does (report/edits.ts).
   'finding.hidden': { keys: string[]; category?: 'friction' | 'objection'; title: string; hidden: boolean }; // hidden: false shows it again
   'finding.edited': { keys: string[]; category?: 'friction' | 'objection'; title: string; new_title: string | null; new_description: string | null }; // null: back to the original
-  // A question to a persona after the run and the model's new answer, not a memory (agent/interview.ts). Only the Inspector reads it: no fold, export or later prompt. The envelope's persona_id is who was asked.
+  // A question to a persona after the run and the model's new answer, not a memory (agent/interview.ts). Only the app's chats read it, in the inspector and on the report page, and a later question to the same persona, as the conversation so far: no fold, export or simulation prompt. The envelope's persona_id is who was asked.
   'persona.interviewed': { question: string; answer: string };
 }
 

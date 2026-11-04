@@ -122,6 +122,11 @@ try {
         queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
         return;
       }
+      if (message?.kind === 'request' && message.method === 'ask_persona' && sessionStorage.getItem('ask-fails')) {
+        sessionStorage.removeItem('ask-fails');
+        queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: false, error: 'The model did not answer in time.' } })));
+        return;
+      }
       if (message?.kind === 'request' && message.method === 'estimate_run' && sessionStorage.getItem('estimate-unpriced')) {
         const result = { calls: 1, cost_usd: [0, 0], minutes: [1, 1], unpriced: ['old-judge'] };
         queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: { kind: 'response', id: message.id, ok: true, result } })));
@@ -521,28 +526,37 @@ try {
   await studied.getByRole('button', { name: 'Show in exports' }).click();
   await studied.locator('summary').first().getByText('Reworded for exports', { exact: true }).waitFor();
   assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'an edit makes no model call');
-  // A question to a persona on the run's real log: only on a click, labelled every time, and reaching no report or file.
+  // A question to a persona on the run's real log, as a chat: only on a send, labelled, and reaching no report or file.
   const generated = 'Generated after the run. This is a new answer from the model, not a memory of why this persona acted.';
-  await studied.getByRole('list', { name: /^Evidence for/ }).getByRole('button').first().click();
+  const persona = studied.getByRole('list', { name: /^Evidence for/ }).getByRole('button').first();
+  const askedName = await persona.innerText();
+  await persona.click();
   const asked = page.getByRole('dialog').getByRole('region', { name: 'Questions after the run' });
+  const box = asked.getByLabel(`Ask ${askedName} about this run`);
+  const send = asked.getByRole('button', { name: 'Send', exact: true });
   await page.getByRole('navigation', { name: 'Persona sections' }).getByRole('button', { name: 'Ask', exact: true }).click();
+  assert.equal(await box.evaluate((field) => field === document.activeElement), true, 'Ask lands in the chat box');
   await asked.getByText(/costs at most \$/).waitFor();
-  assert.equal(await asked.getByRole('button', { name: 'Ask', exact: true }).isDisabled(), true, 'nothing to send yet');
+  assert.ok(await asked.getByText(generated, { exact: false }).isVisible(), 'the chat opens with the label');
+  assert.equal(await send.isDisabled(), true, 'nothing to send yet');
   assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'opening a persona spends nothing');
-  await asked.getByLabel(/^Ask /).fill('Why did you stop?');
+  await asked.getByRole('button', { name: 'What was hardest for you?', exact: true }).click();
+  assert.equal(await box.inputValue(), 'What was hardest for you?', 'an idea fills the box');
+  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 1, 'and sends nothing');
+  await box.fill('Why did you stop?');
   await page.setViewportSize({ width: 320, height: 1000 });
-  await assertFits(page, 'the question form fits a narrow viewport');
+  await assertFits(page, 'the chat fits a narrow viewport');
   await asked.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-ask-320.png') });
-  await asked.getByRole('button', { name: 'Ask', exact: true }).click();
-  await asked.getByText('The answer is below.', { exact: true }).waitFor();
-  await asked.locator('article').first().getByText('Why did you stop?', { exact: true }).waitFor();
-  await asked.getByText(/^Scripted demo answer: /).waitFor();
-  await asked.getByLabel(/^Ask /).fill('And what would you change?');
-  await asked.getByRole('button', { name: 'Ask', exact: true }).click();
-  await asked.locator('article').nth(1).waitFor();
-  assert.ok(await asked.locator('article').first().getByText('And what would you change?', { exact: true }).isVisible(), 'the newest comes first');
-  assert.equal(await asked.getByText(generated, { exact: true }).count(), 2, 'every answer is labelled');
+  await box.press('Enter');
+  await asked.getByText(/Scripted demo answer: /).waitFor();
+  assert.equal(await box.inputValue(), '', 'Enter sends, and the box empties');
+  await box.fill('And what would you change?');
+  await send.click();
+  await asked.getByText(/Scripted demo answer: /).nth(1).waitFor();
+  const thread = await asked.getByRole('log', { name: `Conversation with ${askedName}` }).innerText();
+  assert.ok(thread.indexOf('Why did you stop?') < thread.indexOf('And what would you change?'), 'oldest first, as in a chat');
+  assert.equal(await asked.getByText('Generated after the run', { exact: true }).count(), 2, 'every answer is marked');
   await assertFits(page, 'the answers fit a narrow viewport');
   await asked.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-answers-320.png') });
@@ -550,10 +564,42 @@ try {
   await assertFits(page, 'the answers fit at desktop width');
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'detached' });
-  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 3, 'one call per question');
-  assert.equal(logOf().filter((event) => event.type === 'persona.interviewed').length, 2);
+  // The report's own chats: everyone in the run, the latest conversation first, the same answers as the inspector's.
+  const chats = root.getByRole('region', { name: 'Ask the personas' });
+  const people = chats.getByRole('list', { name: 'Personas' });
+  const latest = await people.getByRole('button').first().innerText();
+  assert.ok(latest.includes(askedName) && latest.includes('Scripted demo answer'), 'the latest conversation leads the list');
+  await chats.getByLabel('Search personas').fill('nobody by this name');
+  await chats.getByText('No one matches “nobody by this name”.', { exact: true }).waitFor();
+  await chats.getByLabel('Search personas').fill('');
+  await people.getByRole('button').first().click();
+  const chat = chats.getByRole('log', { name: `Conversation with ${askedName}` });
+  assert.equal(await chat.getByText(/Scripted demo answer: /).count(), 2, 'the inspector’s answers are here too');
+  const reportBox = chats.getByLabel(`Ask ${askedName} about this run`);
+  assert.equal(await reportBox.evaluate((field) => field === document.activeElement), true, 'opening a chat lands in its box');
+  await page.evaluate(() => sessionStorage.setItem('ask-fails', '1'));
+  await reportBox.fill('What did you look for first?');
+  await reportBox.press('Enter');
+  await chat.getByText('The model did not answer in time.', { exact: true }).waitFor();
+  assert.ok(await chat.getByText('Not answered', { exact: true }).isVisible(), 'a refused question stays, marked');
+  await chat.getByRole('button', { name: 'Try again', exact: true }).click();
+  await chat.getByText(/Scripted demo answer: /).nth(2).waitFor();
+  assert.equal(await chat.getByText('Not answered', { exact: true }).count(), 0, 'and goes once it is answered');
+  assert.equal(await chat.getByText('What did you look for first?').count(), 1, 'with no second copy'); // not exact: a screen reader's "You asked: " leads it
+  await chats.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-chat.png') });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'the report chat fits a narrow viewport');
+  assert.equal(await people.isVisible(), false, 'a narrow page shows the chat alone');
+  await chats.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'report-chat-320.png') });
+  await chats.getByRole('button', { name: 'All personas', exact: true }).click();
+  await people.waitFor();
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  assert.equal(logOf().filter((event) => event.type === 'llm.call').length, callsBefore + 4, 'one call per question');
+  assert.equal(logOf().filter((event) => event.type === 'persona.interviewed').length, 3);
   const leftOut = await exported();
-  assert.ok(!leftOut.includes('Why did you stop?') && !leftOut.includes('Scripted demo answer'), 'no export has an interview');
+  assert.ok(!leftOut.includes('Why did you stop?') && !leftOut.includes('Scripted demo answer') && !leftOut.includes('Ask the personas'), 'no export has an interview');
   assert.ok(!readFileSync(join(projectDir, 'runs/r-0003/report.md'), 'utf8').includes('Why did you stop?'), 'and report.md has none');
   await page.setViewportSize({ width: 320, height: 1000 });
   const rerun = openProject(projectDir);

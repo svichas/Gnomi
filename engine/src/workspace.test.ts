@@ -412,6 +412,10 @@ test('an answer goes in the log and no report file, and a failed call adds none 
   assert.equal(store.listRuns()[0].cost_usd, 0.03);
   const [json, markdown] = ['json', 'md'].map((format) => readFileSync(join(dir, `runs/${run_id}/report.${format}`), 'utf8'));
   for (const file of [json, markdown]) assert.ok(!file.includes('A generated answer') && !file.includes('Why did you stop'), 'the report files hold no interview');
+  const sent: string[] = [];
+  const following = createScriptedGateway({ navigator: (req) => { sent.push(req.user.map((part) => (part.type === 'text' ? part.text : '')).join('\n')); return { answer: 'Another.' }; } }, place.record);
+  await askPersona(place, row(), BUILTIN_PERSONA.id, 'Why that?', following);
+  assert.match(sent[0], /<conversation>\nQuestion: "Why did you stop\?"\nAnswer: "A generated answer about saving\."\n<\/conversation>/, 'a follow-up gets the conversation so far');
 });
 
 test('a comparison study and a run that has not ended take no question', async (t) => {

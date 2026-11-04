@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
-import { interviewContext, QUESTION_MAX, runInterview } from '@gnomi/simulation/agent/interview.ts';
+import { interviewContext, interviewConversation, QUESTION_MAX, runInterview } from '@gnomi/simulation/agent/interview.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
 import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { effectiveComparisonPois, validateComparison } from '@gnomi/simulation/comparison/config.ts';
@@ -263,7 +263,7 @@ export async function askPersona(place: RunPlace, { run_id, config }: RunRow, pe
   const context = await interviewContext(log, persona_id, run_id, place.blobs);
   if (context === null) throw new Error(`${persona.name} did nothing the log of ${run_id} records, so there is nothing to draw on.`);
   try {
-    return await runInterview({ config, persona, question: asked, context, round: log.at(-1)?.round ?? 1, llm, record: place.record });
+    return await runInterview({ config, persona, question: asked, context, conversation: interviewConversation(log, persona_id), round: log.at(-1)?.round ?? 1, llm, record: place.record });
   } finally {
     // Written even when the call failed: a failed attempt can still cost money, and the files are snapshots of the log.
     await rewriteReport(place, run_id);

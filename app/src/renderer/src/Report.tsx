@@ -643,7 +643,7 @@ function DimensionTable({ dimension, selected }: { dimension: ReportDimension; s
 
 const noScreenshot: RenderScreenshot = () => null;
 
-export function Report({ report, repeats, filter = {}, onInspect, renderScreenshot = noScreenshot, actions, audienceFilters }: { report: ReportData; repeats?: RepeatSet; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot; actions?: ReactNode; audienceFilters?: ReactNode }) {
+export function Report({ report, repeats, filter = {}, onInspect, renderScreenshot = noScreenshot, actions, audienceFilters, interviews }: { report: ReportData; repeats?: RepeatSet; filter?: ProfileFilter; onInspect: Inspect; renderScreenshot?: RenderScreenshot; actions?: ReactNode; audienceFilters?: ReactNode; interviews?: ReactNode /* the app's chats with personas; never in a file */ }) {
   const inFile = useContext(InFile);
   const selectedPersonas = report.personas.filter((persona) => matchesProfileValues(persona.attributes, filter));
   const ids = new Set(selectedPersonas.map((persona) => persona.id));
@@ -683,6 +683,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         <Glance report={report} themes={themes} />
         {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} hidAll={!!report.shared?.hidden} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
         {report.unmatched_edits && <UnmatchedEdits edits={report.unmatched_edits} />}
+        {interviews}
         <Study report={report} />
       </>}
       <div className="report-details">

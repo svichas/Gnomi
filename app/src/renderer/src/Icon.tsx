@@ -28,6 +28,7 @@ const paths = {
   leaf: 'M20 4C8 2 2 8 6 15s16 2 14-11ZM4 21 15 10',
   report: 'M14 2H5v20h14V7l-5-5Zm0 0v6h5M8 12h8M8 16h6',
   spark: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16v4m-2-2h4',
+  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z',
 } as const;
 
 export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: number }) {

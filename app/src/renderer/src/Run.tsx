@@ -1,7 +1,7 @@
 import { RunStatus } from './RunStatus.tsx';
 import './run.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/simulation/types.ts';
 import { isAttributeEnabled } from '@gnomi/simulation/profile/schema.ts';
 import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
@@ -13,6 +13,7 @@ import { emptyMoments, foldMoments } from './activityFeed.ts';
 import { BlockedBanner } from './Blocked.tsx';
 import { call, errorText, onEvent, onRepeatFailed } from './engine.ts';
 import { Inspector } from './Inspector.tsx';
+import { Interviews, useInterview } from './Interview.tsx';
 import { personaLabel } from './ProfileFields.tsx';
 import { Feed } from './Feed.tsx';
 import { ExportReport } from './ReportExport.tsx';
@@ -100,6 +101,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
   const openPersona = useCallback((id: string, seq?: number) => setInspecting({ persona: id, seq: seq ?? null }), []);
   const [view, setView] = useState<'activity' | 'report'>('activity');
   const [feedOpen, setFeedOpen] = useState(false);
+  const interview = useInterview(runId);
   const openedReport = useRef(false);
 
   useEffect(() => {
@@ -201,6 +203,8 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
     if (!inspected || !log.social) return null; // a run without social rounds
     return socialMemory(events, inspected.id);
   }, [events, inspected, log.social]);
+  const askable = ended && !log.comparison; // a comparison study has no persona to question
+  const interviewed = useMemo(() => (askable ? events.filter((event): event is EventOf<'persona.interviewed'> => event.type === 'persona.interviewed') : []), [events, askable]); // a live run has none, and its log grows every batch
   const statusPanel = <RunStatus events={events} config={frozenConfig} row={row} compact={view === 'report'} reportAvailable={report !== null} waiting={waiting.length} stopping={stopping} onStop={stop} />;
 
   return (
@@ -271,6 +275,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           actions={<ExportReport report={report} repeats={repeats} />}
           audienceFilters={groups.length > 0 ? <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /> : undefined}
           onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })}
+          interviews={askable ? <Interviews runId={runId} report={report} answers={interviewed} interview={interview} onInspect={openPersona} /> : undefined}
           renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />}
         /> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
       </div>}
@@ -285,7 +290,8 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           segment={segments.find((segment) => segment.id === inspected.segment_id)}
           focusSeq={inspecting.seq}
           ended={ended}
-          askable={ended && !log.comparison}
+          askable={askable}
+          interview={interview}
           state={states.get(inspected.id) ?? 'waiting'}
           events={inspectedEvents}
           social={social}

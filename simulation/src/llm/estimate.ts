@@ -6,7 +6,7 @@ import { socialRounds } from '../settings.ts';
 import type { Audience, ModelChoice, Persona, Poi, PriorPoi, RunConfig, RunEstimate, RunSettings } from '../types.ts';
 import type { ComparisonStudy } from '../comparison/types.ts';
 import { admits, inScenario } from '../comparison/config.ts';
-import { INTERVIEW_CONTEXT_MAX, INTERVIEW_OUTPUT_TOKENS } from '../agent/interview.ts';
+import { INTERVIEW_CONTEXT_MAX, INTERVIEW_CONVERSATION_MAX, INTERVIEW_OUTPUT_TOKENS } from '../agent/interview.ts';
 import { STUDY_OUTPUT_TOKENS } from '../report/study.ts';
 import { costUsd, isPriced } from './prices.ts';
 
@@ -39,7 +39,7 @@ const STUDY_ATTEMPTS = 2;
 // A question to a persona (agent/interview.ts): one navigator call on a run that has ended, with room for one retry of an invalid answer.
 const INTERVIEW_PROMPT_TOKENS = 3_000; // the persona's profile, the rules and the question
 const INTERVIEW_CONTEXT_CHARS_PER_TOKEN = [4, 2] as const; // as for a digest: few texts get near 2, so the high figure works as a ceiling
-const INTERVIEW_INPUT = [1_000, INTERVIEW_PROMPT_TOKENS + INTERVIEW_CONTEXT_MAX / INTERVIEW_CONTEXT_CHARS_PER_TOKEN[1]] as const; // the low end: a short session
+const INTERVIEW_INPUT = [1_000, INTERVIEW_PROMPT_TOKENS + (INTERVIEW_CONTEXT_MAX + INTERVIEW_CONVERSATION_MAX) / INTERVIEW_CONTEXT_CHARS_PER_TOKEN[1]] as const; // the low end: a short session and a first question
 const INTERVIEW_OUTPUT = [200, INTERVIEW_OUTPUT_TOKENS] as const;
 const INTERVIEW_ATTEMPTS = 2;
 
