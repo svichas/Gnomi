@@ -177,7 +177,7 @@ try {
     assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile', 'latestRelease', 'installUpdate', 'openReleases'], inlineScriptRan: false, remote: 'blocked' });
   });
 
-  await stage('provider keys and the session key are stored encrypted, one file each; a key is never returned and can be removed', async () => {
+  await stage('provider keys and the session key are stored as plain files only this user can read; a key is never returned and can be removed', async () => {
     const anthropic = 'sk-ant-smoke-test-key';
     const openai = 'sk-openai-smoke-test-key';
     const saved = await page.evaluate((key) => window.gnomi.saveKey('anthropic', key), `  ${anthropic}  `);
@@ -187,14 +187,12 @@ try {
     assert.ok(!JSON.stringify([saved, listed]).includes('smoke-test'), 'a key came back from main');
     const refused = await page.evaluate(() => (window.gnomi.saveKey as (provider: string, key: string) => Promise<unknown>)('mistral', 'x').then(() => 'accepted', (err: Error) => err.message));
     assert.match(refused, /Unknown provider/);
-    if (saved.remembered) {
-      assert.ok(!readFileSync(join(userData, 'anthropic.key')).includes(anthropic), 'the key file holds plain text');
-      assert.ok(!readFileSync(join(userData, 'openai.key')).includes(openai), 'the key file holds plain text');
-      // The session key is 64 hex characters when it is plain, so a file that matches is not encrypted.
-      const sessionKey = join(userData, 'session.key');
-      assert.ok(!/^[0-9a-f]{64}$/.test(readFileSync(sessionKey, 'latin1')), 'the session key file holds plain text');
-      if (process.platform !== 'win32') assert.equal(statSync(sessionKey).mode & 0o777, 0o600);
-    }
+    // Plain files, not safeStorage, so macOS never asks for Keychain access (tech.md §4.11).
+    assert.ok(saved.remembered, 'the key was not kept');
+    assert.equal(readFileSync(join(userData, 'anthropic.key'), 'utf8'), anthropic, 'the key is saved trimmed');
+    assert.equal(readFileSync(join(userData, 'openai.key'), 'utf8'), openai);
+    assert.match(readFileSync(join(userData, 'session.key'), 'utf8'), /^[0-9a-f]{64}$/);
+    if (process.platform !== 'win32') for (const file of ['anthropic.key', 'session.key']) assert.equal(statSync(join(userData, file)).mode & 0o777, 0o600, `${file} is readable by others`);
     await page.evaluate(() => Promise.all([window.gnomi.clearKey('anthropic'), window.gnomi.clearKey('openai')]));
     assert.deepEqual((await page.evaluate(() => window.gnomi.listProviders())).keys, []);
     assert.ok(!existsSync(join(userData, 'openai.key')), 'the removed key file is still there');

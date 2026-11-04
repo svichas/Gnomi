@@ -22,9 +22,8 @@ export function launchApp(userData: string, env: Record<string, string | undefin
   const vars = Object.entries({ ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_HIDE_WINDOW: hide, ...env }).filter((entry): entry is [string, string] => entry[1] !== undefined);
   return electron.launch({
     executablePath: createRequire(import.meta.url)('electron') as string,
-    // The mock keychain keeps macOS from asking for Keychain access while the key storage is exercised. SwiftShader gives
-    // the swarm's WebGL 2 a software fallback where there is no GPU, as on CI's virtual display.
-    args: ['--use-mock-keychain', '--enable-unsafe-swiftshader', `--user-data-dir=${userData}`, join(import.meta.dirname, 'out/main/index.js')],
+    // SwiftShader gives the swarm's WebGL 2 a software fallback where there is no GPU, as on CI's virtual display.
+    args: ['--enable-unsafe-swiftshader', `--user-data-dir=${userData}`, join(import.meta.dirname, 'out/main/index.js')],
     env: Object.fromEntries(vars),
   });
 }

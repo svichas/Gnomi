@@ -8,7 +8,7 @@ Gnomi is a local desktop application. One process runs a round-based simulation 
 
 **Expected scale.** 20–200 personas per run (default 50), up to 60 browser steps per persona, 3–8 social rounds, 8–16 concurrent browser contexts. That is roughly 7,000 events for a default run and up to ~100,000 for the largest run, a few hundred megabytes of screenshots, and 3,000–15,000 LLM calls. Nothing at this scale needs a server, a queue, a message broker or a vector database. The design is sized to a laptop with 16 GB of RAM.
 
-**Stack in one line.** TypeScript end to end: Electron shell, React UI with Sigma.js for the graph, a Node engine process that drives Playwright and calls LLM providers through the Vercel AI SDK, SQLite for the event log, the OS keychain for keys. Each choice is compared with alternatives in [§4](#4-components-and-options).
+**Stack in one line.** TypeScript end to end: Electron shell, React UI with Sigma.js for the graph, a Node engine process that drives Playwright and calls LLM providers through the Vercel AI SDK, SQLite for the event log, plain files only the user can read for keys. Each choice is compared with alternatives in [§4](#4-components-and-options).
 
 **Non-negotiables carried through the design.** The LLM never sees credentials. CAPTCHAs and bot protection are never defeated. Nothing runs against production. Outbound traffic from the simulated browsers is limited to hosts the user allowed; product data and keys leave the machine only for the LLM provider the user chose. Every reported friction carries evidence and a trust level, and every report says that the findings are hypotheses.
 
@@ -97,7 +97,7 @@ Across all four groups the recurring conclusion is the same: the fixes that work
 │  └───────────┴───────────────┴────────────────┴───────────────┴────────────────┘   │
 │         ▲ typed messages over a MessagePort (commands, queries, event stream)      │
 │         │                                                                          │
-│  Main process: window, menus, file dialogs, auto-update, key storage (safeStorage) │
+│  Main process: window, menus, file dialogs, auto-update, key storage (0600 files)  │
 │         │ spawns and supervises                                                    │
 │         ▼                                                                          │
 │  Engine process (Electron utilityProcess = plain Node)                             │
@@ -122,7 +122,7 @@ Across all four groups the recurring conclusion is the same: the fixes that work
 Three processes, one machine:
 
 1. **Renderer.** The UI. It never talks to the network, never holds keys and never runs the simulation. It sends commands ("start run", "stop", "regenerate persona") and queries ("events for persona p-017 after seq 1200") to the engine and subscribes to the event stream.
-2. **Main.** Electron's privileged process. It owns the window, the OS keychain access for keys, auto-update, file dialogs, and spawning the engine. It passes a `MessagePort` to the renderer and the engine so they talk directly.
+2. **Main.** Electron's privileged process. It owns the window, key storage, auto-update, file dialogs, and spawning the engine. It passes a `MessagePort` to the renderer and the engine so they talk directly.
 3. **Engine.** A plain Node process that holds the SQLite connection, the browser pool, the LLM gateway and the run loop. It is written as a library with a small message-handling entry point, so the same code can later be driven from a command line or CI without the app.
 
 The engine is isolated in its own process so that a crash in Playwright or an out-of-memory in a 200-persona run cannot take the UI down, so that "Stop" can kill it cleanly, and so that the UI stays responsive while thousands of events per minute are written.
@@ -258,7 +258,7 @@ Each table compares the realistic options for one component (maturity, licence, 
 | keytar 7.9 | **Archived** (last publish 2025-07) | MIT | — | Do not adopt |
 | Encrypted file with a hand-rolled key scheme | Pattern | — | What `safeStorage` already is | Home-made cryptography |
 
-**Chosen: `safeStorage`** with ciphertext in the app's data directory. On Linux, if the backend is plaintext, warn and offer "do not remember my key". Sign the macOS build or users get repeated Keychain prompts after updates.
+**Chosen: plain files with mode 0600** in the app's data directory (since 0.3.1). `safeStorage` was used up to 0.3.0, but the unsigned macOS build asked for Keychain access on every launch or update; it is still used once to read and rewrite a file it wrote. Any process running as the user can read the keys; revisit `safeStorage` once the macOS build is signed.
 
 ### 4.12 Report export
 
@@ -367,7 +367,7 @@ Acme ATS.gnomi/
     recruiter.session       # encrypted Playwright storage state per role
 ```
 
-The app keeps a list of known project folders in its own data directory; there is no limit on the number of projects, one project is open per window, and a project folder moved or copied elsewhere can be opened from its new location. Session files are encrypted with a key held by the OS keychain (see [§13](#13-security-model)), so they are useless on another machine. Project export excludes `sessions/` and never includes provider keys, which live outside the project in the app's own data directory.
+The app keeps a list of known project folders in its own data directory; there is no limit on the number of projects, one project is open per window, and a project folder moved or copied elsewhere can be opened from its new location. Session files are encrypted with a key kept in the app's data directory (see [§13](#13-security-model)), so they are useless without it. Project export excludes `sessions/` and never includes provider keys, which live outside the project in the app's own data directory.
 
 ### 5.3 Tables
 
@@ -762,7 +762,7 @@ Once every persona has finished, abandoned, or exhausted its episode budget, the
 - **Identities are Gnomi's.** Every persona has a name, email address (on the sink domain), company and job title generated from its sampled traits. The "data pack" export (CSV and JSON) gives the team these identities to seed staging if they want persona-specific accounts.
 - **Account state is a segment setting.** `empty` means the persona experiences first use; `populated` means the team's staging fixtures provide history (open jobs, candidates). Gnomi cannot populate the team's database and does not try; the report states which state each segment ran in.
 - **Content personas create is in character.** When a recruiter persona writes a job description, the navigation model writes it from the persona's company and role, so staging fills with plausible data rather than "test test".
-- **Reset between runs.** The project can hold a reset hook: an HTTPS URL on the allowed hosts (with an optional secret header stored in the keychain) that Gnomi calls before a run, after the user confirms in the pre-run summary. Teams without a hook are told that reproducibility depends on resetting staging themselves. Database snapshots and container restarts are the team's job, and the setup screen documents the common ways to do them.
+- **Reset between runs.** The project can hold a reset hook: an HTTPS URL on the allowed hosts (with an optional secret header kept with the keys) that Gnomi calls before a run, after the user confirms in the pre-run summary. Teams without a hook are told that reproducibility depends on resetting staging themselves. Database snapshots and container restarts are the team's job, and the setup screen documents the common ways to do them.
 - **Isolation within a run.** Browser contexts isolate cookies, storage and sessions. Shared account data is not isolated, by design (real teams share accounts). Personas are instructed to only edit what they created; the report tags a failed action as *possibly interference* when the target element's name matches an object another persona changed in the previous minute, and shows that tag on the theme and its evidence so a team can discount it. The tag removes nothing. It is a fold over the log's event times (`possibleInterference` in `signals/index.ts`), with the window frozen in the run's signal thresholds, so a rebuild gives the same answer and runs from before the tag have none.
 
 ### 9.3 Side effects
@@ -794,7 +794,7 @@ Mocking tools for the team's own code (service-worker mocks, OpenAPI mock server
 
 ### 9.6 Privacy and security
 
-Summarised here, detailed in [§13](#13-security-model): keys are stored through the OS keychain and never written to the project; the only outbound traffic is to the LLM providers the user configured and the POI hosts the user allowed; there is no telemetry unless the user opts in; the simulated browsers run in a separate Playwright-managed Chromium, not in the app's own window; page content is treated as untrusted input to the model, and personas have no tools beyond the browser.
+Summarised here, detailed in [§13](#13-security-model): keys are stored in the app's data directory and never written to the project; the only outbound traffic is to the LLM providers the user configured and the POI hosts the user allowed; there is no telemetry unless the user opts in; the simulated browsers run in a separate Playwright-managed Chromium, not in the app's own window; page content is treated as untrusted input to the model, and personas have no tools beyond the browser.
 
 ### 9.7 Evaluating Gnomi itself
 
@@ -913,7 +913,7 @@ This is the same mechanism in development and in the packaged app; there is no H
 
 **Development.** `npm run dev` enables electron-vite's main/preload watch mode. Engine and main-process source changes rebuild the bundle and restart Electron, so switching branches loads the current engine; renderer edits use Vite's hot reload.
 
-**Signing.** Apple Developer Program ($99 per year) and notarization through `@electron/notarize`; without it, auto-update does not work on macOS and `safeStorage` re-prompts for the Keychain after every update. Windows signing through Azure Artifact Signing ($9.99 per month) where the legal entity is eligible, otherwise an OV certificate with cloud HSM. Developer accounts are opened in milestone 0 because of lead times.
+**Signing.** Apple Developer Program ($99 per year) and notarization through `@electron/notarize`; without it, auto-update does not work on macOS, and keys cannot move back to `safeStorage` without repeated Keychain prompts. Windows signing through Azure Artifact Signing ($9.99 per month) where the legal entity is eligible, otherwise an OV certificate with cloud HSM. Developer accounts are opened in milestone 0 because of lead times.
 
 **Updates.** electron-updater against GitHub Releases (works for private repositories with a token and for public ones without), each download checked against the sha512 in the release's `latest*.yml` (the manifests themselves are not signed; macOS also requires the update to carry the app's own code signature), a "ready to install" banner rather than a forced restart. Crash reporting is off by default; the opt-in sends minidumps and the app version only.
 
@@ -929,7 +929,7 @@ This is the same mechanism in development and in the packaged app; there is no H
 
 **Trust boundaries.** The renderer is untrusted relative to main (context isolation on, node integration off, a strict content-security policy, no remote content ever loaded in the app window). The engine is trusted but sandboxed by convention: it accepts only typed messages from the port. The simulated browsers are *untrusted*: they load third-party content (the product, competitor sites) and are treated like any web page.
 
-**Keys.** Stored with Electron's `safeStorage`, which encrypts with a key held by the OS keychain (macOS Keychain, Windows DPAPI, Linux Secret Service or a fallback the user is warned about). The ciphertext lives in the app's data directory, not in any project folder. Keys are read by the main process, passed to the engine over the port at engine start, held in memory, and never logged. Transcripts redact anything matching a configured key.
+**Keys.** Stored as plain files with mode 0600 in the app's data directory, not in any project folder (§4.11): unencrypted, so any process running as the user can read them. Keys are read by the main process, passed to the engine over the port at engine start, held in memory, and never logged. Transcripts redact anything matching a configured key.
 
 **Sessions.** Playwright storage state is encrypted with the same mechanism before it touches disk, and the plaintext exists only in the engine process while a context is being created. Session files are excluded from project export and are invalid on another machine.
 
@@ -985,14 +985,14 @@ Gnomi is local-first and v1 ships without any server. The same engine should be 
 - The engine is a library with no Electron imports. It runs in a utility process today and would run in a container tomorrow.
 - The transport between engine and UI is behind an interface ([§4.10](#410-real-time-transport-from-the-engine-to-the-ui), [§11](#11-real-time-updates-to-the-ui)).
 - The event log is the source of truth and a run folder is self-contained, so "where the run happened" does not change what a run is.
-- The renderer holds no business logic. It is a React app that could be served as a web page; the only Electron-specific code lives in the main process (keychain, file dialogs, updater, spawning the engine).
+- The renderer holds no business logic. It is a React app that could be served as a web page; the only Electron-specific code lives in the main process (key storage, file dialogs, updater, spawning the engine).
 - Strict containment through a local proxy already exists as an option ([§4.13](#413-side-effect-containment)).
 
 ### 16.2 Seams to build in milestone 0
 
 | Seam | Desktop implementation | Cloud implementation |
 |---|---|---|
-| Secrets store (provider keys, session state, reset-hook secret) | `safeStorage` | per-run ephemeral injection held in memory, or a vault backed by the cloud's key-management service |
+| Secrets store (provider keys, session state, reset-hook secret) | 0600 files in the app's data directory | per-run ephemeral injection held in memory, or a vault backed by the cloud's key-management service |
 | Blob store (screenshots, HAR files, exports) | the project folder on disk | object storage, same relative paths |
 | Transport (commands, queries, event stream) | `MessagePort` | WebSocket with a per-session token |
 | Browser launcher | installed Chrome or downloaded Chromium | Playwright's container image |

@@ -70,7 +70,7 @@ export interface BlobStore {
   get(path: string): Promise<Uint8Array>;
 }
 
-/** Provider keys, the Figma token, and session_key: 64 hex chars (AES-256) that encrypt recorded sessions. Main keeps all of them in the OS keychain. */
+/** Provider keys, the Figma token, and session_key: 64 hex chars (AES-256) that encrypt recorded sessions. Main keeps all of them in the app's data directory. */
 export type SecretName = 'anthropic_api_key' | 'openai_api_key' | 'google_api_key' | 'deepseek_api_key' | 'figma_token' | 'session_key';
 
 export interface SecretsStore {

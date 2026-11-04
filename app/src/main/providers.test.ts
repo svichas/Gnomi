@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { keyedProvider, maskKey, ProviderKeys, type Vault } from './providers.ts';
+import { fileVault, keyedProvider, maskKey, ProviderKeys, type Vault } from './providers.ts';
 
 const ANTHROPIC = 'sk-ant-api03-test-key-0123456789';
 const GOOGLE = 'AIzaSyTestGoogleKey0123456789abcd';
@@ -127,4 +127,31 @@ test('a Figma token must be one run of printable characters and is kept for this
   assert.equal((await providers.saveFigma(FIGMA)).remembered, false);
   assert.equal(existsSync(join(dir, 'figma.key')), false);
   assert.deepEqual(sent, [['figma_token', FIGMA]]);
+});
+
+test('keys are kept as plain files only this user can read, and a file safeStorage wrote is rewritten plain once', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gnomi-vault-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const decrypted: string[] = [];
+  const vault = fileVault(dir, async (data) => {
+    decrypted.push(data.toString());
+    if (data.toString() === 'v10broken') throw new Error('Keychain access denied');
+    return 'sk-from-keychain';
+  });
+
+  await vault.write('anthropic.key', ANTHROPIC);
+  assert.equal(readFileSync(join(dir, 'anthropic.key'), 'utf8'), ANTHROPIC);
+  if (process.platform !== 'win32') assert.equal(statSync(join(dir, 'anthropic.key')).mode & 0o777, 0o600);
+  assert.equal(await vault.read('anthropic.key'), ANTHROPIC);
+  assert.equal(await vault.read('missing.key'), null);
+  assert.equal(await vault.canRemember(), true);
+
+  writeFileSync(join(dir, 'openai.key'), 'v10ciphertext');
+  assert.equal(await vault.read('openai.key'), 'sk-from-keychain');
+  assert.equal(readFileSync(join(dir, 'openai.key'), 'utf8'), 'sk-from-keychain');
+  assert.equal(await vault.read('openai.key'), 'sk-from-keychain');
+
+  writeFileSync(join(dir, 'google.key'), 'v10broken');
+  assert.equal(await vault.read('google.key'), null);
+  assert.deepEqual(decrypted, ['v10ciphertext', 'v10broken'], 'safeStorage is asked once per old file, and never for a plain one');
 });
