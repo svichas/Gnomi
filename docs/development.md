@@ -62,7 +62,7 @@ Then read `demo.gnomi/runs/r-0001/report.md`. For a real run, set your provider 
 | [`engine/`](../engine/) | Host process and CLI: project and audience authoring, Figma import, and the protocol around the simulation. |
 | [`simulation/`](../simulation/) | Simulation runtime: Playwright browser actions, provider routing, social rounds, SQLite event storage and reports. |
 | [`demo/GymSite/`](../demo/GymSite/) | Demo web app, defect catalogue, design frames and text fixtures. |
-| [`docs/`](.) | Product and technical design, input contracts, evaluation guides and roadmap. |
+| [`docs/`](.) | Product and technical design, input contracts and evaluation guides. |
 | [`assets/brand/`](../assets/brand/) | Logos, icons, typography and brand assets. |
 | [`videos/readme-gif/`](../videos/readme-gif/) | The README animation, rendered with `node videos/readme-gif/render.mjs`. |
 

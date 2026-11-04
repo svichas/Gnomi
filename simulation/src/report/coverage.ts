@@ -2,7 +2,7 @@ import { isUnrated } from '../types.ts';
 import type { Poi, Report, ReportCoverage, ReportPersona, ReportReach, ReportTheme } from '../types.ts';
 import { RETEST_REACH } from './diff.ts';
 
-// Whether later personas still found new problems, and what few of them reached (features_roadmap.md item 6). It reads what the
+// Whether later personas still found new problems, and what few of them reached. It reads what the
 // report already holds and stays inside this simulated run: a flat curve says the run stopped finding, not that nothing is left.
 
 /** Fewer personas than this and the curve is too short to read, so the hint claims nothing from it. */

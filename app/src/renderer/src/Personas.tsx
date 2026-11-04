@@ -19,7 +19,7 @@ const languageName = (code: string) => new Intl.DisplayNames(['en'], { type: 'la
 const percent = (x: number) => `${Math.round(x * 100)}%`;
 const SCALE = ['1', '2', '3', '4', '5'];
 
-/** How the generated population is spread, so a skew is visible before anyone is paid to browse (idea.md §11). */
+/** How the generated population is spread, so a skew is visible before anyone is paid to browse. */
 export function Distribution({ personas, schema }: { personas: Persona[]; schema?: PersonaSchema }) {
   const custom = getPersonaSchema(schema).attributes.filter((attribute) => !DEFAULT_IDS.has(attribute.id) && attribute.enabled && attribute.show_on_card && (attribute.type === 'choice' || attribute.type === 'boolean'));
   return (
@@ -134,7 +134,7 @@ function PersonaCard(props: { persona: Persona; schema?: PersonaSchema; stale: b
   );
 }
 
-/** The generated population, grouped by segment, with the editing the engine offers (idea.md §6.3). */
+/** The generated population, grouped by segment, with the editing the engine offers. */
 export function PersonaList(props: {
   personas: Persona[];
   schema?: PersonaSchema;

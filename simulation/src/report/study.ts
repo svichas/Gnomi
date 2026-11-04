@@ -5,10 +5,10 @@ import type { EventOf, EventPayloads, GnomiEvent, Report, ReportStudyPlan, Repor
 import { themeByKeys } from './match.ts';
 import { authorThemes, rankOrder } from './themes.ts';
 
-// From a report to real people and back (features_roadmap.md item 5): a plan for a study, then what the team's study found. What
+// From a report to real people and back: a plan for a study, then what the team's study found. What
 // people found stays apart from what personas did: it reaches no count, rank, label or model, and it stays with its run.
 
-/** The findings a plan covers and a report counts outcomes over: the "Confirmed findings" metric in roadmap.md. */
+/** The findings a plan covers and a report counts outcomes over. */
 export const STUDY_FINDINGS = 5;
 /** This many consecutive words shared with a finding mean an entry quotes it. Fewer are ordinary words. */
 export const QUOTE_WORDS = 4;

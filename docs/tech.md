@@ -1,6 +1,6 @@
 # Gnomi — technical design
 
-*Status: founding draft, 2026-10-15. Companion documents: [idea.md](idea.md) (what and why) and [roadmap.md](roadmap.md) (in what order). Versions and prices were checked on the dates given in each section; see [§17](#17-sources-and-dates-checked).*
+*Status: founding draft, 2026-10-15. Versions and prices were checked on the dates given in each section; see [§17](#17-sources-and-dates-checked).*
 
 ## 1. Summary
 
@@ -631,7 +631,7 @@ Per persona: `done`, `abandon`, step budget, repeated failed action (three ident
 | Caricature from over-steering | Behaviour rules are mild and trait-derived; short real examples per segment rather than "be impatient" directives |
 | Over-confident reporting | Trust levels; objective signals; evidence required for every theme; one reflection call at episode end rather than more reasoning per step; hypothesis banner; no single product score |
 
-These mitigations are drawn from the persona-steering and silicon-sample literature summarised in [§2](#2-prior-art); their effect on Gnomi is measured by the evaluation plan in [roadmap.md](roadmap.md#evaluation-plan), not assumed.
+These mitigations are drawn from the persona-steering and silicon-sample literature summarised in [§2](#2-prior-art); their effect on Gnomi is measured by the evaluation plan in [§9.7](#97-evaluating-gnomi-itself), not assumed.
 
 ## 7. POI ingestion and interaction
 
@@ -798,7 +798,7 @@ Summarised here, detailed in [§13](#13-security-model): keys are stored through
 
 ### 9.7 Evaluating Gnomi itself
 
-A seeded-defect demo application ("the Gym") lives in the repository, is deployed locally by the test harness, and carries a defect catalogue with feature flags. Every release reports recall, precision, stability, segment attribution and the false-positive rate of a control run, by model tier. A yearly human usability study on the same build measures agreement with real findings. The full plan, metric definitions and thresholds are in [roadmap.md](roadmap.md#evaluation-plan).
+A seeded-defect demo application ("the Gym") lives in the repository, is deployed locally by the test harness, and carries a defect catalogue with feature flags. Every release reports recall, precision, stability, segment attribution and the false-positive rate of a control run, by model tier. A yearly human usability study on the same build measures agreement with real findings.
 
 ## 10. LLM provider abstraction and model routing
 

@@ -5,7 +5,7 @@ import { buildReport } from './build.ts';
 import { buildCandidates, groupKey, SIGNAL_KINDS, type Candidate } from './friction.ts';
 import { echoesOf, hostless, othersPosts, pathOf, type Echoes } from './themes.ts';
 
-// What a returning persona remembers (features_roadmap.md item 12): a pure fold over the earlier run's log, frozen into the next run's
+// What a returning persona remembers: a pure fold over the earlier run's log, frozen into the next run's
 // config, so that run never reads this log. docs/odd.md has the policy.
 
 // The memory sits in every step's prompt, so a long run still leaves a short one. All assumed (docs/odd.md).

@@ -40,7 +40,7 @@ export const ARMS = {
 } satisfies Record<string, { settings?: Partial<RunSettings>; generic?: true; grounded?: true; returning?: true }>;
 export type Arm = keyof typeof ARMS;
 
-/** `provider:model` for the mapping judge, which docs/roadmap.md's judge calibration wants from another model family than the navigator's. */
+/** `provider:model` for the mapping judge, which should be from another model family than the navigator's. */
 function parseMapper(value: string, navigator: string): Mapper {
   const colon = value.indexOf(':');
   const [provider, model] = [value.slice(0, colon), value.slice(colon + 1)];
@@ -150,7 +150,7 @@ export function assess(mode: Mode, facts: Facts, expected = FULL_POPULATION): Cr
 
 export const TOP = 20; // precision is measured over a report's top 20 themes
 
-/** The false positives of a control build: its themes with trust confirmed or observed (docs/roadmap.md's evaluation plan). */
+/** The false positives of a control build: its themes with trust confirmed or observed (tech.md §9.7). */
 export const controlThemes = (themes: Pick<ReportTheme, 'trust'>[]) => themes.filter((theme) => theme.trust !== 'reported').length;
 
 const listOf = (entry: string, field: string) => (new RegExp(`${field}: \\[(.*)\\]`).exec(entry)?.[1] ?? '').split(',').map((item) => item.trim().replaceAll('"', '')).filter(Boolean);
@@ -211,7 +211,7 @@ export function applyMapping<T extends { theme_id: string; defect?: string | nul
 
 /**
  * Recall of high-severity defects and precision of the top themes per run, from theme-mapping.json items, so a mapping replaces the
- * defectScores estimate. By docs/roadmap.md's definitions a theme mapped to a switched-on defect is a true positive and a defect is
+ * defectScores estimate. A theme mapped to a switched-on defect is a true positive and a defect is
  * found when a confirmed or observed theme maps to it, so two themes may share a defect. A control run has no defect on: it is left out.
  * A theme with no answer counts for nothing, and a run with no answers has no scores.
  */
@@ -232,7 +232,7 @@ export function mappingScores(items: { run: string; rank: number; trust: string;
 export const STABILITY_TOP = 10; // stability is measured over a report's top ten themes
 
 /**
- * Stability from docs/roadmap.md's evaluation plan: the Jaccard overlap of two runs' top themes, averaged over every pair of runs. Themes
+ * Stability: the Jaccard overlap of two runs' top themes, averaged over every pair of runs. Themes
  * count as the same by matchThemes, not by a reviewed mapping, so it can pair themes that share one key. Null with no pair to compare.
  */
 export function topOverlap(runs: ReportTheme[][]): number | null {

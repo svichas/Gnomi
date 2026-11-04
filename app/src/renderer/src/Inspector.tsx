@@ -73,7 +73,7 @@ function AskPersona({ runId, persona, name }: { runId: string; persona: Persona;
   );
 }
 
-/** One persona of a run: who she is, how she feels now, and every step she took with what she saw (idea.md §6.3). */
+/** One persona of a run: who she is, how she feels now, and every step she took with what she saw. */
 export function Inspector(props: {
   runId: string; persona: Persona; schema?: PersonaSchema; pois?: Poi[]; segment: Segment | undefined; focusSeq: number | null; ended: boolean;
   askable: boolean; // an ended run that a question can go to: a comparison study has no such thing

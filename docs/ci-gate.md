@@ -6,7 +6,7 @@
 npm run -s gnomi -- gate <project dir> --base <run id> --run <run id> [--json]
 ```
 
-Each id stands for its whole repeat set, so any run of a set gives the same answer. Each side needs at least three finished runs of one set, because the [regression plan](roadmap.md#evaluation-plan) is a rolling window over three runs, not a single run. A set's trait-free run is in no count.
+Each id stands for its whole repeat set, so any run of a set gives the same answer. Each side needs at least three finished runs of one set, because the [regression plan](tech.md#14-testing-strategy-for-a-non-deterministic-system) is a rolling window over three runs, not a single run. A set's trait-free run is in no count.
 
 ## What it decides
 

@@ -20,7 +20,7 @@ function Homogeneity({ value }: { value: ReportHomogeneity }) {
 const BLOCK_REASONS: Record<string, string> = { captcha: 'a CAPTCHA', session_expired: 'an expired login' };
 const TRIPWIRES: Record<string, string> = { live_payment_key: 'Live payment key found', production_host: 'Production host reached' };
 
-/** What the run was set up with, allowed to do and what got in its way (idea.md §6.5), so a team can change a setting and run again. */
+/** What the run was set up with, allowed to do and what got in its way, so a team can change a setting and run again. */
 export function Methods({ methods, personas, coverage, pois }: { methods: ReportMethods; personas: ReportPersona[]; coverage?: ReportCoverage[]; pois: Report['pois'] }) {
   const none = 'None';
   const name = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;

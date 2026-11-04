@@ -1,6 +1,6 @@
 # Spike: a simulated Figma prototype
 
-M5 spike from [roadmap.md](roadmap.md#m5--more-points-of-interest). Question: should Gnomi rebuild a Figma prototype from the file's own data (starting points, hotspots, destinations), render the frames itself, and let personas click through it, and does that ship in M7?
+M5 spike. Question: should Gnomi rebuild a Figma prototype from the file's own data (starting points, hotspots, destinations), render the frames itself, and let personas click through it, and does that ship in M7?
 
 Context: [tech.md §7](tech.md#7-poi-ingestion-and-interaction) ("Figma frames" and "Figma prototype, simulated" rows) and [§4.16](tech.md#416-design-tool-ingestion). Gnomi never automates Figma's own prototype viewer: its terms and its lack of an accessibility tree rule that out, and nothing here changes that.
 
@@ -14,7 +14,7 @@ Written 2026-10-16. The parser (removed; see `git show d3696fa:engine/src/figma/
 
 Why ship it:
 
-- It tests something a static-design sequence cannot. In the M5 sequence the persona is *shown* the next frame; here the persona must *find* the way to it, which is the "where will people get stuck in this flow" the product designer asks for in [idea.md](idea.md).
+- It tests something a static-design sequence cannot. In the M5 sequence the persona is *shown* the next frame; here the persona must *find* the way to it, which is the "where will people get stuck in this flow" the product designer asks for.
 - The data is documented and cheap to get: the same three Tier 1 calls as frame import (§2.4), so a Figma frames import in M5 already has most of what the simulation needs.
 - A run needs no browser. The simulation is a small state machine over images, so cost per persona-step is that of a static-design step (§6) and there is no containment layer to build.
 
@@ -202,7 +202,7 @@ Observation: the current frame PNG, with an open overlay composited over a dimme
 
 ### Questions for the legal read
 
-1. **Two-way data flow (Developer Terms §4(f)).** Does the requirement apply to a local desktop app that only reads (`GET` file, nodes and images with a personal token) and never calls a write endpoint? What are "tool calls" and "write-back" meant to cover? tech.md and idea.md already flag this; it affects frame import as much as the simulation.
+1. **Two-way data flow (Developer Terms §4(f)).** Does the requirement apply to a local desktop app that only reads (`GET` file, nodes and images with a personal token) and never calls a write endpoint? What are "tool calls" and "write-back" meant to cover? tech.md already flags this; it affects frame import as much as the simulation.
 2. **Licence scope (§2).** Is downloading frames and rebuilding interaction behaviour from file data inside "an integration with the Services, as permitted in Figma's developer documentation"? The documentation permits fetching files, nodes and renders; it does not discuss building a player.
 3. **Copying Figma's functions (AUP §2(e)).** Does re-implementing prototype *playback* (navigation, overlays, back) count as using the Services to copy a feature or function? This is the clause that separates the simulation from frame import. Read the 2026-10-07 text: tech.md cites the 2026-03-26 version, and I did not compare the two.
 4. **Programmatic access (AUP §2(j)).** Confirm that REST access with a user's token is "expressly permitted", and that Gnomi must never request a `figma.com/proto/...` page. The importer should take the file key and node ids out of a pasted link (their layout is not in the developer documentation, so it needs checking) and call only the REST API.
@@ -215,11 +215,10 @@ Observation: the current frame PNG, with an open overlay composited over a dimme
 
 Not made here, because other sessions are editing these files:
 
-- tech.md §4.16, idea.md: "only 20 requests per month" on View and Collab seats should read "up to 20 per month, and 6 per month for a file on a Starter plan reached with a personal token"; the Enterprise figure for Dev and Full was missing from the page text I received.
+- tech.md §4.16: "only 20 requests per month" on View and Collab seats should read "up to 20 per month, and 6 per month for a file on a Starter plan reached with a personal token"; the Enterprise figure for Dev and Full was missing from the page text I received.
 - tech.md §4.16 and its source line cite the Developer Terms and Acceptable Use Policy as 2026-03. The pages now show Developer Terms effective 2026-05-05 and the Acceptable Use Policy last updated 2026-10-07.
 - tech.md §7 and §4.16 say interactions are "per-frame". They are on any layer, which is what makes hotspots possible; `flowStartingPoints` is on the page, not the frame.
 - tech.md: personal access tokens expire within 90 days (since 2025-04-28), and `files:read` is deprecated in favour of `file_content:read`.
-- roadmap.md "Deliberately deferred" and M7 "Out of scope": record the decision in §1 once the gates are scheduled.
 
 ## 9. What this spike did not do
 

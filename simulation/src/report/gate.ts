@@ -1,10 +1,10 @@
 import type { ReportDiff, ThemeDiff } from './diff.ts';
 import { isSevere } from './themes.ts';
 
-// Whether CI should stop a build (features_roadmap.md item 11), read from a comparison of two repeat sets. Pure, with no model call.
+// Whether CI should stop a build, read from a comparison of two repeat sets. Pure, with no model call.
 // A pass only says nothing new and severe came back, and two sides that are not like for like are no pass (docs/ci-gate.md).
 
-/** Finished runs each side needs: the regression plan's rolling window over three runs (roadmap.md). */
+/** Finished runs each side needs: the regression plan's rolling window over three runs (tech.md §14). */
 export const GATE_RUNS = 3;
 /** Later runs a new theme must be high severity in before it fails: one run is one sample of a noisy model. */
 export const GATE_SIGHTINGS = 2;
