@@ -33,8 +33,11 @@ jobs:
       - run: npm run build -w @gnomi/app
       - run: |
           # An unset secret arrives as an empty string, which electron-builder reads as a certificate path and fails on.
-          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-          npx electron-builder ${{ matrix.platform }} --publish always
+          # Without a certificate the Mac app is signed ad hoc: Apple silicon calls a downloaded arm64 app with
+          # electron-builder's broken leftover signature "damaged". Hardened runtime is only for notarization, and with ad
+          # hoc signing it would refuse to load Electron's own frameworks.
+          [ -n "$CSC_LINK" ] || { unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; adhoc='-c.mac.identity=- -c.mac.hardenedRuntime=false'; }
+          npx electron-builder ${{ matrix.platform }} --publish always $adhoc
         shell: bash
         working-directory: app
         env:

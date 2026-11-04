@@ -177,9 +177,9 @@ ipcMain.handle('latest-release', () => {
     const updater = electronUpdater.autoUpdater;
     // electron-updater sends a per-install ID for staged rollouts, which Gnomi does not use; a fixed one identifies no one.
     updater.requestHeaders = { 'x-user-staging-id': '00000000-0000-0000-0000-000000000000' };
-    // Squirrel.Mac installs only into a signed app, so an unsigned build skips the download and offers the release page.
+    // Squirrel.Mac installs only into a Developer ID signed app, so an unsigned or ad-hoc signed build skips the download and offers the release page.
     const bundle = join(app.getPath('exe'), '../../..');
-    updater.autoDownload = process.platform !== 'darwin' || (await promisify(execFile)('codesign', ['--verify', bundle]).then(() => true, () => false));
+    updater.autoDownload = process.platform !== 'darwin' || (await promisify(execFile)('codesign', ['--verify', '-R=anchor apple generic', bundle]).then(() => true, () => false));
     return fetchUpdate(updater, installable);
   })();
   return update;
