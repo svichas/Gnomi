@@ -21,7 +21,7 @@ On macOS the update installs only when the installed app and the new release are
 
 ## Code signing
 
-macOS signing and notarization run only when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`. Without them the `.dmg` is unsigned. Windows and Linux installers are not signed yet. The [README](../README.md#install) tells users how to open unsigned installers.
+macOS signing and notarization run only when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64`, `MAC_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`. Without them the Mac app is signed ad hoc, with no certificate: macOS still asks the user to allow it once, but an arm64 app with no valid signature at all would show as "damaged" and not open. Windows and Linux installers are not signed yet. The [README](../README.md#install) tells users how to open unsigned installers.
 
 ## Build an installer locally
 
