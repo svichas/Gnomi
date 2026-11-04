@@ -1,0 +1,64 @@
+/* A persona's steps as a video: a dark player with its thoughts as captions, a scrubber marking what happened where, and each frame's details. */
+.replay { border-radius: var(--gnomi-radius-panel); }
+.replay:focus-visible { outline-offset: 4px; }
+.replay-body { display: grid; gap: 12px; }
+.replay-player { overflow: hidden; border-radius: var(--gnomi-radius-panel); background: #161a16; color: #f6f5f0; box-shadow: 0 8px 24px #2228231f; }
+.replay-stage { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: #0d100d; cursor: zoom-in; }
+.replay-frames { position: absolute; inset: 0; display: grid; }
+.replay-frame { grid-area: 1 / 1; min-width: 0; min-height: 0; visibility: hidden; }
+.replay-frame[data-current] { visibility: visible; animation: replay-fade 180ms ease-out; }
+@keyframes replay-fade { from { opacity: 0; } }
+.replay-frame > div { position: relative; display: grid; place-items: center; height: 100%; min-height: 0; }
+/* Sized to the picture, not the stage, so a design frame with a transparent background shows on white as it was drawn, with no white bars;
+   absolute, as a grid or flex row would grow to the picture and let a tall one spill over the controls. */
+.replay-frame img { position: absolute; inset: 0; width: auto; height: auto; max-width: 100%; max-height: 100%; margin: auto; border: 0; border-radius: 0; background: #fff; }
+.replay-frame p { color: #adb5a7; font-size: 13px; }
+.replay-empty { display: grid; place-items: center; align-content: center; gap: 8px; height: 100%; }
+.replay-flags { position: absolute; top: 10px; left: 10px; display: flex; gap: 6px; }
+.replay-flags > span { padding: 2px 9px; border-radius: 999px; color: #161a16; font-size: 11px; font-weight: 600; }
+.replay-flags > [data-kind='friction'], .replay-mark[data-kind='friction'] { background: #dfc28a; }
+.replay-flags > [data-kind='done'], .replay-mark[data-kind='done'] { background: #9ec9a9; }
+.replay-flags > [data-kind='gave-up'], .replay-mark[data-kind='gave-up'] { background: #e7ada3; }
+.replay-caption { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 5px 12px; border-radius: 6px; background: #000000bf; color: #fff; font-size: 13px; line-height: 1.45; text-align: center; overflow-wrap: anywhere; }
+.replay-scrubber { position: relative; padding: 10px 12px 0; }
+.replay-scrubber input { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 16px; margin: 0; background: transparent; cursor: pointer; }
+.replay-scrubber input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, #b8c8a9 var(--progress), #ffffff3d var(--progress)); }
+.replay-scrubber input::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #f6f5f0; box-shadow: 0 1px 4px #00000080; }
+.replay-scrubber input:focus-visible { outline: 2px solid #b8c8a9; outline-offset: 3px; border-radius: 4px; }
+/* Under the track, centred where the thumb sits for that step: 12px of padding and half the 14px thumb on each side. */
+.replay-mark { position: absolute; top: 12px; left: calc(19px + (100% - 38px) * var(--at)); width: 3px; height: 12px; margin-left: -1.5px; border-radius: 2px; pointer-events: none; }
+.replay-controls { display: flex; align-items: center; gap: 2px; padding: 4px 6px 6px; }
+.replay-controls button { display: grid; place-items: center; min-width: 36px; height: 36px; padding: 0 6px; border-radius: 8px; color: #f6f5f0; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.replay-controls button:hover:not([aria-disabled='true']) { background: #ffffff1f; }
+.replay-controls button[aria-disabled='true'] { opacity: .35; cursor: not-allowed; }
+.replay-controls button:focus-visible { outline: 2px solid #b8c8a9; outline-offset: -2px; }
+.replay-controls .replay-cc[aria-pressed='false'] { color: #ffffff80; text-decoration: line-through; }
+.replay-count { flex: 1; margin-left: 6px; color: #d8dcd2; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.replay-info { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 14px 16px; border: 1px solid var(--gnomi-line); border-radius: var(--gnomi-radius-panel); background: var(--gnomi-surface); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.replay-info-step { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--gnomi-text-muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.replay-info-step > span { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--gnomi-success) 12%, var(--gnomi-surface)); color: var(--gnomi-success); font-weight: 500; letter-spacing: 0; text-transform: none; }
+.replay-info-step > span[data-ok='false'] { background: color-mix(in srgb, var(--gnomi-error) 12%, var(--gnomi-surface)); color: var(--gnomi-error); }
+.replay-info h4 { font-size: 15px; font-weight: 550; line-height: 1.4; }
+.replay-info-page { display: flex; align-items: center; gap: 6px; color: var(--gnomi-text-muted); font-size: 12px; word-break: break-all; }
+.replay-info-feeling > span, .replay-info-note { color: var(--gnomi-text-muted); font-size: 12px; }
+.replay-info blockquote { padding: 8px 12px; border-left: 2px solid var(--gnomi-selected); background: var(--gnomi-canvas); }
+.replay-info-friction, .replay-info-end { padding: 8px 12px; border-radius: 8px; background: color-mix(in srgb, var(--gnomi-warning) 10%, var(--gnomi-surface)); }
+.replay-info-friction p + p { margin-top: 2px; color: var(--gnomi-text-muted); font-size: 12px; }
+.replay-info-end { background: color-mix(in srgb, var(--gnomi-error) 10%, var(--gnomi-surface)); }
+.replay-info-end[data-done] { background: color-mix(in srgb, var(--gnomi-success) 10%, var(--gnomi-surface)); }
+.replay-ask { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; padding: 6px 12px; border: 1px solid var(--gnomi-line); border-radius: 999px; color: var(--gnomi-action); font-size: 12px; font-weight: 500; }
+.replay-ask:hover { background: var(--gnomi-selected); }
+
+/* Full screen: a modal dialog over the whole window, the details beside the picture, or under it when narrow. Esc or a click on the picture leaves. */
+.replay-full { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: #0b0d0b; overflow: hidden; }
+.replay-full::backdrop { background: #0b0d0b; }
+.replay-body[data-full] { height: 100%; grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem); grid-template-rows: minmax(0, 1fr); padding: 16px; }
+.replay-body[data-full] .replay-player { display: flex; flex-direction: column; min-height: 0; }
+.replay-body[data-full] .replay-stage { flex: 1; min-height: 0; aspect-ratio: auto; cursor: zoom-out; }
+.replay-body[data-full] .replay-caption { bottom: 24px; font-size: 16px; }
+.replay-body[data-full] .replay-info { max-height: 100%; overflow-y: auto; }
+@media (max-width: 720px) {
+  .replay-body[data-full] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
+  .replay-body[data-full] .replay-info { max-height: 38dvh; }
+}

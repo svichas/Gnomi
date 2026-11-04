@@ -23,13 +23,17 @@
 .report-export-actions select { width: auto; max-width: 100%; font-size: 13px; }
 .report-export > .note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 
-.inspector-header { padding: 24px; flex-shrink: 0; }
-.inspector-header .button { flex-shrink: 0; }
-.inspector-jump-links { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 20px 12px; border-bottom: 1px solid var(--gnomi-line); flex-shrink: 0; }
-.inspector-jump-links button { display: flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 40px; border-radius: var(--gnomi-radius-control); color: var(--gnomi-action); font-size: 12px; font-weight: 500; }
-.inspector-jump-links button:hover { background: var(--gnomi-selected); }
-.inspector-jump-links button > span { color: var(--gnomi-text-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
-.inspector-body { min-height: 0; padding: 20px 24px 32px; }
+.inspector-header { padding: 20px 16px 12px 24px; flex-shrink: 0; }
+.inspector-close { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; margin-top: -4px; border-radius: 50%; color: var(--gnomi-text-muted); }
+.inspector-close:hover { background: var(--gnomi-canvas); color: var(--gnomi-text); }
+/* One row of equal tabs, icon over label, so five fit even at phone width; the section at the top of the panel is marked. */
+.inspector-jump-links { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 0 12px 8px; border-bottom: 1px solid var(--gnomi-line); flex-shrink: 0; }
+.inspector-jump-links button { position: relative; display: grid; justify-items: center; gap: 3px; min-width: 0; padding: 8px 2px 6px; border-radius: 10px; color: var(--gnomi-text-muted); font-size: 11px; font-weight: 500; transition: background-color var(--gnomi-duration), color var(--gnomi-duration); }
+.inspector-jump-links button > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-jump-links button:hover { background: var(--gnomi-canvas); color: var(--gnomi-text); }
+.inspector-jump-links button[aria-current] { background: var(--gnomi-selected); color: var(--gnomi-action); }
+.inspector-jump-links small { position: absolute; top: 3px; left: calc(50% + 7px); min-width: 17px; padding: 0 5px; border-radius: 999px; background: var(--gnomi-line); color: var(--gnomi-text); font-size: 9.5px; line-height: 15px; font-variant-numeric: tabular-nums; }
+.inspector-body { min-height: 0; padding: 20px 24px 32px; overscroll-behavior: contain; }
 .inspector-body section, .inspector-body details { scroll-margin-top: 16px; }
 .inspector-body > [tabindex='-1']:focus { outline: none; }
 .inspector-synthetic-label { color: var(--gnomi-text-muted); font-size: 11px; margin-bottom: 8px; }
@@ -44,15 +48,6 @@
 .inspector-empty > svg { margin: 0 auto 12px; color: var(--gnomi-action); }
 .inspector-empty p { font-size: 14px; }
 .inspector-empty span { display: block; margin-top: 4px; font-size: 12px; color: var(--gnomi-text-muted); }
-.inspector-replay { padding: 16px; border: 1px solid var(--gnomi-line); border-radius: var(--gnomi-radius-control); }
-.inspector-replay:focus-visible { outline-offset: 2px; }
-.inspector-replay-frame { display: flex; flex-wrap: wrap; gap: 12px; }
-.inspector-replay-stage { flex: 2 1 12rem; min-width: 0; display: grid; align-items: start; }
-.inspector-replay-stage > * { grid-area: 1 / 1; min-width: 0; }
-.inspector-replay-stage > :not([data-current]) { visibility: hidden; }
-.inspector-replay-caption { flex: 1 1 7rem; min-width: 0; overflow-wrap: anywhere; display: grid; align-content: start; gap: 4px; font-size: 13px; }
-.inspector-replay-controls { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
-.inspector-replay-controls .button[aria-disabled='true'] { opacity: .45; cursor: not-allowed; }
 .inspector-fold { border-top: 1px solid var(--gnomi-line); }
 .inspector-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 16px; }
 .inspector-fold > summary::after { content: '+'; color: var(--gnomi-action); font-size: 18px; }
@@ -71,8 +66,7 @@
 @media (max-width: 420px) {
   .report-export-actions { width: 100%; }
   .report-export-actions select { flex: 1 1 0; min-width: 0; }
-  .inspector-header { padding: 16px; }
+  .inspector-header { padding: 16px 12px 10px 16px; }
   .inspector-body { padding: 16px; }
-  .inspector-jump-links { padding-inline: 8px; }
-  .inspector-jump-links button { padding-inline: 8px; }
+  .inspector-jump-links { padding-inline: 6px; }
 }
