@@ -4,53 +4,16 @@ import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
 import { FEELINGS, personaProgress, shotLabels, stateWord, toRows, TONE_CLASSES } from './activity.ts';
-import type { PersonaState, Row } from './activity.ts';
-import { Button, Screenshot } from './ui.tsx';
+import type { PersonaState } from './activity.ts';
+import { Screenshot } from './ui.tsx';
 import { PersonaHeader, personaLabel, ProfileFields } from './ProfileFields.tsx';
 import { Icon } from './Icon.tsx';
 import { PersonaChat } from './Interview.tsx';
+import { Replay } from './Replay.tsx';
 import type { Interview } from './Interview.tsx';
 import './results.css';
 
-/**
- * A persona's steps as a flipbook, oldest first, so a live run's new steps never move the one on show. Only that step and its two
- * neighbours are in the page, and each loads its own image, so a long episode costs three images however far it is flipped.
- */
-function Replay({ steps, name, shotLabel }: { steps: Row[]; name: string; shotLabel: (row: Row) => string | undefined }) {
-  const [index, setIndex] = useState(0);
-  const go = (to: number) => setIndex(Math.max(0, Math.min(to, steps.length - 1)));
-  const step = steps[index];
-  return (
-    // biome-ignore lint/a11y/noNoninteractiveTabindex: the flipbook takes focus so its arrow keys work without tabbing to a button
-    <div role="region" id="inspector-replay" aria-label="Replay" aria-keyshortcuts="ArrowLeft ArrowRight" tabIndex={0} className="inspector-replay" onKeyDown={(event) => {
-      if (event.key === 'ArrowLeft') go(index - 1);
-      if (event.key === 'ArrowRight') go(index + 1);
-    }}>
-      <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Replay</h3><span>Left and right arrow keys</span></div>
-      {/* Apart from the visible count, whose total grows with every step of a live run: only flipping should be announced. */}
-      <p className="sr-only" aria-live="polite" aria-atomic="true">{`Step ${index + 1}: ${step.title}`}</p>
-      <div className="inspector-replay-frame">
-        <div className="inspector-replay-stage">
-          {/* Neighbours sit behind the step on show, so moving to one shows an image that has already loaded. */}
-          {steps.slice(Math.max(0, index - 1), index + 2).map((row) => <div key={row.seq} data-current={row === step || undefined}>
-            {row.screenshot ? <Screenshot path={row.screenshot} alt={`${name} at ${row.label.toLowerCase()}`} /> : <p className="text-sm text-stone-500">No screenshot for this step.</p>}
-          </div>)}
-        </div>
-        <div className="inspector-replay-caption">
-          <p className="font-medium text-stone-900">Step {index + 1} of {steps.length}</p>
-          <p>{step.title}</p>
-          {step.page && <p className="break-all text-xs text-stone-500">{step.page}</p>}
-          {step.screenshot && shotLabel(step) && <p className="text-xs text-stone-500">{shotLabel(step)}</p>}
-        </div>
-      </div>
-      <div className="inspector-replay-controls">
-        {/* aria-disabled, because a button that disables itself under the keyboard drops focus out of the flipbook. */}
-        <Button small aria-disabled={index === 0} onClick={() => go(index - 1)}><Icon name="back" size={15} />Previous</Button>
-        <Button small aria-disabled={index === steps.length - 1} onClick={() => go(index + 1)}>Next<Icon name="arrow" size={15} /></Button>
-      </div>
-    </div>
-  );
-}
+type IconName = Parameters<typeof Icon>[0]['name'];
 
 /** One persona of a run: who she is, how she feels now, and every step she took with what she saw. */
 export function Inspector(props: {
@@ -91,6 +54,22 @@ export function Inspector(props: {
   const surveys = events.filter((event): event is EventOf<'persona.survey'> => event.run_id === runId && event.type === 'persona.survey');
   const answers = events.filter((event): event is EventOf<'persona.interviewed'> => event.run_id === runId && event.type === 'persona.interviewed'); // oldest first, as in a chat
   const highlighted = evidenceSeq ?? focusSeq;
+  // The bar's sections in page order; the one at the top of the panel is marked as where you are.
+  const links = [
+    replayable && { id: 'inspector-replay', icon: 'play', label: 'Replay' },
+    { id: 'inspector-timeline', icon: 'activity', label: 'Journey', count: rows.length },
+    { id: 'inspector-opinions', icon: 'message', label: 'Opinions' },
+    (askable || answers.length > 0) && { id: 'inspector-ask', icon: 'spark', label: 'Ask' },
+    { id: 'inspector-profile', icon: 'people', label: 'Profile' },
+  ].filter((link) => !!link) as { id: string; icon: IconName; label: string; count?: number }[];
+  const body = useRef<HTMLDivElement>(null);
+  const [here, setHere] = useState<string | null>(null);
+  function spy() {
+    const top = body.current?.getBoundingClientRect().top ?? 0;
+    setHere(links.findLast(({ id }) => (dialog.current?.querySelector(`#${id}`)?.getBoundingClientRect().top ?? Infinity) - top < 120)?.id ?? null);
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, for where the panel opens; scrolling keeps it current after
+  useEffect(spy, []);
   // Opened from an event: bring that step into view once the timeline has it. Braces matter: scrollIntoView now returns a Promise, and an
   // effect that returns one is treated by React as its cleanup.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs again once the timeline has rows, so the focused step's element exists
@@ -102,21 +81,17 @@ export function Inspector(props: {
   return (
     <dialog ref={dialog} aria-label="Persona details" className="inspector-dialog" onCancel={(event) => { event.preventDefault(); close(); }}>
     <aside aria-label="Persona inspector" className="flex h-full w-full flex-col bg-white">
-      <div className="inspector-header flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-4">
+      <div className="inspector-header flex items-start justify-between gap-3">
         <PersonaHeader persona={persona} schema={schema} detail={segment?.name} heading="h2" />
-        <Button onClick={close} small>
-          <Icon name="close" size={16} />Close
-        </Button>
+        <button type="button" className="inspector-close" aria-label="Close" title="Close" onClick={close}><Icon name="close" size={18} /></button>
       </div>
       <nav className="inspector-jump-links" aria-label="Persona sections">
-        {replayable && <button type="button" onClick={() => jumpTo('inspector-replay')}><Icon name="play" size={15} />Replay</button>}
-        <button type="button" onClick={() => jumpTo('inspector-timeline')}><Icon name="activity" size={15} />Journey<span>{rows.length}</span></button>
-        <button type="button" onClick={() => jumpTo('inspector-opinions')}><Icon name="message" size={15} />Opinions</button>
-        {(askable || answers.length > 0) && <button type="button" onClick={() => jumpTo('inspector-ask')}><Icon name="spark" size={15} />Ask</button>}
-        <button type="button" onClick={() => jumpTo('inspector-profile')}><Icon name="people" size={15} />Profile</button>
+        {links.map(({ id, icon, label, count }) => <button key={id} type="button" aria-current={here === id ? 'location' : undefined} onClick={() => jumpTo(id)}>
+          <Icon name={icon} size={17} /><span>{label}</span>{count !== undefined && <small>{count}</small>}
+        </button>)}
       </nav>
 
-      <div className="inspector-body flex-1 space-y-5 overflow-y-auto px-5 py-4">
+      <div ref={body} onScroll={spy} className="inspector-body flex-1 space-y-5 overflow-y-auto px-5 py-4">
         <section aria-label="Right now" className="inspector-state space-y-1 rounded-lg bg-stone-50 px-4 py-3 text-sm">
           <p className="inspector-synthetic-label">Simulated persona · Generated opinions</p>
           <p>
@@ -125,7 +100,7 @@ export function Inspector(props: {
           </p>
         </section>
 
-        {replayable && <Replay steps={steps} name={name} shotLabel={shotLabel} />}
+        {replayable && <Replay id="inspector-replay" steps={steps} events={events} name={name} shotLabel={shotLabel} focusSeq={focusSeq} />}
 
         <section aria-label="Timeline" id="inspector-timeline" tabIndex={-1}>
           <div className="inspector-section-heading"><h3 className="text-sm font-semibold text-stone-900">Step by step</h3><span>Newest first</span></div>

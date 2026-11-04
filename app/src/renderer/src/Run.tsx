@@ -275,7 +275,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           actions={<ExportReport report={report} repeats={repeats} />}
           audienceFilters={groups.length > 0 ? <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /> : undefined}
           onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })}
-          interviews={askable ? <Interviews runId={runId} report={report} answers={interviewed} interview={interview} onInspect={openPersona} /> : undefined}
+          interviews={askable ? <Interviews runId={runId} report={report} answers={interviewed} interview={interview} personas={personas} schema={setup.schema} events={events} pois={frozenConfig?.project.pois} onInspect={openPersona} /> : undefined}
           renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />}
         /> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
       </div>}
