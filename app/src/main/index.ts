@@ -295,7 +295,7 @@ ipcMain.handle('save-report', async (_event, format: unknown, runId: unknown, co
 });
 
 function createWindow(started: Promise<Startup>) {
-  // GNOMI_HIDE_WINDOW=1 (the smoke tests' default) keeps the window off screen; no throttling, so a hidden page still animates.
+  // GNOMI_HIDE_WINDOW=1 (the smoke tests' default, except on Linux) keeps the window off screen; no throttling, so a hidden page still animates.
   const hidden = process.env.GNOMI_HIDE_WINDOW === '1';
   const win = new BrowserWindow({
     show: !hidden,

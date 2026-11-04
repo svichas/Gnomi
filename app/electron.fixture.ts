@@ -17,7 +17,9 @@ export const scratch = (name: string) => mkdtempSync(join(tmpdir(), `gnomi-${nam
 
 /** Launches the built app, hidden, with scripted models; `env` is merged over this process's environment, and `undefined` removes a variable. GNOMI_HIDE_WINDOW=0 shows the window. */
 export function launchApp(userData: string, env: Record<string, string | undefined> = {}) {
-  const vars = Object.entries({ ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_HIDE_WINDOW: process.env.GNOMI_HIDE_WINDOW ?? '1', ...env }).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  // Not on Linux: there a window that is never shown is never painted, so screenshots time out; CI's xvfb display is unseen anyway.
+  const hide = process.env.GNOMI_HIDE_WINDOW ?? (process.platform === 'linux' ? '0' : '1');
+  const vars = Object.entries({ ...process.env, GNOMI_FAKE_LLM: '1', GNOMI_HIDE_WINDOW: hide, ...env }).filter((entry): entry is [string, string] => entry[1] !== undefined);
   return electron.launch({
     executablePath: createRequire(import.meta.url)('electron') as string,
     // The mock keychain keeps macOS from asking for Keychain access while the key storage is exercised. SwiftShader gives
