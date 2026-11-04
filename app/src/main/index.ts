@@ -15,7 +15,7 @@ import type { ReportFormat } from '../reports.ts';
 import type { Startup } from '../startup.ts';
 import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
-import { keyedProvider, ProviderKeys } from './providers.ts';
+import { fileVault, keyedProvider, ProviderKeys, type Vault } from './providers.ts';
 import { fetchUpdate, RELEASES_PAGE } from './release.ts';
 import type { Release } from './release.ts';
 
@@ -66,42 +66,17 @@ function request<M extends Method>(method: M, params: Api[M]['params']): Promise
   });
 }
 
-// Secrets live encrypted in userData, never in a project folder, and are only ever sent to the engine.
-const secretFile = (name: string) => join(app.getPath('userData'), name);
-
-async function readSecret(name: string): Promise<string | null> {
-  if (!existsSync(secretFile(name))) return null;
-  try {
-    return (await safeStorage.decryptStringAsync(readFileSync(secretFile(name)))).result;
-  } catch {
-    console.warn(`${name} could not be decrypted and is ignored.`); // never the value
-    return null;
-  }
-}
-
-async function writeSecret(name: string, value: string) {
-  writeFileSync(secretFile(name), await safeStorage.encryptStringAsync(value), { mode: 0o600 });
-}
-
-// Linux without a secret store would keep the key readable by anyone (tech.md §4.11): then it lives for this session only.
-async function canRemember(): Promise<boolean> {
-  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') return false;
-  return safeStorage.isAsyncEncryptionAvailable();
-}
-
 /** The key that encrypts recorded logins on disk: made on first start, then kept like the API key. */
-async function loadSessionKey(): Promise<{ key: string; remembered: boolean }> {
-  const stored = await readSecret('session.key');
-  if (stored && /^[0-9a-f]{64}$/.test(stored)) return { key: stored, remembered: true };
+async function loadSessionKey(vault: Vault): Promise<string> {
+  const stored = await vault.read('session.key');
+  if (stored && /^[0-9a-f]{64}$/.test(stored)) return stored;
   const key = randomBytes(32).toString('hex');
-  const remembered = await canRemember();
-  if (remembered) await writeSecret('session.key', key);
-  return { key, remembered }; // not remembered: recorded logins end with this app session
+  await vault.write('session.key', key);
+  return key;
 }
 
 /** Starts the engine, gives it the secrets and opens the project. */
 async function startEngine(): Promise<Startup> {
-  let sessionsPersist = true;
   try {
     const child = utilityProcess.fork(join(import.meta.dirname, 'host.js'), [], { serviceName: 'Gnomi engine' });
     engine = child;
@@ -121,10 +96,10 @@ async function startEngine(): Promise<Startup> {
     const override = process.env.GNOMI_PROJECT_DIR;
     library = new ProjectLibrary(join(app.getPath('userData'), 'projects'), override);
     audiences = new AudienceLibrary(join(app.getPath('userData'), 'audiences.json'));
-    providers = new ProviderKeys(app.getPath('userData'), { read: readSecret, write: writeSecret, canRemember }, (name, value) => request('set_secret', { name, value }));
-    const sessionKey = await loadSessionKey();
-    sessionsPersist = sessionKey.remembered;
-    await request('set_secret', { name: 'session_key', value: sessionKey.key });
+    // Secrets live in userData, never in a project folder, and are only ever sent to the engine.
+    const vault = fileVault(app.getPath('userData'), async (data) => (await safeStorage.decryptStringAsync(data)).result);
+    providers = new ProviderKeys(app.getPath('userData'), vault, (name, value) => request('set_secret', { name, value }));
+    await request('set_secret', { name: 'session_key', value: await loadSessionKey(vault) });
     await Promise.all([
       (async () => {
         if (override) {
@@ -136,9 +111,9 @@ async function startEngine(): Promise<Startup> {
       })(),
       providers.load(),
     ]);
-    return { startupError: null, sessionsPersist, version: app.getVersion() };
+    return { startupError: null, sessionsPersist: true, version: app.getVersion() };
   } catch (err) {
-    return { startupError: err instanceof Error ? err.message : String(err), sessionsPersist, version: app.getVersion() };
+    return { startupError: err instanceof Error ? err.message : String(err), sessionsPersist: true, version: app.getVersion() };
   }
 }
 

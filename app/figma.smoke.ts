@@ -1,6 +1,6 @@
 // Figma frame import in real Electron, against the engine's fixture API (GNOMI_FAKE_FIGMA): no token, no network.
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from 'playwright-core';
 import { FAKE_KEY } from '../engine/src/figma/fake.ts';
@@ -159,12 +159,11 @@ try {
       assert.ok(assets.includes(asset) && /^[0-9a-f]{16}\.png$/.test(asset));
       assert.deepEqual([...readFileSync(join(projectDir, 'assets', asset)).subarray(1, 4)], [0x50, 0x4e, 0x47]);
     }
-    // The token is in the user's encrypted store, in no project file and in no log.
+    // The token is in figma.key alone: in no project file, no log and no other app file.
     const files = (root: string): string[] => readdirSync(root, { recursive: true, encoding: 'utf8' }).map((f) => join(root, f)).filter((f) => statSync(f).isFile());
     assert.deepEqual(files(projectDir).filter((f) => readFileSync(f).includes(TOKEN)), []);
-    assert.deepEqual(files(userData).filter((f) => readFileSync(f).includes(TOKEN)), [], 'not in plain text anywhere under the app data folder');
-    assert.ok(existsSync(join(userData, 'figma.key')));
-    console.log('ok    both designs are saved with their frames as PNG assets, and the token is nowhere in plain text');
+    assert.deepEqual(files(userData).filter((f) => readFileSync(f).includes(TOKEN)), [join(userData, 'figma.key')], 'the token is in another file under the app data folder');
+    console.log('ok    both designs are saved with their frames as PNG assets, and the token is only in figma.key');
     rmSync(dir, { recursive: true, force: true });
   } else console.error(`Figma smoke artifacts: ${dir}`);
 }

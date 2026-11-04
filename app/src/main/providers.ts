@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SecretName } from '@gnomi/simulation/seams.ts';
 import type { ProviderId } from '@gnomi/simulation/types.ts';
@@ -14,12 +14,39 @@ const KEYS: Record<KeyedProvider, { file: string; secret: SecretName }> = {
 const FIGMA = { file: 'figma.key', secret: 'figma_token' } as const satisfies { file: string; secret: SecretName };
 const TESTS = 'provider-tests.json';
 
-/** Where keys are kept: files encrypted by the OS (safeStorage) in the app, stand-ins in tests. Names are relative to the folder. */
+/** Where keys are kept: plain files only this user can read in the app (fileVault), stand-ins in tests. Names are relative to the folder. */
 export interface Vault {
   read(file: string): Promise<string | null>;
   write(file: string, value: string): Promise<void>;
   /** False where the OS has no secure store: a key then lasts until Gnomi quits. */
   canRemember(): Promise<boolean>;
+}
+
+/**
+ * Keys as plain files with mode 0600, not safeStorage, so macOS never asks for Keychain access. A file safeStorage wrote
+ * (up to 0.3.0) starts with its "v10" or "v11" prefix, which no key or hex session key does: `decrypt` reads it a last
+ * time and it is rewritten plain.
+ */
+export function fileVault(dir: string, decrypt: (data: Buffer) => Promise<string>): Vault {
+  const path = (file: string) => join(dir, file);
+  const write = async (file: string, value: string) => writeFileSync(path(file), value, { mode: 0o600 });
+  return {
+    async read(file) {
+      if (!existsSync(path(file))) return null;
+      const data = readFileSync(path(file));
+      if (!/^v1[01]/.test(data.toString('latin1', 0, 3))) return data.toString('utf8');
+      try {
+        const value = await decrypt(data);
+        await write(file, value);
+        return value;
+      } catch {
+        console.warn(`${file} could not be decrypted and is ignored.`); // never the value
+        return null;
+      }
+    },
+    write,
+    canRemember: async () => true,
+  };
 }
 
 /** Enough of a key to tell two apart: its first three and last four characters, and nothing of a short one. */
@@ -59,7 +86,7 @@ export class ProviderKeys {
     this.tests = readTests(join(dir, TESTS));
   }
 
-  /** Hands every saved key to the engine, one at a time so macOS asks for Keychain access once. */
+  /** Hands every saved key to the engine, one at a time so a key file left by safeStorage asks for Keychain access once. */
   async load() {
     for (const provider of KEYED_PROVIDERS) {
       const key = await this.vault.read(KEYS[provider].file);
