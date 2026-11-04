@@ -1,6 +1,7 @@
 import { withPois } from '@gnomi/simulation/poi/pois.ts';
+import { usedPronouns } from '@gnomi/simulation/profile/schema.ts';
 import { influenceEdges } from '@gnomi/simulation/social/influence.ts';
-import type { EventOf, GnomiEvent, PoiType } from '@gnomi/simulation/types.ts';
+import type { EventOf, GnomiEvent, Persona, PoiType } from '@gnomi/simulation/types.ts';
 
 // The swarm graph (tech.md §5.5): a pure projection of one run's events. It is applied incrementally and reports what each
 // batch changed, so the live view patches only those nodes and edges; applying any split of a log equals building it at once.
@@ -14,6 +15,7 @@ export interface PersonaNode {
   key: string; // 'persona:<id>', so a persona and a POI never share a key
   id: string;
   label: string;
+  pronouns?: Persona['pronouns']; // the ones the run used, for the node's face; set when the persona is created
   segment_id: string | null;
   status: PersonaStatus;
   step_count: number;
@@ -163,7 +165,7 @@ function apply(graph: SwarmGraph, event: GnomiEvent, changes: GraphChanges) {
       }
       return;
     case 'persona.created':
-      if (who) Object.assign(personaNode(graph, changes, who), { label: event.payload.persona.name, segment_id: event.payload.persona.segment_id });
+      if (who) Object.assign(personaNode(graph, changes, who), { label: event.payload.persona.name, segment_id: event.payload.persona.segment_id, pronouns: usedPronouns(event.payload.persona, graph.started?.payload.config.project.persona_schema) });
       return;
     case 'persona.step': {
       if (!who) return;

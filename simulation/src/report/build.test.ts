@@ -157,6 +157,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
       {
         id: 'p-001',
         name: 'Priya Natarajan',
+        pronouns: 'she',
         job_title: 'Recruiter',
         segment_id: null,
         device: 'desktop',
@@ -787,6 +788,7 @@ const expectedOldReport = {
     {
       id: 'p-001',
       name: 'Priya Natarajan',
+      pronouns: 'they',
       job_title: 'Recruiter',
       segment_id: null,
       device: 'desktop',

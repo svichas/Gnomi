@@ -14,7 +14,8 @@
 .swarm-node-card[data-side='left'] { translate: calc(-100% - 24px) -50%; transform-origin: right center; }
 @keyframes swarm-card-in { from { opacity: 0; scale: .94; } }
 .swarm-node-head { display: flex; align-items: flex-start; gap: 10px; }
-.swarm-node-icon { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-top: 2px; border-radius: 50%; color: #fff; }
+.swarm-node-icon { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-top: 2px; overflow: hidden; border-radius: 50%; color: #fff; }
+.swarm-node-icon img { width: 100%; height: 100%; }
 .swarm-node-kind { display: block; margin-bottom: 2px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
 .swarm-node-title { color: var(--gnomi-text); font-size: 14px; font-weight: 500; }
 .swarm-node-hint { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--gnomi-line); }

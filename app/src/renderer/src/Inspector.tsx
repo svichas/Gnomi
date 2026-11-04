@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Segment } from '@gnomi/simulation/types.ts';
+import { usedPronouns } from '@gnomi/simulation/profile/schema.ts';
 import { foldOpinions } from '@gnomi/simulation/opinion/index.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import type { SocialMemory } from '@gnomi/engine/graph/feed.ts';
@@ -158,7 +159,8 @@ export function Inspector(props: {
 
         {(askable || answers.length > 0) && <section aria-label="Questions after the run" id="inspector-ask" tabIndex={-1} className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Questions after the run</h3>
-          <PersonaChat runId={runId} persona={{ id: persona.id, name }} answers={answers} interview={interview} askable={askable} />
+          {/* shortcut: with names hidden on cards, the chat draws its faces from the "Persona <id>" label rather than the name, so they differ from the header's; give the chat the real name for its faces if that matters. */}
+          <PersonaChat runId={runId} persona={{ id: persona.id, name, pronouns: usedPronouns(persona, schema) }} answers={answers} interview={interview} askable={askable} />
         </section>}
 
         <details aria-label="Survey" className="inspector-fold" open={surveys.length > 0}>

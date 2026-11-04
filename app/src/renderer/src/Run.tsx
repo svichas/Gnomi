@@ -2,7 +2,7 @@ import { RunStatus } from './RunStatus.tsx';
 import './run.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EventOf, GnomiEvent, Persona, PersonaSchema, Report as ReportData, RunRow } from '@gnomi/simulation/types.ts';
-import { isAttributeEnabled } from '@gnomi/simulation/profile/schema.ts';
+import { isAttributeEnabled, usedPronouns } from '@gnomi/simulation/profile/schema.ts';
 import { groupProfiles } from '@gnomi/simulation/report/dimensions.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { socialMemory } from '@gnomi/engine/graph/feed.ts';
@@ -52,7 +52,7 @@ function PersonaGrid(props: { personas: Persona[]; schema?: PersonaSchema; segme
                 aria-label={`Inspect ${name}`}
                 className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-left hover:border-indigo-300"
               >
-                <span className="persona-preview"><PersonaAvatar name={name} id={persona.id} /><span className="block truncate text-sm font-medium text-stone-900">{name}</span></span>
+                <span className="persona-preview"><PersonaAvatar name={persona.name} id={persona.id} pronouns={usedPronouns(persona, schema)} /><span className="block truncate text-sm font-medium text-stone-900">{name}</span></span>
                 <span className="block truncate text-xs text-stone-500">{segments.find((segment) => segment.id === persona.segment_id)?.name ?? (isAttributeEnabled(schema, 'job_title', 'card') ? persona.job_title : '')}</span>
                 <span className="mt-1 flex items-center gap-2 text-xs text-stone-700">
                   <span aria-hidden className={`h-2 w-2 rounded-full ${DOT[state]}`} />
@@ -257,6 +257,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           filters={filters}
           live={!ended}
           profileGroups={groups}
+          schema={setup.schema}
           onFilters={setFilters}
           onOpen={(id, seq) => setInspecting({ persona: id, seq })}
         />

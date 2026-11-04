@@ -36,6 +36,8 @@
     "electron-updater": "6.8.11"
   },
   "devDependencies": {
+    "@dicebear/core": "9.4.3",
+    "@dicebear/lorelei": "9.4.3",
     "@react-sigma/core": "6.0.0",
     "@sigma/node-image": "4.0.1",
     "@tailwindcss/vite": "4.3.3",

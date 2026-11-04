@@ -6,7 +6,7 @@
 .chat-day { align-self: center; margin: 8px 0 2px; padding: 2px 10px; border: 1px solid var(--gnomi-line); border-radius: 999px; background: var(--gnomi-surface); color: var(--gnomi-text-muted); font-size: 11px; }
 .chat-row { display: flex; align-items: flex-end; gap: 8px; max-width: min(85%, 60ch); }
 .chat-row[data-from='team'] { align-self: flex-end; }
-.chat-row .persona-avatar { width: 28px; height: 28px; font-size: 10px; }
+.chat-row .persona-avatar { width: 28px; height: 28px; }
 .chat-bubble { min-width: 0; padding: 8px 12px 5px; border-radius: 18px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px 1px #2228230f; }
 .chat-row[data-from='team'] .chat-bubble { border-bottom-right-radius: 6px; background: var(--gnomi-action); color: var(--gnomi-on-action); }
 .chat-row[data-from='persona'] .chat-bubble { border: 1px solid var(--gnomi-line); border-bottom-left-radius: 6px; background: var(--gnomi-surface); }
@@ -42,7 +42,7 @@
 .chat-contact:hover { background: var(--gnomi-canvas); }
 .chat-contact[aria-current='true'] { background: var(--gnomi-selected); }
 .chat-contact:focus-visible { outline-offset: -2px; }
-.chat-contact .persona-avatar { width: 40px; height: 40px; font-size: 12px; }
+.chat-contact .persona-avatar { width: 40px; height: 40px; }
 .chat-contact-copy { display: grid; flex: 1; gap: 2px; min-width: 0; }
 .chat-contact-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .chat-contact-top strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
@@ -90,7 +90,7 @@
 .profile-dialog::backdrop { background: #22282359; backdrop-filter: blur(2px); }
 .profile-card { display: grid; gap: 18px; padding: 24px; }
 .profile-hero { display: flex; align-items: flex-start; gap: 16px; }
-.profile-hero .persona-avatar { width: 76px; height: 76px; font-size: 24px; box-shadow: 0 0 0 4px var(--gnomi-selected); }
+.profile-hero .persona-avatar { width: 76px; height: 76px; box-shadow: 0 0 0 4px var(--gnomi-selected); }
 .profile-hero h2 { font-size: 20px; font-weight: 550; letter-spacing: -.02em; line-height: 1.25; }
 .profile-hero h2 span { color: var(--gnomi-text-muted); font-size: 14px; font-weight: 400; }
 .profile-hero p { margin: 2px 0 8px; color: var(--gnomi-text-muted); font-size: 13px; }

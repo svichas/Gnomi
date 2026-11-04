@@ -1,7 +1,8 @@
 import { forwardRef, useId, useMemo, useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { Persona, Segment } from '@gnomi/simulation/types.ts';
+import type { Persona, PersonaSchema, Segment } from '@gnomi/simulation/types.ts';
+import { usedPronouns } from '@gnomi/simulation/profile/schema.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
 import type { ProfileGroups } from '@gnomi/simulation/report/dimensions.ts';
 import { CATEGORIES, isTimelineHighlight } from './activity.ts';
@@ -13,7 +14,7 @@ import { Icon, PersonaAvatar } from './Icon.tsx';
 import './activity.css';
 
 /** Persona controls open the full profile; the rest of the row toggles inline activity details. */
-export function ActivityItem({ row, related = [row], who, onOpen, onRead }: { row: Row; related?: Row[]; who: string | null; onOpen?(personaId: string, seq: number | null): void; onRead?(): void }) {
+export function ActivityItem({ row, related = [row], who, pronouns, onOpen, onRead }: { row: Row; related?: Row[]; who: string | null; pronouns?: Persona['pronouns']; onOpen?(personaId: string, seq: number | null): void; onRead?(): void }) {
   const [expanded, setExpanded] = useState(false);
   const detailId = useId();
   const personaId = row.persona_id;
@@ -24,7 +25,7 @@ export function ActivityItem({ row, related = [row], who, onOpen, onRead }: { ro
   const context = [row.source?.step !== undefined ? `Step ${row.source.step}` : '', row.source?.round ? `Round ${row.source.round}` : ''].filter(Boolean).join(' · ');
   const openProfile = personaId !== null && onOpen ? () => onOpen(personaId, null) : undefined;
   const icon = tone === 'alarm' || tone === 'bad' || tone === 'friction' ? 'alert' : tone === 'good' ? 'check' : quote ? 'message' : 'activity';
-  const marker = <>{who ? <PersonaAvatar name={who} id={personaId ?? who} /> : <span className="system-avatar"><Icon name={icon} size={16} /></span>}{who && <span className={`event-icon event-${icon}`}><Icon name={icon} size={10} /></span>}</>;
+  const marker = <>{who ? <PersonaAvatar name={who} id={personaId ?? who} pronouns={pronouns} /> : <span className="system-avatar"><Icon name={icon} size={16} /></span>}{who && <span className={`event-icon event-${icon}`}><Icon name={icon} size={10} /></span>}</>;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: catches focus and Escape bubbling from the buttons inside; the item itself is not a control
     <div className={`timeline-item tone-${tone}`} data-expanded={expanded || undefined} onFocusCapture={onRead}
@@ -91,6 +92,7 @@ export function Activity(props: {
   moments: Record<'highlights' | 'all', ActivityMoment[]>; // the live rows' moments, folded as events arrive
   total: number;
   personas: Persona[];
+  schema?: PersonaSchema;
   segments: Segment[];
   filters: Filters;
   live?: boolean;
@@ -98,7 +100,7 @@ export function Activity(props: {
   onFilters(filters: Filters): void;
   onOpen(personaId: string, seq: number | null): void;
 }) {
-  const { rows, moments: liveMoments, total, personas, segments, filters, live = false, profileGroups = [], onFilters, onOpen } = props;
+  const { rows, moments: liveMoments, total, personas, schema, segments, filters, live = false, profileGroups = [], onFilters, onOpen } = props;
   const byId = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const [showFilters, setShowFilters] = useState(false);
   const [allEvents, setAllEvents] = useState(false);
@@ -175,7 +177,7 @@ export function Activity(props: {
             const persona = row.persona_id === null ? undefined : byId.get(row.persona_id);
             return (
               <div role="listitem" className="timeline-row">
-                <ActivityItem row={row} related={related} who={persona?.name ?? (row.persona_id ? 'Simulated user' : null)} onOpen={onOpen} onRead={pause} />
+                <ActivityItem row={row} related={related} who={persona?.name ?? (row.persona_id ? 'Simulated user' : null)} pronouns={persona && usedPronouns(persona, schema)} onOpen={onOpen} onRead={pause} />
               </div>
             );
           }}
