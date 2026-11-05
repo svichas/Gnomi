@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { poisFor, webPois, withPois, type SavedProject } from '../poi/pois.ts';
 import { DEFAULT_SETTINGS, readsImages } from '../settings.ts';
-import { isAttributeEnabled } from '../profile/schema.ts';
+import { isAttributeEnabled, usedPronouns } from '../profile/schema.ts';
 import { buildComparisons, competitorIds } from './compare.ts';
 import { buildComparison } from './comparison.ts';
 import { buildCoverage } from './coverage.ts';
@@ -164,6 +164,7 @@ export function buildReport(events: GnomiEvent[]): Report {
     return {
       id: p.id,
       name: p.name,
+      pronouns: usedPronouns(p, schema),
       ...(!schema || isAttributeEnabled(schema, 'job_title', 'all') ? { job_title: p.job_title } : {}),
       segment_id: p.segment_id ?? null, // runs before M2 have no segment
       device: p.device,

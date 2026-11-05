@@ -1,4 +1,6 @@
 import type { CSSProperties } from 'react';
+import type { Persona } from '@gnomi/simulation/types.ts';
+import { personaFace } from './face.ts';
 
 const paths = {
   search: 'M21 21l-5-5M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z',
@@ -43,9 +45,8 @@ export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: num
 /** A white glyph as an image, for WebGL graph nodes, which cannot draw the SVG element. */
 export const iconImage = (name: keyof typeof paths) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name]}"/></svg>`)}`;
 
-/** A stable, local identity for simulated people. Never relies on a remote avatar service. */
-export function PersonaAvatar({ name, id }: { name: string; id: string }) {
+/** A stable, local identity for simulated people: a face drawn in the app (face.ts), never from a remote avatar service. */
+export function PersonaAvatar({ name, id, pronouns }: { name: string; id: string; pronouns?: Persona['pronouns'] }) {
   const color = [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 5 + 1;
-  const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('');
-  return <span className="persona-avatar" style={{ '--avatar-color': `var(--gnomi-segment-${color})` } as CSSProperties} aria-hidden="true">{initials || <Icon name="people" size={16} />}</span>;
+  return <span className="persona-avatar" style={{ '--avatar-color': `var(--gnomi-segment-${color})` } as CSSProperties} aria-hidden="true"><img src={personaFace(id, name, pronouns)} alt="" /></span>;
 }

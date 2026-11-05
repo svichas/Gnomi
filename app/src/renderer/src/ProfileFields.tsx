@@ -1,4 +1,4 @@
-import { isAttributeEnabled, profileEntries } from '@gnomi/simulation/profile/schema.ts';
+import { isAttributeEnabled, profileEntries, usedPronouns } from '@gnomi/simulation/profile/schema.ts';
 import type { Persona, PersonaSchema } from '@gnomi/simulation/types.ts';
 import { PersonaAvatar } from './Icon.tsx';
 import { formatAttribute, NARRATIVE_FIELDS, STALE_PROFILE_FIELDS } from './profile.ts';
@@ -15,12 +15,12 @@ export function ProfileFields({ persona, schema, only, except = [], stale = fals
   </div>)}</dl>;
 }
 
-/** Who a persona is at a glance (initials, name, pronouns, role), the same on audience cards, the run inspector and the setup preview. */
+/** Who a persona is at a glance (face, name, pronouns, role), the same on audience cards, the run inspector and the setup preview. */
 export function PersonaHeader({ persona, schema, stale = false, detail, heading: Heading = 'h3' }: { persona: Persona; schema?: PersonaSchema; stale?: boolean; detail?: string; heading?: 'h2' | 'h3' }) {
   const role = [!stale && isAttributeEnabled(schema, 'job_title', 'card') && persona.job_title, detail].filter(Boolean).join(' · ');
   return (
     <div className="persona-header">
-      <PersonaAvatar name={isAttributeEnabled(schema, 'name', 'card') ? persona.name : ''} id={persona.id} />
+      <PersonaAvatar name={persona.name} id={persona.id} pronouns={usedPronouns(persona, schema)} />
       <div className="min-w-0">
         <Heading className="persona-name">{personaLabel(persona, schema)}{isAttributeEnabled(schema, 'pronouns', 'card') && persona.pronouns && <span> ({persona.pronouns})</span>}</Heading>
         {role && <p className="persona-role">{role}</p>}

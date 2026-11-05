@@ -33,7 +33,7 @@ test('used: the first step on a POI draws the edge; its weight counts steps and 
   const last = step('a', 'poi-1', 2);
   const graph = buildGraph(events);
   assert.deepEqual(edgesOf(events, 'used'), [{ key: 'used:persona:a>poi:poi-1', type: 'used', source: 'persona:a', target: 'poi:poi-1', weight: 3, first_seq: first, last_seq: last, round: 1, last_round: 2 }]);
-  assert.deepEqual(graph.nodes.get('persona:a'), { kind: 'persona', key: 'persona:a', id: 'a', label: 'Name a', segment_id: 'seg-1', status: 'active', step_count: 3, friction_count: 0 });
+  assert.deepEqual(graph.nodes.get('persona:a'), { kind: 'persona', key: 'persona:a', id: 'a', label: 'Name a', pronouns: 'they', segment_id: 'seg-1', status: 'active', step_count: 3, friction_count: 0 });
   assert.equal(graph.nodes.get('poi:poi-1')?.kind, 'poi');
 });
 

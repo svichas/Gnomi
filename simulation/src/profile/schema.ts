@@ -141,6 +141,9 @@ export function isAttributeEnabled(schema: PersonaSchema | undefined, id: string
   return !!attr?.enabled && (purpose === 'all' || attr[purpose === 'card' ? 'show_on_card' : purpose === 'prompt' ? 'use_in_prompt' : 'report_dimension']);
 }
 
+/** The pronouns a run uses for a persona: its own only when the schema lets them into prompts, else they, as for personas logged before pronouns. Faces follow them too. */
+export const usedPronouns = (persona: Pick<Persona, 'pronouns'>, schema: PersonaSchema | undefined): Persona['pronouns'] => isAttributeEnabled(schema, 'pronouns', 'prompt') ? persona.pronouns ?? 'they' : 'they';
+
 export function attributeValue(persona: Persona, attribute: ProfileAttribute): AttributeValue | undefined {
   if (attribute.id === 'languages') return personaEnvironment(persona).languages;
   if (attribute.id === 'language') return personaEnvironment(persona).locale;

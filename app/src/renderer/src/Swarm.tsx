@@ -13,6 +13,7 @@ import type { EdgeType, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.
 import type { GnomiEvent, PoiType, Segment } from '@gnomi/simulation/types.ts';
 import { Button, Check } from './ui.tsx';
 import { Icon, iconImage } from './Icon.tsx';
+import { personaFace } from './face.ts';
 import { connectionMatches, EDGES, NO_SEGMENT, patch, POI_COLOR, reconcile, segmentColor, SMALL_GRAPH_LIMIT, summarizeConnections } from './swarm-view.ts';
 import type { GraphFilter } from './swarm-view.ts';
 import { roundMoments, selectMoments } from './swarm-moments.ts';
@@ -24,7 +25,7 @@ const BATCH_MS = 250; // tech.md §5.5: the live graph is patched at most four t
 const SETTLE_MS = 4000; // the layout stops this long after the last change
 const DEFAULT_CONNECTIONS: EdgeType[] = [...EDGE_TYPES];
 const POI_KINDS: Record<PoiType, { label: string; icon: 'globe' | 'image' | 'report' }> = { web: { label: 'Website', icon: 'globe' }, design: { label: 'Design', icon: 'image' }, text: { label: 'Text', icon: 'report' } };
-const NODE_IMAGES = { persona: iconImage('person'), web: iconImage('globe'), design: iconImage('image'), text: iconImage('report') };
+const NODE_IMAGES = { web: iconImage('globe'), design: iconImage('image'), text: iconImage('report') };
 const motion = (ms: number) => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
 type Hover = { key: string; x: number; y: number; left: boolean };
 type NodeState = { isHovered: boolean; isHighlighted: boolean };
@@ -109,7 +110,7 @@ function NodeCard({ node, segments, at }: { node: SwarmNode; segments: Segment[]
   return (
     <div role="status" className="swarm-node-card" data-side={at.left ? 'left' : 'right'} style={{ left: at.x, top: at.y }}>
       <div className="swarm-node-head">
-        <span aria-hidden className="swarm-node-icon" style={{ background: node.kind === 'persona' ? segmentColor(segments, node.segment_id) : POI_COLOR }}><Icon name={node.kind === 'persona' ? 'person' : poi?.icon ?? 'globe'} size={14} /></span>
+        <span aria-hidden className="swarm-node-icon" style={{ background: node.kind === 'persona' ? segmentColor(segments, node.segment_id) : POI_COLOR }}>{node.kind === 'persona' ? <img src={personaFace(node.id, node.label, node.pronouns)} alt="" /> : <Icon name={poi?.icon ?? 'globe'} size={14} />}</span>
         <div>
           <span className="swarm-node-kind">{node.kind === 'persona' ? 'Simulated person' : poi ? `Product area · ${poi.label}` : 'Product area'}</span>
           <p className="swarm-node-title">{node.label}</p>
@@ -220,13 +221,15 @@ export function Swarm({ active, events, segments, onOpen, expectedPersonas }: { 
   // Filters are a style over the edges, not graph data: sigma 4 cannot repaint attribute changes on edges it has not indexed yet.
   const sigma = useRef<Sigma | null>(null);
   const [options] = useState(() => ({
-    primitives: { nodes: { layers: [layerFill(), layerImage({ padding: 0.22 })] } },
+    // Faces get a layer of their own, so they fill the node while the POI glyphs keep their margin.
+    primitives: { nodes: { layers: [layerFill(), layerImage({ padding: 0.22 }), layerImage({ name: 'face', imageAttribute: 'face', padding: 0.04 })] } },
     // allowInvalidContainer: React detaches the canvas a frame or more before it kills sigma, and an easing may render in between.
     settings: { allowInvalidContainer: true, itemSizesReference: 'screen' as const, labelRenderedSizeThreshold: 9, stagePadding: 88, minCameraRatio: 0.15, maxCameraRatio: 4 },
     styles: {
       nodes: [DEFAULT_STYLES.nodes, {
         cursor: 'pointer',
-        image: (attributes: { kind?: string; poi_type?: PoiType | null }) => attributes.kind === 'persona' ? NODE_IMAGES.persona : attributes.poi_type ? NODE_IMAGES[attributes.poi_type] : undefined,
+        image: (attributes: { poi_type?: PoiType | null }) => attributes.poi_type ? NODE_IMAGES[attributes.poi_type] : undefined,
+        face: (attributes: { face?: string }) => attributes.face,
         size: (attributes: { kind?: string; size?: number }, state: NodeState) => (attributes.size ?? 6) * (attributes.kind === 'persona' && viewRef.current.nodeCount > 80 ? 0.65 : 1) * (state.isHovered ? 1.3 : 1),
         opacity: (attributes: { key?: string }, state: NodeState, graphState: { hasHovered: boolean }) => {
           if (graphState.hasHovered) return state.isHovered || state.isHighlighted ? 1 : 0.2;

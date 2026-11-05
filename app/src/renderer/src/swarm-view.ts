@@ -3,6 +3,7 @@ import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { EDGE_TYPES } from '@gnomi/engine/graph/index.ts';
 import type { EdgeType, GraphChanges, SwarmEdge, SwarmGraph, SwarmNode } from '@gnomi/engine/graph/index.ts';
 import type { Segment } from '@gnomi/simulation/types.ts';
+import { personaFace } from './face.ts';
 
 export interface GraphFilter {
   types: ReadonlySet<EdgeType>;
@@ -58,7 +59,7 @@ export const segmentColor = (segments: Segment[], id: string | null) => {
 function nodeAttributes(node: SwarmNode, segments: Segment[]) {
   return node.kind === 'poi'
     ? { key: node.key, kind: 'poi', poi_type: node.poi_type, label: node.label, color: POI_COLOR, size: Math.min(15, 11 + Math.sqrt(node.friction_count) / 2) }
-    : { key: node.key, kind: 'persona', label: node.label, color: segmentColor(segments, node.segment_id), size: Math.min(10, 6 + Math.sqrt(node.step_count) * 0.5) };
+    : { key: node.key, kind: 'persona', label: node.label, face: personaFace(node.id, node.label, node.pronouns), color: segmentColor(segments, node.segment_id), size: Math.min(10, 6 + Math.sqrt(node.step_count) * 0.5) };
 }
 
 function edgeAttributes(edge: SwarmEdge) {

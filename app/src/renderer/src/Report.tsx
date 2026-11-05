@@ -552,7 +552,7 @@ function PersonaReport({ persona, segment, pois, frictions, hid, onInspect, rend
       <details className="disclosure" open={inFile}>
         <summary>
           <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-3">
-            <PersonaAvatar name={persona.name} id={persona.id} />
+            <PersonaAvatar name={persona.name} id={persona.id} pronouns={persona.pronouns} />
             <div className="min-w-0">
               <p className="text-sm font-medium text-stone-900">{persona.name}</p>
               <p className="text-xs font-normal text-stone-500">{[persona.job_title, segment, persona.device].filter(Boolean).join(' · ')}</p>
