@@ -843,7 +843,7 @@ async function ask(v: Values, dir: string | undefined): Promise<void> {
   const store = existingProject(dir, { recover: false });
   try {
     const fake = v['fake-llm'];
-    const run = modelRun(store, v.run, fake, 'asked about');
+    const run = modelRun(store, v.run, fake, 'asked about', true);
     const { run_id, config } = run;
     const settings = config.project.settings;
     requireKey(settings, 'navigator', fake);

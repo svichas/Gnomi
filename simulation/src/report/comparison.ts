@@ -1,6 +1,6 @@
 import type { EventOf, GnomiEvent } from '../types.ts';
 import type { ComparisonAction, ComparisonCell, ComparisonCoverage, ComparisonEvidence, ComparisonFit, ComparisonOutcome, ComparisonReport, ComparisonScope } from '../comparison/types.ts';
-import { admits, inScenario, validateComparison } from '../comparison/config.ts';
+import { admits, EVIDENCE_FREE_UNKNOWN, inScenario, validateComparison } from '../comparison/config.ts';
 import { isPriced } from '../llm/prices.ts';
 
 const OUTCOMES: ComparisonOutcome[] = ['completed', 'task_failed', 'abandoned', 'blocked_environment', 'incomplete', 'invalid_task', 'not_applicable', 'not_attempted'];
@@ -104,6 +104,7 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
     return finish.payload.outcome;
   };
   const observedCriteria = new Set<string>();
+  const setAside = new Map<string, string[]>(); // each cell's rejection reasons, so an unknown can say why
   for (const event of ordered) {
     if (event.type !== 'comparison.assessment') continue;
     const assessment = event.payload;
@@ -134,8 +135,11 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
       evidence.push({ ...citation, assessment_seq: event.seq, episode_id: assessment.episode_id, persona_id: event.persona_id!, captured_at: source.payload.captured_at, screenshot: source.payload.screenshot, proposition: assessment.summary, basis: assessment.basis });
     }
     if (!reason && assessment.basis === 'observed_behavior' && !assessment.evidence.some((citation) => sources.get(citation.event_seq)?.payload.kind === 'action')) reason = 'Observed workflow behavior requires a captured action/result; a page or supplied asset alone cannot verify it.';
-    if (reason) rejected.push({ seq: event.seq, reason });
-    else { observedCriteria.add(ownKey); accepted.push({ event, evidence }); }
+    if (reason) {
+      rejected.push({ seq: event.seq, reason });
+      const cell = key(assessment.target_id, assessment.task_id, assessment.segment_id, assessment.criterion_id);
+      setAside.set(cell, [...(setAside.get(cell) ?? []), reason]);
+    } else { observedCriteria.add(ownKey); accepted.push({ event, evidence }); }
   }
   if (rejected.length) limitations.add(`${rejected.length} unsupported or invalid assessment(s) were excluded; inspect their recorded rejection reasons.`);
   const segments = [...new Set(config.personas.map((persona) => persona.segment_id ?? null))];
@@ -162,16 +166,27 @@ export function buildComparison(events: GnomiEvent[]): ComparisonReport | undefi
       const labels = new Set(records.map(({ event }) => event.payload.assessment).filter((assessment) => assessment !== 'unknown'));
       const evidence = records.flatMap((record) => record.evidence);
       const notes: string[] = [];
-      if (labels.size > 1) notes.push('Contradictory recorded assessments remain unresolved; inspect both contexts.');
-      if (scheduled > records.length) notes.push(`Only ${records.length} of ${scheduled} eligible persona/task observations were assessed.`);
-      if (outcomes.blocked_environment) notes.push(`${outcomes.blocked_environment} episode(s) were blocked by environment, permissions or setup; this is not evidence of product failure.`);
-      if (outcomes.invalid_task) notes.push(`${outcomes.invalid_task} invalid task episode(s) were excluded.`);
-      if (records.some(({ event }) => event.payload.basis === 'simulated_inference')) notes.push('Includes simulated inference; this is not independently verified capability evidence.');
+      // With nothing accepted, the summary says why in one line, so the notes on accepted evidence stay out.
+      if (records.length) {
+        if (labels.size > 1) notes.push('Contradictory recorded assessments remain unresolved; inspect both contexts.');
+        if (scheduled > records.length) notes.push(`Only ${records.length} of ${scheduled} eligible persona/task observations were assessed.`);
+        if (outcomes.blocked_environment) notes.push(`${outcomes.blocked_environment} episode(s) were blocked by environment, permissions or setup; this is not evidence of product failure.`);
+        if (outcomes.invalid_task) notes.push(`${outcomes.invalid_task} invalid task episode(s) were excluded.`);
+        if (records.some(({ event }) => event.payload.basis === 'simulated_inference')) notes.push('Includes simulated inference; this is not independently verified capability evidence.');
+      }
       const assessment = scheduled === 0 ? 'not_applicable' : labels.size === 1 ? [...labels][0] : 'unknown';
       const summaries = [...new Set(records.map(({ event }) => normalized(event.payload.summary)))];
       const summary = summaries.slice(0, 3).join(' ').slice(0, 1200);
       if (summaries.length > 3 || summaries.join(' ').length > 1200) notes.push('The concise summary is abbreviated; all accepted propositions remain in the evidence links.');
-      cells.push({ ...scope, criterion_id, assessment, summary: labels.size > 1 ? 'Evidence conflicts under the same task and scope.' : summary || (scheduled ? 'No accepted evidence for this criterion.' : 'The frozen eligibility rule excludes this group.'), bases: [...new Set(records.map(({ event }) => event.payload.basis))], eligible: scheduled, assessed: records.length, distinct_sources: new Set(evidence.map((item) => item.source)).size, evidence, limitations: notes });
+      const reasons = setAside.get(key(target.id, task.id, segment_id, criterion_id)) ?? [];
+      const failed = [...new Set(reasons.filter((reason) => reason !== EVIDENCE_FREE_UNKNOWN))];
+      const unassessed = !scheduled ? 'The frozen eligibility rule excludes this group.'
+        : !attempted ? 'Not attempted in this run.'
+        : failed.length ? `No assessment was accepted. ${failed.slice(0, 3).join(' ')}`.slice(0, 1200) // all of them are under the coverage's exclusions
+        : reasons.length ? 'The assessor could not settle this from the captured pages and cited nothing.'
+        : outcomes.blocked_environment === attempted ? 'Not assessed: access, permissions or setup blocked every attempt. This is not evidence of a product failure.'
+        : 'No assessment was recorded for this criterion.';
+      cells.push({ ...scope, criterion_id, assessment, summary: labels.size > 1 ? 'Evidence conflicts under the same task and scope.' : summary || unassessed, bases: [...new Set(records.map(({ event }) => event.payload.basis))], eligible: scheduled, assessed: records.length, distinct_sources: new Set(evidence.map((item) => item.source)).size, evidence, limitations: notes });
     }
     const own = cells.filter((cell) => cell.target_id === target.id && cell.task_id === task.id && cell.segment_id === segment_id);
     const criteria = (assessment: string[]) => own.filter((cell) => assessment.includes(cell.assessment)).map((cell) => study.criteria.find((criterion) => criterion.id === cell.criterion_id)!.name);

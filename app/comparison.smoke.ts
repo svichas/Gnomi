@@ -84,7 +84,21 @@ try {
   assert.match(reportText, /Configured semantic verifier: navigator model/);
   assert.doesNotMatch(reportText, /At a glance|What to fix first|Legacy comparison:/);
   for (const [name] of materials) assert.ok(await report.getByRole('columnheader', { name, exact: true }).isVisible());
+  const why = await report.locator('td.comparison-cell[data-unknown] .comparison-summary').allInnerTexts();
+  assert.ok(why.length === 8 && why.every((text) => text === 'The assessor could not settle this from the captured pages and cited nothing.'), 'every unknown says why, once');
   await page.screenshot({ path: join(shots, 'comparison-report.png'), fullPage: true });
+
+  // The personas can be asked about a comparison too, and a requirement left unknown becomes a question idea.
+  const chats = report.getByRole('region', { name: 'Ask the personas' });
+  await chats.getByRole('list', { name: 'Personas' }).getByRole('button').first().click();
+  const idea = `What did you see about fit for the stated needs on ${materials[0][0]}?`;
+  await chats.getByRole('group', { name: 'Question ideas' }).getByRole('button', { name: idea, exact: true }).click();
+  const box = chats.getByRole('textbox', { name: /^Ask .+ about this run$/ });
+  assert.equal(await box.inputValue(), idea);
+  await box.press('Enter');
+  await chats.getByRole('log').getByText(/Scripted demo answer: /).waitFor({ timeout: 30_000 });
+  await chats.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(shots, 'comparison-chat.png') });
 
   // Read-only database inspection does not mark a live project/run interrupted, unlike opening another ProjectStore.
   const db = new DatabaseSync(join(projectDir, 'project.sqlite'), { readOnly: true });

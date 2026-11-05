@@ -15,6 +15,9 @@ export function inScenario(study: ComparisonStudy, scenarioId: string, segmentId
   return !!scenario && (scenario.segment_ids === null || scenario.segment_ids.includes(segmentId ?? ''));
 }
 
+/** The runtime's rejection of an unknown that cites nothing: the assessor could not tell, which the report says in plain words. */
+export const EVIDENCE_FREE_UNKNOWN = 'Evidence-free unknown retained without semantic verification.';
+
 /** Whether a study source takes a persona's segment: every one when it lists none, never the built-in persona when it does. */
 export const admits = (poi: Pick<Poi, 'segments'>, segmentId: string | null): boolean => poi.segments === null || poi.segments.includes(segmentId ?? '');
 

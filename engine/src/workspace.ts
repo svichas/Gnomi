@@ -203,18 +203,18 @@ export function compareRuns(store: ProjectStore, base: string, run: string): Rep
 /** What a change to an ended run writes to. */
 export type RunPlace = { store: ProjectStore; blobs: BlobStore; record: Recorder };
 
-/** A run that work after its end may touch. From the log, not the row: a crashed run's row may still say running. Comparison studies have no themes to act on. */
-export function endedRun(store: ProjectStore, run_id: string): RunRow {
+/** A run that work after its end may touch. From the log, not the row: a crashed run's row may still say running. Comparison studies have no themes to act on, so only work that needs none (`comparisons`) may touch one. */
+export function endedRun(store: ProjectStore, run_id: string, comparisons = false): RunRow {
   const run = store.listRuns().find((row) => row.run_id === run_id);
   if (!run) throw new Error(`There is no run ${run_id} in this project.`);
   if (store.events(run_id, { types: ['run.finished', 'run.stopped'], limit: 1 }).length === 0) throw new Error(`${run_id} has not ended: it is still running, or it was interrupted before its report.`);
-  if (run.config.project.comparison) throw new Error(`${run_id} is a comparison study, which has no themes to act on.`);
+  if (run.config.project.comparison && !comparisons) throw new Error(`${run_id} is a comparison study, which has no themes to act on.`);
   return run;
 }
 
 /** The run an ended run's model work starts from, with its own frozen models. Scripted answers never replace a real model's. */
-export function modelRun(store: ProjectStore, run_id: string, fake: boolean, doing: string): RunRow {
-  const run = endedRun(store, run_id);
+export function modelRun(store: ProjectStore, run_id: string, fake: boolean, doing: string, comparisons = false): RunRow {
+  const run = endedRun(store, run_id, comparisons);
   if (!run.config.project.settings?.routing) throw new Error(`${run_id} predates per-run model settings, so it cannot be ${doing}.`);
   if (fake && store.events(run_id, { types: ['llm.call'] }).some((e) => e.type === 'llm.call' && e.payload.provider !== 'scripted')) throw new Error(`${run_id} was analysed by real models; --fake-llm would replace their answers with scripted ones.`);
   return run;
@@ -222,7 +222,7 @@ export function modelRun(store: ProjectStore, run_id: string, fake: boolean, doi
 
 /** After any change to an ended run: its report files are snapshots of the log, its row counts what the log does, and an app with the run open reloads, as when a run ends. */
 export async function rewriteReport({ store, blobs, record }: RunPlace, run_id: string): Promise<Report> {
-  endedRun(store, run_id);
+  endedRun(store, run_id, true); // what may change a comparison study was decided by its caller
   const log = store.events(run_id);
   const report = buildReport(log);
   const path = `runs/${run_id}/report`;

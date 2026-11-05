@@ -204,13 +204,18 @@ export function Interviews({ runId, report, answers, interview, personas, schema
   const own = useMemo(() => events.filter((event) => event.persona_id === open), [events, open]);
   const steps = useMemo(() => toRows(own, assetPlaces(pois ?? [])).filter((row) => row.source?.type === 'persona.step').toReversed(), [own, pois]);
   const replay = persona && steps.some((row) => row.screenshot) ? { steps, events: own, shotLabel: shotLabels(own), summary: `${count(steps.length, 'step')} · ${OUTCOMES[persona.outcome].text}` } : undefined;
-  // Questions from this persona's own run: its worst friction and how it ended, then one for anyone.
+  // Questions from this persona's own run: its worst friction and how it ended, then, in a comparison, a requirement its segment left unknown (a must-have first), else one for anyone.
   const startersFor = (who: Who) => {
     const worst = report.frictions.filter((friction) => friction.persona_id === who.id).sort((a, b) => b.severity - a.severity)[0];
+    const study = report.comparison?.study;
+    const unknowns = (report.comparison?.cells ?? []).filter((cell) => cell.assessment === 'unknown' && cell.eligible > 0 && cell.segment_id === (who.segment_id ?? null));
+    const open = unknowns.find((cell) => study?.criteria.find((criterion) => criterion.id === cell.criterion_id)?.importance === 'must_have') ?? unknowns[0];
+    const criterion = study?.criteria.find((item) => item.id === open?.criterion_id)?.name;
+    const target = study?.targets.find((item) => item.id === open?.target_id)?.name;
     return [
       worst && `At step ${worst.step_no} you reported “${clip(worst.what)}”. What did you expect?`,
       who.outcome === 'done' ? 'What made it easy to finish?' : who.outcome === 'abandoned' ? 'Why did you give up?' : 'What was hardest for you?',
-      'What would you change first?',
+      criterion && target ? `What did you see about ${lowerFirst(clip(criterion))} on ${clip(target, 40)}?` : 'What would you change first?',
     ].filter((starter): starter is string => !!starter);
   };
   function pick(id: string | null) {

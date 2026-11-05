@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import type { Report } from '@gnomi/simulation/types.ts';
 import type { ComparisonAssessment, ComparisonCell, ComparisonReport as ComparisonData } from '@gnomi/simulation/comparison/types.ts';
 import { BASIS_LABELS, ComparisonEvidence, EvidenceLinks, evidenceCatalog } from './ComparisonEvidence.tsx';
+import type { EvidenceCatalog } from './ComparisonEvidence.tsx';
 import { ACCESS_LABELS, ComparisonCoverage } from './ComparisonCoverage.tsx';
 import { Icon } from './Icon.tsx';
-import { Fold, SectionHeading, Tile } from './reportParts.tsx';
+import { count, Fold, SectionHeading, Tile } from './reportParts.tsx';
 import type { Tone } from './reportParts.tsx';
 
 const ASSESSMENTS: Record<ComparisonAssessment, { label: string; tone: Tone }> = {
@@ -48,6 +49,20 @@ function names({ study }: ComparisonData, report: Report) {
   };
 }
 
+/** One tool against one requirement: the verdict, then why in a line, then what it rests on. An unknown says why it is unknown. */
+function Verdict({ cell, catalog }: { cell: ComparisonCell; catalog: EvidenceCatalog }) {
+  const { label, tone } = ASSESSMENTS[cell.assessment];
+  const basis = cell.bases.map((item) => BASIS_LABELS[item]).join(', ');
+  const assessed = `${cell.assessed} / ${cell.eligible} eligible episodes assessed${cell.distinct_sources ? ` · ${count(cell.distinct_sources, 'distinct source')}` : ''}`;
+  return <td className="comparison-cell" data-tone={tone} data-unknown={cell.assessment === 'unknown' || undefined}>
+    <span className="tone-chip" data-tone={tone}>{label}</span>
+    <p className="comparison-summary">{cell.summary}</p>
+    <p className="comparison-meta tabular-nums">{[basis, assessed].filter(Boolean).join(' · ')}</p>
+    <EvidenceLinks evidence={cell.evidence} catalog={catalog} />
+    {cell.limitations.length > 0 && <ul className="comparison-limits">{cell.limitations.map((limitation, i) => <li key={i}>{limitation}</li>)}</ul>}
+  </td>;
+}
+
 /** This component also renders every HTML/PDF export: the decision and denominators have one source. */
 export function ComparisonReport({ comparison, report, inFile }: Props) {
   const { study, decision } = comparison;
@@ -63,6 +78,7 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
   const mustCells = comparison.cells.filter((cell) => mustHaves.has(cell.criterion_id) && cell.assessment !== 'not_applicable');
   const settled = mustCells.filter((cell) => cell.assessment !== 'unknown').length;
   const isFocal = (id: string) => id === study.focal_target_id;
+  const oneScope = new Set(comparison.fits.map((fit) => JSON.stringify([fit.scenario_id, fit.task_id, fit.segment_id]))).size <= 1; // then a scope line on every card says nothing
   return <>
     <section aria-labelledby="comparison-decision-title" className="comparison-decision">
       <div className="comparison-decision-top">
@@ -85,12 +101,13 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
     </section>
 
     <section aria-labelledby="comparison-matrix-title" className="min-w-0">
-      <SectionHeading id="comparison-matrix-title" title="Side-by-side comparison" hint="Each tool faces the same criterion. Unknown means the evidence cannot settle the requirement." />
+      <SectionHeading id="comparison-matrix-title" title="Side-by-side comparison" hint="Each tool against the same requirements. Unknown means the evidence could not settle a requirement; each one says why." />
       {groups.size === 0 && <div className="report-empty"><h4>No comparison evidence yet</h4><p>No criterion observations are available. Review coverage and limitations below to see what prevented an assessment.</p></div>}
       <div className="space-y-6">{[...groups.entries()].map(([key, cells], groupIndex) => {
         const scope = cells[0];
         const task = study.tasks.find((candidate) => candidate.id === scope.task_id);
         const criteria = study.criteria.filter((criterion) => task?.criterion_ids.includes(criterion.id) || cells.some((cell) => cell.criterion_id === criterion.id));
+        const fitOf = (targetId: string) => comparison.fits.find((fit) => fit.target_id === targetId && fit.scenario_id === scope.scenario_id && fit.task_id === scope.task_id && fit.segment_id === scope.segment_id);
         return <section key={key} aria-labelledby={`comparison-scope-${groupIndex}`} className="space-y-3">
           <div>
             <h4 id={`comparison-scope-${groupIndex}`} className="comparison-scope">{scopeName(scope)} · {ACCESS_LABELS[scope.access_scope]}</h4>
@@ -98,29 +115,26 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
           </div>
           {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling table region must be focusable so the keyboard can scroll it */}
           <div className="comparison-table-scroll" role="region" aria-label={`Comparison matrix: ${scopeName(scope)}, ${ACCESS_LABELS[scope.access_scope]}`} tabIndex={0}>
-            <table className="comparison-matrix" style={{ minWidth: `${13 + study.targets.length * 12}rem` }}>
-              <thead><tr><th scope="col">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id}>{target.name}{isFocal(target.id) && <span className="comparison-focal">Your tool</span>}</th>)}</tr></thead>
+            <table className="comparison-matrix" style={{ minWidth: `${12 + study.targets.length * 11}rem` }}>
+              <thead><tr><th scope="col">Shared criterion</th>{study.targets.map((target) => <th scope="col" key={target.id}>{target.name}{isFocal(target.id) && <> <span className="comparison-focal">Your tool</span></>}</th>)}</tr></thead>
               <tbody>{criteria.map((criterion) => <tr key={criterion.id}>
                 <th scope="row">
                   <span className="comparison-criterion">{criterion.name}</span>
                   <span className="comparison-importance" data-must={criterion.importance === 'must_have' || undefined}>{criterion.importance === 'must_have' ? 'Must-have' : 'Preference'}</span>
-                  <details className="report-more" open={inFile}><summary>Assessment rule</summary><div className="comparison-rule"><p>{criterion.question}</p><p>{criterion.decision_rule}</p><p>Required evidence: {criterion.evidence_required}</p></div></details>
+                  <details className="report-more" open={inFile}><summary>How it is judged</summary><div className="comparison-rule"><p>{criterion.question}</p><p>{criterion.decision_rule}</p><p>Required evidence: {criterion.evidence_required}</p></div></details>
                 </th>
                 {study.targets.map((target) => {
                   const cell = cells.find((item) => item.target_id === target.id && item.criterion_id === criterion.id);
-                  if (!cell) return <td key={target.id} className="comparison-cell" data-empty>{target.access_scope !== scope.access_scope
+                  if (cell) return <Verdict key={target.id} cell={cell} catalog={catalog} />;
+                  return <td key={target.id} className="comparison-cell" data-unknown>{target.access_scope !== scope.access_scope
                     ? <><span className="tone-chip" data-tone="neutral">Different access scope</span><p className="comparison-meta">{ACCESS_LABELS[target.access_scope]}; see its separate comparison below.</p></>
-                    : <><span className="tone-chip" data-tone="neutral">Unknown</span><p className="comparison-meta">No assessment recorded for this scope.</p></>}</td>;
-                  return <td key={target.id} className="comparison-cell" data-tone={ASSESSMENTS[cell.assessment].tone}>
-                    <span className="tone-chip" data-tone={ASSESSMENTS[cell.assessment].tone}>{ASSESSMENTS[cell.assessment].label}</span>
-                    <p className="comparison-summary">{cell.summary}</p>
-                    <p className="comparison-meta">{cell.bases.map((basis) => BASIS_LABELS[basis]).join('; ') || 'No supporting evidence'}</p>
-                    <p className="comparison-meta tabular-nums">{cell.assessed} / {cell.eligible} eligible episodes assessed · {cell.distinct_sources} distinct {cell.distinct_sources === 1 ? 'source' : 'sources'}</p>
-                    <EvidenceLinks evidence={cell.evidence} catalog={catalog} />
-                    {cell.limitations.length > 0 && <ul className="comparison-limits">{cell.limitations.map((limitation, i) => <li key={i}>{limitation}</li>)}</ul>}
-                  </td>;
+                    : <><span className="tone-chip" data-tone="neutral">Unknown</span><p className="comparison-summary">No assessment recorded for this scope.</p></>}</td>;
                 })}
               </tr>)}</tbody>
+              <tfoot><tr>
+                <th scope="row">Fit for this scope</th>
+                {study.targets.map((target) => { const fit = target.access_scope === scope.access_scope && fitOf(target.id); return <td key={target.id}>{fit && <span className="tone-chip" data-tone={FITS[fit.status].tone}>{FITS[fit.status].label}</span>}</td>; })}
+              </tr></tfoot>
             </table>
           </div>
         </section>;
@@ -128,23 +142,25 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
     </section>
 
     <section aria-labelledby="comparison-fit-title">
-      <SectionHeading id="comparison-fit-title" title="Where each tool fits" hint="Strengths, gaps and open questions per tool, within the recorded scope." />
+      <SectionHeading id="comparison-fit-title" title="Where each tool fits" hint="Each tool’s strengths, gaps and open questions, within the recorded scope." />
       {comparison.tradeoffs.length > 0 && <ul className="comparison-cards mb-4" aria-label="Your tool’s advantages, gaps and parity">{comparison.tradeoffs.map((tradeoff, i) => <li key={i} className="comparison-card">
         <span className="tone-chip" data-tone={TRADEOFFS[tradeoff.result].tone}>{TRADEOFFS[tradeoff.result].label}</span>
         <h4>{criterionName(tradeoff.criterion_id)}</h4>
-        <p className="comparison-meta">{targetName(tradeoff.focal_target_id)} versus {targetName(tradeoff.other_target_id)} · {scopeName(tradeoff)}</p>
+        <p className="comparison-meta">{targetName(tradeoff.focal_target_id)} versus {targetName(tradeoff.other_target_id)}{oneScope ? '' : ` · ${scopeName(tradeoff)}`}</p>
         <p>{tradeoff.summary}</p>
         <EvidenceLinks evidence={catalog.filter(({ evidence }) => tradeoff.evidence_seqs.includes(evidence.event_seq)).map(({ evidence }) => evidence)} catalog={catalog} />
       </li>)}</ul>}
       {comparison.fits.length === 0 && <p className="report-empty">No supported fit assessment is available yet.</p>}
       <ul className="comparison-cards">{comparison.fits.map((fit, i) => {
         const cells = comparison.cells.filter((cell) => cell.target_id === fit.target_id && cell.scenario_id === fit.scenario_id && cell.task_id === fit.task_id && cell.segment_id === fit.segment_id);
-        const lists = ([['Strengths', fit.strengths, 'good'], ['Gaps', fit.gaps, 'bad'], ['Unresolved requirements', fit.unknowns, 'neutral']] as const).filter(([, values]) => values.length);
+        const lists = ([['Strengths', fit.strengths, 'good'], ['Gaps', fit.gaps, 'bad'], ['Still unknown', fit.unknowns, 'neutral']] as const).filter(([, values]) => values.length);
         return <li key={i} className="comparison-card" data-tone={FITS[fit.status].tone}>
-          <h4>{targetName(fit.target_id)}{isFocal(fit.target_id) && ' (your tool)'}</h4>
-          <span className="tone-chip" data-tone={FITS[fit.status].tone}>{FITS[fit.status].label}</span>
-          <p className="comparison-meta">{scopeName(fit)}</p>
-          {lists.length > 0 && <dl className="comparison-fit-lists">{lists.map(([label, values, tone]) => <div key={label}><dt><span className="tone-dot" data-tone={tone} />{label}</dt><dd><ul>{values.map((value, j) => <li key={j}>{value}</li>)}</ul></dd></div>)}</dl>}
+          <div className="comparison-card-top">
+            <h4>{targetName(fit.target_id)}{isFocal(fit.target_id) && <> <span className="comparison-focal">Your tool</span></>}</h4>
+            <span className="tone-chip" data-tone={FITS[fit.status].tone}>{FITS[fit.status].label}</span>
+          </div>
+          {!oneScope && <p className="comparison-meta">{scopeName(fit)}</p>}
+          {lists.length > 0 && <dl className="comparison-fit-lists">{lists.map(([label, values, tone]) => <div key={label}><dt><span className="tone-dot" data-tone={tone} />{label}</dt><dd>{values.join(', ')}</dd></div>)}</dl>}
           <EvidenceLinks evidence={cells.flatMap((cell) => cell.evidence)} catalog={catalog} />
         </li>;
       })}</ul>
@@ -157,12 +173,12 @@ export function ComparisonReport({ comparison, report, inFile }: Props) {
         <span className="report-finding-number" data-tone="neutral">{String(i + 1).padStart(2, '0')}</span>
         <div className="comparison-action-copy">
           <h4>{action.action}</h4>
-          <p className="comparison-meta">{OWNER_LABELS[action.owner]} · {targetName(action.target_id)} · {scopeName(action)}</p>
+          <p className="comparison-meta">{[OWNER_LABELS[action.owner], targetName(action.target_id), action.criterion_id && criterionName(action.criterion_id), !oneScope && scopeName(action)].filter(Boolean).join(' · ')}</p>
           <p>{action.rationale}</p>
-          <div className="report-suggestion"><Icon name="spark" size={16} /><div>
-            <h5>Expected benefit (hypothesis)</h5><p>{action.expected_benefit}</p>
-            <p className="report-suggestion-how"><strong>Validate:</strong> {action.validation}</p>
-          </div></div>
+          <div className="comparison-hypothesis"><Icon name="spark" size={14} /><dl>
+            <div><dt>Expected benefit (hypothesis)</dt><dd>{action.expected_benefit}</dd></div>
+            <div><dt>Validate:</dt><dd>{action.validation}</dd></div>
+          </dl></div>
           <EvidenceLinks evidence={catalog.filter(({ evidence }) => action.evidence_seqs.includes(evidence.event_seq) || action.evidence_seqs.includes(evidence.assessment_seq)).map(({ evidence }) => evidence)} catalog={catalog} />
         </div>
       </li>)}</ol>}
