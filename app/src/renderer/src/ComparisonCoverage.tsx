@@ -1,5 +1,6 @@
 import type { ComparisonOutcome, ComparisonReport } from '@gnomi/simulation/comparison/types.ts';
-import { pct } from './reportParts.tsx';
+import { EVIDENCE_FREE_UNKNOWN } from '@gnomi/simulation/comparison/config.ts';
+import { count, pct } from './reportParts.tsx';
 
 export const ACCESS_LABELS = {
   public_site: 'Public-site evaluation',
@@ -34,7 +35,10 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
           <th scope="row" className="p-3 align-top font-normal"><strong className="font-medium">{targetName(row.target_id)}</strong><span className="mt-1 block text-xs text-stone-600">{scopeName(row)}<br />{ACCESS_LABELS[row.access_scope]}</span></th>
           <td className="p-3 align-top tabular-nums">{row.scheduled} / {row.attempted}</td>
           <td className="p-3 align-top tabular-nums">{row.outcomes.completed} / {row.valid_attempts}<span className="block text-xs text-stone-600">{row.completion_rate === null ? 'Rate unavailable' : `${pct(row.completion_rate)} of valid attempts`}</span></td>
-          <td className="p-3 align-top"><dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">{outcomes.map((outcome) => <div key={outcome} className="contents"><dt>{OUTCOME_LABELS[outcome]}</dt><dd className="text-right tabular-nums">{row.outcomes[outcome]}</dd></div>)}</dl></td>
+          <td className="p-3 align-top text-xs">
+            <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">{outcomes.filter((outcome) => row.outcomes[outcome]).map((outcome) => <div key={outcome} className="contents"><dt>{OUTCOME_LABELS[outcome]}</dt><dd className="text-right tabular-nums">{row.outcomes[outcome]}</dd></div>)}</dl>
+            {outcomes.some((outcome) => !row.outcomes[outcome]) && <p className="mt-1 text-stone-500">None: {outcomes.filter((outcome) => !row.outcomes[outcome]).map((outcome) => OUTCOME_LABELS[outcome]).join(', ')}</p>}
+          </td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -49,7 +53,10 @@ export function ComparisonCoverage({ comparison, targetName, scopeName, personaN
     <ul className="list-disc space-y-1 pl-5 text-sm text-stone-700">{comparison.limitations.map((limitation, i) => <li key={i}>{limitation}</li>)}</ul>
     {comparison.rejected_assessments.length > 0 && <div className="space-y-1">
       <h4 className="text-sm font-medium text-stone-900">Evidence excluded from conclusions</h4>
-      <ul className="list-disc space-y-1 pl-5 text-sm text-stone-700">{comparison.rejected_assessments.map((rejected, i) => <li key={i}>Assessment {rejected.seq}: {rejected.reason}</li>)}</ul>
+      <ul className="list-disc space-y-1 pl-5 text-sm text-stone-700">{[...Map.groupBy(comparison.rejected_assessments, (rejected) => rejected.reason)].map(([reason, items]) => <li key={reason}>
+        {reason === EVIDENCE_FREE_UNKNOWN ? 'The assessor could not settle it and cited nothing, so it stays unknown.' : reason}
+        <span className="text-stone-500"> ({count(items.length, 'assessment')}: {items.map((rejected) => `#${rejected.seq}`).join(', ')})</span>
+      </li>)}</ul>
     </div>}
     <details className="report-more" open={inFile}>
       <summary>Task order and execution scope</summary>

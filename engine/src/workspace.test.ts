@@ -418,10 +418,11 @@ test('an answer goes in the log and no report file, and a failed call adds none 
   assert.match(sent[0], /<conversation>\nQuestion: "Why did you stop\?"\nAnswer: "A generated answer about saving\."\n<\/conversation>/, 'a follow-up gets the conversation so far');
 });
 
-test('a comparison study and a run that has not ended take no question', async (t) => {
+test('a comparison study takes a question but no theme work, and a run that has not ended takes neither', async (t) => {
   const study = loggedRun(t, { ...gym, comparison: { targets: [] } as unknown as ProjectConfig['comparison'] });
   study.end();
-  assert.throws(() => modelRun(study.store, study.run_id, true, 'asked about'), /comparison study/);
+  assert.equal(modelRun(study.store, study.run_id, true, 'asked about', true).run_id, study.run_id);
+  assert.throws(() => modelRun(study.store, study.run_id, true, 'planned from'), /comparison study, which has no themes to act on/);
   const live = loggedRun(t);
   assert.throws(() => modelRun(live.store, live.run_id, true, 'asked about'), /has not ended/);
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { draftComparison } from '../comparison/config.ts';
+import { draftComparison, EVIDENCE_FREE_UNKNOWN } from '../comparison/config.ts';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
 import type { ComparisonAssessment, ComparisonOutcome, ComparisonScope } from '../comparison/types.ts';
@@ -76,6 +76,21 @@ test('denominators distinguish failed valid tasks, blocked setup, invalid assign
   assert.equal(report.pairs[0].matched, 0);
   assert.equal(report.cells.find((cell) => cell.target_id === beta.target_id)?.assessed, 0);
   assert.ok(report.limitations.some((text) => /unequal|unmatched|coverage/i.test(text)));
+});
+
+test('an unknown with nothing accepted says why in its summary, with no note repeating the count', () => {
+  const f = fixture(); f.episode(0, 0); f.episode(1, 0); f.episode(0, 1, 'blocked_environment'); f.episode(1, 1, 'blocked_environment');
+  const [alpha, beta] = f.study.targets.map((target) => target.id);
+  for (const event of f.events) if (event.type === 'comparison.assessment' && event.payload.target_id === alpha) {
+    if (event.payload.criterion_id === 'cost') Object.assign(event.payload, { evidence: [], rejection: EVIDENCE_FREE_UNKNOWN });
+    else event.payload.rejection = 'Citation quotation is not present in the captured source.';
+  }
+  const report = buildComparison(f.events.filter((event) => !(event.type === 'comparison.assessment' && event.payload.target_id === beta)))!;
+  const cell = (target: string, criterion: string) => report.cells.find((item) => item.target_id === target && item.criterion_id === criterion)!;
+  assert.equal(cell(alpha, 'cost').summary, 'The assessor could not settle this from the captured pages and cited nothing.');
+  assert.deepEqual(cell(alpha, 'cost').limitations, []);
+  assert.equal(cell(alpha, 'fit').summary, 'No assessment was accepted. Citation quotation is not present in the captured source.');
+  assert.match(cell(beta, 'fit').summary, /blocked every attempt\. This is not evidence of a product failure\.$/);
 });
 
 test('rejects cross-target sources, fabricated quotations and unrelated task identities', () => {

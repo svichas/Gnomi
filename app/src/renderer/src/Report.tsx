@@ -677,7 +677,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         {!report.comparison && (report.comparisons?.length || report.pois.some((poi) => poi.competitor)) ? <Note tone="info">Legacy comparison: this report predates shared task and criterion attribution. Its pairwise preferences do not establish an overall winner or validated comparison coverage.</Note> : null}
         {filtered && <p role="status" className="text-sm text-stone-700">{report.comparison ? 'Comparison results use the frozen scenario and segment groups shown below. Profile filters do not recalculate comparison evidence.' : `Showing ${details.personas.length} of ${report.personas.length} personas under User journeys. Everything else describes the full run.`}</p>}
       </header>
-      {report.comparison ? <ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <>
+      {report.comparison ? <><ComparisonReport comparison={report.comparison} report={report} inFile={inFile} onInspect={onInspect} renderScreenshot={renderScreenshot} />{interviews}</> : <>
         {repeats?.what_if && <WhatIf whatIf={repeats.what_if} />}
         {summary && <section aria-label="Summary" className="report-goal">{summary}</section>}
         <Glance report={report} themes={themes} />

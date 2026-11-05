@@ -514,10 +514,10 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     await editFinding(current(), edit);
     return null;
   },
-  estimate_interview: ({ run_id }) => estimateInterview({ settings: modelRun(current().store, run_id, FAKE_LLM, 'asked about').config.project.settings }),
+  estimate_interview: ({ run_id }) => estimateInterview({ settings: modelRun(current().store, run_id, FAKE_LLM, 'asked about', true).config.project.settings }),
   async ask_persona({ run_id, persona_id, question }) {
     const place = current();
-    const run = modelRun(place.store, run_id, FAKE_LLM, 'asked about');
+    const run = modelRun(place.store, run_id, FAKE_LLM, 'asked about', true);
     const { project } = run.config;
     if (!FAKE_LLM) requireCredential(project.settings, 'navigator', project.settings.routing.navigator, secret);
     const { cost_usd: [, most], unpriced } = estimateInterview({ settings: project.settings });

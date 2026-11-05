@@ -21,8 +21,8 @@ export type EvidenceCatalog = ReturnType<typeof evidenceCatalog>;
 export function EvidenceLinks({ evidence, catalog }: { evidence: EvidenceData[]; catalog: EvidenceCatalog }) {
   const keys = new Set(evidence.map(key));
   const rows = catalog.filter((row) => keys.has(key(row.evidence)));
-  if (!rows.length) return <span className="text-xs text-stone-500">No supporting citation</span>;
-  return <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">{rows.map((row) => (
+  if (!rows.length) return null; // the verdict or summary beside it already says nothing was cited
+  return <span className="comparison-cites">{rows.map((row) => (
     <a key={row.id} href={`#${row.id}`} className="text-link">Evidence {row.id.replace('comparison-evidence-', '')}</a>
   ))}</span>;
 }

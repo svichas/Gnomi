@@ -2,7 +2,7 @@ import { fnv1a, mulberry32 } from '../audience/sample.ts';
 import type { EpisodeEnd } from '../agent/loop.ts';
 import { readAsset } from '../assets.ts';
 import { InvalidOutputError } from '../llm/gateway.ts';
-import { admits, effectiveComparisonPoi, inScenario } from './config.ts';
+import { admits, effectiveComparisonPoi, EVIDENCE_FREE_UNKNOWN, inScenario } from './config.ts';
 import { runnerFor } from '../poi/index.ts';
 import type { BlobStore, LlmGateway, PageDriver, Recorder } from '../seams.ts';
 import type { EventOf, EventType, GnomiEvent, PageSnapshot, Persona, Poi, RunConfig, Segment, SessionInfo, WebPoi } from '../types.ts';
@@ -166,7 +166,7 @@ async function assessEpisode(deps: ComparisonRuntimeDeps, scope: ComparisonScope
         ?? (item.assessment !== 'unknown' && item.assessment !== 'not_applicable' && !item.evidence.length ? 'A supported assessment requires captured evidence.' : null)
         // An evidence-free unknown cannot change a matrix label. Keep its proposal in the log, but do not
         // publish unreviewed summary claims or count it as an assessed episode in the report.
-        ?? (item.assessment === 'unknown' && !item.evidence.length ? 'Evidence-free unknown retained without semantic verification.' : null);
+        ?? (item.assessment === 'unknown' && !item.evidence.length ? EVIDENCE_FREE_UNKNOWN : null);
     seen.add(item.criterion_id);
     return { item, rejection };
   });

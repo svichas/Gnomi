@@ -203,7 +203,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
     if (!inspected || !log.social) return null; // a run without social rounds
     return socialMemory(events, inspected.id);
   }, [events, inspected, log.social]);
-  const askable = ended && !log.comparison; // a comparison study has no persona to question
+  const askable = ended;
   const interviewed = useMemo(() => (askable ? events.filter((event): event is EventOf<'persona.interviewed'> => event.type === 'persona.interviewed') : []), [events, askable]); // a live run has none, and its log grows every batch
   const statusPanel = <RunStatus events={events} config={frozenConfig} row={row} compact={view === 'report'} reportAvailable={report !== null} waiting={waiting.length} stopping={stopping} onStop={stop} />;
 

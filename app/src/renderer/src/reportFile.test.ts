@@ -281,6 +281,9 @@ test('comparison HTML leads with the scoped decision, compares every target and 
   assert.match(html, /href="#comparison-evidence-2"/);
   assert.match(html, /id="comparison-evidence-2"/);
   assert.ok(html.includes('Applicable monthly plan is at most $400.'), 'the frozen assessment rule remains inspectable');
+  assert.match(html, />Fit for this scope<\/th><td><span class="tone-chip" data-tone="warn">Conditional fit<\/span>/, 'each matrix ends with every tool\'s fit');
+  assert.ok(html.includes('A candidate-profile quote does not support a pricing assessment.<span class="text-stone-500"> (1 assessment: #321)'), 'exclusions are grouped by reason');
+  assert.ok(!html.includes('No supporting citation'), 'an empty citation list is left out, not announced in every cell');
   assert.match(html, /src="data:image\/jpeg;base64,/);
   assert.equal(html.split('<details').length, html.split(/<details[^>]*open/).length, 'all exported details are visible');
 });
@@ -364,8 +367,9 @@ test('the app comparison exposes transcript inspection while keeping the same de
   const report = fixture(1, 0);
   report.comparison = comparisonFixture();
   const { Report } = await vite.ssrLoadModule('/src/Report.tsx') as typeof import('./Report.tsx');
-  const html = renderToStaticMarkup(createElement(Report, { report, onInspect: () => {} }));
+  const html = renderToStaticMarkup(createElement(Report, { report, onInspect: () => {}, interviews: createElement('section', { id: 'chat-slot' }) }));
   assert.ok(html.includes(report.comparison.decision.summary));
+  assert.ok(html.indexOf('id="chat-slot"') > html.indexOf('Next checks before choosing'), 'the personas can be asked after the comparison, before its details');
   assert.match(html, /<button[^>]*>Inspect Persona 0’s evidence<\/button>/);
   assert.match(html, /aria-label="Comparison matrix:/);
   assert.match(html, /tabindex="0"/);
