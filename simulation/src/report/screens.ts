@@ -31,10 +31,12 @@ export const screenName = (page: string) => (/^[\w.-]+(:\d+)?\//.test(page) ? pa
 const sameBox = (a: ReportBox, b: ReportBox) => a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
 
 function screen(poi_id: string, kind: Screen['kind'], page: string | null, themes: ReportTheme[], reached: number | null): Screen {
-  const pictureOf = (t: ReportTheme) => (kind === 'page' ? t.pictures?.find((p) => p.page === page) : t.pictures?.[0]);
-  const lead = kind === 'page' ? (themes.map(pictureOf).find((p) => p !== undefined) ?? null) : null;
+  const pictures = themes.map((t) => (kind === 'page' ? t.pictures?.find((p) => p.page === page) : t.pictures?.[0]));
+  // The screenshot most findings are marked on, so findings of several personas share it; ties, or none marked, go to the first finding's.
+  const marked = (shot: string) => pictures.filter((p) => p?.box && p.screenshot === shot).length;
+  const lead = kind === 'page' ? pictures.reduce<ReportPicture | null>((best, p) => (p && (!best || marked(p.screenshot) > marked(best.screenshot)) ? p : best), null) : null;
   const findings = themes.map((theme, i): ScreenFinding => {
-    const picture = pictureOf(theme);
+    const picture = pictures[i];
     return { theme, number: i + 1, ...(picture && { picture }), pinned: !!picture?.box && picture.screenshot === lead?.screenshot };
   });
   const pins: Screen['pins'] = [];

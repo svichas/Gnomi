@@ -74,7 +74,7 @@ export interface ReportBox {
   element: string; // role "name"
 }
 
-/** A theme's picture on one of its pages: the screenshot of a persona who met it there, or a design's frame. */
+/** A theme's picture on one of its pages: the page's lead screenshot when its element shows there (report/pins.ts), else the screenshot of a persona who met it there, or a design's frame. */
 export interface ReportPicture {
   page: string; // as ReportTheme.pages names it
   screenshot: string; // a step's screenshot, or a design frame's asset path

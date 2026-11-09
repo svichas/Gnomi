@@ -2,6 +2,7 @@ import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, Ju
 import { postPois } from '../social/feed.ts';
 import { pagePattern } from '../signals/index.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
+import { episodesOf, leadsOf, pinOf, viewer, type Episodes, type Leads } from './pins.ts';
 
 // Steps 4–6, 8 and 9 of the report pipeline (tech.md §8.2) as pure folds. The judge's, check's and author's answers come in as
 // report.themes, report.checks and report.suggestions events and are checked against the deterministic ids here, every time.
@@ -223,17 +224,19 @@ export function rulesTitle(group: Group): string {
 const byEvidence = (a: Candidate, b: Candidate) => b.severity - a.severity || TRUST_WEIGHT[b.trust] - TRUST_WEIGHT[a.trust] || a.seqs[0] - b.seqs[0];
 
 const byPicture = (a: Candidate, b: Candidate) => Number(!a.box) - Number(!b.box) || byEvidence(a, b);
-const viewer = (persona_id: string, poi_id: string) => `${persona_id}\u0000${poi_id}`;
 
-/** The personas who browsed a POI with simulated perception: emulated vision changes the screenshot, and a screen reader never saw it. */
-const perceivedOf = (events: GnomiEvent[]) =>
-  new Set(events.flatMap((e) => (e.type === 'persona.episode_started' && e.persona_id && e.payload.perception ? [viewer(e.persona_id, e.payload.poi_id)] : [])));
-
-/** One picture per page: the screenshot of a persona who met the theme there, one who saw the page as it is first, then one with its element marked, then as evidence orders. */
-function picturesOf(members: Candidate[], pages: string[], perceived: Set<string>): ReportPicture[] {
+/**
+ * One picture per page: its lead screenshot with the element marked when a member's element shows there (report/pins.ts), so findings
+ * of several personas share it; else the screenshot of a persona who met the theme there, one who saw the page as it is first (emulated
+ * vision changes the screenshot, and a screen reader never saw it), then one with its element marked, then as evidence orders.
+ */
+function picturesOf(members: Candidate[], pages: string[], episodes: Episodes, leads: Leads): ReportPicture[] {
   return pages.flatMap((page) => {
-    const shown = felt(members).filter((m) => m.page === page && m.screenshot && m.step_seq !== null);
-    const plain = shown.filter((m) => !perceived.has(viewer(m.persona_id, m.poi_id)));
+    const met = felt(members).filter((m) => m.page === page).sort(byEvidence);
+    const pinned = met.map((m) => pinOf(m, leads, episodes)).find((p) => p !== undefined);
+    if (pinned) return [pinned];
+    const shown = met.filter((m) => m.screenshot && m.step_seq !== null);
+    const plain = shown.filter((m) => !episodes.get(viewer(m.persona_id, m.poi_id))?.perception);
     const [best] = (plain.length > 0 ? plain : shown).sort(byPicture);
     return best ? [{ page, screenshot: best.screenshot!, ...(best.box && { box: best.box }), persona_id: best.persona_id, step_seq: best.step_seq! }] : [];
   });
@@ -712,7 +715,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const config = events.find((e) => e.type === 'run.started')?.payload.config;
   const checkOn = config?.project.settings?.finding_check;
   const echoes = echoesOf(events);
-  const perceived = perceivedOf(events);
+  const episodes = episodesOf(events);
+  const leads = leadsOf(events);
 
   for (const poi_id of pois) {
     // Each POI says the same things, so with several each note names its POI.
@@ -769,7 +773,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const interference = members.filter((m) => m.interference).length;
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
         const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
-        const pictures = picturesOf(members, pages, perceived);
+        const pictures = picturesOf(members, pages, episodes, leads);
         return {
           id,
           keys: draft.groups.map((g) => groupKey(g.members[0])),

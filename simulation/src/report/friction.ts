@@ -92,7 +92,7 @@ type SignalEvent = EventOf<`signal.${SignalKind}`>;
 const isSignal = (e: GnomiEvent): e is SignalEvent => e.type.startsWith('signal.') && SIGNAL_KINDS.includes(e.type.slice(7) as SignalKind);
 
 /** The part of `target` a screenshot spanning `viewport` shows, if any. A frame's boxes start at its own corner, not the page's, so an element in one gets none. */
-function boxOn(target: ActionTarget | null | undefined, ref: string | null, viewport: Viewport | undefined): ReportBox | undefined {
+export function boxOn(target: ActionTarget | null | undefined, ref: string | null, viewport: Viewport | undefined): ReportBox | undefined {
   if (!target?.box || !viewport || ref?.startsWith('f')) return undefined;
   const [x, y, width, height] = target.box;
   const [left, top, wide, tall] = viewport;

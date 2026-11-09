@@ -33,6 +33,7 @@ import type {
   RunSettings,
   Segment,
   SessionInfo,
+  Viewport,
   WebPoi,
 } from './types.ts';
 
@@ -644,6 +645,27 @@ test('stop() while the judge answers still ends the run as a user stop, with its
   assert.equal(report.status, 'stopped');
   assert.equal(r.types().at(-1), 'report.generated');
   assert.ok(r.files.has('runs/r-0001/report.json'));
+});
+
+test('where findings sit is recorded once the episodes end, before the judge, and after a user stop or the cost cap too', async () => {
+  const snapshot = () => ({ text: '- button "Save" [ref=e1] [box=100,50,200,25]', hash: 'h-save', viewport: [0, 0, 1000, 500] as Viewport });
+  const steps = [step('click', 'e1', null, { severity: 3, what: 'Save does nothing', expected: 'A saved job', about_ref: 'e1' }), step('done', null, 'Saved')];
+  const runs = [
+    begin(steps, { snapshot }),
+    begin(steps, { snapshot, onEvent: (e, run) => void (e.type === 'persona.friction_reported' && run.stop()) }),
+    begin(steps, { snapshot, cost: 0.2, settings: { cost_budget_usd: 0.4 } }),
+  ];
+  const pin = { left: 10, top: 10, width: 20, height: 5, element: 'button "Save"' };
+  for (const [i, r] of runs.entries()) {
+    const report = await r.run.done;
+    assert.deepEqual([report.status, report.stop_reason?.split(':')[0] ?? null], [['finished', null], ['stopped', 'user'], ['stopped', 'cost_budget']][i]);
+    const [first] = of(r.events, 'persona.step');
+    assert.deepEqual(of(r.events, 'report.screens').map((e) => e.payload.screens), [[{ poi_id: 'poi-1', page: 'gym.test/', device: 'desktop', persona_id: 'p-001', step_seq: first.seq, screenshot: first.payload.screenshot, boxes: [pin] }]]);
+    assert.deepEqual(report.themes?.find((t) => t.pages.length > 0)?.pictures?.[0].box, pin);
+    assert.deepEqual(buildReport(r.events), report, 'the report rebuilds from the log alone');
+  }
+  const types = runs[0].types();
+  assert.ok(types.indexOf('report.screens') < types.indexOf('report.started'), 'before the judge');
 });
 
 test('a failure in the report phase ends the run as stopped(error), with its report', async () => {

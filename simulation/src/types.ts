@@ -1,5 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
+import type { ReportBox } from './report/types.ts';
 export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportPicture, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, ThemeEdit, UnmatchedEdit, UnmatchedOutcome, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
@@ -512,6 +513,9 @@ export interface EventPayloads {
     seed?: number | null; // the provider seed sent; null when the provider takes none
     response_model?: string | null; // the model id the provider reported in its response, the fact behind `model`, the intent
   };
+  // Where findings' elements sit on one screenshot per web page and device, read from the stored snapshots as soon as the episodes
+  // end, however they ended: no model (report/pins.ts). By element, not theme id, so a rejudge keeps it. Absent when no page has one.
+  'report.screens': { screens: ScreenLead[] };
   // The report's model steps (tech.md §8.2), recorded after the episodes end and only when the model answered, so the
   // report rebuilds from the log alone. buildReport checks both against the group and theme ids each time it folds.
   'report.started': { pois: string[] }; // after the surveys: the POIs the judge and author will run for, so the app can show progress
@@ -572,6 +576,17 @@ export type JudgeLike = JudgeTheme;
 export interface JudgePostTag {
   post_id: string;
   group_ids: string[];
+}
+
+/** A web page's lead step on one device (report/pins.ts): the step whose snapshot shows the most of the elements findings name there. */
+export interface ScreenLead {
+  poi_id: string;
+  page: string; // a page pattern, as ReportTheme.pages names it
+  device: Device;
+  persona_id: string;
+  step_seq: number;
+  screenshot: string;
+  boxes: ReportBox[]; // each element on one line of the snapshot only, inside the viewport; element as the findings name it
 }
 
 /** What a model's review of a theme's evidence points to: the product, the persona, the test setup, or nothing it can decide. */

@@ -82,3 +82,18 @@ test('a screen reads as a path for a web page and by its name for a text or desi
   assert.equal(screenName('gym.test/'), '/');
   assert.equal(screenName('Checkout, screen 2 "Desktop / Payment"'), 'Checkout, screen 2 "Desktop / Payment"', 'a frame name keeps its slash');
 });
+
+test('the lead is the screenshot most findings are marked on, so pins of several personas share it; ties go to the first finding\'s', () => {
+  const lead = 'shots/p-3-0002.jpg';
+  const [a] = screensOf([
+    theme('own', ['a'], [pic('a', 'shots/p-1-0001.jpg', box(10))]),
+    theme('no-element', ['a'], [pic('a', 'shots/p-2-0001.jpg')]),
+    theme('on-lead', ['a'], [pic('a', lead, box(30, 'link "Jobs"'))]),
+    theme('on-lead-too', ['a'], [pic('a', lead, box(50, 'link "Help"'))]),
+  ]);
+  assert.equal(a.picture?.screenshot, lead);
+  assert.deepEqual(a.findings.map((f) => f.pinned), [false, false, true, true]);
+  assert.deepEqual(a.pins.map((p) => p.numbers), [[3], [4]]);
+  const [tie] = screensOf([theme('first', ['a'], [pic('a', 'shots/1.jpg', box(10))]), theme('second', ['a'], [pic('a', 'shots/2.jpg', box(10))])]);
+  assert.equal(tie.picture?.screenshot, 'shots/1.jpg');
+});
