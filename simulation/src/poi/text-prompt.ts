@@ -58,12 +58,12 @@ export function readSystemPrompt(persona: Persona, project: ProjectConfig, segme
 
 People stop reading what wastes their time. When ${p} would stop, the true answer is that ${p} stops.
 
-${personaSection(persona, project, segment, obj)}
+${personaSection(persona, project, segment, obj, poi)}
 
 How ${p} reads:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${taskSection(persona, project, segment, p)}
+${taskSection(persona, project, segment, p, poi)}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud while reading, in ${poss} own voice, in ${ENGLISH}, in at most 60 words.

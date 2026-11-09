@@ -29,9 +29,9 @@ export function buyerSystemPrompt(persona: Persona, project: ProjectConfig, segm
   const product = surveyedName(project, poi); // a competitor's site is surveyed by its own name
   return `This is ${persona.name}. ${p} is weighing whether to buy ${product}, or to recommend it to whoever decides, and has just looked at what ${product} shows people like ${obj}. Now ${p} answers a few questions about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.
 
-${personaSection(persona, project, segment, obj)}
+${personaSection(persona, project, segment, obj, poi)}
 
-${taskSection(persona, project, segment, p)}
+${taskSection(persona, project, segment, p, poi)}
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}:
 - objections: what would stop ${p} buying ${product} or recommending it, most important first, up to 5 short statements (at most 500 characters each); empty when nothing would.

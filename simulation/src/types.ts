@@ -192,6 +192,8 @@ interface PoiBase {
   id: string;
   name: string;
   segments: string[] | null; // the segment ids that engage with it, in any order; null: the default for each segment's kind (poi/pois.ts)
+  task?: string; // this POI's own task: replaces the goal, and the persona's reading of it, while personas are on this POI
+  context?: string; // what the setup implies here and the screens do not say: who they are logged in as, what the words mean, what is placeholder, what happened off screen
 }
 
 export interface WebPoi extends PoiBase {
@@ -221,7 +223,7 @@ export type PoiType = Poi['type'];
 export interface ProjectConfig {
   comparison?: import('./comparison/types.ts').ComparisonStudy | null;
   name: string;
-  description: string; // one sentence about the product
+  description: string; // what every persona knows about the product before starting: what it is for, what its words mean, the state they are in
   pois: Poi[]; // in the order personas use them; projects and runs saved with one `poi` load as [poi] (poi/pois.ts)
   goal: string;
   role: string | null; // the login the built-in persona uses when there is no audience; segments carry their own

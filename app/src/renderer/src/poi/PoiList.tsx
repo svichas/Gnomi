@@ -82,6 +82,12 @@ function PoiEditor({ draft, index, count, expanded, focusName, segments, session
           <input ref={name} value={draft.name} onChange={(e) => onChange((was) => ({ ...was, name: e.target.value }))} placeholder={draft.type === 'web' ? 'e.g. Our hiring app' : draft.type === 'text' ? 'e.g. Welcome email' : 'e.g. Onboarding screens'} className={inputClass} />
         </Field>
         <Form draft={draft} onChange={onChange} sessions={sessions} />
+        <Field label="What to do here" hint="Optional. Replaces the study goal for this point of interest only, for example “Ask an admin for more credits”.">
+          <textarea value={draft.task ?? ''} onChange={(e) => onChange((was) => ({ ...was, task: e.target.value }))} rows={2} className={inputClass} />
+        </Field>
+        <Field label="What they already know" hint="Optional. What the screens imply but do not say: who they are logged in as, what words like “admin” mean, which content is placeholder, what happened between screens.">
+          <textarea value={draft.context ?? ''} onChange={(e) => onChange((was) => ({ ...was, context: e.target.value }))} rows={2} className={inputClass} />
+        </Field>
         {segments.length > 0 && <details className="disclosure poi-audience">
           <summary><Icon name="people" size={18} />Who tries this?<span>{draft.segments === null ? 'Automatic selection' : `${draft.segments.length} selected`}</span></summary>
           <div className="disclosure-body"><Segments draft={draft} segments={segments} onChange={(chosen) => onChange((was) => ({ ...was, segments: chosen }))} /></div>

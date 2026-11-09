@@ -13,6 +13,8 @@ export interface WebDraft {
   production: string; // production domains as typed, comma-separated
   reset: string;
   allowed: string[];
+  task?: string;
+  context?: string;
 }
 
 /** The hostname of a web address, or null when it is not an http(s) address. */
@@ -67,6 +69,8 @@ export const web: PoiKind<WebDraft, WebPoi> = {
     production: poi.production_domains.join(', '),
     reset: poi.reset_hook_url ?? '',
     allowed: poi.allowed_hosts,
+    ...(poi.task !== undefined && { task: poi.task }),
+    ...(poi.context !== undefined && { context: poi.context }),
   }),
   toPoi(draft) {
     const url = draft.url.trim();
@@ -87,6 +91,8 @@ export const web: PoiKind<WebDraft, WebPoi> = {
       allowed_hosts: [...new Set(draft.allowed)].filter((allowed) => allowed !== host),
       production_domains: production,
       reset_hook_url: (full && reset) || null,
+      ...(draft.task !== undefined && { task: draft.task }),
+      ...(draft.context !== undefined && { context: draft.context }),
     };
   },
   title: (draft) => draft.name.trim() || startHost(draft.url) || '',

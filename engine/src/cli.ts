@@ -35,7 +35,7 @@ import type { BlobStore, BrowserPool, LlmGateway, ProjectStore, Recorder } from 
 import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, PersonaSchema, Poi, ProjectConfig, ProviderId, Report, RunConfig, RunEstimate, RunRow, RunSettings, StudyStatus } from '@gnomi/simulation/types.ts';
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
-  audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<one sentence>"]
+  audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<what personas know about it>"]
       [--pois <pois.json> | --url <url>] [--count <n>] [--propose] [--settings <settings.json>] [--fake-llm]
   audience update <audience.json> [--settings <settings.json>] [--fake-llm]
       writes the personas again where the file's audience or product was edited; the rest are kept
@@ -52,7 +52,7 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   estimate <project dir> --base <run id> [--repeats <n>] [--returning]
       what rerun would cost, on that run's frozen settings and personas. --returning counts the memory each prompt carries.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
-      [--name <product>] [--product "<one sentence>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
+      [--name <product>] [--product "<what personas know about it>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
       [--repeats <n>] [--also-model <provider:model>] [--also-trait-free] [--what-if "<post text>" [--what-if-round <n>]]
       --repeats makes n runs one after another, each with its own report and its share of the cost budget. --also-model adds one
       more run with the navigator and socialiser on that model. --also-trait-free adds one more of the same personas with every
@@ -104,6 +104,8 @@ Every command takes --json: one JSON object per stdout line, the last being the 
 
 --pois is a JSON array of points of interest, as the app saves them. A text POI may give "path" instead of "asset", and a
 design frame "path" instead of "asset": the file is imported. Ids, names and the web defaults are filled in when left out.
+A POI may carry "task" (its own task, replacing --goal while personas are on it) and "context" (what the setup implies:
+who they are logged in as, what words mean, what is placeholder, what happened off screen).
 --settings is a JSON object of run settings (routing, rounds, budgets…) laid over the defaults.
 Keys come from ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY or DEEPSEEK_API_KEY; --fake-llm calls no model.`;
 
@@ -228,10 +230,16 @@ function requireKey(settings: RunSettings, role: keyof RunSettings['routing'], f
     : `Set ${KEYS[provider].secret.toUpperCase()} (the ${role} runs on ${provider}), or pass --fake-llm for a scripted run that calls no model.`);
 }
 
+/** A POI's optional "task" and "context"; anything but a string is refused here, not in a prompt mid-run. */
+function brief(raw: Record<string, unknown>, where: string): { task?: string; context?: string } {
+  for (const key of ['task', 'context'] as const) if (raw[key] != null && typeof raw[key] !== 'string') throw new Error(`${where}: "${key}" must be a string.`);
+  return { ...(typeof raw.task === 'string' && { task: raw.task }), ...(typeof raw.context === 'string' && { context: raw.context }) };
+}
+
 function webPoi(raw: Record<string, unknown>, id: string): Poi {
   const start = URL.parse(String(raw.start_url ?? ''));
   if (!start || !/^https?:$/.test(start.protocol)) throw new Error(`Point of interest ${id}: "start_url" must be an http(s) URL.`);
-  return { mode: 'full', name: start.host, allowed_hosts: [], production_domains: [], reset_hook_url: null, ...raw, id, segments: (raw.segments as string[] | null) ?? null, type: 'web', start_url: start.href } as Poi;
+  return { mode: 'full', name: start.host, allowed_hosts: [], production_domains: [], reset_hook_url: null, ...raw, ...brief(raw, `Point of interest ${id}`), id, segments: (raw.segments as string[] | null) ?? null, type: 'web', start_url: start.href } as Poi;
 }
 
 /** The POIs from --pois or --url; files named by "path" are imported into the project's assets/ folder. */
@@ -254,12 +262,12 @@ async function poisFrom(v: Values, blobs: BlobStore): Promise<Poi[]> {
     if (raw.type === 'web') pois.push(webPoi(raw, id));
     else if (raw.type === 'text') {
       const name = raw.name ?? (typeof raw.path === 'string' ? basename(raw.path) : 'Text');
-      pois.push({ id, type: 'text', name, segments, asset: await imported(raw, `Point of interest ${id}`) });
+      pois.push({ id, type: 'text', name, segments, asset: await imported(raw, `Point of interest ${id}`), ...brief(raw, `Point of interest ${id}`) });
     } else if (raw.type === 'design') {
       if (!Array.isArray(raw.frames) || !raw.frames.length) throw new Error(`Point of interest ${id}: "frames" must list at least one frame.`);
       const frames = [];
       for (const [f, frame] of raw.frames.entries()) frames.push({ asset: await imported(frame ?? {}, `Point of interest ${id}, frame ${f + 1}`), name: frame?.name ?? null });
-      pois.push({ id, type: 'design', name: raw.name ?? 'Design', segments, frames });
+      pois.push({ id, type: 'design', name: raw.name ?? 'Design', segments, frames, ...brief(raw, `Point of interest ${id}`) });
     } else throw new Error(`Point of interest ${id}: "type" must be "web", "text" or "design".`);
   }
   return pois;

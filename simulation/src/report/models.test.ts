@@ -243,6 +243,15 @@ test('judge and author calls record the round the run reached and the POI they a
   assert.deepEqual(calls.map((e) => [e.payload.purpose, e.round, e.poi_id]).sort(), [['report_suggestions', 3, 'poi'], ['report_themes', 3, 'poi']]);
 });
 
+test('a POI brief reaches the judge and the author as the product\'s goal and context; without one the product is as before', async () => {
+  const [poi] = config.project.pois;
+  const briefed = { ...config, project: { ...config.project, pois: [{ ...poi, task: ' Ask an admin for credits ', context: 'The names in the list are placeholders.' }] } };
+  const { requests } = await analyse({ judge: () => judged, author: () => suggested }, [], 1, files(), briefed);
+  for (const req of requests) assert.deepEqual(JSON.parse(req.user).product, { name: 'Gym', description: 'A demo ATS.', goal: 'Ask an admin for credits', context: 'The names in the list are placeholders.' });
+  const plain = await analyse({ judge: () => judged, author: () => suggested });
+  assert.deepEqual(JSON.parse(plain.requests[0].user).product, { name: 'Gym', description: 'A demo ATS.', goal: 'Post a job' });
+});
+
 const checkOn = (over: Partial<RunSettings> = {}): RunConfig => ({ ...config, project: { ...config.project, settings: { ...DEFAULT_SETTINGS, finding_check: true, ...over } } });
 const shownThemes = (req: Parameters<Responder>[0]): { id: string }[] => JSON.parse(req.user[0].type === 'text' ? req.user[0].text : '{}').themes;
 /** The demo judge, whose check gives each theme it is shown the verdict named here, else product. */
