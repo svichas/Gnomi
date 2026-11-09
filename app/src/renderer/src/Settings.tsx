@@ -8,6 +8,8 @@ import { problemFor, ROLE_TEXT, ROLES } from './form.ts';
 import { ActionBar, Button, Card, Check, Field, inputClass, Note, NumberInput, useAction, when } from './ui.tsx';
 import type { Outcome } from './ui.tsx';
 import { Icon } from './Icon.tsx';
+import { UpdateCard } from './Update.tsx';
+import type { UpdateState } from '../../main/release.ts';
 import './audience-settings.css';
 
 // What to know before sending product data to a provider (tech.md §10.2), shown when adding it and on its row.
@@ -179,8 +181,8 @@ function CheckModelRow({ settings, configured, onChange }: { settings: RunSettin
   );
 }
 
-export function Settings(props: { version: string; settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean; comparison?: boolean }) {
-  const { version, settings, onSettings, save, list, reloadProviders, workspace, comparison } = props;
+export function Settings(props: { version: string; update: UpdateState | null; settings: RunSettings; onSettings(next: RunSettings): void; save(settings?: RunSettings): Promise<ProjectConfig | string>; list: ProviderList | null; reloadProviders(): Promise<void>; workspace?: boolean; comparison?: boolean }) {
+  const { version, update, settings, onSettings, save, list, reloadProviders, workspace, comparison } = props;
   const changing = useAction(); // adding and removing: the row it concerns may be gone when the outcome shows
   const saving = useAction();
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => onSettings({ ...settings, [key]: value });
@@ -318,8 +320,10 @@ export function Settings(props: { version: string; settings: RunSettings; onSett
         ) : (
           <p className="text-sm text-stone-500">Nowhere yet: no provider is connected.</p>
         ))}
-        <p className="mt-3 text-xs text-stone-500">Once per launch, Gnomi also checks github.com for a newer release and, when it can install it for you, downloads it from release-assets.githubusercontent.com. It sends nothing from your projects and nothing that identifies you.</p>
+        <p className="mt-3 text-xs text-stone-500">Once per launch, and when you ask under Updates, Gnomi also checks github.com for a newer release and, when it can install it for you, downloads it from release-assets.githubusercontent.com. It sends nothing from your projects and nothing that identifies you.</p>
       </Card>
+
+      <UpdateCard state={update} version={version} />
 
       </div>
       {!workspace && <div className="settings-run-options">

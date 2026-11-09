@@ -19,6 +19,8 @@ import { Settings } from './Settings.tsx';
 import { Button, Dialog, Note, OpenSettings } from './ui.tsx';
 import type { SettingsSection } from './credentials.ts';
 import { SimulationDock } from './SimulationDock.tsx';
+import { UpdateBanner } from './Update.tsx';
+import type { UpdateState } from '../../main/release.ts';
 import { Icon } from './Icon.tsx';
 import logo from '../../../../assets/brand/gnomi-logo.svg';
 
@@ -64,7 +66,8 @@ export function App() {
   const [comparing, setComparing] = useState<{ base: string; run: string } | null>(null);
   const [sessionsPersist, setSessionsPersist] = useState(true);
   const [version, setVersion] = useState('');
-  const [newRelease, setNewRelease] = useState<Awaited<ReturnType<Window['gnomi']['latestRelease']>>>(null);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
+  const [dismissed, setDismissed] = useState(dismissedRelease);
   const [catalog, setCatalog] = useState<ProjectCatalog | null>(null);
   const [home, setHome] = useState(true);
   const [homePage, setHomePage] = useState<'projects' | 'runs' | 'settings'>('projects');
@@ -122,6 +125,12 @@ export function App() {
     setDraft((current) => current && { ...current, settings: withAvailableProvider(current.settings, available.keys) });
   }, []);
 
+  useEffect(() => {
+    const stop = window.gnomi.onUpdate(setUpdate);
+    void window.gnomi.checkUpdate().then((state) => setUpdate((latest) => latest ?? state)); // a step may have arrived first
+    return stop;
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: startup runs once; loadProject only uses setters and refs
   useEffect(() => {
     void stopped.then(setProblem);
@@ -129,7 +138,6 @@ export function App() {
       const { startupError, sessionsPersist, version } = await connected;
       setSessionsPersist(sessionsPersist);
       setVersion(version);
-      void window.gnomi.latestRelease().then((latest) => { if (latest && latest.version !== dismissedRelease()) setNewRelease(latest); });
       if (startupError) setProblem(`Gnomi could not start properly: ${startupError}`);
       let loaded: ProjectInfo | null = null;
       try {
@@ -287,21 +295,7 @@ export function App() {
       </header>
 
       <main ref={main} id="main-content" tabIndex={-1} className={`app-main ${home ? 'projects-main' : ''}`}>
-        {newRelease && (
-          <div className="mb-5">
-            <div role="status" className="note" data-tone="info">
-              <span className="note-icon"><Icon name="spark" size={16} /></span>
-              {newRelease.ready ? <>
-                <div className="note-copy"><p className="note-title">Gnomi {newRelease.version} is ready to install</p><p>You have {version}. Restart to update now, or it updates the next time you quit; your projects stay.</p></div>
-                <Button small className="note-action" onClick={() => void window.gnomi.installUpdate()}>Restart<Icon name="arrow" size={14} /></Button>
-              </> : <>
-                <div className="note-copy"><p className="note-title">Gnomi {newRelease.version} is available</p><p>You have {version}. Download the new version from GitHub and install it over this one; your projects stay.</p></div>
-                <Button small className="note-action" onClick={() => void window.gnomi.openReleases()}>Download<Icon name="arrow" size={14} /></Button>
-              </>}
-              <Button small variant="quiet" aria-label="Dismiss update notice" onClick={() => { dismissRelease(newRelease.version); setNewRelease(null); }}><Icon name="close" size={14} /></Button>
-            </div>
-          </div>
-        )}
+        {update && 'version' in update && update.version !== dismissed && <UpdateBanner release={update} version={version} onDismiss={() => { dismissRelease(update.version); setDismissed(update.version); }} />}
         {problem && (
           <div className="mb-5">
             <Note tone="error">{problem}</Note>
@@ -315,7 +309,7 @@ export function App() {
             : <div className="page-heading"><p className="eyebrow">Preferences</p><h1 tabIndex={-1}>Connections</h1><p>AI providers and Figma, shared by all your projects. Budgets and models are set in each project’s Settings.</p></div>}
           {homePage === 'runs'
             ? allRuns ? <section aria-label="All project runs"><ProjectRunHistory runs={allRuns} selected={null} onSelect={(run) => void openSessionRun(run).catch((err) => setProblem(errorText(err)))} /></section> : <p className="text-sm text-stone-500">Loading your runs…</p>
-            : draft && <OpenSettings.Provider value={null}><Settings workspace version={version} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} /></OpenSettings.Provider>}
+            : draft && <OpenSettings.Provider value={null}><Settings workspace version={version} update={update} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} /></OpenSettings.Provider>}
         </div>}
         {!draft ? (
           <p className="text-sm text-stone-500">Starting Gnomi...</p>
@@ -334,7 +328,7 @@ export function App() {
             <div className={`page-heading ${tab === 'run' ? 'simulation-page-heading' : ''}`}><div className="page-heading-meta"><p className="eyebrow">{PAGES[tab].eyebrow}</p><span className="save-state" data-dirty={dirty}><Icon name={dirty ? 'clock' : 'check'} size={13} />{dirty ? 'Unsaved changes' : info?.project ? 'Saved locally' : 'New study'}</span></div><h1 tabIndex={-1}>{PAGES[tab].title}</h1><p>{PAGES[tab].intro}</p></div>
             <div role="region" id="panel-settings" aria-labelledby="tab-settings" hidden={tab !== 'settings'}>
               <OpenSettings.Provider value={null}>
-                <Settings version={version} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} comparison={!!draft.form.comparison} />
+                <Settings version={version} update={update} settings={draft.settings} onSettings={setSettings} save={save} list={providers} reloadProviders={refreshProviders} comparison={!!draft.form.comparison} />
               </OpenSettings.Provider>
             </div>
             <div role="region" id="panel-runs" aria-label="Project run history" hidden={tab !== 'runs'}>
