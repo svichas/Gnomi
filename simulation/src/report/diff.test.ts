@@ -320,3 +320,11 @@ test('free text in a comparison cannot write Markdown', () => {
   const diff = diffReports([before()], [run('r-2', 'localhost:2222', visitsTo('/jobs/new', 3, '[click](http://x) <img src=x>'))]);
   assert.doesNotMatch(diffToMarkdown(diff), /<img|(?<!\\)\]\(http/);
 });
+
+test('a briefed side is not a before-and-after comparison, whichever side it is', () => {
+  const briefed = (): Report => { const report = before(); return { ...report, run_id: 'r-2', methods: { ...report.methods, brief: { persona_id: 'p-001', name: 'Dana', text: 'Use Settings.', role: 'admin', from_run: 'r-0001' } } }; };
+  const texts = (a: Report[], b: Report[]) => diffReports(a, b).gaps.filter(({ kind }) => kind === 'brief').map(({ text }) => text);
+  assert.deepEqual(texts([before()], [briefed()]), ['The later run followed a brief from the team for Dana, so a theme it did not show may have been skipped on purpose: it is not a before-and-after comparison.']);
+  assert.match(texts([briefed()], [before()])[0], /^The earlier run followed a brief/);
+  assert.deepEqual(texts([before()], [before()]), []);
+});

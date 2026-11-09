@@ -325,6 +325,7 @@ export interface ReportMethods {
   accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
   grounding?: { segment_id: string; name: string; facts: number; remarks: number; sources: string[] }[]; // the segments in this run that real data shaped, as the run froze them; `sources` holds file names; only in runs with one
   prior?: { run_id: string; fresh: number }; // a returning run: the run its personas remember, and how many had no visit there to remember; only in such runs
+  brief?: { persona_id: string; name: string; text: string; role: string | null; from_run: string }; // a brief rerun (RunConfig.briefs): the one persona who ran on the team's words, what they were and the login it used; only in such runs
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }

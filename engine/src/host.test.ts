@@ -743,3 +743,33 @@ test('a rerun at a new address takes a recorded login with it: with the old buil
   assert.ok(pages.length > 0 && pages.every((url) => url.startsWith(next.url)), pages.join(' '));
   await call('open_project', { dir });
 });
+
+test('a brief reruns its one persona alone, signed in as the login the team chose, which is checked before any browser opens', async (t) => {
+  const gym = await startGym({ port: 0, defects: 'none' });
+  t.after(() => gym.close());
+  const folder = join(dir, 'brief');
+  await call('open_project', { dir: folder });
+  await call('set_secret', { name: 'session_key', value: key });
+  await call('save_project', { project: project({ start_url: `${gym.url}/` }, { role: 'recruiter' }) });
+  const save = async (role: string) => {
+    const login = openProject(folder);
+    await createSessionStore(login, createFsBlobStore(folder), key).save({ role, start_url: `${gym.url}/`, hosts: [new URL(gym.url).host], recorded_at: 1, verified_at: 1, expires_at: null }, { cookies: [] });
+    login.close();
+  };
+  await save('recruiter');
+  const ended = (run_id: string) => until(async () => (await call('get_session_runs', {})).some((run) => run.run_id === run_id && run.project_dir === folder && run.status !== 'running'));
+  const { run_id } = await call('start_run', { reset: false });
+  await ended(run_id);
+  const persona_id = (await call('get_project', {})).runs[0].config.personas[0].id;
+  const brief = { persona_id, text: ' You are the admin now. ', role: 'admin' };
+
+  await assert.rejects(call('duplicate_run', { run_id, reset: false, repeats: 2, brief }), /A brief is one persona's one visit, so it cannot run as a set\./);
+  await assert.rejects(call('duplicate_run', { run_id, reset: false, brief }), /No login is recorded for "admin"/, "the brief's login, not the segment's");
+  await save('admin');
+  const { run_id: briefed } = await call('duplicate_run', { run_id, reset: false, brief });
+  await ended(briefed);
+  const { config } = (await call('get_project', {})).runs.find((run) => run.run_id === briefed)!;
+  assert.deepEqual(config.briefs, { [persona_id]: { text: 'You are the admin now.', role: 'admin', from_run: run_id } });
+  assert.deepEqual([config.personas.length, config.sessions.map((s) => s.role), config.project.settings.social], [1, ['admin'], false]);
+  await call('open_project', { dir });
+});

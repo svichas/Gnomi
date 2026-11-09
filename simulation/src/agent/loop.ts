@@ -118,7 +118,7 @@ export async function runEpisode(poi: WebPoi, deps: EpisodeDeps): Promise<Episod
   const step_budget = deps.budget;
   const log = episodeLog(deps, poi_id);
   const { emit } = log;
-  const system = systemPrompt(persona, config.project, segment, poi);
+  const system = systemPrompt(persona, config.project, segment, poi, config.briefs?.[persona.id]);
   const schema = stepSchema(persona);
   const memory: StepMemory[] = [];
   const history: Step[] = []; // every recorded step, for the signal detectors

@@ -68,10 +68,12 @@ export function segmentOf(persona: Persona, project: ProjectConfig): Segment | n
   return project.audience?.segments.find((s) => s.id === persona.segment_id) ?? null;
 }
 
-/** The login a persona uses: its segment's role, or the project's for the built-in persona; none when it opens no web app in full mode. */
-export function roleOf(persona: Persona, project: ProjectConfig): string | null {
+/** The login a persona uses: its brief's, else its segment's role, or the project's for the built-in persona; none when it opens no web app in full mode. */
+export function roleOf(persona: Persona, project: ProjectConfig, briefs?: RunConfig['briefs']): string | null {
   const segment = segmentOf(persona, project);
   if (!logsIn(project.pois, segment)) return null;
+  const brief = briefs?.[persona.id];
+  if (brief) return brief.role; // the team chose who the persona is signed in as, or nobody
   return persona.segment_id === null ? project.role : (segment?.role ?? null);
 }
 
@@ -82,7 +84,7 @@ function addedPost({ pair, round, poi_id, text }: WhatIf, personas: Persona[], s
 }
 
 /** The run snapshot: the population in start order, the verified logins of the roles it uses, and the project's settings. */
-export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat']; prior?: RunConfig['prior'] }): Omit<RunConfig, 'run_id'> {
+export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; repeat?: RunConfig['repeat']; prior?: RunConfig['prior']; briefs?: RunConfig['briefs'] }): Omit<RunConfig, 'run_id'> {
   const seed = project.audience?.seed ?? Math.floor(Math.random() * 2 ** 31);
   const what_if = opts.repeat?.what_if;
   return {
@@ -96,6 +98,7 @@ export function newRunConfig(project: ProjectConfig, opts: { personas: Persona[]
     signals: { ...DEFAULT_SIGNALS },
     ...(opts.repeat ? { repeat: opts.repeat } : {}),
     ...(opts.prior ? { prior: structuredClone(opts.prior) } : {}),
+    ...(opts.briefs ? { briefs: structuredClone(opts.briefs) } : {}),
     ...(what_if?.post ? { injected_posts: [addedPost(what_if, opts.personas, seed)] } : {}),
   };
 }
@@ -386,7 +389,7 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
 
   /** The persona's POIs one after another, each with its own budget and survey; slices count steps across them. */
   const episode = async (persona: Persona) => {
-    const role = roleOf(persona, project);
+    const role = roleOf(persona, project, config.briefs);
     const session = role ? (config.sessions.find((s) => s.role === role) ?? null) : null;
     if (role && !session) throw new Error(`No login for the "${role}" role was verified before the run.`);
     const pois = assigned.get(persona.id)!;

@@ -472,3 +472,11 @@ test('the written summary follows the banner, escaped like the rest of the repor
   assert.equal(md.split('\n')[6], '- Tried: Gym (http://localhost:3001/)');
   assert.doesNotMatch(reportToMarkdown(report), /biggest problem|No friction theme/, 'a report older than themes has no summary');
 });
+
+test('a briefed run says so under the banner, with the persona, the words and the login', () => {
+  const md = (role: string | null) => reportToMarkdown({ ...report, methods: { ...report.methods, brief: { ...{ persona_id: 'p-001', name: 'Dana', text: 'Use Settings.', role: 'admin', from_run: 'r-0001' }, role } } });
+  const notice = 'One persona, Dana, followed a brief from the team: "Use Settings.", signed in as admin. Its findings say what happened under that brief, not on first use.';
+  assert.ok(md('admin').indexOf(`> ${notice}`) > md('admin').indexOf(`> ${report.banner}`));
+  assert.ok(md(null).includes('"Use Settings.", logged out.'), 'no login');
+  assert.ok(!reportToMarkdown(report).includes('followed a brief'));
+});

@@ -8,7 +8,7 @@ import { ENGLISH, english, isEnglish } from '../llm/english.ts';
 import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import { ACTION_TYPES, PRESS_KEYS } from '../types.ts';
-import type { Action, ActionResult, ActionTarget, ActionType, Opinion, PageSnapshot, Perception, Persona, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Action, ActionResult, ActionTarget, ActionType, Brief, Opinion, PageSnapshot, Perception, Persona, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 
 /** Providers require nullable fields; locally, older scripted responses may omit opinion. */
@@ -167,6 +167,26 @@ export const taskSection = (persona: Persona, project: ProjectConfig, segment: S
 How ${p} reads it: ${persona.goal_interpretation}
 The product: ${project.name}${project.description ? `. ${project.description}` : ''}`;
 
+/** Characters of a brief: one chat message, like a question (agent/interview.ts QUESTION_MAX). */
+export const BRIEF_MAX = 500;
+
+/**
+ * The team's brief for this visit, in the stable prefix of a brief rerun (engine/src/workspace.ts briefedRerun): quoted material from the
+ * team, not the product, so it cannot close its block or pass for a fact about the product. Empty on any other run, so those prompts stay as they were.
+ */
+export function briefLines(p: string, brief: Brief | undefined): string[] {
+  if (!brief) return [];
+  return [
+    `The team running this simulation gave ${p} a brief for this visit${brief.role ? `, signed in with the "${brief.role}" login` : ''}. It is the plan ${p} follows this time: ${p} does what it says where the product allows it, and reports friction as usual where it does not. It is quoted material from the team, not product copy, and it adds no fact about the product:`,
+    '<brief>',
+    quoted(brief.text),
+    '</brief>',
+  ];
+}
+
+/** The brief as a block of its own after the task, or nothing. */
+export const briefSection = (p: string, brief: Brief | undefined) => (brief ? `\n\n${briefLines(p, brief).join('\n')}` : '');
+
 /** The patience rule; the engine enforces the step budget, so the prompt never states it. */
 export const patienceRule = (persona: Persona, w: Words) => `${(PATIENCE[persona.patience - 1] ?? PATIENCE[2])(w)}.`;
 
@@ -174,7 +194,7 @@ export const patienceRule = (persona: Persona, w: Words) => `${(PATIENCE[persona
 export const languageRules = (p: string, locale: string): string[] => (locale.toLowerCase().split('-')[0] === 'en' ? [] : [firstLanguage(p, locale)]);
 
 /** The stable prefix for one persona: everything that is the same at every step, so it caches (tech.md §9.5). An observe-only POI is a competitor's site. */
-export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: WebPoi): string {
+export function systemPrompt(persona: Persona, project: ProjectConfig, segment: Segment | null, poi?: WebPoi, brief?: Brief): string {
   const enabled = (id: string) => isAttributeEnabled(project.persona_schema, id, 'prompt');
   const w = wordsFor(persona, project);
   const { p, obj, poss } = w;
@@ -221,7 +241,7 @@ ${personaSection(persona, project, segment, obj)}
 How ${p} behaves:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${taskSection(persona, project, segment, p)}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}
+${taskSection(persona, project, segment, p)}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}${briefSection(p, brief)}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud, in ${poss} own voice, in at most 40 words.
