@@ -8,7 +8,7 @@ import { ENGLISH, english, isEnglish } from '../llm/english.ts';
 import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import { ACTION_TYPES, PRESS_KEYS } from '../types.ts';
-import type { Action, ActionResult, ActionTarget, ActionType, Brief, Opinion, PageSnapshot, Perception, Persona, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
+import type { Action, ActionResult, ActionTarget, ActionType, Brief, Opinion, PageSnapshot, Perception, Persona, Poi, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import type { UserPart } from '../seams.ts';
 
 /** Providers require nullable fields; locally, older scripted responses may omit opinion. */
@@ -125,8 +125,11 @@ const REMARKS_SHOWN = 3;
 /** A few of the segment's real remarks, picked by the persona's seed and not by their order, so the cached prefix stays the same at every step and across rebuilds. */
 const remarksFor = (segment: Segment, seed: number) => (segment.grounding?.remarks ?? []).toSorted((a, b) => fnv1a(`${seed}/${a}`) - fnv1a(`${seed}/${b}`)).slice(0, REMARKS_SHOWN);
 
+/** A POI's own task, when it has one; a comparison's assignment (comparison/runtime.ts) is the only task there. */
+const poiTask = (project: ProjectConfig, poi?: Poi | null) => (project.comparison ? undefined : poi?.task?.trim()) || undefined;
+
 /** The profile as prompts see it: only attributes the schema enables for prompts, grouped, plus the segment's context and real remarks. */
-export function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string): string {
+export function profileBlock(persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string, poi?: Poi | null): string {
   const segmentContext = segment && !project.comparison
     ? [
         `  account: ${ACCOUNT[segment.account_state]}`,
@@ -139,6 +142,7 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
     // Authored context can invent an invitation/account/task; the frozen comparison brief supplies those facts.
     if (project.comparison && ['context_of_use', 'motivation'].includes(attribute.id)) continue;
     if (attribute.id === 'connectivity') continue; // not simulated: a "flaky" line would only invite invented slowness
+    if (attribute.id === 'goal_interpretation' && poiTask(project, poi)) continue; // written for the project goal, which this POI's task replaces
     const formatted = attribute.id === 'pronouns' ? `${value}/${obj}`
       : attribute.id === 'country' ? `${countryName(String(value))} (${value})`
       : Array.isArray(value) ? value.join(', ') : String(value);
@@ -158,14 +162,18 @@ export function profileBlock(persona: Persona, project: ProjectConfig, segment: 
 }
 
 /** The profile block every persona prompt carries, delimited. */
-export const personaSection = (persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string) =>
-  `<persona>\n${profileBlock(persona, project, segment, obj)}\n</persona>`;
+export const personaSection = (persona: Persona, project: ProjectConfig, segment: Segment | null, obj: string, poi?: Poi | null) =>
+  `<persona>\n${profileBlock(persona, project, segment, obj, poi)}\n</persona>`;
 
-/** The task, how the persona reads it and the product, as every persona prompt states them. */
-export const taskSection = (persona: Persona, project: ProjectConfig, segment: Segment | null, p: string) =>
-  `${p}'s task: "${segment?.goal_override ?? project.goal}"
-How ${p} reads it: ${persona.goal_interpretation}
-The product: ${project.name}${project.description ? `. ${project.description}` : ''}`;
+/** The task, how the persona reads it and the product, as every persona prompt states them; a POI's brief replaces the task and adds what the persona knows there. */
+export function taskSection(persona: Persona, project: ProjectConfig, segment: Segment | null, p: string, poi?: Poi | null): string {
+  const task = poiTask(project, poi);
+  const context = project.comparison ? undefined : poi?.context?.trim();
+  return `${p}'s task: "${task || (segment?.goal_override ?? project.goal)}"${task ? '' : `
+How ${p} reads it: ${persona.goal_interpretation}`}
+The product: ${project.name}${project.description ? `. ${project.description}` : ''}${context ? `
+What ${p} already knows here: ${context}` : ''}`;
+}
 
 /** Characters of a brief: one chat message, like a question (agent/interview.ts QUESTION_MAX). */
 export const BRIEF_MAX = 500;
@@ -236,12 +244,12 @@ ${competitor} ${comparison ? 'is the current comparison target' : `is a competit
 
 People give up on tools that waste their time. When ${p} would stop, the true answer is that ${p} stops: giving up is a normal outcome.
 
-${personaSection(persona, project, segment, obj)}
+${personaSection(persona, project, segment, obj, poi)}
 
 How ${p} behaves:
 ${rules.map((r) => `- ${r}`).join('\n')}
 
-${taskSection(persona, project, segment, p)}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}${briefSection(p, brief)}
+${taskSection(persona, project, segment, p, poi)}${observing}${comparison ? `\nThe task above is the only assignment. Persona biography changes priorities and reactions; it does not create an invitation, account, candidate, email or other prerequisite. Do not invent work or ask this target to compare other vendors. Judge only this target and the observed success rule. Report restricted access as a study limitation, not a missing product capability.` : ''}${briefSection(p, brief)}
 
 Answer every turn with one JSON object:
 - thought: ${p} thinking aloud, in ${poss} own voice, in at most 40 words.

@@ -14,7 +14,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
 1. **Describe the inputs** in a points-of-interest file (below), or use `--url` for one web app.
 2. **Create the audience** and its personas:
    ```bash
-   npm run -s gnomi -- audience create --out audiences/acme.json --name Acme --product "One sentence about the product." --goal "What people should try to do" --pois pois.json --count 20 --propose --json
+   npm run -s gnomi -- audience create --out audiences/acme.json --name Acme --product "An applicant tracking system for recruiters. Users are logged in; only admins can buy credits." --goal "What people should try to do" --pois pois.json --count 20 --propose --json
    ```
    `--propose` asks the model for segments that fit the product; without it there is one "Everyone" segment. Writing personas costs model calls; the result line gives `cost_usd`.
 3. **Estimate** before running, and tell the user the cost range:
@@ -37,13 +37,14 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
 [
   { "type": "web", "start_url": "http://localhost:4317", "allowed_hosts": ["localhost"] },
   { "type": "text", "path": "copy/pricing.md", "name": "Pricing copy" },
-  { "type": "design", "name": "Checkout", "frames": [{ "path": "designs/1.png", "name": "Cart" }, { "path": "designs/2.png", "name": "Pay" }] }
+  { "type": "design", "name": "Checkout", "task": "Buy the team plan", "context": "Logged in as the account admin. Prices, names and card details are placeholder content.", "frames": [{ "path": "designs/1.png", "name": "Cart" }, { "path": "designs/2.png", "name": "Pay" }] }
 ]
 ```
 
 - **web**: a staging or local app only, never production. Personas click and type in a real browser, so they create real data there. Requests to hosts other than the start page's and `allowed_hosts` are blocked. Gnomi refuses only the hosts in `production_domains`, so list the product's production domain there (e.g. `["acme.com"]`). Add `"mode": "observe_only"` for a competitor's site (or a production marketing site), browsed without writes; its pages may load assets and scripts from public third-party hosts, so list only the hosts personas should browse.
 - **text**: a `.md` or `.txt` file to read and react to (copy, pricing, an idea).
 - **design**: PNG, JPEG or WebP frames shown in order.
+- **`task`** and **`context`** are optional on any POI. `task` is this POI's own task: while personas are on it, it replaces the goal in their prompts, and the persona's own reading of the project goal is left out. `context` is what the setup implies and the screens do not say (who they are logged in as, what words such as "admin" mean, which content is placeholder, what happened off screen); it is one line after the product. The report's judge, evidence check and author read both. A frame's name may also say what happened before it, off screen (for example "after the checkout"), and that step is not a friction for its absence from the screens. A comparison study ignores them, since the assignment already replaces the goal.
 
 Paths are relative to the POI file. Logins cannot be recorded from the CLI: web runs are logged out, and an audience whose segments name a `role` is refused.
 

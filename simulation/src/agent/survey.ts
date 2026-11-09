@@ -64,9 +64,9 @@ export function surveySystemPrompt(persona: Persona, project: ProjectConfig, seg
   const sample = poi?.type === 'design' ? ` The screens were filled with sample content, such as names, dates and times, addresses and call links, that need not match from one screen to the next or what ${p} chose earlier. Sample content is never a friction or an objection.` : '';
   return `This is ${persona.name}. ${p} ${met} and now answers a short survey about it. ${p} is not a tester, nobody is watching, and nothing depends on ${p} liking the product.${sample}
 
-${personaSection(persona, project, segment, obj)}
+${personaSection(persona, project, segment, obj, poi)}
 
-${taskSection(persona, project, segment, p)}
+${taskSection(persona, project, segment, p, poi)}
 
 Answer with one JSON object, every text in ${poss} own voice and in ${ENGLISH}. Each list holds up to 5 items, one specific point per item, and is empty when there is nothing to say:
 - frictions: what got in ${poss} way while doing the task: something ${p} could not find, did not understand, that did not work or took too long.

@@ -65,10 +65,11 @@ export function Project(props: {
           <Field label="Project name">
             <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Your product" className={inputClass} />
           </Field>
-          <Field label="What the product does" hint="One sentence. It helps the persona understand the site.">
-            <input
+          <Field label="What the product does" hint="What every persona knows about it: what it is for and what its words mean. A few sentences are fine, but editing it writes the personas again; what only one point of interest implies goes on that point of interest.">
+            <textarea
               value={form.description}
               onChange={(e) => set('description', e.target.value)}
+              rows={2}
               placeholder="An applicant tracking system for recruiters"
               className={inputClass}
             />

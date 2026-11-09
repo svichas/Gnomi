@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import { DEFAULT_SETTINGS } from '../settings.ts';
-import type { ActionResult, DesignPoi, PageSnapshot, Persona, PriorPoi, ProjectConfig, Segment } from '../types.ts';
+import type { ActionResult, DesignPoi, PageSnapshot, Persona, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
 import { z } from 'zod';
 import { buyerSystemPrompt } from './buyer.ts';
 import { readParts } from '../poi/text-prompt.ts';
-import { designParts } from '../poi/design-prompt.ts';
+import { designParts, designSystemPrompt } from '../poi/design-prompt.ts';
 import { stepSchema, systemPrompt, userParts, type StepMemory } from './prompt.ts';
 import { socialParts, socialSchema, socialSystemPrompt } from './social.ts';
 import { surveyItems, surveyParts, surveySchema, surveySystemPrompt } from './survey.ts';
@@ -81,6 +81,23 @@ test('the system prompt frames the persona in the third person, with no assistan
   }
   assert.match(system, /Priya's task: "Post a job for a backend engineer"/);
   assert.match(system, new RegExp(`How Priya reads it: ${BUILTIN_PERSONA.goal_interpretation.replace(/[.*+?()]/g, '\\$&')}`));
+});
+
+test('a POI brief replaces the task and its reading and says what the persona knows; a comparison ignores it', () => {
+  const poi = project.pois[0] as WebPoi;
+  const briefed = { ...poi, task: 'Ask an admin for credits', context: 'Priya is logged in as a recruiter.' };
+  const system = systemPrompt(BUILTIN_PERSONA, project, null, briefed);
+  assert.match(system, /Priya's task: "Ask an admin for credits"\nThe product: Gym ATS\. An applicant tracking system for mid-size companies\.\nWhat Priya already knows here: Priya is logged in as a recruiter\./);
+  assert.doesNotMatch(system, /How Priya reads it|goal_interpretation/);
+  assert.match(systemPrompt(BUILTIN_PERSONA, project, null), /goal_interpretation/);
+  assert.equal(systemPrompt(BUILTIN_PERSONA, project, null, poi), systemPrompt(BUILTIN_PERSONA, project, null));
+  assert.equal(systemPrompt(BUILTIN_PERSONA, project, null, { ...poi, task: '  ', context: ' ' }), systemPrompt(BUILTIN_PERSONA, project, null));
+  const screens = designSystemPrompt(BUILTIN_PERSONA, project, null, { id: 'd', type: 'design', name: 'Credits', segments: null, frames: [{ asset: 'a', name: null }], task: 'Ask an admin for credits', context: ' ' });
+  assert.match(screens, /Priya's task: "Ask an admin for credits"\nThe product: Gym ATS\./);
+  assert.doesNotMatch(screens, /already knows here|goal_interpretation/);
+  const compared = systemPrompt(BUILTIN_PERSONA, { ...project, comparison: { version: 1 } as NonNullable<ProjectConfig['comparison']> }, null, briefed);
+  assert.match(compared, /Priya's task: "Post a job for a backend engineer"\nHow Priya reads it/);
+  assert.doesNotMatch(compared, /already knows here/);
 });
 
 test('page content is delimited and declared untrusted', () => {
