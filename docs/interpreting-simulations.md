@@ -36,12 +36,14 @@ Likewise, `strong`, `some` and `single` describe the report's internal support c
 The findings list has two views. **By priority** is the default: the ranked list. **By screen** groups the same findings by the screen they happened on. It is in the app only; exported HTML, PDF and Markdown files have a **Findings by screen** section instead, with each screen's picture once.
 
 - A **screen** is a page pattern, shown as its path (`/jobs/:id`), or a design frame, shown by its name. A finding can sit on several screens if it was met on several pages.
-- Each card leads with its top finding's picture: the first picture on that screen, in the order the findings are listed (by section, then rank).
-- A **pin** marks an element on the picture, numbered to match its findings. A pin appears only when a finding's own screenshot is the card's picture and the element's position on it is known. A finding whose own screenshot is a different one shows it as a thumbnail instead. Findings with the same element share one pin.
-- A picture comes from a persona without simulated vision or a screen reader when one met the screen. Only when none did is it that persona's screenshot, which may show emulated colour-blind or blurred vision.
+- A web page's card leads with its **lead screenshot**: of every step any persona took on that page, on one device, the one that shows the most of the elements the findings name there. So findings by different personas get their pins on one picture. The persona who took it need not have met any of them.
+- A **pin** marks an element on the picture, numbered to match its findings. A finding gets one when its element appears on the lead screenshot once, inside what the screenshot shows. A finding with no element, or whose element the lead screenshot leaves out, shows its own screenshot as a thumbnail instead. So does an element that matches two of the page's elements by role and name (two "Sign up" buttons), or one inside a frame, rather than risk a pin on the wrong one. Findings with the same element share one pin.
+- Phone and desktop personas each get their own lead screenshot, and a finding is pinned only on the one for its persona's device. A card shows the one with the most pins. Without a lead screenshot, or when no finding is marked on any picture, the card leads with its top finding's picture: the first picture on that screen, in the order the findings are listed (by section, then rank).
+- A picture comes from a persona without simulated vision or a screen reader whenever one could give it. Only when none could is it a screenshot that may show emulated colour-blind or blurred vision.
 - **Across many screens** holds a finding met on 4 or more pages. It is one group, not a copy on each screen. **Not tied to one screen** holds findings with no page, mostly survey answers.
 - Screens are ordered by how many personas reached them.
-- Runs recorded before steps stored their viewport have pictures but no pins.
+- Runs recorded before steps stored their viewport have pictures but no pins. Runs recorded before lead screenshots pin only the findings whose own screenshot leads the card.
+- The lead screenshot is recorded when the episodes end, with no model call, so a stopped or cost-capped run has its pins too, and a rejudge keeps them.
 
 The view moves no rank, count, trust label or priority. It only regroups the findings that are already there.
 

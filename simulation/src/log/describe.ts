@@ -78,6 +78,8 @@ export function describe(e: GnomiEvent): string {
       return '';
     case 'run.stopped':
       return e.payload.detail ? `${e.payload.reason}: ${e.payload.detail}` : e.payload.reason;
+    case 'report.screens':
+      return `findings marked on one screenshot for ${e.payload.screens.length} page${e.payload.screens.length === 1 ? '' : 's'}`;
     case 'report.started':
       return e.payload.pois.length ? `naming themes and writing suggestions for ${e.payload.pois.join(', ')}` : 'no frictions to name themes for';
     case 'report.themes':

@@ -12,11 +12,13 @@ import type { Page } from 'playwright-core';
 import { GYM_ACCOUNTS, startGym } from '../../demo/GymSite/server.ts';
 import { DEMO_PERSONA_WRITER, syncPersonas } from './audience/index.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
-import { createScriptedGateway, DEMO_NAVIGATOR, DEMO_SOCIALISER, DEMO_SURVEY, findRef } from '@gnomi/simulation/llm/scripted.ts';
+import { createScriptedGateway, DEMO_AUTHOR, DEMO_JUDGE, DEMO_NAVIGATOR, DEMO_SOCIALISER, DEMO_SURVEY, findRef } from '@gnomi/simulation/llm/scripted.ts';
 import { createFsBlobStore } from '@gnomi/simulation/log/blobs.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
+import { runReportModels } from '@gnomi/simulation/report/models.ts';
+import { screensOf } from '@gnomi/simulation/report/screens.ts';
 import { createRecorder, newRunConfig, startRun, type RunHandle } from '@gnomi/simulation/run.ts';
 import { allowedHosts, checkTarget } from '@gnomi/simulation/safety.ts';
 import { createSessionStore } from './sessions.ts';
@@ -275,6 +277,39 @@ test('a scripted persona walks the Gym: frictions with screenshots, a report fro
   assert.deepEqual(buildReport(reopened.events(config.run_id)), report);
   const transcripts = JSON.stringify(reopened.transcripts(config.run_id));
   for (const canary of CANARIES) assert.ok(!transcripts.includes(canary), `canary ${canary} reached a transcript`);
+});
+
+test('three personas each name another element of one Gym page, and the report pins all three on one screenshot, through a rejudge', async (t) => {
+  const w = await world(t);
+  const project = { ...w.project, pois: [{ ...web(w.project), start_url: `${w.gym.url}/jobs/new` }] };
+  const complaint = (role: string, name: string, what: string) => walk([(req) => say(`${what}. That will do.`, { type: 'done', text: 'Read the job form' }, { severity: 2, what, expected: 'A clearer job form', about_ref: ref(req, role, name) })]);
+  const walks = new Map([
+    ['p-1', complaint('textbox', 'Job title *', 'The title field gives no example')],
+    ['p-2', complaint('textbox', 'Location', 'Location has no remote option')],
+    ['p-3', complaint('combobox', 'Employment type', 'Employment type has no internship')],
+  ]);
+  const personas = [...walks.keys()].map((id) => ({ ...BUILTIN_PERSONA, id, name: `Persona ${id}` }));
+  const { report, config } = await w.go((req) => walks.get(req.persona_id ?? '')!(req), { project, personas });
+  const page = (r: typeof report) => screensOf(r.themes ?? [], r.reach).find((s) => s.page === `${new URL(w.gym.url).host}/jobs/new`)!;
+
+  const screen = page(report);
+  assert.deepEqual(screen.pins.map((p) => p.box.element).sort(), ['combobox "Employment type"', 'textbox "Job title *"', 'textbox "Location"']);
+  assert.deepEqual(screen.pins.map((p) => p.numbers.length), [1, 1, 1], 'one finding each');
+  assert.ok(screen.findings.every((f) => f.pinned && f.picture?.screenshot === screen.picture?.screenshot), 'all on the one picture');
+  assert.ok(existsSync(join(w.dir, screen.picture!.screenshot)));
+  assert.ok(screen.pins.every(({ box }) => box.left >= 0 && box.top >= 0 && box.left + box.width <= 100 && box.top + box.height <= 100));
+  const reopened = openProject(w.dir);
+  t.after(() => reopened.close());
+  assert.deepEqual(buildReport(reopened.events(config.run_id)), report, 'replay is equal');
+
+  // A rejudge names the themes again; the pins are stored by element, so they stay.
+  const record = createRecorder(w.store, () => {});
+  const llm = createScriptedGateway({ judge: DEMO_JUDGE, author: DEMO_AUTHOR }, record);
+  await runReportModels({ config, round: 1, llm, blobs: createFsBlobStore(w.dir), record, events: () => w.store.events(config.run_id) });
+  const rejudged = buildReport(w.store.events(config.run_id));
+  assert.ok(rejudged.themes?.some((theme) => theme.named_by === 'judge'));
+  assert.deepEqual(page(rejudged).pins, screen.pins);
+  assert.deepEqual(page(rejudged).picture, screen.picture);
 });
 
 // —— M1 ——

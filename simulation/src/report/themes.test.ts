@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { EventPayloads, EventType, EvidenceLevel, GnomiEvent, JudgeTheme, ReportTheme, Trust } from '../types.ts';
+import type { EventPayloads, EventType, EvidenceLevel, GnomiEvent, JudgeTheme, ReportBox, ReportTheme, ScreenLead, Trust } from '../types.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, type Candidate, type Group } from './friction.ts';
 import { analyseFrictions, applyJudge, applySuggestions, AUTHOR_PAGE_CAP, AUTHOR_TOKEN_CAP, authorThemes, frictionGroups, judgeGroups, judgeInput, PAGE_TEXT_MAX, pickEvidence, prevalence, priorityOf, rulesTitle, sentimentBySegment, wentWell, type Context } from './themes.ts';
+import { screensOf } from './screens.ts';
 
 const JOBS = 'http://gym.test/jobs/new';
 const HOME = 'http://gym.test/';
@@ -785,4 +786,61 @@ test('a design screen\'s picture is its frame; a theme of survey answers only ha
   assert.deepEqual(screen.pictures, [{ page: 'Checkout', screenshot: 'assets/0123456789abcdef.png', persona_id: 'a1', step_seq: 2 }]);
   const answers = themes.find((t) => t.pages.length === 0)!;
   assert.ok(!('pictures' in answers));
+});
+
+// Phase 2: report.screens puts findings of several personas on one page's lead screenshot (report/pins.ts).
+const episode = (device = 'desktop') => ({ poi_id: 'poi', device, start_url: JOBS });
+const named = (role: string, name: string) => ({ role, name, box: null });
+const mark = (element: string, left: number): ReportBox => ({ left, top: 10, width: 10, height: 10, element });
+const lead = (boxes: ReportBox[], over: Partial<ScreenLead> = {}): ScreenLead => ({ poi_id: 'poi', page: PAGE, device: 'desktop', persona_id: 'b1', step_seq: 8, screenshot: 'shots/b1.jpg', boxes, ...over });
+const ON_LEAD = [mark('textbox "Job title"', 10), mark('button "Save"', 30), mark('combobox "Department"', 50)];
+// Four personas on the job form, each about another element; b1's step shows three of them, not Help.
+const form = log(
+  ['persona.episode_started', 'a1', episode()],
+  ['persona.step', 'a1', viewed(1, 'shots/a1.jpg')],
+  ['persona.friction_reported', 'a1', { ...friction(1, 4, 'The title field takes no title'), about: named('textbox', 'Job title') }],
+  ['persona.episode_started', 'a2', episode()],
+  ['persona.step', 'a2', viewed(1, 'shots/a2.jpg')],
+  ['persona.friction_reported', 'a2', { ...friction(1, 3), about }],
+  ['persona.episode_started', 'b1', episode()],
+  ['persona.step', 'b1', viewed(1, 'shots/b1.jpg')],
+  ['persona.friction_reported', 'b1', { ...friction(1, 2, 'Engineering is not a department'), about: named('combobox', 'Department') }],
+  ['persona.episode_started', 'a3', episode()],
+  ['persona.step', 'a3', viewed(1, 'shots/a3.jpg')],
+  ['persona.friction_reported', 'a3', { ...friction(1, 1, 'Help is hard to find'), about: named('link', 'Help') }],
+  ['report.screens', null, { screens: [lead(ON_LEAD)] }],
+);
+const withScreens = (events: GnomiEvent[], screens: ScreenLead[]) => [...events.slice(0, -1), { ...events.at(-1)!, payload: { screens } } as GnomiEvent];
+
+test('findings of different personas on one page are pinned on its lead screenshot; an element it does not show keeps its own picture', () => {
+  const { themes } = analyseFrictions(form, ctx);
+  assert.deepEqual(themes.map((t) => [t.elements[0], t.pictures?.[0].screenshot, t.pictures?.[0].box?.left]), [
+    ['textbox "Job title"', 'shots/b1.jpg', 10],
+    ['button "Save"', 'shots/b1.jpg', 30],
+    ['combobox "Department"', 'shots/b1.jpg', 50],
+    ['link "Help"', 'shots/a3.jpg', undefined],
+  ]);
+  assert.deepEqual(themes[0].pictures, [{ page: PAGE, screenshot: 'shots/b1.jpg', box: ON_LEAD[0], persona_id: 'b1', step_seq: 8 }], 'b1 took it, though a1 met it');
+  const [screen] = screensOf(themes);
+  assert.equal(screen.picture?.screenshot, 'shots/b1.jpg');
+  assert.deepEqual(screen.pins, [{ box: ON_LEAD[0], numbers: [1] }, { box: ON_LEAD[1], numbers: [2] }, { box: ON_LEAD[2], numbers: [3] }]);
+  assert.deepEqual(screen.findings.map((f) => f.pinned), [true, true, true, false]);
+  assert.deepEqual(analyseFrictions(form.slice(0, -1), ctx).themes[1].pictures, [{ page: PAGE, screenshot: 'shots/a2.jpg', box: MARK, persona_id: 'a2', step_seq: 5 }], 'without the event, as before');
+});
+
+test('a rejudge keeps the pins: the lead is stored by element, so a renamed or merged finding stays on it', () => {
+  const before = analyseFrictions(form, ctx).themes;
+  const judged = { ...form[0], seq: 99, persona_id: null, type: 'report.themes', payload: { poi_id: 'poi', themes: [{ title: 'The job form fields are unclear', description: 'd', group_ids: ['g1', 'g3'] }, { title: 'Save does nothing', description: 'd', group_ids: ['g2'] }] } } as GnomiEvent;
+  const after = analyseFrictions([...form, judged], ctx).themes;
+  assert.deepEqual(after.find((t) => t.id === 'g2')?.pictures, before.find((t) => t.id === 'g2')?.pictures);
+  assert.deepEqual(after.find((t) => t.id === 'g1+g3')?.pictures?.[0].box, ON_LEAD[0], 'the merged finding at its top member\'s element');
+  assert.deepEqual(screensOf(after)[0].pins.map((p) => p.box.element), ['textbox "Job title"', 'button "Save"']);
+});
+
+test('a finding is pinned only on the lead of its own persona\'s device', () => {
+  const mobile = form.map((e) => (e.type === 'persona.episode_started' && e.persona_id === 'a2' ? { ...e, payload: { ...e.payload, device: 'mobile' } } : e)) as GnomiEvent[];
+  const save = (events: GnomiEvent[]) => analyseFrictions(events, ctx).themes.find((t) => t.id === 'g2')?.pictures;
+  assert.deepEqual(save(mobile)?.map((p) => p.screenshot), ['shots/a2.jpg'], 'no mobile lead: its own screenshot');
+  const phone = lead([mark('button "Save"', 70)], { device: 'mobile', persona_id: 'a2', step_seq: 5, screenshot: 'shots/a2.jpg' });
+  assert.deepEqual(save(withScreens(mobile, [lead(ON_LEAD), phone])), [{ page: PAGE, screenshot: 'shots/a2.jpg', box: mark('button "Save"', 70), persona_id: 'a2', step_seq: 5 }]);
 });

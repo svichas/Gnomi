@@ -18,6 +18,7 @@ import { getPersonaSchema } from './profile/schema.ts';
 import { observeOptions } from './browser/observe.ts';
 import { buildReport } from './report/build.ts';
 import { runReportModels } from './report/models.ts';
+import { recordScreens } from './report/pins.ts';
 import { allowedHosts, productionDomain } from './safety.ts';
 import { socialRounds } from './settings.ts';
 import { DEFAULT_SIGNALS, pageAudits } from './signals/index.ts';
@@ -667,8 +668,10 @@ export function startRun(config: RunConfig, { store, blobs, browsers, llm, recor
       comparison?.finishUnscheduled();
       if (!comparison) clearTimeout(clock);
     }
-    // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them.
+    // The judge and author run once the episodes are over, through the budgeted gateway: a stop or the cost cap skips them. The pins
+    // before them call no model, so a stopped run gets them too.
     try {
+      await recordScreens({ config, round: base.round, blobs, record, events: store.events(run_id) });
       if (!halted && !comparison) await runReportModels({ config, round: base.round, llm: budgetedLlm, blobs, record, events: () => store.events(run_id) });
     } catch (err) {
       fail(err); // the run still ends, logged and reported, rather than staying 'running'
