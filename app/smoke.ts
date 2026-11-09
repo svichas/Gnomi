@@ -174,7 +174,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile', 'latestRelease', 'installUpdate', 'openReleases'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile', 'checkUpdate', 'onUpdate', 'installUpdate', 'openReleases'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored as plain files only this user can read; a key is never returned and can be removed', async () => {

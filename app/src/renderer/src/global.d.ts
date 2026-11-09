@@ -34,10 +34,12 @@ interface Window {
     /** The local path of a file the user picked or dropped, for import_asset { path }. */
     pathForFile(file: File): string;
     /**
-     * A newer release on GitHub, downloaded in the background; ready when it installs on restart or quit, else only the
-     * download page offers it. Null when there is none, offline and in development builds.
+     * Where the check for a newer release on GitHub stands, starting one unless a check is running or a download waits
+     * for the restart; each later step comes through onUpdate. Null in development builds, which have no releases.
      */
-    latestRelease(): Promise<import('../../main/release.ts').Release | null>;
+    checkUpdate(): Promise<import('../../main/release.ts').UpdateState | null>;
+    /** Each step of a check and download as it happens; the result stops listening. */
+    onUpdate(listener: (state: import('../../main/release.ts').UpdateState) => void): () => void;
     /** Quits, installs the downloaded release and opens Gnomi again. */
     installUpdate(): Promise<void>;
     /** Opens the latest release's download page in the default browser. */

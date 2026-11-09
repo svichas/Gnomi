@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { IpcRendererEvent } from 'electron';
+import type { UpdateState } from '../main/release.ts';
 import type { Startup } from '../startup.ts';
 
 // contextBridge cannot carry a MessagePort, so the engine port is re-posted into the page, which listens for it.
@@ -24,7 +26,12 @@ contextBridge.exposeInMainWorld('gnomi', {
   reportThumbnails: (paths) => ipcRenderer.invoke('report-thumbnails', paths),
   saveReport: (format, runId, content) => ipcRenderer.invoke('save-report', format, runId, content),
   pathForFile: (file) => webUtils.getPathForFile(file),
-  latestRelease: () => ipcRenderer.invoke('latest-release'),
+  checkUpdate: () => ipcRenderer.invoke('check-update'),
+  onUpdate: (listener) => {
+    const relay = (_event: IpcRendererEvent, state: UpdateState) => listener(state);
+    ipcRenderer.on('update-state', relay);
+    return () => { ipcRenderer.removeListener('update-state', relay); };
+  },
   installUpdate: () => ipcRenderer.invoke('install-update'),
   openReleases: () => ipcRenderer.invoke('open-releases'),
 } satisfies Window['gnomi']);
