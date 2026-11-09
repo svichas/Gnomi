@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEMO_PERSONA_WRITER, type AudienceDeps } from './audience/index.ts';
+import { BRIEF_MAX } from '@gnomi/simulation/agent/prompt.ts';
 import { interviewContext, interviewConversation, QUESTION_MAX, runInterview } from '@gnomi/simulation/agent/interview.ts';
 import { assetPath } from '@gnomi/simulation/assets.ts';
 import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
@@ -39,6 +40,9 @@ export type Secrets = (name: SecretName) => string | null;
 
 /** What a person asks of a what-if; the round defaults to the first. */
 export interface AddedPost { text: string; round?: number }
+
+/** What a person asks of a brief rerun from a persona's chat: that persona alone, the team's words, and the recorded login it uses (null: logged out). */
+export interface BriefRequest { persona_id: string; text: string; role: string | null }
 
 /** What a provider needs before any call: the local endpoint for openai_compatible, else its key. */
 export const credential = (provider: ProviderId, localBaseUrl: string | null | undefined, secrets: Secrets) =>
@@ -334,11 +338,30 @@ export function finishedRun(store: ProjectStore, run_id: string): RunConfig {
 }
 
 /** What a returning run freezes, from a run finishedRun let through: read once here, so each run of a set remembers the same visit and none reads that log. */
-export function returningPrior(store: ProjectStore, from: RunConfig): NonNullable<RunConfig['prior']> {
+export function returningPrior(store: ProjectStore, from: RunConfig, persona_id?: string): NonNullable<RunConfig['prior']> {
   if (from.project.comparison) throw new Error(`${from.run_id} is a comparison study, whose personas assess tools rather than use a product, so nobody can return to it.`);
   const prior = priorOf(store.events(from.run_id));
   if (!Object.keys(prior.memories).length) throw new Error(`${from.run_id} left no persona a visit to remember, so a returning run would be a first use under a notice saying otherwise.`);
-  return prior;
+  if (persona_id === undefined) return prior;
+  // A brief runs one persona, so only its own visit is frozen.
+  const memory = prior.memories[persona_id];
+  const name = from.personas.find((p) => p.id === persona_id)?.name ?? persona_id;
+  if (!memory) throw new Error(`${name} left nothing to remember from ${from.run_id}.`);
+  return { ...prior, memories: { [persona_id]: memory } };
+}
+
+/** The refusal of a brief with repeats, the same from the app and the terminal. */
+export const BRIEF_SET = "A brief is one persona's one visit, so it cannot run as a set.";
+
+/** The one persona a brief runs again, as `from` froze it, and the brief its new run freezes. Refused before anything is spent. */
+export function briefedRerun(from: RunConfig, brief: BriefRequest): { personas: Persona[]; briefs: NonNullable<RunConfig['briefs']> } {
+  if (from.project.comparison) throw new Error(`${from.run_id} is a comparison study, which takes no brief.`);
+  const persona = from.personas.find((p) => p.id === brief.persona_id);
+  if (!persona) throw new Error(`${from.run_id} has no persona ${brief.persona_id}.`);
+  const text = brief.text.trim();
+  if (!text) throw new Error('Write the brief first.');
+  if (text.length > BRIEF_MAX) throw new Error(`The brief has ${text.length} characters, and the limit is ${BRIEF_MAX}.`);
+  return { personas: [persona], briefs: { [persona.id]: { text, role: brief.role, from_run: from.run_id } } };
 }
 
 /** `url` on the old address's origin, moved to the new one; anywhere else it stays. */
@@ -352,8 +375,9 @@ function moved(url: string, from: string, to: string): string {
  * the new host joins the POI's allowed hosts, its reset hook moves with it, and `loginUrl` moves a recorded login's start page, which
  * would otherwise take logged-in personas back to the old build. A bad address is refused by the same preflight as any other.
  * A run of a set holds its share of the budget, so the budget goes back to the whole, for repeatRuns to share out.
+ * `solo` runs one persona alone, with nobody to talk to, so its social rounds are off.
  */
-export function rerunProject(from: RunConfig, urls: Record<string, string> = {}): { config: ProjectConfig; loginUrl: (url: string) => string } {
+export function rerunProject(from: RunConfig, urls: Record<string, string> = {}, opts: { solo?: boolean } = {}): { config: ProjectConfig; loginUrl: (url: string) => string } {
   const project: ProjectConfig = withPois(from.project);
   if (!project.settings?.routing) throw new Error(`${from.run_id} predates per-run model settings, so it cannot be run again.`);
   const web = webPois(project.pois);
@@ -369,7 +393,7 @@ export function rerunProject(from: RunConfig, urls: Record<string, string> = {})
   const login = loginPoi(project.pois);
   const to = login && urls[login.id];
   return {
-    config: { ...project, pois, settings: { ...project.settings, cost_budget_usd: project.settings.cost_budget_usd * (from.repeat?.of ?? 1) } },
+    config: { ...project, pois, settings: { ...project.settings, cost_budget_usd: project.settings.cost_budget_usd * (from.repeat?.of ?? 1), ...(opts.solo ? { social: false } : {}) } },
     loginUrl: (url) => (to ? moved(url, login.start_url, to) : url),
   };
 }
@@ -432,7 +456,7 @@ export function requireCredential(settings: RunSettings, role: LlmRole, { provid
 export function launchRun(
   store: ProjectStore,
   config: ProjectConfig,
-  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat']; from?: RunConfig; prior?: RunConfig['prior'] },
+  run: { personas: Persona[]; sessions: SessionInfo[]; reset: boolean; pause_timeout_ms?: number; repeat?: RunConfig['repeat']; from?: RunConfig; prior?: RunConfig['prior']; briefs?: RunConfig['briefs'] },
   deps: Omit<RunDeps, 'store' | 'llm'> & { fake: boolean; secrets: Secrets },
 ): RunHandle {
   let handle: RunHandle | undefined;

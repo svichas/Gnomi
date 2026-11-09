@@ -80,7 +80,7 @@ function useFold<T>(events: GnomiEvent[], reset: unknown[], start: () => T, step
   return state;
 }
 
-function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | undefined; runs: RunRow[]; active: boolean }) {
+function RunDetail({ runId, row, runs, active, onRunAgain, onOpenRun }: { runId: string; row: RunRow | undefined; runs: RunRow[]; active: boolean; onRunAgain(personaId: string, text: string): void; onOpenRun(runId: string): void }) {
   const [received, setEvents] = useState<GnomiEvent[]>([]);
   // A hidden tab keeps showing the log it last showed, and catches up in one fold when it is shown again.
   const shown = useRef(received);
@@ -275,7 +275,7 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
           actions={<ExportReport report={report} repeats={repeats} />}
           audienceFilters={groups.length > 0 ? <ProfileFilters groups={groups} filter={profileFilter} onChange={(next) => setFilters((current) => ({ ...current, ...next, persona: '' }))} /> : undefined}
           onInspect={(id, seq) => setInspecting({ persona: id, seq: seq ?? null })}
-          interviews={askable ? <Interviews runId={runId} report={report} answers={interviewed} interview={interview} personas={personas} schema={setup.schema} events={events} pois={frozenConfig?.project.pois} onInspect={openPersona} /> : undefined}
+          interviews={askable ? <Interviews runId={runId} report={report} answers={interviewed} interview={interview} personas={personas} schema={setup.schema} events={events} pois={frozenConfig?.project.pois} onInspect={openPersona} onRunAgain={row?.status === 'finished' && !frozenConfig?.project.comparison ? onRunAgain : undefined} briefs={frozenConfig?.briefs} runs={runs} onOpenRun={onOpenRun} /> : undefined}
           renderScreenshot={(path, alt) => <Screenshot path={path} alt={alt} />}
         /> : <p className="text-sm text-stone-500">{error ? 'The report could not be loaded.' : 'Preparing your report…'}</p>}
       </div>}
@@ -304,13 +304,13 @@ function RunDetail({ runId, row, runs, active }: { runId: string; row: RunRow | 
 }
 
 export function Run({ runId, runs, onSetup, onStarted, active }: { runId: string | null; runs: RunRow[]; onSetup(): void; onStarted(runId: string): void; active: boolean }) {
-  const [again, setAgain] = useState(false);
+  const [again, setAgain] = useState<boolean | { persona_id: string; text: string }>(false);
   const row = runs.find((run) => run.run_id === runId);
   return (
     <div className="run-page">
       {runs.length > 0 && <div className="run-history-bar"><div className="run-history-context"><Icon name="activity" size={16} /><span>Simulation record</span><code title={runId ?? undefined}>{runId}</code></div>{row?.status === 'finished' && <Button variant="link" onClick={() => setAgain(true)}><Icon name="play" size={16} />Run again</Button>}<Button variant="link" onClick={onSetup}><Icon name="plus" size={16} />New run</Button></div>}
-      {again && row && <RunAgain run={row} running={runs.some((run) => run.status === 'running')} onClose={() => setAgain(false)} onStarted={(id) => { setAgain(false); onStarted(id); }} />}
-      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} runs={runs} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
+      {again && row && <RunAgain run={row} brief={typeof again === 'object' ? again : undefined} running={runs.some((run) => run.status === 'running')} onClose={() => setAgain(false)} onStarted={(id) => { setAgain(false); onStarted(id); }} />}
+      {runId ? <RunDetail key={runId} active={active} runId={runId} row={runs.find((run) => run.run_id === runId)} runs={runs} onRunAgain={(id, text) => setAgain({ persona_id: id, text })} onOpenRun={onStarted} /> : <div className="empty-state run-empty"><span className="empty-illustration"><Icon name="message" size={36} /></span><h2>Every perspective starts with a first step.</h2><p>Set a goal, invite your simulated audience, and see their experience unfold here.</p><Button variant="primary" onClick={onSetup}>Set up your first run<Icon name="arrow" size={18} /></Button></div>}
     </div>
   );
 }

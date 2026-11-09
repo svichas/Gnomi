@@ -4,8 +4,8 @@ import { placeName } from '../poi/pois.ts';
 import { placesOf, poiNamesOf } from '../report/friction.ts';
 import { PAGE_MARKS } from '../report/themes.ts';
 import type { BlobStore, LlmGateway, Recorder } from '../seams.ts';
-import type { EventOf, GnomiEvent, Persona, ProjectConfig, RunConfig, Segment } from '../types.ts';
-import { clip, describeAction, describeResult, personaSection, priorLines, taskSection, where, wordsFor } from './prompt.ts';
+import type { Brief, EventOf, GnomiEvent, Persona, ProjectConfig, RunConfig, Segment } from '../types.ts';
+import { briefSection, clip, describeAction, describeResult, personaSection, priorLines, taskSection, where, wordsFor } from './prompt.ts';
 
 // One question to a persona after the run. Personas are stateless functions of the log, so the context is
 // rebuilt from it, and the answer is a new generation, not a memory of a reason. It goes in the log and reaches nothing but a later
@@ -32,13 +32,14 @@ export const INTERVIEW_LABEL = 'Generated after the run. This is a new answer fr
 
 export const interviewSchema = z.object({ answer: english(z.string().trim().min(1).max(ANSWER_MAX)) });
 
-export function interviewSystem(persona: Persona, project: ProjectConfig, segment: Segment | null): string {
+/** `brief`: the team's brief the run froze for this persona, so an answer about a brief rerun knows what it was asked to do. */
+export function interviewSystem(persona: Persona, project: ProjectConfig, segment: Segment | null, brief?: Brief): string {
   const { p, obj, poss } = wordsFor(persona, project);
   return `This is ${persona.name}, a fictional persona in a simulation of ${project.name}. The session is over: this is after the run, and the team asks questions about it, one at a time. ${p} has no memory beyond the record below.
 
 ${personaSection(persona, project, segment, obj)}
 
-${taskSection(persona, project, segment, p)}
+${taskSection(persona, project, segment, p)}${briefSection(p, brief)}
 
 You get what the log recorded of ${p}'s session, oldest first, then the conversation so far if there is one, then the question. Answer with one JSON object:
 - answer: what ${p} would say, in ${poss} own voice, in ${ENGLISH}, in at most 120 words.
@@ -136,7 +137,7 @@ export async function runInterview({ config, persona, question, context, convers
     purpose: 'interview',
     timeout_ms: INTERVIEW_TIMEOUT_MS,
     max_output_tokens: INTERVIEW_OUTPUT_TOKENS,
-    system: interviewSystem(persona, project, segment),
+    system: interviewSystem(persona, project, segment, config.briefs?.[persona.id]),
     user: [{ type: 'text', text: `The record of the session, oldest first:\n${context}${conversation ? `\n\nThe conversation so far, oldest first:\n<conversation>\n${conversation}\n</conversation>` : ''}\n\nThe team's question: ${JSON.stringify(question)}` }],
     schema: interviewSchema,
   });

@@ -21,7 +21,7 @@ Run `npm run gnomi` with no command for every option. [Development](development.
 | `run` | Run the audience against `--url` or a `--pois` file and write the report into `--project`. |
 | `runs` | List a project's runs. |
 | `report` | Rebuild a run's report as a summary, Markdown or JSON. |
-| `rerun` | Run a finished run again on its frozen settings and personas, optionally at a new address or with `--returning` personas. |
+| `rerun` | Run a finished run again on its frozen settings and personas, optionally at a new address, with `--returning` personas, or one persona alone on a `--brief`. |
 | `rejudge` | Regroup and rename an ended run's themes with the current judge, without browsing. |
 | `compare` | Show what changed between two runs or repeat sets. No model calls. |
 | `gate` | For CI: exit non-zero on a new high-severity theme across two repeat sets. No model calls. See [CI gate](ci-gate.md). |

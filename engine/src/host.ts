@@ -20,7 +20,7 @@ import { openProject } from '@gnomi/simulation/log/sqlite.ts';
 import { BUILTIN_PERSONA } from '@gnomi/simulation/persona.ts';
 import { browses, loginPoi, webPois } from '@gnomi/simulation/poi/pois.ts';
 import { validatePersonaSchema } from '@gnomi/simulation/profile/schema.ts';
-import { askPersona, audienceDeps, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, returningPrior, runSet } from './workspace.ts';
+import { askPersona, audienceDeps, BRIEF_SET, briefedRerun, cappedGateway, checkComparison, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, launchRun, modelRun, planStudy, population, projectGateway, recordOutcome, repeatReports, repeatRuns, requireCredential, rerunProject, returningPrior, runSet } from './workspace.ts';
 import { estimateInterview, estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { buildReport } from '@gnomi/simulation/report/build.ts';
 import { combineReports } from '@gnomi/simulation/report/repeats.ts';
@@ -218,7 +218,7 @@ function releaseProject(project: OpenProject | null) {
 }
 
 /** The start path of a new run and of a rerun: checks each role's login, launches the first run, and lets the rest of a set follow. */
-async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Persona[], reset: boolean, rerun?: { from: RunConfig; loginUrl(url: string): string; prior?: RunConfig['prior'] }) {
+async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Persona[], reset: boolean, rerun?: { from: RunConfig; loginUrl(url: string): string; prior?: RunConfig['prior']; briefs?: RunConfig['briefs'] }) {
   const place = here();
   const { store, blobs, record, sessions: held } = place;
   const { config } = planned[0];
@@ -232,7 +232,7 @@ async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Pe
         try { verified.push((await verify(config, session.role, place)).info); }
         catch { verified.push({ ...session, verified_at: null }); }
       }
-    } else for (const role of new Set(personas.map((p) => roleOf(p, config)).filter((r) => r !== null))) {
+    } else for (const role of new Set(personas.map((p) => roleOf(p, config, rerun?.briefs)).filter((r) => r !== null))) {
       const checked = await verify(config, role, place, rerun?.loginUrl);
       if (!checked.result.ok) throw new Error(`The recorded "${role}" login no longer works (${checked.result.reason ?? `it ended on ${checked.result.url}`}). Re-record it, then start again.`);
       verified.push(checked.info);
@@ -244,7 +244,7 @@ async function startPlanned(planned: ReturnType<typeof repeatRuns>, personas: Pe
     return { verified, browserPool };
   };
   const launch = (run: typeof planned[number], { verified, browserPool }: Awaited<ReturnType<typeof prepare>>) => {
-    const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat, from: rerun?.from, prior: rerun?.prior }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
+    const started = launchRun(store, run.config, { personas, sessions: verified, reset, repeat: run.repeat, from: rerun?.from, prior: rerun?.prior, briefs: rerun?.briefs }, { blobs, record, browsers: browserPool, sessions: held, fake: FAKE_LLM, secrets: secret });
     const key = runKey(store.dir, started.run_id);
     runs.set(key, started);
     started.done.catch(() => sessionRuns.fail(store.dir, started.run_id)).finally(() => {
@@ -398,11 +398,13 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     current().store.putPersona({ ...old, name, job_title, background, context_of_use, goal_interpretation, voice });
     return null;
   },
-  estimate_run({ repeats, run_id, returning, what_if }) {
+  estimate_run({ repeats, run_id, returning, what_if, brief }) {
     if (run_id !== undefined) {
       const { store } = current();
       const from = finishedRun(store, run_id);
-      return estimateFor(rerunProject(from).config, from.personas, repeats, undefined, false, undefined, returning ? returningPrior(store, from) : undefined);
+      const solo = brief ? briefedRerun(from, brief) : undefined;
+      // shortcut: a brief's tokens are not estimated, upgrade when BRIEF_MAX grows past a paragraph
+      return estimateFor(rerunProject(from, {}, { solo: !!solo }).config, solo?.personas ?? from.personas, solo ? 1 : repeats, undefined, false, undefined, returning ? returningPrior(store, from, brief?.persona_id) : undefined);
     }
     const config = project();
     return estimateFor(config, population(current().store, config), repeats, undefined, false, what_if);
@@ -414,15 +416,17 @@ const handlers: { [M in Method]: (params: Api[M]['params']) => Api[M]['result'] 
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
     return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret }), reset);
   },
-  async duplicate_run({ run_id, reset, repeats, urls, returning }) {
+  async duplicate_run({ run_id, reset, repeats, urls, returning, brief }) {
     noSetup('starting a run');
     const { store } = current();
     const from = finishedRun(store, run_id);
-    const prior = returning ? returningPrior(store, from) : undefined;
-    const { config, loginUrl } = rerunProject(from, urls);
+    if (brief && (repeats ?? 1) > 1) throw new Error(BRIEF_SET);
+    const solo = brief ? briefedRerun(from, brief) : undefined;
+    const prior = returning ? returningPrior(store, from, brief?.persona_id) : undefined;
+    const { config, loginUrl } = rerunProject(from, urls, { solo: !!solo });
     const planned = repeatRuns(config, repeats);
     if (hasRun(store.dir)) throw new Error('A run is already in progress in this project');
-    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret, personas: from.personas }), reset, { from, loginUrl, prior });
+    return startPlanned(planned, checkRun(store, planned[0].config, { reset, fake: FAKE_LLM, secrets: secret, personas: solo?.personas ?? from.personas }), reset, { from, loginUrl, prior, briefs: solo?.briefs });
   },
   stop_run({ run_id, project_dir }) {
     const dir = project_dir ? resolve(project_dir) : current().store.dir;
