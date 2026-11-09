@@ -473,3 +473,20 @@ test('edits reach no model: not a rejudge, not its check, not a study plan, whic
   assert.ok(everything.includes('Name 0'), 'a hidden finding is still in what they read');
   assert.equal(buildReport(events).themes!.filter((t) => t.edit).length, 2, 'and the rejudge kept both edits, as they are in the log');
 });
+
+test('a copy keeps no picture of a hidden finding, and a kept finding keeps its own', () => {
+  const { events, record } = logOf([]);
+  events.pop(); // run.finished, recorded again after the steps
+  ['/jobs', '/users'].forEach((path, i) => {
+    const step_no = i + 1;
+    record({ ...who, type: 'persona.step', payload: { step_no, action: { type: 'click', ref: 'e1', text: null }, target: { role: 'button', name: 'Save', box: null }, result: { ok: true, url_before: page(path), url_after: page(path), dom_changed: true, error: null }, thought: 'Saving.', feeling: 0, snapshot_hash: 'h', screenshot: `shots/SHOT-${path.slice(1)}.jpg`, duration_ms: 1, heard_post_ids: [] } });
+    record({ ...who, type: 'persona.friction_reported', payload: { step_no, severity: 3, what: `The save button on ${path} does nothing at all`, expected: 'Saved', where: { url: page(path), ref: null }, heard_post_ids: [] } });
+  });
+  record({ ...none, type: 'run.finished', payload: {} });
+  const [jobs, users] = buildReport(events).themes!;
+  assert.deepEqual([jobs.pictures?.[0].screenshot, users.pictures?.[0].screenshot], ['shots/SHOT-jobs.jpg', 'shots/SHOT-users.jpg']);
+  record(hide(jobs));
+  const shared = forSharing(buildReport(events));
+  assert.ok(!JSON.stringify(shared).includes('SHOT-jobs'), 'the hidden finding\'s picture is gone with it');
+  assert.deepEqual(shared.themes?.map((t) => t.pictures?.map((p) => p.screenshot)), [['shots/SHOT-users.jpg']]);
+});

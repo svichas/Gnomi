@@ -1,4 +1,4 @@
-import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportReach, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
+import type { AuthorSuggestion, CheckVerdict, EventOf, GnomiEvent, JudgeLike, JudgePostTag, JudgeTheme, EvidenceLevel, Prevalence, ReportEvidence, ReportLike, ReportPicture, ReportReach, ReportSegment, ReportSentiment, ReportTheme, ThemeCheck, Trust } from '../types.ts';
 import { postPois } from '../social/feed.ts';
 import { pagePattern } from '../signals/index.ts';
 import { buildCandidates, categoryOf, groupCandidates, groupKey, isWeak, latestSurveys, likeGroups, placesOf, poiNamesOf, stepEvidence, TRUST_WEIGHT, type Candidate, type CandidateKind, type Group, type LikeGroup } from './friction.ts';
@@ -221,6 +221,23 @@ export function rulesTitle(group: Group): string {
 }
 
 const byEvidence = (a: Candidate, b: Candidate) => b.severity - a.severity || TRUST_WEIGHT[b.trust] - TRUST_WEIGHT[a.trust] || a.seqs[0] - b.seqs[0];
+
+const byPicture = (a: Candidate, b: Candidate) => Number(!a.box) - Number(!b.box) || byEvidence(a, b);
+const viewer = (persona_id: string, poi_id: string) => `${persona_id}\u0000${poi_id}`;
+
+/** The personas who browsed a POI with simulated perception: emulated vision changes the screenshot, and a screen reader never saw it. */
+const perceivedOf = (events: GnomiEvent[]) =>
+  new Set(events.flatMap((e) => (e.type === 'persona.episode_started' && e.persona_id && e.payload.perception ? [viewer(e.persona_id, e.payload.poi_id)] : [])));
+
+/** One picture per page: the screenshot of a persona who met the theme there, one who saw the page as it is first, then one with its element marked, then as evidence orders. */
+function picturesOf(members: Candidate[], pages: string[], perceived: Set<string>): ReportPicture[] {
+  return pages.flatMap((page) => {
+    const shown = felt(members).filter((m) => m.page === page && m.screenshot && m.step_seq !== null);
+    const plain = shown.filter((m) => !perceived.has(viewer(m.persona_id, m.poi_id)));
+    const [best] = (plain.length > 0 ? plain : shown).sort(byPicture);
+    return best ? [{ page, screenshot: best.screenshot!, ...(best.box && { box: best.box }), persona_id: best.persona_id, step_seq: best.step_seq! }] : [];
+  });
+}
 
 export interface Draft {
   groups: Group[];
@@ -695,6 +712,7 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
   const config = events.find((e) => e.type === 'run.started')?.payload.config;
   const checkOn = config?.project.settings?.finding_check;
   const echoes = echoesOf(events);
+  const perceived = perceivedOf(events);
 
   for (const poi_id of pois) {
     // Each POI says the same things, so with several each note names its POI.
@@ -750,6 +768,8 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
         const echoed = met.filter((m) => echoesOther(m, id, themeTags, echoes)).map((m) => m.seqs[0]);
         const interference = members.filter((m) => m.interference).length;
         const { affected, severity, trust, trust_counts, prevalence: share, score } = scoreTheme(members, poi_id, ctx, reach, hand);
+        const pages = [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))];
+        const pictures = picturesOf(members, pages, perceived);
         return {
           id,
           keys: draft.groups.map((g) => groupKey(g.members[0])),
@@ -771,8 +791,9 @@ export function analyseFrictions(events: GnomiEvent[], ctx: Context): Analysis {
           score,
           personas,
           frictions: members.length,
-          pages: [...new Set(members.flatMap((m) => (m.page ? [m.page] : [])))],
+          pages,
           elements: [...new Set(members.flatMap((m) => (m.element ? [m.element] : [])))],
+          ...(pictures.length > 0 && { pictures }),
           affected,
           evidence: pickEvidence(members).map((m) => evidenceOf(m, ctx)),
           seqs: [...new Set(members.flatMap((m) => m.seqs))].sort((a, b) => a - b),

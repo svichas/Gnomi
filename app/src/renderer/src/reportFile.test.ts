@@ -171,6 +171,45 @@ test('the box on a finding and the flow render into the export with no script, a
   assert.doesNotMatch(html, /dropped off/i);
 });
 
+test('the file groups findings by screen: each lead picture once with its pins, a link to every card, no crop and no switch', async () => {
+  const report = fixture(2, 1);
+  const evidence = { ...report.frictions[0], step_seq: 1, trust: 'reported' as const, signals: [], screenshot: null };
+  const box = (left: number) => ({ left, top: 50, width: 20, height: 10, element: `button "B${left}"` });
+  const picture = (page: string, screenshot: string, left?: number) => ({ page, screenshot, ...(left ? { box: box(left) } : {}), persona_id: 'p-1-0', step_seq: 1 });
+  const NEW = 'gym.test/jobs/new';
+  const JOBS = 'gym.test/jobs';
+  const theme = (id: string, title: string, pages: string[], pictures: ReturnType<typeof picture>[]): ReportTheme => ({
+    id, poi_id: 'poi-gym', rank: 1, title, description: `${id} description`, named_by: 'judge', trust: 'reported', severity: 2, score: 1, personas: 1, frictions: 1, pages, elements: [],
+    ...(pictures.length ? { pictures } : {}), affected: [], seqs: [1], evidence: [evidence], suggestion: null,
+  });
+  report.themes = [
+    theme('a', 'Save is unclear', [NEW], [picture(NEW, 'shots/new.jpg', 10)]),
+    theme('b', 'Title field is easy to miss', [NEW], [picture(NEW, 'shots/new.jpg', 30)]),
+    theme('c', 'Errors disappear', [NEW, JOBS], [picture(NEW, 'shots/new.jpg', 10), picture(JOBS, 'shots/jobs.jpg')]),
+    theme('d', 'Slow everywhere', ['gym.test/a', 'gym.test/b', 'gym.test/c', 'gym.test/d'], [picture('gym.test/a', 'shots/a.jpg')]),
+    theme('e', 'Tone feels cold', [], []),
+  ];
+  report.reach = [{ poi_id: 'poi-gym', started: ['p-1-0', 'p-1-1'], surveyed: [], pages: { [NEW]: ['p-1-0'], [JOBS]: ['p-1-0', 'p-1-1'] } }];
+  const html = await reportFile(report, 'html', thumbnails());
+  const from = html.indexOf('id="screens-title"');
+  const section = html.slice(from, html.indexOf('</section>', from));
+  assert.ok(section.includes('Findings by screen'));
+  assert.ok(section.indexOf('>/jobs<') < section.indexOf('>/jobs/new<'), 'the page more personas reached comes first');
+  assert.ok(section.includes('2 personas reached it'));
+  for (const name of ['>Across many screens<', '>Not tied to one screen<']) assert.ok(section.includes(name), name);
+  for (const shot of ['shots/new.jpg', 'shots/jobs.jpg']) assert.equal(section.split(`src="data:image/jpeg;base64,${btoa(shot)}"`).length - 1, 1, `${shot} is the lead of its screen, drawn once`);
+  assert.equal(section.split('src="data:image/jpeg').length - 1, 2, 'a site-wide or untied finding has no lead picture');
+  assert.ok(section.includes('aria-label="Marked 1 and 3 on the screenshot: button &quot;B10&quot;"'), 'findings with one box share a pin');
+  assert.ok(section.includes('aria-label="Marked 2 on the screenshot: button &quot;B30&quot;"'));
+  const links = [...section.matchAll(/href="#([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(links.length, 6, 'a finding on two screens is listed on both');
+  for (const id of links) assert.equal(html.split(`id="${id}"`).length - 1, 1, `${id} is one finding card`);
+  assert.doesNotMatch(html, /class="report-crop"|Group findings|>By priority<|>By screen</);
+  const none = fixture(1, 1);
+  none.themes = [theme('a', 'Save is unclear', [], [])];
+  assert.doesNotMatch(await reportFile(none, 'html', thumbnails()), /Findings by screen/, 'with no screen to name, the section would only repeat the list');
+});
+
 test("a text POI's quoted passages and the buying survey render into the HTML and Markdown exports", async () => {
   const report = fixture(1, 1);
   report.pois = [{ id: 'pricing', type: 'text', name: 'Pricing page', start_url: null }];

@@ -27,7 +27,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
    npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --json > runs/acme.log 2>&1
    ```
    Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"` (`"kind":"repeats"` for a [repeat set](#repeat-runs)), or when the process has exited with an error on stderr.
-5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. A rate is `null`, not 0, when nobody it covers started (for example a segment a stopped run never reached). Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw.
+5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. A rate is `null`, not 0, when nobody it covers started (for example a segment a stopped run never reached). Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw: each theme's `pictures` give one screenshot per page it was met on, with `box` when the element shows.
 
 ## Points of interest
 

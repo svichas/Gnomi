@@ -5,6 +5,7 @@ import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } fro
 import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
 import { MIN_PAIRS, uncounted, type RepeatSet, type WhatIfNumber, type WhatIfResult } from './repeats.ts';
 import { HIDDEN_ALL, writtenSummary } from './summary.ts';
+import { screenName, screensOf, type Screen } from './screens.ts';
 import { priorityOf } from './themes.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
@@ -338,6 +339,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     ...segmentLines(report),
     ...dimensionLines(report),
     ...themeLines(report, set),
+    ...screenLines(report),
     ...setAsideLines(report),
     ...studyLines(report),
     ...flowLines(report),
@@ -508,6 +510,31 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
           return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report, report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme), report.pois))),
+  ];
+}
+
+/** The same themes by screen, in the order the Themes section lists them. Set-aside themes are not in report.themes. */
+function screenLines(report: Report): string[] {
+  const screens = screensOf(report.themes ?? [], report.reach);
+  // With no screen to name, the section would only repeat the themes (the HTML export leaves it out too).
+  if (!screens.some((s) => s.kind !== 'none')) return [];
+  const h = report.pois.length > 1 ? '####' : '###';
+  const group = ({ kind, page, reached, picture, findings }: Screen): string[] => [
+    '',
+    `${h} ${kind === 'page' ? `${line(screenName(page!))}${reached === null ? '' : ` (reached by ${count(reached, 'persona')})`}` : kind === 'across' ? 'Across many screens' : 'Not tied to one screen'}`,
+    '',
+    ...(picture ? [`Screenshot: ${picture.screenshot}`, ''] : []),
+    ...findings.map(({ theme, number, picture: own, pinned }) =>
+      `${number}. ${line(theme.title)}${theme.category === 'objection' ? ' (a reason not to adopt, from the survey)' : ''} (severity ${theme.severity} of 4)${
+        pinned ? ` — marked on the screenshot: ${line(own!.box!.element)}` : own ? ` — own screenshot: ${own.screenshot}` : ''}`),
+  ];
+  return [
+    '', '## Findings by screen',
+    ...[...new Set(screens.map((s) => s.poi_id))].flatMap((id) => {
+      const own = screens.filter((s) => s.poi_id === id);
+      const poi = themePoi(own[0].findings[0].theme, report.pois);
+      return [...(poi ? ['', `### ${line(poi)}`] : []), ...own.flatMap(group)];
+    }),
   ];
 }
 

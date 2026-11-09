@@ -20,7 +20,8 @@
 .report-section-heading h3 > span { display: grid; place-items: center; min-width: 24px; height: 24px; border-radius: 7px; padding: 0 6px; background: var(--gnomi-selected); color: var(--gnomi-action); font-size: 12px; font-variant-numeric: tabular-nums; }
 .report-section-heading p { margin-top: 5px; font-size: 12px; color: var(--gnomi-text-muted); }
 .report-priorities { display: grid; gap: 12px; }
-.report-priorities > section:first-child { margin-bottom: 6px; }
+.report-priorities > section:first-of-type { margin-bottom: 6px; }
+.report-view { width: fit-content; }
 .report-finding-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--gnomi-line); border-radius: 12px; overflow: hidden; }
 .report-finding + .report-finding { border-top: 1px solid var(--gnomi-line); }
 .report-finding-summary { display: flex; align-items: center; gap: 16px; padding: 21px 20px; list-style: none; transition: background-color var(--gnomi-duration); }
@@ -29,7 +30,7 @@
 .report-finding-summary:focus-visible, .report-fold > summary:focus-visible { outline-offset: -3px; border-radius: 10px; }
 .report-finding-number { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px; background: var(--tone-tint); color: var(--tone-ink); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .report-finding-copy { min-width: 0; flex: 1; }
-.report-finding-copy h4 { overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; font-weight: 500; }
+.report-finding-copy :is(h4, h5) { overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; font-weight: 500; }
 .report-finding-copy p { display: flex; align-items: flex-start; gap: 5px; margin-top: 5px; color: var(--gnomi-text-muted); font-size: 11px; line-height: 1.5; }
 .report-finding-copy p > svg { margin-top: 2px; }
 .report-finding-copy p.report-finding-outcome { color: var(--gnomi-text); font-weight: 500; }
@@ -56,6 +57,21 @@
 .report-shot { position: relative; width: fit-content; max-width: 100%; align-self: start; } /* never stretched to the text beside it: the frame is in percent of this box, which must be the image */
 .report-shot-box { display: none; position: absolute; outline: 2px solid var(--gnomi-error); outline-offset: 1px; box-shadow: 0 0 0 1px var(--gnomi-surface); }
 .report-shot:has(img) > .report-shot-box { display: block; }
+.report-shot-box > b { position: absolute; left: 0; top: 0; display: grid; place-items: center; min-width: 1.25rem; height: 1.25rem; padding-inline: 4px; background: var(--gnomi-error); color: var(--gnomi-surface); font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; } /* solid and ringed by the frame, so it reads on any screenshot in either theme */
+.report-crop { position: relative; overflow: hidden; flex: none; width: 4.5rem; height: 3rem; border: 1px solid var(--gnomi-line); border-radius: 6px; background: var(--gnomi-canvas); }
+.report-crop > div { min-height: 0; }
+.report-crop p { display: none; }
+.report-crop img { display: block; border: 0; border-radius: 0; }
+.report-crop:not([data-box]) > div, .report-crop:not([data-box]) img { width: 100%; height: 100%; object-fit: cover; }
+.report-crop[data-box] > div { position: absolute; left: 50%; top: 50%; width: 100%; transform-origin: 0 0; transform: scale(var(--s)) translate(var(--x), var(--y)); } /* the box's centre at the frame's centre, scaled up; the custom properties come from the box's percentages */
+.report-screens { display: grid; gap: 16px; }
+.report-screen { min-width: 0; border: 1px solid var(--gnomi-line); border-radius: 12px; }
+.report-screen > header { padding: 14px 16px; border-bottom: 1px solid var(--gnomi-line); border-radius: 12px 12px 0 0; background: var(--gnomi-canvas); }
+.report-screen h4 { overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
+.report-screen > header p { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; color: var(--gnomi-text-muted); font-size: 11px; }
+.report-screen-body { display: grid; gap: 16px; align-items: start; padding: 16px; }
+.report-screen-body[data-lead] { grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); }
+.report-screen-body > ol:not(.report-finding-list) { display: grid; gap: 6px; padding-left: 1.25rem; list-style: decimal; font-size: 13px; }
 .report-flow { display: block; }
 .report-flow rect[data-tone] { fill: var(--tone); }
 .report-flow-node { fill: var(--gnomi-line); }
@@ -140,6 +156,9 @@
 .comparison-evidence { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--gnomi-line); border-radius: 12px; scroll-margin-top: 16px; }
 .comparison-evidence:target { border-color: var(--gnomi-action); }
 
+@media (max-width: 900px) {
+  .report-screen-body[data-lead] { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 800px) {
   .run-compare-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report-page { padding: 24px; gap: 26px; }
@@ -156,6 +175,8 @@
   .report-stat-value { font-size: 22px; }
   .report-finding-summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) 16px; gap: 8px 10px; padding: 16px 12px; }
   .report-finding-number { width: 28px; height: 28px; border-radius: 8px; }
+  .report-crop { display: none; }
+  .report-screen-body { padding: 12px; }
   .report-finding-summary > .tone-chip { grid-column: 2; justify-self: start; font-size: 10px; padding: 2px 7px; }
   .report-finding-summary > svg { grid-column: 3; grid-row: 1; }
   .run-compare-theme { grid-template-columns: minmax(0, 1fr); }
