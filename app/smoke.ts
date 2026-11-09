@@ -238,7 +238,7 @@ try {
     }
     const html = file('html').toString();
     assert.doesNotMatch(html, /<script/i);
-    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'the HTML loads something from outside the file');
+    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?(?:data:|#))/i, 'the HTML loads something from outside the file'); // a #link moves within the file
     assert.match(html, /<img src="data:image\/jpeg;base64,/);
     assert.doesNotMatch(html, /<button\b/, 'the file has inspector links');
     assert.equal(file('pdf').subarray(0, 5).toString(), '%PDF-');

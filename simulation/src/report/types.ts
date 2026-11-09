@@ -74,6 +74,15 @@ export interface ReportBox {
   element: string; // role "name"
 }
 
+/** A theme's picture on one of its pages: the screenshot of a persona who met it there, or a design's frame. */
+export interface ReportPicture {
+  page: string; // as ReportTheme.pages names it
+  screenshot: string; // a step's screenshot, or a design frame's asset path
+  box?: ReportBox; // the theme's element on it, when it shows
+  persona_id: string;
+  step_seq: number;
+}
+
 /** One member friction shown as evidence for a theme. */
 export type ReportEvidence = {
   seq: number; // the self-report, survey or signal event
@@ -174,6 +183,7 @@ export interface ReportTheme {
   frictions: number;
   pages: string[]; // page patterns, ids normalised out
   elements: string[]; // role "name"
+  pictures?: ReportPicture[]; // one per page with a stored image, in pages order; absent with none and in older reports
   affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[]; // affected: first-hand personas
   drivers?: ReportDriver[]; // at most two, the largest gap first; only when a value passes the limits in report/dimensions.ts
   evidence: ReportEvidence[]; // at most three, highest severity first

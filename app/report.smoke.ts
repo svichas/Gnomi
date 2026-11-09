@@ -63,6 +63,19 @@ const box = { left: 25, top: 50, width: 20, height: 10, element: 'button "Publis
 const [evidence] = report.themes[0].evidence;
 report.themes[0].evidence = [{ ...evidence, screenshot: shotPath('wide'), box, interference: true }, { ...evidence, screenshot: shotPath('tall'), box }, { ...evidence, screenshot: shotPath('wide') }, { ...evidence, screenshot: shotPath('gone'), box }];
 report.themes[0].interference = 1;
+// Pictures for By screen: three findings on /jobs/new over one screenshot (two of them on the same element), two on /jobs over two, one site-wide, the rest tied to no screen.
+const NEW = 'app.example.com/jobs/new';
+const JOBS = 'app.example.com/jobs';
+const picture = (page: string, screenshot: string, at?: typeof box) => ({ page, screenshot, ...(at ? { box: at } : {}), persona_id: friction.persona_id, step_seq: 1 });
+const save = { left: 60, top: 20, width: 25, height: 12, element: 'link "Save draft"' };
+const [t0, t1, t2, t3, , t5] = report.themes;
+Object.assign(t0, { pages: [NEW], pictures: [picture(NEW, shotPath('wide'), box)] });
+Object.assign(t1, { pages: [NEW], pictures: [picture(NEW, shotPath('wide'), save)] });
+Object.assign(t2, { pages: [NEW, JOBS], pictures: [picture(NEW, shotPath('wide'), box), picture(JOBS, shotPath('tall'))] });
+Object.assign(t3, { pages: [JOBS], pictures: [picture(JOBS, shotPath('wide'), save)] });
+Object.assign(t5, { pages: [NEW, JOBS, 'app.example.com/jobs/:id', 'app.example.com/account'], pictures: [picture(NEW, shotPath('wide'))] });
+const people = report.personas.map((persona) => persona.id);
+report.reach = [{ poi_id: report.pois[0].id, started: people, surveyed: [], pages: { [NEW]: people.slice(0, 4), [JOBS]: people } }];
 const pageName = (i: number) => `app.example.com/dashboard/campaigns/new-campaign/summary-${i}`; // as wide as real names get, so the check at 320 px proves the graph's limit
 const flow: ReportFlow = {
   poi_id: report.pois[0].id, personas: 6, left_out: { pages: 3, ended: 1 },
@@ -84,7 +97,7 @@ report.coverage![0].thin_pages.push({ page: pageName(1), personas: 2 }, { page: 
 const exportedFile = join(dir, 'report.html');
 /** Every frame on show sits on the same spot of its image, whatever size the image is drawn at. */
 async function assertMarks(page: Page, when: string) {
-  const placed = await page.locator('.report-shot-box').evaluateAll((marks) => marks.filter((mark) => mark.checkVisibility()).map((mark) => {
+  const placed = await page.locator('.report-finding .report-shot-box').evaluateAll((marks) => marks.filter((mark) => mark.checkVisibility()).map((mark) => {
     const image = mark.parentElement!.querySelector('img')!.getBoundingClientRect();
     const frame = mark.getBoundingClientRect();
     return [(frame.left - image.left) / image.width, (frame.top - image.top) / image.height, frame.width / image.width, frame.height / image.height];
@@ -156,13 +169,46 @@ try {
   assert.equal(await root.getByText('Suggested change', { exact: true }).first().isVisible(), false);
   assert.equal(await root.getByText('Recorded cost', { exact: true }).isVisible(), false);
   const summary = root.getByRole('region', { name: 'Summary' });
-  assert.match(await summary.innerText(), /^The biggest problem in this run is “Users could not tell whether their job was published”, met by 4 of 6 personas who tried it\./);
+  assert.match(await summary.innerText(), /^The biggest problem in this run is “Users could not tell whether their job was published”, met by 4 of 6 personas who reached the page\./);
   assert.ok((await summary.boundingBox())!.y < (await root.getByRole('region', { name: 'At a glance' }).boundingBox())!.y, 'the summary sits above the glance');
   assert.equal(await first.locator('summary').getByText('Fix now', { exact: true }).count(), 1, 'the top finding carries its label');
   assert.match((await first.locator('summary').getByText('Fix now', { exact: true }).getAttribute('title'))!, /where to look first within this run/);
   await page.setViewportSize({ width: 1100, height: 1000 });
   await root.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(shots, 'report-overview.png'), fullPage: true });
+  // By priority is the default: a small crop beside each finding that has a picture, around its element.
+  assert.equal(await page.getByRole('button', { name: 'By priority' }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await root.locator('.report-finding-summary:visible .report-crop').count(), 4, 'a crop beside each finding on show that has a picture');
+  assert.equal(await root.locator('.report-crop[aria-hidden="true"]').count(), 5, 'hidden from assistive technology');
+  await first.locator('.report-crop img').waitFor();
+  assert.equal(await root.locator('.report-screen').count(), 0, 'no screen cards until asked for');
+  // By screen: one card per screen, the lead picture with numbered pins beside the findings, numbered within the card.
+  await page.getByRole('button', { name: 'By screen' }).focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.getByRole('button', { name: 'By screen' }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await root.locator('.report-finding-summary').first().isVisible(), true);
+  assert.deepEqual(await root.locator('.report-screen > header h4').allInnerTexts(), ['/jobs', '/jobs/new', 'Across many screens', 'Not tied to one screen'], 'the most reached screen first, then the two groups');
+  const newScreen = root.locator('.report-screen').filter({ hasText: '/jobs/new' }).first();
+  assert.match(await newScreen.locator('header').innerText(), /3 findings[\s\S]*Blocker[\s\S]*4 personas reached it/);
+  assert.deepEqual(await newScreen.locator('.report-finding-number').allInnerTexts(), ['01', '02', '03']);
+  assert.equal(await newScreen.getByRole('heading', { level: 5 }).count(), 3, 'a finding is a heading under its screen');
+  assert.deepEqual(await newScreen.locator('.report-shot-box b').allInnerTexts(), ['1, 3', '2'], 'findings on one element share a pin');
+  await newScreen.locator('.report-screen-body > .report-shot img').waitFor();
+  assert.equal(await newScreen.getByRole('img', { name: 'Marked 1 and 3 on the screenshot: button "Publish"' }).count(), 1);
+  assert.equal(await newScreen.locator('.report-crop').count(), 0, 'a finding pinned on the lead needs no crop');
+  assert.ok(await newScreen.locator('.report-finding-copy').first().getByText('What to improve', { exact: false }).isVisible(), 'each finding names its section');
+  const jobsScreen = root.locator('.report-screen').first();
+  assert.equal(await jobsScreen.locator('.report-crop').count(), 1, 'a finding off the lead keeps its crop; one whose picture is the lead needs none');
+  const lead = (await newScreen.locator('.report-screen-body > .report-shot').boundingBox())!;
+  assert.ok(lead.x + lead.width <= (await newScreen.locator('.report-finding').first().boundingBox())!.x, 'the picture sits left of the findings');
+  await page.screenshot({ path: join(shots, 'report-by-screen.png'), fullPage: true });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await assertFits(page, 'by screen at 320');
+  assert.ok((await newScreen.locator('.report-screen-body > .report-shot').boundingBox())!.y < (await newScreen.locator('.report-finding').first().boundingBox())!.y, 'stacked on a narrow screen');
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await page.getByRole('button', { name: 'By priority' }).click();
+  assert.equal(await root.locator('.report-screen').count(), 0);
+  assert.equal(await root.locator('.report-finding-summary:visible').count(), 5, 'and back');
   const trigger = first.locator('summary');
   await trigger.focus();
   await page.keyboard.press('Enter');
@@ -388,6 +434,12 @@ try {
   await file.emulateMedia({ media: 'print' });
   await assertMarks(file, 'in the exported file, printed');
   assert.equal(await file.locator('.report-flow').count(), 1);
+  // By screen in the file: each lead picture once, every line a link to a card on the page, and neither the switch nor a crop.
+  const screens = file.locator('section:has(> div > div > h3#screens-title)');
+  assert.equal(await screens.locator('.report-screen').count(), 4);
+  assert.equal(await screens.locator('.report-shot img').count(), 2, 'one lead picture for each screen that has one');
+  for (const href of await screens.locator('li > a').evaluateAll((links) => links.map((link) => link.getAttribute('href')!))) assert.equal(await file.locator(href).count(), 1, `${href} is a card`);
+  assert.equal(await file.locator('.report-crop, .segmented-control').count(), 0);
   assert.ok(await file.getByText('A persona typed its own name as the hiring manager').isVisible(), 'the export keeps what was set aside');
   assert.ok(await file.getByText("Your team's study, 12 Oct 2026: supported", { exact: true }).isVisible(), 'the export says whose the outcome is');
   assert.ok(await file.getByText('Post a job for a new role and make it live.', { exact: true }).isVisible(), 'and carries the plan');
