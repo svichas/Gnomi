@@ -155,6 +155,8 @@ export function buildReport(events: GnomiEvent[]): Report {
     created.length > 0 ? created.map((e) => e.payload.persona) : (config.personas ?? (config.persona ? [config.persona] : []));
   const personaById = new Map<string, Persona>();
   for (const p of population) if (!personaById.has(p.id)) personaById.set(p.id, p);
+  // shortcut: one briefed persona per run, upgrade when briefs can cover everyone
+  const [briefed] = Object.entries(config.briefs ?? {});
 
   const ourPois = pois.filter((poi) => !competitors.has(poi.id));
   const personas: ReportPersona[] = population.map((p) => {
@@ -397,6 +399,7 @@ export function buildReport(events: GnomiEvent[]): Report {
       ...(undersized_targets.length ? { undersized_targets } : {}),
       ...(accessibility_audit.length ? { accessibility_audit } : {}),
       ...(grounding.length ? { grounding } : {}),
+      ...(briefed ? { brief: { persona_id: briefed[0], name: personaById.get(briefed[0])?.name ?? briefed[0], text: briefed[1].text, role: briefed[1].role, from_run: briefed[1].from_run } } : {}),
       ...(prior ? { prior: { run_id: prior.run_id, fresh: population.filter((p) => !prior.memories[p.id]).length } } : {}),
       limitations: comparison ? comparison.limitations : [...analysis.limitations, ...runNotes],
       ...(social ? { homogeneity: homogeneity(events, population) } : {}),

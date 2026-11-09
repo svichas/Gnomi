@@ -1,6 +1,6 @@
 // Shared domain types. The event log is the source of truth (tech.md §5.1): everything here is
 // configuration frozen into a run snapshot, an event payload, or a projection of the log.
-export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, ThemeEdit, UnmatchedEdit, UnmatchedOutcome, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
+export type { EvidenceLevel, Prevalence, ReportFriction, ReportPersona, ReportDimension, ReportSegment, Trust, ReportBox, ReportPicture, ReportEvidence, ReportDriver, ReportTheme, ReportReach, ReportCoverage, ReportSentiment, ReportComparison, ReportLike, ReportBuyers, ReportFlow, ReportFlowPage, ThemeValidation, ThemeEdit, UnmatchedEdit, UnmatchedOutcome, StudyCount, ReportStudyPlan, Report, ReportMethods, ReportHomogeneity, ReportPost, SpreadStats, ReportSpread } from './report/types.ts';
 
 export type Device = 'desktop' | 'mobile';
 
@@ -265,9 +265,17 @@ export interface RunConfig {
   injected_posts?: InjectedPost[]; // posted in a persona's name before that round's social phase
   repeat?: { group: string; index: number; of: number; trait_free?: number; what_if?: WhatIf }; // one run of a repeat set (report/repeats.ts), index from 1; absent on a lone run. trait_free: which index is the set's run of personas with no traits, on every run of such a set. what_if: on every run of a what-if set
   prior?: { run_id: string; memories: Record<string, PriorVisit> }; // a returning run (report/prior.ts): what each persona id remembers of run_id, frozen here so the run never reads that log; absent on every other run
+  briefs?: Record<string, Brief>; // a brief rerun (engine/src/workspace.ts briefedRerun): the team's words for each persona id that has one, frozen here; absent on every other run
 }
 
 /** One complaint a persona keeps of an earlier visit. */
+/** The team's words for one persona's visit, typed in a chat after an earlier run and shown in its prompts (agent/prompt.ts briefLines). */
+export interface Brief {
+  text: string; // at most BRIEF_MAX characters (agent/prompt.ts)
+  role: string | null; // the recorded login this persona uses in this run; null browses logged out
+  from_run: string; // the run whose chat it came from
+}
+
 export interface PriorFriction {
   key: string; // its group key without the host (report/themes.ts hostless), which decides whether a later report repeats it
   what: string;

@@ -74,6 +74,15 @@ export interface ReportBox {
   element: string; // role "name"
 }
 
+/** A theme's picture on one of its pages: the screenshot of a persona who met it there, or a design's frame. */
+export interface ReportPicture {
+  page: string; // as ReportTheme.pages names it
+  screenshot: string; // a step's screenshot, or a design frame's asset path
+  box?: ReportBox; // the theme's element on it, when it shows
+  persona_id: string;
+  step_seq: number;
+}
+
 /** One member friction shown as evidence for a theme. */
 export type ReportEvidence = {
   seq: number; // the self-report, survey or signal event
@@ -174,6 +183,7 @@ export interface ReportTheme {
   frictions: number;
   pages: string[]; // page patterns, ids normalised out
   elements: string[]; // role "name"
+  pictures?: ReportPicture[]; // one per page with a stored image, in pages order; absent with none and in older reports
   affected: { segment_id: string | null; name: string; affected: number; reached: number; rate: number }[]; // affected: first-hand personas
   drivers?: ReportDriver[]; // at most two, the largest gap first; only when a value passes the limits in report/dimensions.ts
   evidence: ReportEvidence[]; // at most three, highest severity first
@@ -325,6 +335,7 @@ export interface ReportMethods {
   accessibility_audit?: (Omit<AccessibilityViolation, 'category'> & { page: string })[]; // an audit, not findings: the moderate and minor violations the page scan found, one per rule and page, by page; only in runs with one
   grounding?: { segment_id: string; name: string; facts: number; remarks: number; sources: string[] }[]; // the segments in this run that real data shaped, as the run froze them; `sources` holds file names; only in runs with one
   prior?: { run_id: string; fresh: number }; // a returning run: the run its personas remember, and how many had no visit there to remember; only in such runs
+  brief?: { persona_id: string; name: string; text: string; role: string | null; from_run: string }; // a brief rerun (RunConfig.briefs): the one persona who ran on the team's words, what they were and the login it used; only in such runs
   limitations?: string[]; // what the report's analysis could not do, in plain words
   homogeneity?: ReportHomogeneity; // M4; only in runs with social posts
 }

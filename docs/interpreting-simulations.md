@@ -21,7 +21,7 @@ Existing report fields named `evidence` contain **simulation records**. They mak
 
 A segment can be grounded in a team's analytics or research notes, and the report's methods then name those sources. Grounded personas are still fictional, and their findings are still hypotheses: real data can make a persona look more credible without making it more accurate. Data used to write personas cannot also test them.
 
-**Returning personas** remember an earlier run of theirs, so such a report says little about first use, and it says so at the top. Their memory is a short summary handed to a model, not what a person who came back would recall, and nothing yet shows that they behave like returning people. A persona that repeats a complaint from its earlier visit counts apart from those who met it first-hand: "2 more reported it after remembering it from an earlier visit". A repeat can still be a real problem that is still there, so read it as a place to look. A returning side and a first-use side are not like for like, so a comparison says so and the CI gate cannot decide. Findings from returning personas are hypotheses like any other.
+**Returning personas** remember an earlier run of theirs, so such a report says little about first use, and it says so at the top. Their memory is a short summary handed to a model, not what a person who came back would recall, and nothing yet shows that they behave like returning people. A persona that repeats a complaint from its earlier visit counts apart from those who met it first-hand: "2 more reported it after remembering it from an earlier visit". A repeat can still be a real problem that is still there, so read it as a place to look. A returning side and a first-use side are not like for like, so a comparison says so and the CI gate cannot decide. Findings from returning personas are hypotheses like any other. A brief rerun, where one persona follows the team's own words, says so at the top too, and a comparison or the gate treats it the same way.
 
 ## Read trust labels within the simulation
 
@@ -30,6 +30,20 @@ A segment can be grounded in a team's analytics or research notes, and the repor
 - **Reported:** a persona generated a complaint without a matching instrumented signal.
 
 Likewise, `strong`, `some` and `single` describe the report's internal support counts. Scores and intervals used for ranking do not supply calibrated confidence about real users. Repeating a result with another seed or model can check robustness within the simulation; it does not turn the result into human evidence. `Fix now`, `Next` and `Later` suggest where to look first within one run, from its severity and support counts; they do not measure impact on real people.
+
+## Findings by screen
+
+The findings list has two views. **By priority** is the default: the ranked list. **By screen** groups the same findings by the screen they happened on. It is in the app only; exported HTML, PDF and Markdown files have a **Findings by screen** section instead, with each screen's picture once.
+
+- A **screen** is a page pattern, shown as its path (`/jobs/:id`), or a design frame, shown by its name. A finding can sit on several screens if it was met on several pages.
+- Each card leads with its top finding's picture: the first picture on that screen, in the order the findings are listed (by section, then rank).
+- A **pin** marks an element on the picture, numbered to match its findings. A pin appears only when a finding's own screenshot is the card's picture and the element's position on it is known. A finding whose own screenshot is a different one shows it as a thumbnail instead. Findings with the same element share one pin.
+- A picture comes from a persona without simulated vision or a screen reader when one met the screen. Only when none did is it that persona's screenshot, which may show emulated colour-blind or blurred vision.
+- **Across many screens** holds a finding met on 4 or more pages. It is one group, not a copy on each screen. **Not tied to one screen** holds findings with no page, mostly survey answers.
+- Screens are ordered by how many personas reached them.
+- Runs recorded before steps stored their viewport have pictures but no pins.
+
+The view moves no rank, count, trust label or priority. It only regroups the findings that are already there.
 
 ## From a hypothesis to a study
 

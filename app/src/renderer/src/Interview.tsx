@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Report as ReportData } from '@gnomi/simulation/types.ts';
+import type { Brief, EventOf, GnomiEvent, Persona, PersonaSchema, Poi, Report as ReportData, RunConfig, RunRow } from '@gnomi/simulation/types.ts';
 import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { assetPlaces } from '@gnomi/simulation/poi/pois.ts';
 import { shotLabels, toRows } from './activity.ts';
@@ -67,7 +67,7 @@ function Message({ from, text, note, at, status, onProfile }: { from: 'team' | W
   );
 }
 
-function Composer({ runId, name, value, onChange, onSend, busy, waitingFor, field }: { runId: string; name: string; value: string; onChange(value: string): void; onSend(question: string): void; busy: boolean; waitingFor: string | null; field: RefObject<HTMLTextAreaElement | null> }) {
+function Composer({ runId, name, value, onChange, onSend, onRunAgain, busy, waitingFor, field }: { runId: string; name: string; value: string; onChange(value: string): void; onSend(question: string): void; onRunAgain?(text: string): void; busy: boolean; waitingFor: string | null; field: RefObject<HTMLTextAreaElement | null> }) {
   const { cost, ready } = useCallCost('estimate_interview', runId);
   const hint = useId();
   const question = value.trim();
@@ -87,6 +87,7 @@ function Composer({ runId, name, value, onChange, onSend, busy, waitingFor, fiel
           // Enter sends, as in any chat; Shift+Enter is a new line, and Enter that ends an input method's composition is not a send.
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } }}
         />
+        {onRunAgain && <button type="button" className="chat-send" aria-label="Run again with this" title="Run again with this" disabled={!question || busy} onClick={() => onRunAgain(question)}><Icon name="play" size={18} /></button>}
         <button type="submit" className="chat-send" aria-label="Send" disabled={!question || !ready || busy}><Icon name="send" size={18} /></button>
       </div>
       <p id={hint} className="chat-hint">
@@ -103,13 +104,15 @@ const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1
  * One persona's questions and answers as a chat, oldest first, then the question on its way and a box for the next one. In the report it
  * opens with the persona's session as a video message, which plays in place and can hand any of its steps to the box as a question.
  */
-export function PersonaChat({ runId, persona, answers, interview, askable = true, autoFocus = false, starters = STARTERS, replay, watching = false, onWatch, onProfile }: {
+export function PersonaChat({ runId, persona, answers, interview, askable = true, autoFocus = false, starters = STARTERS, replay, watching = false, onWatch, onProfile, onRunAgain, brief }: {
   runId: string; persona: Who; answers: Answer[]; interview: Interview; askable?: boolean; autoFocus?: boolean;
   starters?: string[];
   replay?: { steps: Row[]; events: GnomiEvent[]; shotLabel(row: Row): string | undefined; summary: string };
   watching?: boolean; // the video message is playing, here or because the profile said so
   onWatch?(watching: boolean): void;
   onProfile?(): void;
+  onRunAgain?(text: string): void; // hands the box's words to the Run again dialog as a brief
+  brief?: Brief; // the words this run was started on
 }) {
   const [question, setQuestion] = useState('');
   const thread = useRef<HTMLDivElement>(null);
@@ -143,6 +146,7 @@ export function PersonaChat({ runId, persona, answers, interview, askable = true
             </button>
           </div>
         </div>)}
+        {brief && <Message from="team" text={brief.text} note="Brief for this run" status="check" />}
         {answers.map((answer, i) => <Fragment key={answer.seq}>
           {dayOf(answer.ts) !== dayOf(answers[i - 1]?.ts ?? 0) && <p className="chat-day">{dayLabel(answer.ts)}</p>}
           <Message from="team" text={answer.payload.question} at={answer.ts} status="check" />
@@ -166,6 +170,7 @@ export function PersonaChat({ runId, persona, answers, interview, askable = true
         name={persona.name}
         value={question}
         onChange={setQuestion}
+        onRunAgain={onRunAgain}
         onSend={(asked) => { setQuestion(''); void interview.ask({ persona_id: persona.id, name: persona.name, question: asked, answered: answers.length }); }}
         busy={interview.busy}
         waitingFor={other}
@@ -179,13 +184,17 @@ export function PersonaChat({ runId, persona, answers, interview, askable = true
 const clip = (text: string, max = 60) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** The report's chats: everyone in the run, the latest conversation first, and the one picked beside the list (or in its place, when narrow). */
-export function Interviews({ runId, report, answers, interview, personas, schema, events, pois, onInspect }: {
+export function Interviews({ runId, report, answers, interview, personas, schema, events, pois, onInspect, onRunAgain, briefs, runs, onOpenRun }: {
   runId: string; report: ReportData; answers: Answer[]; interview: Interview;
   personas: Persona[]; // the run's frozen profiles, for the profile card
   schema?: PersonaSchema;
   events: GnomiEvent[]; // the run's log, for each persona's replay
   pois?: Poi[];
   onInspect(personaId: string): void;
+  onRunAgain?(personaId: string, text: string): void;
+  briefs?: RunConfig['briefs']; // this run's frozen briefs, by persona id
+  runs?: RunRow[];
+  onOpenRun?(runId: string): void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -263,7 +272,8 @@ export function Interviews({ runId, report, answers, interview, personas, schema
               {replay && <Button small variant="quiet" aria-label="Watch the replay" title="Watch the replay" onClick={() => setWatching(true)}><Icon name="play" size={15} /><span className="chat-header-label">Replay</span></Button>}
               <Button small variant="quiet" aria-label="Open timeline" title="Open timeline" onClick={() => onInspect(persona.id)}><Icon name="activity" size={15} /><span className="chat-header-label">Timeline</span></Button>
             </header>
-            <PersonaChat key={persona.id} runId={runId} persona={persona} answers={threads.get(persona.id) ?? []} interview={interview} starters={startersFor(persona)} replay={replay} watching={watching} onWatch={setWatching} onProfile={() => setProfile(true)} autoFocus />
+            {runs?.filter((run) => run.config.briefs?.[persona.id]?.from_run === runId).map((run) => <Button key={run.run_id} small variant="link" onClick={() => onOpenRun?.(run.run_id)}>Ran again as {run.run_id}</Button>)}
+            <PersonaChat key={persona.id} runId={runId} persona={persona} brief={briefs?.[persona.id]} onRunAgain={onRunAgain && ((text) => onRunAgain(persona.id, text))} answers={threads.get(persona.id) ?? []} interview={interview} starters={startersFor(persona)} replay={replay} watching={watching} onWatch={setWatching} onProfile={() => setProfile(true)} autoFocus />
             {profile && <PersonaProfile
               persona={persona}
               profile={personas.find((candidate) => candidate.id === persona.id)}

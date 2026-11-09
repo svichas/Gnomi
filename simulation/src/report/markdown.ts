@@ -5,6 +5,7 @@ import { DRIVER_AFFECTED, DRIVER_GAP, DRIVER_HOLDERS, formatAttributeValue } fro
 import { GATE_SIGHTINGS, severeSightings, type GateDecision, type GateResult } from './gate.ts';
 import { MIN_PAIRS, uncounted, type RepeatSet, type WhatIfNumber, type WhatIfResult } from './repeats.ts';
 import { HIDDEN_ALL, writtenSummary } from './summary.ts';
+import { screenName, screensOf, type Screen } from './screens.ts';
 import { priorityOf } from './themes.ts';
 
 // Free text from the model can hold line breaks, which would split a Markdown list item or a table row. It also quotes pages,
@@ -324,6 +325,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     '',
     ...(report.shared ? [`> ${sharedText(report.shared)}`, ''] : []),
     ...(report.methods.prior ? [`> ${priorNotice(report.methods.prior)}`, ''] : []),
+    ...(report.methods.brief ? [`> ${briefNotice(report.methods.brief)}`, ''] : []),
     ...(summary ? [line(summary), ''] : []),
     ...(report.study_count ? [`**From your team's studies, not the simulation:** ${studyCountText(report.study_count)}`, ''] : []),
     `- Tried: ${report.pois.map((poi) => (poi.start_url ? `${poiName(poi)} (${poi.start_url})` : poiName(poi))).join(', ')}`,
@@ -338,6 +340,7 @@ export function reportToMarkdown(report: Report, set?: RepeatSet): string {
     ...segmentLines(report),
     ...dimensionLines(report),
     ...themeLines(report, set),
+    ...screenLines(report),
     ...setAsideLines(report),
     ...studyLines(report),
     ...flowLines(report),
@@ -508,6 +511,31 @@ function themeLines(report: Report, set?: RepeatSet): string[] {
           return ['', `### ${line(poiName(poi))}`, ...(themes.length ? themes.flatMap((t) => themeToMarkdown(t, '####', repeatNote(set, report.run_id, t), report.pois)) : ['', noThemes(report, report.set_aside?.filter((t) => t.poi_id === poi.id), poi.competitor)])];
         })
       : report.themes.flatMap((theme) => themeToMarkdown(theme, '###', repeatNote(set, report.run_id, theme), report.pois))),
+  ];
+}
+
+/** The same themes by screen, in the order the Themes section lists them. Set-aside themes are not in report.themes. */
+function screenLines(report: Report): string[] {
+  const screens = screensOf(report.themes ?? [], report.reach);
+  // With no screen to name, the section would only repeat the themes (the HTML export leaves it out too).
+  if (!screens.some((s) => s.kind !== 'none')) return [];
+  const h = report.pois.length > 1 ? '####' : '###';
+  const group = ({ kind, page, reached, picture, findings }: Screen): string[] => [
+    '',
+    `${h} ${kind === 'page' ? `${line(screenName(page!))}${reached === null ? '' : ` (reached by ${count(reached, 'persona')})`}` : kind === 'across' ? 'Across many screens' : 'Not tied to one screen'}`,
+    '',
+    ...(picture ? [`Screenshot: ${picture.screenshot}`, ''] : []),
+    ...findings.map(({ theme, number, picture: own, pinned }) =>
+      `${number}. ${line(theme.title)}${theme.category === 'objection' ? ' (a reason not to adopt, from the survey)' : ''} (severity ${theme.severity} of 4)${
+        pinned ? ` — marked on the screenshot: ${line(own!.box!.element)}` : own ? ` — own screenshot: ${own.screenshot}` : ''}`),
+  ];
+  return [
+    '', '## Findings by screen',
+    ...[...new Set(screens.map((s) => s.poi_id))].flatMap((id) => {
+      const own = screens.filter((s) => s.poi_id === id);
+      const poi = themePoi(own[0].findings[0].theme, report.pois);
+      return [...(poi ? ['', `### ${line(poi)}`] : []), ...own.flatMap(group)];
+    }),
   ];
 }
 
@@ -765,6 +793,10 @@ export const GROUNDING_NOTE = 'Grounded personas are still fictional, and their 
 export const priorNotice = ({ run_id, fresh }: NonNullable<ReportMethods['prior']>) =>
   `These personas used the product before, in ${run_id}, so this run says little about first use.${fresh ? ` ${count(fresh, 'persona')} had no earlier visit to remember and started fresh.` : ''}`;
 
+/** The notice on a briefed run: one persona followed the team's words, so its findings are not first use. */
+export const briefNotice = ({ name, text, role }: NonNullable<ReportMethods['brief']>) =>
+  `One persona, ${line(name)}, followed a brief from the team: "${line(text)}", ${role ? `signed in as ${line(role)}` : 'logged out'}. Its findings say what happened under that brief, not on first use.`;
+
 export const groundingText = ({ name, facts, remarks, sources }: NonNullable<ReportMethods['grounding']>[number]) =>
   `${name}: ${count(sources.length, 'source')} (${sources.join(', ')}), ${count(facts, 'fact')}, ${count(remarks, 'remark')}`;
 
@@ -790,6 +822,7 @@ function methodsToMarkdown(m: ReportMethods): string[] {
     ...(m.undersized_targets ? [`- Undersized tap targets on your product (an audit, not findings; only elements a mobile persona tapped): ${m.undersized_targets.map((t) => `${line(t.page)}, ${t.element ? line(t.element) : 'unnamed element'}, ${t.width}×${t.height} px, ${count(t.personas, 'persona')}`).join('; ')}`] : []),
     ...(m.accessibility_audit ? [`- Accessibility audit of your product (an audit, not findings; the moderate and minor rules the page scan flagged, not ranked): ${m.accessibility_audit.map((a) => `${line(a.page)}, ${line(a.help)} (${line(scanText(a))})`).join('; ')}`] : []),
     ...(m.grounding ? [`- Grounded segments: ${m.grounding.map((segment) => line(groundingText(segment))).join('; ')}. ${GROUNDING_NOTE}`] : []),
+    ...(m.brief ? [`- Brief: ${briefNotice(m.brief)}`] : []),
     ...(m.prior ? [`- Earlier visit: ${priorNotice(m.prior)}`] : []),
     ...(m.homogeneity ? [
       `- Homogeneity (mean pairwise TF-IDF cosine, warning at ${m.homogeneity.threshold.toFixed(2)}): posts ${m.homogeneity.posts === null ? 'too few to compare' : m.homogeneity.posts.toFixed(2)} (${count(m.homogeneity.post_count, 'post')}), persona backgrounds ${m.homogeneity.narratives === null ? 'too few to compare' : m.homogeneity.narratives.toFixed(2)}`,

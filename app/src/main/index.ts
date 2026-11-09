@@ -17,7 +17,7 @@ import { AudienceLibrary } from './audiences.ts';
 import { ProjectLibrary } from './projects.ts';
 import { fileVault, keyedProvider, ProviderKeys, type Vault } from './providers.ts';
 import { fetchUpdate, RELEASES_PAGE } from './release.ts';
-import type { Release } from './release.ts';
+import type { UpdateState } from './release.ts';
 
 // A second instance would open the same project and mark the first one's live run interrupted.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -140,29 +140,36 @@ ipcMain.handle('test-figma-token', async (): Promise<KeyTest> => {
 });
 
 // Installed builds check GitHub's releases once per launch and download a newer one, which installs when Gnomi restarts
-// or quits (listed in Settings under Where Gnomi connects). A page reload gets the same answer.
-let update: Promise<Release | null> | undefined;
+// or quits (listed in Settings under Where Gnomi connects). Each step reaches the page, where Settings can also check again.
+let update: UpdateState = { status: 'checking' };
+let checking: Promise<UpdateState> | undefined;
 let installing = false;
 const installable = () => process.platform === 'darwin'
   ? new Promise((resolve, reject) => squirrel.once('update-downloaded', resolve).once('error', reject))
   : Promise.resolve();
-ipcMain.handle('latest-release', () => {
+const report = (state: UpdateState) => {
+  update = state;
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('update-state', state);
+};
+ipcMain.handle('check-update', (): UpdateState | null => {
   if (!app.isPackaged) return null; // dev and smoke runs are not releases
-  update ??= (async () => {
-    const updater = electronUpdater.autoUpdater;
-    // electron-updater sends a per-install ID for staged rollouts, which Gnomi does not use; a fixed one identifies no one.
-    updater.requestHeaders = { 'x-user-staging-id': '00000000-0000-0000-0000-000000000000' };
-    // Squirrel.Mac installs only into a Developer ID signed app, so an unsigned or ad-hoc signed build skips the download and offers the release page.
-    const bundle = join(app.getPath('exe'), '../../..');
-    updater.autoDownload = process.platform !== 'darwin' || (await promisify(execFile)('codesign', ['--verify', '-R=anchor apple generic', bundle]).then(() => true, () => false));
-    return fetchUpdate(updater, installable);
-  })();
+  if (!checking && update.status !== 'ready') { // a downloaded release waits for the restart; any other answer can be checked again
+    checking = (async () => {
+      const updater = electronUpdater.autoUpdater;
+      // electron-updater sends a per-install ID for staged rollouts, which Gnomi does not use; a fixed one identifies no one.
+      updater.requestHeaders = { 'x-user-staging-id': '00000000-0000-0000-0000-000000000000' };
+      // Squirrel.Mac installs only into a Developer ID signed app, so an unsigned or ad-hoc signed build skips the download and offers the release page.
+      const bundle = join(app.getPath('exe'), '../../..');
+      updater.autoDownload = process.platform !== 'darwin' || (await promisify(execFile)('codesign', ['--verify', '-R=anchor apple generic', bundle]).then(() => true, () => false));
+      return fetchUpdate(updater, installable, report);
+    })().finally(() => { checking = undefined; });
+  }
   return update;
 });
 // The update's own quit does not wait for the engine, so it stops first. No installer wizard on Windows (an install for
 // all users still asks for admin rights), then Gnomi opens again.
 ipcMain.handle('install-update', async () => {
-  if (installing || !(await update)?.ready) return; // once, and only for a download the platform accepted
+  if (installing || update.status !== 'ready') return; // once, and only for a download the platform accepted
   installing = true;
   await stopEngine();
   electronUpdater.autoUpdater.quitAndInstall(true, true);

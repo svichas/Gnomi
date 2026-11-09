@@ -234,6 +234,7 @@ test('a finished run folds into its outcome, frictions, totals and methods', () 
         frictions: 2,
         pages: ['localhost:3001/jobs/new'],
         elements: [],
+        pictures: [{ page: 'localhost:3001/jobs/new', screenshot: 'runs/r-0001/shots/p-001-0001.jpg', persona_id: 'p-001', step_seq: 4 }],
         affected: [{ segment_id: null, name: 'Built-in persona', affected: 1, reached: 1, rate: 1 }],
         evidence: [
           { seq: 7, step_seq: 6, persona_id: 'p-001', persona_name: 'Priya Natarajan', segment_id: null, step_no: 2, url, severity: 3, trust: 'reported', what: 'The required field gives no error.', quote: 'The form gives no error text.', screenshot: null, signals: [] },
@@ -894,4 +895,11 @@ test('a theme\'s evidence carries the box of what it is about and Markdown names
   assert.ok(!('box' in old.themes![0].evidence[0]));
   assert.equal(old.themes?.[0].evidence[0].screenshot, shot.screenshot, 'the plain screenshot stays');
   assert.ok(!reportToMarkdown(old).includes('   - About: '));
+});
+
+test('a brief frozen in the config is named in the methods, and a run without one has none', () => {
+  const briefed = { ...config, briefs: { 'p-001': { text: 'Use Settings.', role: 'admin', from_run: 'r-0001' } } };
+  const methods = (cfg: RunConfig) => buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: cfg } }]])).methods;
+  assert.deepEqual(methods(briefed).brief, { persona_id: 'p-001', name: BUILTIN_PERSONA.name, text: 'Use Settings.', role: 'admin', from_run: 'r-0001' });
+  assert.equal(methods(config).brief, undefined);
 });

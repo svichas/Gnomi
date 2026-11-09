@@ -10,7 +10,8 @@ import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, propos
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
-import { askPersona, audienceDeps, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type AddedPost, type Secrets } from './workspace.ts';
+import { askPersona, audienceDeps, BRIEF_SET, briefedRerun, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type AddedPost, type BriefRequest, type Secrets } from './workspace.ts';
+import { BRIEF_MAX } from '@gnomi/simulation/agent/prompt.ts';
 import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
 import { importLocalFile } from '@gnomi/simulation/assets.ts';
 import { launchBrowserPool } from '@gnomi/simulation/browser/pool.ts';
@@ -49,7 +50,7 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   personas <audience.json> [--id <persona id>]
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>] [--also-trait-free] [--what-if "<post text>" [--what-if-round <n>]]
-  estimate <project dir> --base <run id> [--repeats <n>] [--returning]
+  estimate <project dir> --base <run id> [--repeats <n> | --persona <persona id> --brief "<text>"] [--returning]
       what rerun would cost, on that run's frozen settings and personas. --returning counts the memory each prompt carries.
   run (--pois <pois.json> | --url <url> [--allow host1,host2]) [--audience <audience.json>] [--goal "<goal>"]
       [--name <product>] [--product "<what personas know about it>"] [--project <dir>] [--settings <settings.json>] [--fake-llm] [--headed]
@@ -66,11 +67,14 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       --repeat compares the runs of a repeat set; each run keeps its own report. --for-sharing gives one run's copy for sharing, as
       the app exports it: without the findings "edit" hid, with its wording, and saying how many it hid and reworded. Without it you
       read what the run found.
-  rerun <project dir> --base <run id> [--repeats <n>] [--url <poi id>=<url>]... [--returning] [--fake-llm] [--headed]
+  rerun <project dir> --base <run id> [--repeats <n> | --persona <persona id> --brief "<text>"] [--url <poi id>=<url>]... [--returning]
+      [--fake-llm] [--headed]
       runs a finished run again with its frozen settings, personas and goal, under a new run id. --url gives a web point of interest
       a new address, such as a PR preview, and its host joins the allowed hosts. --repeats makes a set, as run does. --returning has
       the personas remember the base run, for changes that confuse people who learned the old version; what they know can hide
       first-use problems, so such a run is not like for like with a first-use run. Every run of a set remembers the base run alone.
+      --brief runs that one persona again alone, on your words of up to ${BRIEF_MAX} characters, with social rounds off and logged out:
+      recorded logins are only available in the app. With --returning it remembers its own visit. It cannot make a set.
   compare <project dir> --base <run id> --run <run id>
       what changed between two runs; a run of a repeat set stands for that set's finished runs. No model calls. "Not seen again"
       means the later run did not show a problem, not that it is fixed.
@@ -148,6 +152,7 @@ const OPTIONS = {
   reset: { type: 'boolean', default: false },
   persona: { type: 'string' },
   question: { type: 'string' },
+  brief: { type: 'string' },
   format: { type: 'string', default: 'summary' },
   'for-sharing': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
@@ -340,6 +345,7 @@ function summarize(report: Report) {
     duration_ms: report.duration_ms,
     banner: report.banner,
     ...(report.methods.prior && { returning: priorNotice(report.methods.prior) }),
+    ...(report.methods.brief && { brief: report.methods.brief }),
   };
 }
 
@@ -494,17 +500,29 @@ function listPersonas(v: Values, path: string | undefined): void {
   out(`${rows.length} personas, ${stale} stale, written for "${file.product.goal}" on ${file.product.name}`, { kind: 'personas', file: resolve(path), personas: rows.length, stale });
 }
 
+/** A rerun's brief from --persona and --brief. The terminal records no logins, so a brief from it is always logged out. */
+function briefFrom(v: Values): BriefRequest | undefined {
+  if (v.brief === undefined && v.persona === undefined) return undefined;
+  if (v.brief === undefined || v.persona === undefined) throw new Error('--brief and --persona go together: the brief is for that one persona.');
+  if (Number(v.repeats ?? 1) > 1) throw new Error(BRIEF_SET);
+  return { persona_id: v.persona, text: v.brief, role: null };
+}
+
 /** What `rerun` would cost: the project may have moved on since, so only what the run froze counts. */
 function estimateRerun(v: Values, dir: string | undefined): void {
   if (v['what-if'] !== undefined) throw new Error('--what-if is for run: rerun repeats what a run froze.');
+  const brief = briefFrom(v);
   const store = existingProject(dir);
   try {
     const from = finishedRun(store, v.base!);
-    const { config } = rerunProject(from);
+    const solo = brief && briefedRerun(from, brief);
+    const personas = solo ? solo.personas : from.personas;
+    const { config } = rerunProject(from, {}, { solo: !!solo });
     const repeats = Number(v.repeats ?? 1);
-    const e = estimateFor(config, from.personas, repeats, undefined, false, undefined, v.returning ? returningPrior(store, from) : undefined);
+    // shortcut: a brief's tokens are not estimated, upgrade when BRIEF_MAX grows past a paragraph
+    const e = estimateFor(config, personas, repeats, undefined, false, undefined, v.returning ? returningPrior(store, from, brief?.persona_id) : undefined);
     const budget = config.settings.cost_budget_usd;
-    out(`${from.personas.length} personas${repeats > 1 ? `, ${repeats} runs` : ''}: ${estimateText(e)}; ${budgetText(e, budget)}`, { kind: 'estimate', personas: from.personas.length, runs: repeats, stale: 0, ...e, budget_usd: budget });
+    out(`${personas.length} personas${repeats > 1 ? `, ${repeats} runs` : ''}: ${estimateText(e)}; ${budgetText(e, budget)}`, { kind: 'estimate', personas: personas.length, runs: repeats, stale: 0, ...e, budget_usd: budget });
   } finally {
     store.close();
   }
@@ -538,7 +556,7 @@ function requireKeys(planned: ReturnType<typeof repeatRuns>, settings: RunSettin
 }
 
 /** Runs what was planned, one after another: each writes its report files and prints its result, and a set ends with its comparison. */
-async function runPlanned(dir: string, store: ProjectStore, record: Recorder, planned: ReturnType<typeof repeatRuns>, personas: Persona[], v: Values, from?: RunConfig, prior?: RunConfig['prior']): Promise<void> {
+async function runPlanned(dir: string, store: ProjectStore, record: Recorder, planned: ReturnType<typeof repeatRuns>, personas: Persona[], v: Values, from?: RunConfig, prior?: RunConfig['prior'], briefs?: RunConfig['briefs']): Promise<void> {
   const blobs = createFsBlobStore(dir);
   const launched: Promise<BrowserPool>[] = []; // at most one, launched on the first page a persona opens
   try {
@@ -554,7 +572,7 @@ async function runPlanned(dir: string, store: ProjectStore, record: Recorder, pl
     });
     const reports = await runSet(planned, async (run) => {
       // Nobody can resume a blocked persona from a terminal, so a block ends their episode at once.
-      started = launchRun(store, run.config, { personas: runPersonas(run, personas), sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from, prior }, {
+      started = launchRun(store, run.config, { personas: runPersonas(run, personas), sessions: [], reset: false, pause_timeout_ms: 0, repeat: run.repeat, from, prior, briefs }, {
         blobs, record, browsers: { newPage: async (opts) => (await pool()).newPage(opts) }, sessions: null, fake: v['fake-llm'], secrets: envSecrets,
       });
       const report = await started.done;
@@ -631,23 +649,25 @@ function urlsFrom(v: Values): Record<string, string> {
 async function rerun(v: Values, dir: string | undefined): Promise<void> {
   if (!v.base) throw new Error(`rerun needs --base <run id>.\n\n${USAGE}`);
   if (v['also-trait-free'] || v['what-if'] !== undefined) throw new Error(`--${v['also-trait-free'] ? 'also-trait-free' : 'what-if'} is for run: rerun repeats what a run froze.`);
+  const brief = briefFrom(v);
   const fake = v['fake-llm'];
   // Beside an app that may have a run live: this leaves it running, and refuses to start a second one.
   const store = existingProject(dir, { recover: false });
   try {
     const from = finishedRun(store, v.base);
-    const prior = v.returning ? returningPrior(store, from) : undefined;
-    const { config } = rerunProject(from, urlsFrom(v));
-    if (from.personas.some((persona) => roleOf(persona, config) !== null)) throw new Error(`${v.base} logs in, and recorded logins are only available in the app.`);
+    const solo = brief && briefedRerun(from, brief);
+    const prior = v.returning ? returningPrior(store, from, brief?.persona_id) : undefined;
+    const { config } = rerunProject(from, urlsFrom(v), { solo: !!solo });
+    if ((solo?.personas ?? from.personas).some((persona) => roleOf(persona, config, solo?.briefs) !== null)) throw new Error(`${v.base} logs in, and recorded logins are only available in the app.`);
     const repeats = Number(v.repeats ?? 1);
     const planned = repeatRuns(config, repeats);
     requireKeys(planned, config.settings, fake);
     const active = store.listRuns().find((run) => run.status === 'running');
     if (active) throw new Error(`${active.run_id} is still running in this project, so another run cannot start. If its process was killed, opening the project in the app clears it.`);
-    const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets, personas: from.personas }))[0]!;
+    const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets, personas: solo?.personas ?? from.personas }))[0]!;
     const estimated = estimateFor(config, personas, repeats, undefined, false, undefined, prior);
     note(`Estimate for ${personas.length} personas${planned.length > 1 ? ` in ${planned.length} runs` : ''}: ${estimateText(estimated)}; ${budgetText(estimated, config.settings.cost_budget_usd)}`);
-    await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from, prior);
+    await runPlanned(resolve(dir!), store, timeline(store), planned, personas, v, from, prior, solo?.briefs);
   } finally {
     store.close();
   }

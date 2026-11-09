@@ -1,11 +1,13 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isUnrated } from '@gnomi/simulation/types.ts';
-import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportBox, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
+import type { EvidenceLevel, Outcome, Prevalence, Report as ReportData, ReportComparison, ReportDimension, ReportEvidence, ReportFriction, ReportLike, ReportPersona, ReportPicture, ReportReach, ReportTheme, Trust } from '@gnomi/simulation/types.ts';
 import { attributeKey, formatAttributeValue } from '@gnomi/simulation/report/dimensions.ts';
 import { COST_SCOPE_TEXT, DRIVER_NOTE, driverText, HIDDEN_FRICTIONS, INTERFERENCE_TEXT, interferenceNote, missingUsageText, outcomeText, poiName, priorNotice, PRIORITY_NOTE, PRIORITY_TEXT, repeatLabel, repeatNote, SCAN_TEXT, scanText, SET_ASIDE_TEXT, setAsideCause, setNote, sharedText, themePoi, themePriority, TRUST_TEXT, trustMix } from '@gnomi/simulation/report/markdown.ts';
 import type { RepeatSet } from '@gnomi/simulation/report/repeats.ts';
 import { HIDDEN_ALL, writtenSummary } from '@gnomi/simulation/report/summary.ts';
+import { screensOf } from '@gnomi/simulation/report/screens.ts';
+import type { Screen } from '@gnomi/simulation/report/screens.ts';
 import { matchesProfileValues, stopText } from './activity.ts';
 import { BuyerSurvey } from './BuyerSurvey.tsx';
 import { ComparisonDetails, ComparisonReport } from './ComparisonReport.tsx';
@@ -17,6 +19,7 @@ import type { Inspect, Tone } from './reportParts.tsx';
 import { Flow } from './ReportFlow.tsx';
 import { EditFinding, EditMark, UnmatchedEdits } from './ReportEdit.tsx';
 import { Methods } from './ReportMethods.tsx';
+import { Crop, FileScreens, findingId, Marked, ScreenPicture, screenTitle } from './ReportScreens.tsx';
 import { Spread } from './ReportSpread.tsx';
 import { OutcomeDetails, RecordOutcome, Study } from './ReportStudy.tsx';
 import { WhatIf } from './ReportWhatIf.tsx';
@@ -99,7 +102,7 @@ function Share({ finding, noun }: { finding: { prevalence?: Prevalence; personas
 const mood = (x: number) => (x <= -1 ? 'Negative' : x < -0.25 ? 'Leaning negative' : x <= 0.25 ? 'Neutral' : x < 1 ? 'Leaning positive' : 'Positive');
 
 // Screenshots come through `renderScreenshot`: the app loads them over IPC, an export inlines them.
-type RenderScreenshot = (path: string, alt: string) => ReactNode;
+export type RenderScreenshot = (path: string, alt: string) => ReactNode;
 
 /** Three quick signals: completion, shared issues, and sentiment or audience size. Always the full run. */
 function Glance({ report, themes: all }: { report: ReportData; themes: ReportTheme[] }) {
@@ -173,12 +176,6 @@ function Affected({ theme }: { theme: ReportTheme }) {
   );
 }
 
-/** A frame over the element, in percent of the screenshot, so it scales with the image with no script. It shows only beside a loaded image (report.css). */
-function Marked({ box: { left, top, width, height, element } }: { box: ReportBox }) {
-  const label = `Marked on the screenshot: ${element}`;
-  return <span role="img" aria-label={label} title={label} className="report-shot-box" style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }} />;
-}
-
 function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportEvidence; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const at = [
     evidence.step_no === null ? 'end-of-episode survey' : `step ${evidence.step_no}`,
@@ -213,19 +210,21 @@ function Evidence({ evidence, onInspect, renderScreenshot }: { evidence: ReportE
 const Repeats = createContext<{ set?: RepeatSet; run_id: string }>({ run_id: '' });
 
 /** Keep the finding readable in one line; the recommendation and evidence open together. */
-function Priority({ theme, number, poi, priority, onInspect, renderScreenshot }: { theme: ReportTheme; number: number; poi?: string; priority: ReturnType<typeof themePriority>; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+function Priority({ theme, number, poi, section, crop, priority, onInspect, renderScreenshot }: { theme: ReportTheme; number: number; poi?: string; section?: string; crop?: ReportPicture; priority: ReturnType<typeof themePriority>; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
   const { set, run_id } = useContext(Repeats);
   const repeats = repeatNote(set, run_id, theme);
   const affected = theme.prevalence?.personas ?? theme.personas;
+  const Title = section ? 'h5' : 'h4'; // a section is named only in a screen card, under the screen's h4
   return (
-    <li className="report-finding" data-tone={SEVERITY[level(theme.severity)].tone}>
+    <li id={inFile ? findingId(theme) : undefined} className="report-finding" data-tone={SEVERITY[level(theme.severity)].tone}>
       <details open={inFile}>
         <summary className="report-finding-summary">
           <span className="report-finding-number" aria-hidden="true">{number.toString().padStart(2, '0')}</span>
+          {crop && !inFile && <Crop picture={crop} renderScreenshot={renderScreenshot} />}
           <div className="report-finding-copy">
-            <h4>{theme.title}</h4>
-            <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{repeats?.appeared && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{repeats?.trait_free && ` · ${repeats.trait_free}`}{theme.interference && ' · possibly interference between personas'}</span></p>
+            <Title>{theme.title}</Title>
+            <p><Icon name="people" size={13} /><span>{theme.scan_only ? 'Found by the accessibility scan' : `${count(affected, 'simulated user')}${affected ? ' experienced this' : ' experienced this first-hand'}`}{poi && ` · ${poi}`}{section && ` · ${section}`}{repeats?.appeared && ` · ${repeats.appeared}`}{repeats?.one_family && ` · ${repeats.one_family}`}{repeats?.trait_free && ` · ${repeats.trait_free}`}{theme.interference && ' · possibly interference between personas'}</span></p>
             {theme.validation && <p className="report-finding-outcome">{outcomeText(theme.validation)}</p>}
             <EditMark theme={theme} />
           </div>
@@ -265,7 +264,7 @@ const TOP = 5;
 
 function Findings({ themes, pois, empty, onInspect, renderScreenshot }: { themes: ReportTheme[]; pois: ReportData['pois']; empty: string; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
   const inFile = useContext(InFile);
-  const items = (shown: ReportTheme[], offset = 0) => shown.map((theme, i) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} number={offset + i + 1} poi={themePoi(theme, pois)} priority={themePriority(theme, pois)} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
+  const items = (shown: ReportTheme[], offset = 0) => shown.map((theme, i) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} number={offset + i + 1} poi={themePoi(theme, pois)} crop={inFile ? undefined : theme.pictures?.[0]} priority={themePriority(theme, pois)} onInspect={onInspect} renderScreenshot={renderScreenshot} />);
   if (themes.length === 0) return <div className="report-empty"><Icon name="check" size={20} /><p>{empty}</p></div>;
   return <div className="report-findings">
     <ol className="report-finding-list">{items(themes.slice(0, TOP))}</ol>
@@ -299,7 +298,43 @@ function SetAside({ themes, pois }: { themes: ReportTheme[]; pois: ReportData['p
   </div>;
 }
 
-function Priorities({ themes, setAside, pois, hidAll, onInspect, renderScreenshot }: { themes: ReportTheme[]; setAside: ReportTheme[]; pois: ReportData['pois']; hidAll: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+/** The findings of every section, regrouped by the screen they were met on. Set-aside findings stay out. */
+function ByScreen({ screens, sections, pois, onInspect, renderScreenshot }: { screens: Screen[]; sections: Map<ReportTheme, string>; pois: ReportData['pois']; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  return (
+    <section aria-labelledby="screens-title">
+      <SectionHeading id="screens-title" title={<>Findings by screen <span>{screens.length}</span></>} hint="The same findings, grouped by where users met them. A number on a picture is the finding it marks; a finding on several screens appears under each." />
+      <div className="report-screens">
+        {screens.map((screen, i) => {
+          const poi = themePoi(screen.findings[0].theme, pois);
+          const title = screenTitle(screen);
+          return (
+            <section key={i} aria-label={poi ? `${title} on ${poi}` : title} className="report-screen">
+              <header>
+                <h4>{title}</h4>
+                <p>
+                  {poi && <span>{poi}</span>}
+                  <span>{count(screen.findings.length, 'finding')}</span>
+                  <SeverityChip severity={Math.max(...screen.findings.map((f) => f.theme.severity))} />
+                  {screen.reached !== null && <span>{count(screen.reached, 'persona')} reached it</span>}
+                </p>
+              </header>
+              <div className="report-screen-body" data-lead={screen.picture ? '' : undefined}>
+                <ScreenPicture screen={screen} renderScreenshot={renderScreenshot} />
+                <ol className="report-finding-list">
+                  {screen.findings.map(({ theme, number, picture }) => <Priority key={`${theme.poi_id}/${theme.id}`} theme={theme} number={number} section={sections.get(theme)} crop={picture?.screenshot === screen.picture?.screenshot ? undefined : picture} priority={themePriority(theme, pois)} onInspect={onInspect} renderScreenshot={renderScreenshot} />)}
+                </ol>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function Priorities({ themes, setAside, pois, reach, hidAll, onInspect, renderScreenshot }: { themes: ReportTheme[]; setAside: ReportTheme[]; pois: ReportData['pois']; reach?: ReportReach[]; hidAll: boolean; onInspect: Inspect; renderScreenshot: RenderScreenshot }) {
+  const inFile = useContext(InFile);
+  const [view, setView] = useState<'priority' | 'screen'>('priority');
   const own = themes.filter((theme) => !pois.find((poi) => poi.id === theme.poi_id)?.competitor);
   const shared = own.filter((t) => !isSingle(t));
   const problems = shared.filter((t) => t.category !== 'objection');
@@ -308,16 +343,28 @@ function Priorities({ themes, setAside, pois, hidAll, onInspect, renderScreensho
   const competitors = themes.filter((theme) => pois.find((poi) => poi.id === theme.poi_id)?.competitor);
   const ownSetAside = setAside.some((theme) => !pois.find((poi) => poi.id === theme.poi_id)?.competitor);
   const props = { pois, onInspect, renderScreenshot };
+  const groups = [['What to improve', problems], ['Reasons for hesitation', objections], ['Individual observations', singles], ['Competitor findings', competitors]] as const;
+  const listed = groups.flatMap(([, list]) => list);
+  const screens = screensOf(listed, reach);
+  const byScreen = view === 'screen' && !inFile && listed.length > 0;
+  const setAsideFold = setAside.length > 0 && <Fold id="set-aside-title" title={`Set aside by the evidence check (${setAside.length})`} hint="A model's review points away from the product; each reason is here" icon="report"><SetAside themes={setAside} pois={pois} /></Fold>;
   return (
     <div className="report-priorities">
-      <section aria-labelledby="themes-title">
-        <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Fix now, Next and Later suggest where to look first in this run. Open an issue for the suggested change and evidence." />
-        <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : hidAll ? HIDDEN_ALL : 'No shared issues were reported in this run.'} {...props} />
-      </section>
-      {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
-      {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, remembered from an earlier visit, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
-      {setAside.length > 0 && <Fold id="set-aside-title" title={`Set aside by the evidence check (${setAside.length})`} hint="A model's review points away from the product; each reason is here" icon="report"><SetAside themes={setAside} pois={pois} /></Fold>}
-      {competitors.length > 0 && <Fold id="competitor-findings-title" title={`Competitor findings (${competitors.length})`} hint="Friction on the other products in this run" icon="globe"><Findings themes={competitors} empty="" {...props} /></Fold>}
+      {!inFile && listed.length > 0 && <div role="group" aria-label="Group findings" className="segmented-control report-view"><button type="button" aria-pressed={!byScreen} onClick={() => setView('priority')}>By priority</button><button type="button" aria-pressed={byScreen} onClick={() => setView('screen')}>By screen</button></div>}
+      {byScreen ? <>
+        <ByScreen screens={screens} sections={new Map(groups.flatMap(([label, list]) => list.map((t) => [t, label] as const)))} {...props} />
+        {setAsideFold}
+      </> : <>
+        <section aria-labelledby="themes-title">
+          <SectionHeading id="themes-title" title={<>What to improve <span>{problems.length}</span></>} hint="Where simulated users found friction. Fix now, Next and Later suggest where to look first in this run. Open an issue for the suggested change and evidence." />
+          <Findings themes={problems} empty={singles.length ? 'No shared issues yet. Individual observations are below.' : ownSetAside ? 'No shared issues are left. What the evidence check set aside is below.' : hidAll ? HIDDEN_ALL : 'No shared issues were reported in this run.'} {...props} />
+        </section>
+        {objections.length > 0 && <Fold id="objections-title" title={`Reasons for hesitation (${objections.length})`} hint="What made users doubt or reconsider" icon="message"><Findings themes={objections} empty="" {...props} /></Fold>}
+        {singles.length > 0 && <Fold id="singles-title" title={`Individual observations (${singles.length})`} hint="Reported by one user, heard from others, remembered from an earlier visit, or found by the accessibility scan; not yet a pattern" icon="people"><Findings themes={singles} empty="" {...props} /></Fold>}
+        {setAsideFold}
+        {competitors.length > 0 && <Fold id="competitor-findings-title" title={`Competitor findings (${competitors.length})`} hint="Friction on the other products in this run" icon="globe"><Findings themes={competitors} empty="" {...props} /></Fold>}
+        {inFile && screens.some((screen) => screen.kind !== 'none') && <FileScreens screens={screens} pois={pois} renderScreenshot={renderScreenshot} />}
+      </>}
     </div>
   );
 }
@@ -681,7 +728,7 @@ export function Report({ report, repeats, filter = {}, onInspect, renderScreensh
         {repeats?.what_if && <WhatIf whatIf={repeats.what_if} />}
         {summary && <section aria-label="Summary" className="report-goal">{summary}</section>}
         <Glance report={report} themes={themes} />
-        {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} hidAll={!!report.shared?.hidden} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
+        {report.themes ? <Priorities themes={themes} setAside={report.set_aside ?? []} pois={report.pois} reach={report.reach} hidAll={!!report.shared?.hidden} onInspect={onInspect} renderScreenshot={renderScreenshot} /> : <LegacyFindings report={report} onInspect={onInspect} />}
         {report.unmatched_edits && <UnmatchedEdits edits={report.unmatched_edits} />}
         {interviews}
         <Study report={report} />

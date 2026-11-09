@@ -509,6 +509,20 @@ html:has(dialog:modal) { overflow: hidden; }
 .note-copy > p:not(.note-title) { color: var(--gnomi-text); }
 .note-copy > .note-detail { margin-top: 4px; color: var(--gnomi-text-muted); font-size: 11px; }
 .note-action { flex-shrink: 0; align-self: center; gap: 6px; margin-left: auto; }
+
+/* Updates: the banner across the app and the row in Settings share one layout. */
+.update-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.update-banner { padding: 14px 16px; margin-bottom: 20px; border: 1px solid var(--gnomi-line); border-radius: 12px; background: linear-gradient(100deg, var(--gnomi-selected), var(--gnomi-surface) 70%); }
+.update-badge { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 10px; background: var(--gnomi-action); color: var(--gnomi-on-action); }
+.update-row[data-status='current'] .update-badge { background: var(--gnomi-success); }
+.update-row[data-status='failed'] .update-badge { background: var(--gnomi-error); }
+.update-row[data-status='checking'] .update-badge, .update-row[data-status='development'] .update-badge { background: var(--gnomi-selected); color: var(--gnomi-action); }
+.update-copy { flex: 1 1 16rem; min-width: 0; display: grid; gap: 2px; font-size: 13px; line-height: 1.5; color: var(--gnomi-text-muted); }
+.update-title { font-weight: 600; color: var(--gnomi-text); }
+.update-meter { height: 6px; margin-top: 8px; max-width: 360px; border-radius: 4px; background: var(--gnomi-line); overflow: hidden; }
+.update-meter > span { display: block; height: 100%; background: var(--gnomi-action); border-radius: inherit; transition: width .4s ease; }
+.update-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { .update-meter > span { transition: none; } }
 .content-panel[id]:focus { outline: none; box-shadow: 0 0 0 2px var(--gnomi-action); }
 
 .tone-fill { background: var(--tone); }

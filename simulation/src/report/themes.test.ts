@@ -722,3 +722,67 @@ test('a post the team added says nothing of what the persona named on it met, so
   const [added] = analyseFrictions(heard(true), ctx).themes;
   assert.deepEqual([added.first_hand, added.heard_first, added.trust, added.personas], [['a3', 'a2'], 0, own.trust, own.personas], 'the team\'s is not');
 });
+
+const PAGE = 'gym.test/jobs/new';
+const viewed = (step_no: number, shot: string): EventPayloads['persona.step'] => ({ ...step(step_no), screenshot: shot, viewport: [0, 0, 1280, 800] });
+const about = { role: 'button', name: 'Save', box: [128, 80, 128, 80] as [number, number, number, number] };
+const MARK = { left: 10, top: 10, width: 10, height: 10, element: 'button "Save"' };
+
+test('a theme\'s picture on its page: a member with its element marked first, then as evidence orders', () => {
+  const events = log(
+    ['persona.step', 'a1', viewed(1, 'shots/a1.jpg')],
+    ['persona.friction_reported', 'a1', friction(1, 4)],
+    ['persona.step', 'a2', viewed(1, 'shots/a2.jpg')],
+    ['persona.friction_reported', 'a2', { ...friction(1, 2), about }],
+  );
+  const [theme] = analyseFrictions(events, ctx).themes;
+  assert.equal(theme.evidence[0].persona_id, 'a1', 'the evidence order is unchanged');
+  assert.deepEqual(theme.pictures, [{ page: PAGE, screenshot: 'shots/a2.jpg', box: MARK, persona_id: 'a2', step_seq: 3 }]);
+  const [unmarked] = analyseFrictions(events.slice(0, 2), ctx).themes;
+  assert.deepEqual(unmarked.pictures, [{ page: PAGE, screenshot: 'shots/a1.jpg', persona_id: 'a1', step_seq: 1 }], 'no box: the whole picture');
+});
+
+test('a page scan never gives a picture: its step is only where one persona happened to be', () => {
+  const [theme] = analyseFrictions(log(['persona.step', 'a1', step(1)], ['signal.accessibility', 'a1', scanned(1)]), ctx).themes;
+  assert.ok(theme.scan_only);
+  assert.ok(!('pictures' in theme));
+  const merged = analyseFrictions(log(
+    ['persona.step', 'a1', viewed(1, 'shots/a1.jpg')],
+    ['signal.accessibility', 'a1', scanned(1)],
+    ['persona.step', 'a2', viewed(1, 'shots/a2.jpg')],
+    ['persona.friction_reported', 'a2', friction(1, 4, 'I could not make out the words')],
+    ['report.themes', null, { poi_id: 'poi', themes: [{ title: 'Pale text', description: 'Words are pale.', group_ids: ['g1', 'g2'] }] }],
+  ), ctx).themes[0];
+  assert.deepEqual(merged.pictures?.map((p) => p.persona_id), ['a2'], 'the persona who met it, not the scan\'s step');
+});
+
+test('a persona with simulated perception gives no picture while another member saw the page as it is', () => {
+  const started = (perception?: string) => ({ poi_id: 'poi', device: 'desktop', start_url: JOBS, ...(perception && { perception }) });
+  const events = log(
+    ['persona.episode_started', 'a1', started('deuteranopia')],
+    ['persona.step', 'a1', viewed(1, 'shots/a1.jpg')],
+    ['persona.friction_reported', 'a1', { ...friction(1, 4), about }],
+    ['persona.episode_started', 'a2', started()],
+    ['persona.step', 'a2', viewed(1, 'shots/a2.jpg')],
+    ['persona.friction_reported', 'a2', friction(1, 2)],
+  );
+  assert.deepEqual(analyseFrictions(events, ctx).themes[0].pictures?.map((p) => [p.persona_id, p.screenshot]), [['a2', 'shots/a2.jpg']]);
+  assert.deepEqual(analyseFrictions(events.slice(0, 3), ctx).themes[0].pictures?.map((p) => p.persona_id), ['a1'], 'alone, hers is still a picture');
+});
+
+test('a design screen\'s picture is its frame; a theme of survey answers only has none', () => {
+  const design = { id: 'poi', type: 'design', name: 'Checkout', segments: null, frames: [{ asset: '0123456789abcdef.png', name: null }] };
+  const frame: EventPayloads['persona.step'] = {
+    ...step(1, 'asset:0123456789abcdef.png'), target: { role: 'frame', name: 'Checkout', box: null }, screenshot: 'assets/0123456789abcdef.png', frame: 0,
+  };
+  const { themes } = analyseFrictions(log(
+    ['run.started', null, { config: { project: { pois: [design] } } }],
+    ['persona.step', 'a1', frame],
+    ['persona.friction_reported', 'a1', { ...friction(1, 3), where: { url: 'asset:0123456789abcdef.png', ref: null }, frame: 0 }],
+    ['persona.survey', 'a2', survey(['Prices are hidden'], [])],
+  ), ctx);
+  const screen = themes.find((t) => t.pages.length > 0)!;
+  assert.deepEqual(screen.pictures, [{ page: 'Checkout', screenshot: 'assets/0123456789abcdef.png', persona_id: 'a1', step_seq: 2 }]);
+  const answers = themes.find((t) => t.pages.length === 0)!;
+  assert.ok(!('pictures' in answers));
+});

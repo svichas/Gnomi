@@ -939,3 +939,27 @@ test('--also-trait-free adds one run to a set, in its snapshot alone, and only a
   assert.match(refused('run', '--pois', pois, '--goal', 'Pick a plan', '--project', empty, '--also-trait-free').stderr, /needs an audience/);
   assert.ok(!existsSync(join(empty, 'runs')), 'before any run starts');
 });
+
+test('rerun --brief runs one persona again alone and logged out on the team\'s words, and cannot make a set', () => {
+  const project = join(dir, 'brief');
+  const lines = (...args: string[]) => cli(...args, '--json').trim().split('\n').map((line) => JSON.parse(line));
+  cli('run', '--pois', join(dir, 'pois.json'), '--goal', 'Pick a plan', '--settings', join(dir, 'settings.json'), '--project', project);
+  const store = openProject(project, { readOnly: true });
+  const persona_id = store.listRuns()[0].config.personas[0].id;
+  store.close();
+  const brief = ['--base', 'r-0001', '--persona', persona_id, '--brief', ' Look for the yearly price. '];
+
+  assert.equal(lines('estimate', project, ...brief).at(-1).personas, 1);
+  assert.equal(lines('rerun', project, ...brief).at(-1).run_id, 'r-0002');
+  const after = openProject(project, { readOnly: true });
+  const { config } = after.listRuns().find((run) => run.run_id === 'r-0002')!;
+  after.close();
+  assert.deepEqual(config.briefs, { [persona_id]: { text: 'Look for the yearly price.', role: null, from_run: 'r-0001' } });
+  assert.deepEqual([config.personas.length, config.project.settings.social], [1, false]);
+
+  const refused = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...args, '--fake-llm'], { encoding: 'utf8' }).stderr;
+  assert.match(refused('rerun', project, ...brief, '--repeats', '2'), /A brief is one persona's one visit, so it cannot run as a set\./);
+  assert.match(refused('estimate', project, ...brief, '--repeats', '2'), /cannot run as a set/);
+  assert.match(refused('rerun', project, '--base', 'r-0001', '--brief', 'Look'), /--brief and --persona go together/);
+  assert.match(refused('rerun', project, '--base', 'r-0001', '--persona', 'p-9', '--brief', 'Look'), /r-0001 has no persona p-9\./);
+});

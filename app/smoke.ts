@@ -174,7 +174,7 @@ try {
         remote,
       };
     });
-    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile', 'latestRelease', 'installUpdate', 'openReleases'], inlineScriptRan: false, remote: 'blocked' });
+    assert.deepEqual(seen, { node: ['undefined', 'undefined'], bridge: ['saveKey', 'listProviders', 'clearKey', 'testKey', 'saveFigmaToken', 'clearFigmaToken', 'testFigmaToken', 'listAudiences', 'saveAudience', 'deleteAudience', 'listProjects', 'listRuns', 'projectAction', 'reportThumbnails', 'saveReport', 'pathForFile', 'checkUpdate', 'onUpdate', 'installUpdate', 'openReleases'], inlineScriptRan: false, remote: 'blocked' });
   });
 
   await stage('provider keys and the session key are stored as plain files only this user can read; a key is never returned and can be removed', async () => {
@@ -238,7 +238,7 @@ try {
     }
     const html = file('html').toString();
     assert.doesNotMatch(html, /<script/i);
-    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?data:)/i, 'the HTML loads something from outside the file');
+    assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*(?!["']?(?:data:|#))/i, 'the HTML loads something from outside the file'); // a #link moves within the file
     assert.match(html, /<img src="data:image\/jpeg;base64,/);
     assert.doesNotMatch(html, /<button\b/, 'the file has inspector links');
     assert.equal(file('pdf').subarray(0, 5).toString(), '%PDF-');

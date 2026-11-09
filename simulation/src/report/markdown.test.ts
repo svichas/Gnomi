@@ -472,3 +472,42 @@ test('the written summary follows the banner, escaped like the rest of the repor
   assert.equal(md.split('\n')[6], '- Tried: Gym (http://localhost:3001/)');
   assert.doesNotMatch(reportToMarkdown(report), /biggest problem|No friction theme/, 'a report older than themes has no summary');
 });
+
+test('a briefed run says so under the banner, with the persona, the words and the login', () => {
+  const md = (role: string | null) => reportToMarkdown({ ...report, methods: { ...report.methods, brief: { ...{ persona_id: 'p-001', name: 'Dana', text: 'Use Settings.', role: 'admin', from_run: 'r-0001' }, role } } });
+  const notice = 'One persona, Dana, followed a brief from the team: "Use Settings.", signed in as admin. Its findings say what happened under that brief, not on first use.';
+  assert.ok(md('admin').indexOf(`> ${notice}`) > md('admin').indexOf(`> ${report.banner}`));
+  assert.ok(md(null).includes('"Use Settings.", logged out.'), 'no login');
+  assert.ok(!reportToMarkdown(report).includes('followed a brief'));
+});
+
+const pic = (page: string, screenshot: string, box?: { left: number; top: number; width: number; height: number; element: string }) => ({ page, screenshot, ...(box && { box }), persona_id: 'p-1-01', step_seq: 3 });
+
+test('findings by screen lists pinned, own-screenshot, across and untied findings, objections marked', () => {
+  const box = { left: 10, top: 20, width: 30, height: 5, element: 'button "Save"' };
+  const a = { ...theme, id: 'a', title: 'Save <fails>', pages: ['gym/jobs/new', 'gym/jobs/:id'], pictures: [pic('gym/jobs/new', 'shots/a.jpg', box), pic('gym/jobs/:id', 'shots/b.jpg')] };
+  const b = { ...theme, id: 'b', title: 'Odd copy', severity: 2, pages: ['gym/jobs/new'], pictures: [pic('gym/jobs/new', 'shots/c.jpg')] };
+  const c = { ...theme, id: 'c', title: 'Slow', pages: ['gym/a', 'gym/b', 'gym/c', 'gym/d'], pictures: [pic('gym/a', 'shots/d.jpg')] };
+  const d = { ...theme, id: 'd', title: 'Too dear', category: 'objection' as const, pages: [] };
+  const md = reportToMarkdown({ ...report, themes: [a, b, c, d], reach: [{ poi_id: 'poi-gym', started: [], surveyed: [], pages: { 'gym/jobs/:id': ['p-1-01'], 'gym/jobs/new': ['p-1-01', 'p-1-02'] } }] });
+  const part = md.slice(md.indexOf('## Findings by screen'));
+  for (const expected of [
+    '### /jobs/new (reached by 2 personas)', 'Screenshot: shots/a.jpg',
+    '1. Save &lt;fails&gt; (severity 3 of 4) — marked on the screenshot: button "Save"',
+    '2. Odd copy (severity 2 of 4) — own screenshot: shots/c.jpg',
+    '### /jobs/:id (reached by 1 persona)', 'Screenshot: shots/b.jpg',
+    '### Across many screens', '1. Slow (severity 3 of 4) — own screenshot: shots/d.jpg',
+    '### Not tied to one screen', '1. Too dear (a reason not to adopt, from the survey) (severity 3 of 4)',
+  ]) assert.ok(part.includes(expected), expected);
+  assert.ok(part.indexOf('/jobs/new') < part.indexOf('/jobs/:id') && part.indexOf('Across') < part.indexOf('Not tied'));
+});
+
+test('findings by screen without pictures groups by POI, and is left out with no screen to name', () => {
+  const pois = [{ id: 'poi-gym', type: 'web' as const, name: 'Gym', start_url: url }, { id: 'poi-2', type: 'web' as const, name: 'Rival', start_url: url }];
+  const md = reportToMarkdown({ ...report, pois, themes: [theme, { ...theme, id: 'x', poi_id: 'poi-2' }] });
+  const [part] = md.slice(md.indexOf('## Findings by screen')).split('\n## ');
+  assert.ok(part.includes('### Gym') && part.includes('### Rival') && part.includes('#### /jobs/new'));
+  assert.ok(!part.includes('Screenshot:') && !part.includes('marked on the screenshot') && !part.includes('own screenshot'));
+  assert.ok(!reportToMarkdown({ ...report, themes: [] }).includes('Findings by screen'));
+  assert.ok(!reportToMarkdown({ ...report, themes: [{ ...theme, pages: [] }] }).includes('Findings by screen'), 'only untied themes would repeat the list');
+});
