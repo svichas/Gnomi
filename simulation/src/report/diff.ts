@@ -69,7 +69,7 @@ export interface SpreadDiff {
 
 /** A note that makes the two sides unlike, for a reader that must act on it rather than print it (report/gate.ts). */
 export interface DiffGap {
-  kind: 'model' | 'personas' | 'goal' | 'pois' | 'stopped' | 'unrated' | 'returning';
+  kind: 'model' | 'personas' | 'goal' | 'pois' | 'stopped' | 'unrated' | 'returning' | 'brief';
   text: string;
 }
 
@@ -240,6 +240,11 @@ function gapsBetween(before: Report[], after: Report[]): DiffGap[] {
     ]),
     ...gaps('unrated', all.filter((run) => run.personas.every((persona) => isUnrated(persona.outcome))).map((run) => `No persona in ${run.run_id} got a valid answer from the model, so it says nothing about the build.`)),
     ...gaps('returning', varied(all.map(remembers)) ? [`${all.every(remembers) ? 'The two sides remember different earlier runs' : "One side's personas had used the product before and the other's had not"}, so a change may come from what they remember rather than the build.`] : []),
+    // A briefed persona skipped or did things on the team's word, so a missing theme proves nothing about the build.
+    ...gaps('brief', ([['earlier', before], ['later', after]] as const).flatMap(([which, side]) => {
+      const name = side.find((run) => run.methods.brief)?.methods.brief?.name;
+      return name ? [`The ${which} run followed a brief from the team for ${name}, so a theme it did not show may have been skipped on purpose: it is not a before-and-after comparison.`] : [];
+    })),
   ];
 }
 

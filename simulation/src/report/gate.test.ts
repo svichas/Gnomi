@@ -185,3 +185,10 @@ test('a side no persona got through says nothing, so three silent runs are no pa
   assert.equal(gate.decision, 'could_not_decide');
   assert.match(gate.reasons.join(), /No persona in later-1 got a valid answer from the model/);
 });
+
+test('a side that followed a brief cannot decide', () => {
+  const briefed = set('later', [OLD, NEW], [OLD, NEW], [OLD, NEW]).map((run) => ({ ...run, methods: { ...run.methods, brief: { persona_id: 'p-001', name: 'Dana', text: 'Use Settings.', role: null, from_run: 'r-0001' } } }));
+  const gate = decide(base(), briefed);
+  assert.equal(gate.decision, 'could_not_decide');
+  assert.match(gate.reasons.join(), /followed a brief from the team for Dana/);
+});

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { defaultAudience } from './audience/index.ts';
-import { askPersona, cappedGateway, checkRun, compareRuns, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runSet } from './workspace.ts';
+import { askPersona, BRIEF_SET, briefedRerun, cappedGateway, checkRun, compareRuns, credential, editFinding, endedRun, estimateFor, finishedRun, modelRun, planStudy, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runSet } from './workspace.ts';
 import { QUESTION_MAX } from '@gnomi/simulation/agent/interview.ts';
 import { estimateStudy } from '@gnomi/simulation/llm/estimate.ts';
 import { createScriptedGateway, DEMO_AUTHOR } from '@gnomi/simulation/llm/scripted.ts';
@@ -282,6 +282,37 @@ test('a returning run freezes the named run\'s memories, and a comparison study 
   failed.place.record({ run_id: failed.run_id, round: 1, persona_id: BUILTIN_PERSONA.id, poi_id: 'poi-1', type: 'signal.repeated_failure', payload: { step_no: 2, action: 'wait', error: 'invalid_output' } });
   failed.end();
   assert.throws(() => returningPrior(failed.store, failed.row().config), /left no persona a visit to remember/, 'the notice would say these personas used the product before');
+});
+
+test('a brief returns one persona, remembering only its own visit, and refuses one with nothing to remember', (t) => {
+  const run = loggedRun(t);
+  const other = { ...BUILTIN_PERSONA, id: 'p-2', name: 'Ola' };
+  const who = { run_id: run.run_id, round: 1, poi_id: 'poi-1' };
+  run.place.record({ ...who, persona_id: other.id, type: 'persona.created', payload: { persona: other } });
+  for (const id of [BUILTIN_PERSONA.id, other.id]) run.place.record({ ...who, persona_id: id, type: 'persona.goal_done', payload: { step_no: 2, summary: 'Saved.' } });
+  run.end();
+  const from = { ...run.row().config, personas: [BUILTIN_PERSONA, other] };
+  assert.equal(Object.keys(returningPrior(run.store, from).memories).length, 2);
+  assert.deepEqual(Object.keys(returningPrior(run.store, from, other.id).memories), [other.id]);
+  assert.throws(() => returningPrior(run.store, { ...from, personas: [...from.personas, { ...other, id: 'p-3', name: 'Kim' }] }, 'p-3'), new RegExp(`Kim left nothing to remember from ${run.run_id}`));
+});
+
+test('a brief is refused before anything is spent, and frozen trimmed for its one persona', () => {
+  const from = frozen();
+  const brief = { persona_id: BUILTIN_PERSONA.id, text: '  You are the admin now.  ', role: 'admin' };
+  assert.throws(() => briefedRerun(from, { ...brief, persona_id: 'p-9' }), /r-0001 has no persona p-9\./);
+  assert.throws(() => briefedRerun(from, { ...brief, text: '   ' }), /Write the brief first/);
+  assert.throws(() => briefedRerun(from, { ...brief, text: 'x'.repeat(501) }), /The brief has 501 characters, and the limit is 500\./);
+  assert.throws(() => briefedRerun(frozen({ project: { ...gym, comparison: { targets: [] } as unknown as ProjectConfig['comparison'] } }), brief), /comparison study, which takes no brief/);
+  assert.deepEqual(briefedRerun(frozen({ personas: [BUILTIN_PERSONA, { ...BUILTIN_PERSONA, id: 'p-2' }] }), brief), { personas: [BUILTIN_PERSONA], briefs: { [BUILTIN_PERSONA.id]: { text: 'You are the admin now.', role: 'admin', from_run: 'r-0001' } } });
+  assert.match(BRIEF_SET, /cannot run as a set/);
+});
+
+test('a solo rerun has nobody to talk to, so its social rounds are off; its budget is as any rerun\'s', () => {
+  const social = frozen({ project: { ...gym, settings: { ...gym.settings, social: true } } });
+  assert.equal(rerunProject(social).config.settings.social, true);
+  const { settings } = rerunProject(social, {}, { solo: true }).config;
+  assert.deepEqual([settings.social, settings.cost_budget_usd], [false, 6]);
 });
 
 test('a comparison study has no themes to act on, and a run with no routing cannot start model work', (t) => {

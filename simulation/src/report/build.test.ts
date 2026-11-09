@@ -895,3 +895,10 @@ test('a theme\'s evidence carries the box of what it is about and Markdown names
   assert.equal(old.themes?.[0].evidence[0].screenshot, shot.screenshot, 'the plain screenshot stays');
   assert.ok(!reportToMarkdown(old).includes('   - About: '));
 });
+
+test('a brief frozen in the config is named in the methods, and a run without one has none', () => {
+  const briefed = { ...config, briefs: { 'p-001': { text: 'Use Settings.', role: 'admin', from_run: 'r-0001' } } };
+  const methods = (cfg: RunConfig) => buildReport(stored([[1000, { ...runEnv, type: 'run.started', payload: { config: cfg } }]])).methods;
+  assert.deepEqual(methods(briefed).brief, { persona_id: 'p-001', name: BUILTIN_PERSONA.name, text: 'Use Settings.', role: 'admin', from_run: 'r-0001' });
+  assert.equal(methods(config).brief, undefined);
+});
