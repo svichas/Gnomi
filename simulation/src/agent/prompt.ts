@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { countryName, personaEnvironment } from '../audience/locations.ts';
 import { fnv1a } from '../audience/sample.ts';
 import { ENGLISH, english, isEnglish } from '../llm/english.ts';
-import { isAttributeEnabled, profileEntries } from '../profile/schema.ts';
+import { isAttributeEnabled, profileEntries, usedPronouns } from '../profile/schema.ts';
 import { opinionSchema } from '../opinion/index.ts';
 import { ACTION_TYPES, PRESS_KEYS } from '../types.ts';
 import type { Action, ActionResult, ActionTarget, ActionType, Brief, Opinion, PageSnapshot, Perception, Persona, Poi, PriorPoi, ProjectConfig, Segment, WebPoi } from '../types.ts';
@@ -114,7 +114,7 @@ const firstLanguage = (p: string, locale: string) =>
 
 /** The first name as subject; pronouns only when the profile schema lets them into prompts. */
 export function wordsFor(persona: Persona, project: ProjectConfig): Words {
-  const pronouns = isAttributeEnabled(project.persona_schema, 'pronouns', 'prompt') ? persona.pronouns : 'they';
+  const pronouns = usedPronouns(persona, project.persona_schema);
   return { p: firstName(persona), ...PRONOUNS[pronouns] };
 }
 

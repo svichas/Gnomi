@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BUILTIN_PERSONA } from '../persona.ts';
 import type { PersonaSchema, ProfileAttribute } from '../types.ts';
-import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries, validatePersonaSchema } from './schema.ts';
+import { attributeValue, getPersonaSchema, isAttributeEnabled, profileEntries, usedPronouns, validatePersonaSchema } from './schema.ts';
 
 export const custom: ProfileAttribute = {
   id: 'region', name: 'Region', description: 'The sales region this person works in.', group: 'work', type: 'choice',
@@ -83,4 +83,11 @@ test('sampling validation rejects incompatible values, nonfinite or empty weight
   schema.attributes.push({ ...custom, id: 'volume', type: 'number', choices: undefined, sampling: { default: { kind: 'range', min: 4, max: 2, integer: true }, by_segment: {} } });
   assert.throws(() => validatePersonaSchema(schema));
   assert.throws(() => validatePersonaSchema({ version: 1, attributes: Array(1000).fill(custom) }));
+});
+
+test('pronouns a schema keeps out of prompts are they, for the prompt and the face alike', () => {
+  const schema = getPersonaSchema();
+  schema.attributes.find((attribute) => attribute.id === 'pronouns')!.use_in_prompt = false;
+  assert.equal(usedPronouns({ pronouns: 'she' }, schema), 'they');
+  assert.equal(usedPronouns({ pronouns: 'she' }, undefined), 'she');
 });

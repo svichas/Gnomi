@@ -15,7 +15,7 @@ import { Button, Note, Screenshot } from './ui.tsx';
 import './interview.css';
 
 type Answer = EventOf<'persona.interviewed'>;
-type Who = { id: string; name: string };
+type Who = { id: string; name: string; pronouns?: Persona['pronouns'] };
 
 /** The question being answered: one per run, whoever it is for, as the host answers one at a time. `answered` is how many answers the persona had when it was asked. */
 interface Asking { persona_id: string; name: string; question: string; answered: number; error?: string }
@@ -58,7 +58,7 @@ function Message({ from, text, note, at, status, onProfile }: { from: 'team' | W
   return (
     <div className="chat-row" data-from={team ? 'team' : 'persona'}>
       {/* Out of the tab order, as in a messenger: the header's name is the keyboard's way to the profile. */}
-      {!team && (onProfile ? <button type="button" tabIndex={-1} className="chat-face" aria-label={`${from.name}'s profile`} onClick={onProfile}><PersonaAvatar name={from.name} id={from.id} /></button> : <PersonaAvatar name={from.name} id={from.id} />)}
+      {!team && (onProfile ? <button type="button" tabIndex={-1} className="chat-face" aria-label={`${from.name}'s profile`} onClick={onProfile}><PersonaAvatar name={from.name} id={from.id} pronouns={from.pronouns} /></button> : <PersonaAvatar name={from.name} id={from.id} pronouns={from.pronouns} />)}
       <div className="chat-bubble">
         <p><span className="sr-only">{team ? 'You asked: ' : `${from.name} answered: `}</span>{text}</p>
         <p className="chat-meta" title={team ? undefined : INTERVIEW_LABEL}>{note && <span>{note}</span>}{at !== undefined && <time>{clock(at)}</time>}{status && <Icon name={status} size={12} />}</p>
@@ -137,7 +137,7 @@ export function PersonaChat({ runId, persona, answers, interview, askable = true
           <Replay steps={replay.steps} events={replay.events} name={persona.name} shotLabel={replay.shotLabel} onAsk={askable ? askAbout : undefined} />
           <button type="button" className="chat-video-hide" onClick={() => onWatch?.(false)}>Hide the replay</button>
         </div> : <div className="chat-row" data-from="persona">
-          <PersonaAvatar name={persona.name} id={persona.id} />
+          <PersonaAvatar name={persona.name} id={persona.id} pronouns={persona.pronouns} />
           <div className="chat-video">
             <div className="chat-video-poster" aria-hidden="true">{poster && <Screenshot path={poster} alt="" />}</div>
             <button type="button" onClick={() => onWatch?.(true)}>
@@ -154,7 +154,7 @@ export function PersonaChat({ runId, persona, answers, interview, askable = true
         </Fragment>)}
         {waiting && <Message from="team" text={waiting.question} note={waiting.error ? 'Not answered' : 'Waiting'} status={waiting.error ? 'alert' : 'clock'} />}
         {waiting && !waiting.error && <div className="chat-row" data-from="persona">
-          <PersonaAvatar name={persona.name} id={persona.id} />
+          <PersonaAvatar name={persona.name} id={persona.id} pronouns={persona.pronouns} />
           <div className="chat-bubble chat-typing"><span className="sr-only">{persona.name} is answering…</span><span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" /></div>
         </div>}
         {waiting?.error && <div className="chat-failed">
@@ -249,7 +249,7 @@ export function Interviews({ runId, report, answers, interview, personas, schema
               const typing = answering(candidate.id);
               return <li key={candidate.id}>
                 <button type="button" data-persona={candidate.id} aria-current={candidate.id === open || undefined} className="chat-contact" onClick={() => pick(candidate.id)}>
-                  <PersonaAvatar name={candidate.name} id={candidate.id} />
+                  <PersonaAvatar name={candidate.name} id={candidate.id} pronouns={candidate.pronouns} />
                   <span className="chat-contact-copy">
                     <span className="chat-contact-top"><strong>{candidate.name}</strong>{last && <time>{dayLabel(last.ts) === 'Today' ? clock(last.ts) : dayLabel(last.ts)}</time>}</span>
                     <span className="chat-contact-preview" data-answering={typing || undefined}>{typing ? 'answering…' : last ? last.payload.answer : detail(candidate)}</span>
@@ -266,7 +266,7 @@ export function Interviews({ runId, report, answers, interview, personas, schema
             <header className="chat-header">
               <button type="button" className="chat-back" aria-label="All personas" onClick={back}><Icon name="back" size={18} /></button>
               <button type="button" className="chat-who" aria-label={`${persona.name}'s profile`} title="Open the profile" onClick={() => setProfile(true)}>
-                <PersonaAvatar name={persona.name} id={persona.id} />
+                <PersonaAvatar name={persona.name} id={persona.id} pronouns={persona.pronouns} />
                 <span className="chat-header-copy"><strong>{persona.name}</strong><span data-answering={answering(persona.id) || undefined}>{answering(persona.id) ? 'answering…' : detail(persona)}</span></span>
               </button>
               {replay && <Button small variant="quiet" aria-label="Watch the replay" title="Watch the replay" onClick={() => setWatching(true)}><Icon name="play" size={15} /><span className="chat-header-label">Replay</span></Button>}

@@ -34,7 +34,7 @@ export function PersonaProfile({ persona, profile, schema, segment, onWatch, onT
     <dialog ref={dialog} aria-label={`${persona.name}'s profile`} className="profile-dialog" onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="profile-card">
         <header className="profile-hero">
-          <PersonaAvatar name={persona.name} id={persona.id} />
+          <PersonaAvatar name={persona.name} id={persona.id} pronouns={persona.pronouns} />
           <div className="min-w-0">
             <h2>{persona.name}{profile?.pronouns && isAttributeEnabled(schema, 'pronouns', 'card') && <span> ({profile.pronouns})</span>}</h2>
             {role && <p>{role}</p>}
