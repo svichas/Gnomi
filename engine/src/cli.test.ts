@@ -4,9 +4,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
+import { defaultAudience } from './audience/defaults.ts';
+import { segmentsFrom } from './audience/segments.ts';
 import { fnv1a } from '@gnomi/simulation/audience/sample.ts';
 import { isPriced } from '@gnomi/simulation/llm/prices.ts';
 import { openProject } from '@gnomi/simulation/log/sqlite.ts';
@@ -424,6 +426,82 @@ test('audience sources warns first, keeps a digest and no source text, and a ref
   assert.equal(cli('audience', 'update', file, '--json').includes('"written":2'), true, 'a grounded segment is written again');
 });
 
+test('audience create --segments reads the segments from a file, starts what they leave out from Everyone and scales the shares to 100', () => {
+  const file = join(dir, 'from-segments.json');
+  const segments = join(dir, 'segments.json');
+  writeFileSync(segments, JSON.stringify([
+    { name: 'Admins', description: 'People who buy the plan.', share: 3, mobile_share: 0, patience: [4, 2] },
+    { name: 'Members', description: 'People who use what an admin bought.', share: 1, usage_frequency: 'daily', goal_override: '' },
+  ]));
+  const create = (out: string) => ['audience', 'create', '--out', out, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', join(dir, 'pois.json'), '--count', '4'];
+  cli(...create(file), '--segments', segments);
+  const saved = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(
+    saved.audience.segments.map((s: Record<string, unknown>) => [s.id, s.name, s.share, s.mobile_share, s.patience, s.tech_skill, s.usage_frequency, s.typical_goals, s.goal_override, s.role]),
+    [
+      ['seg-1', 'Admins', 75, 0, [2, 4], [1, 5], 'weekly', ['Pick a plan'], null, null],
+      ['seg-2', 'Members', 25, 0.25, [1, 5], [1, 5], 'daily', ['Pick a plan'], null, null],
+    ],
+  );
+  assert.deepEqual(saved.personas.map((p: { segment_id: string }) => p.segment_id).sort(), ['seg-1', 'seg-1', 'seg-2', 'seg-2']);
+  assert.equal(saved.personas.some((p: { segment_id: string; device: string }) => p.segment_id === 'seg-1' && p.device === 'mobile'), false, 'a mobile share of 0 puts nobody on a phone');
+
+  // Refused before a persona is written or a file left: both sources of segments, the analytics flag by mistake, and a file that is not segments.
+  const wrong = join(dir, 'wrong-segments.json');
+  writeFileSync(wrong, JSON.stringify([{ name: 'Admins', share: 1, mobile: 0 }]));
+  const unwritten = join(dir, 'never-written.json');
+  for (const [args, message] of [
+    [['--segments', segments, '--propose'], /pass one of them/],
+    [['--segment', segments], /--segments <segments\.json>, not --segment/],
+    [['--segments', wrong], /description[\s\S]*"mobile"|"mobile"[\s\S]*description/],
+    [['--segments', join(dir, 'pois.json')], /"name", "description", "share"/],
+  ] as const) {
+    const refused = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), ...create(unwritten), ...args, '--fake-llm'], { encoding: 'utf8' });
+    assert.equal(refused.status, 1, args.join(' '));
+    assert.match(refused.stderr, message);
+    assert.equal(existsSync(unwritten), false);
+  }
+});
+
+test('project create sets a project up as run does and starts no run, and --app puts it where the desktop app lists its projects', () => {
+  const pois = join(dir, 'pois.json');
+  const file = join(dir, 'for-project.json');
+  cli('audience', 'create', '--out', file, '--name', 'Acme', '--goal', 'Pick a plan', '--pois', pois, '--count', '2');
+  const last = (stdout: string) => JSON.parse(stdout.trim().split('\n').at(-1)!);
+  const project = join(dir, 'created');
+  assert.deepEqual(last(cli('project', 'create', '--pois', pois, '--audience', file, '--project', project, '--json')), { kind: 'project', project, name: 'Acme', app: false, pois: 1, personas: 2, written: 0, cost_usd: 0 });
+  const store = openProject(project, { readOnly: true });
+  assert.deepEqual([store.getProject()?.goal, store.getProject()?.pois.map((poi) => poi.name), store.listPersonas().length, store.listRuns().length], ['Pick a plan', ['Pricing'], 2, 0]);
+  store.close();
+  assert.match(cli('run', '--pois', pois, '--audience', file, '--settings', join(dir, 'settings.json'), '--project', project), /run\.started r-0001/, 'the first run of the folder is a later run --project');
+
+  const fails = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'project', 'create', '--pois', pois, '--audience', file, ...args, '--fake-llm'], { encoding: 'utf8' });
+  assert.match(fails('--project', project).stderr, /already exists\. Name a new folder/);
+  for (const args of [[], ['--project', join(dir, 'both'), '--app']]) {
+    const refused = fails(...args);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /needs --project <dir> or --app, and only one of them/);
+  }
+  writeFileSync(join(dir, 'no-file.json'), JSON.stringify([{ type: 'text', path: 'missing.md' }]));
+  const half = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'project', 'create', '--pois', join(dir, 'no-file.json'), '--goal', 'Pick a plan', '--project', join(dir, 'half'), '--fake-llm'], { encoding: 'utf8' });
+  assert.equal(half.status, 1);
+  assert.equal(existsSync(join(dir, 'half')), false, 'a project that could not be set up leaves no folder behind');
+
+  // Electron's userData is the app's package name under the platform's app-data folder: the home folder on macOS, these variables elsewhere.
+  const home = join(dir, 'home');
+  const env = { ...process.env, HOME: home, APPDATA: home, XDG_CONFIG_HOME: home };
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'cli.ts'), 'project', 'create', '--pois', pois, '--audience', file, '--name', 'Acme for the app', '--app', '--fake-llm', '--json'], { encoding: 'utf8', env });
+  assert.equal(result.status, 0, result.stderr);
+  const inApp = last(result.stdout);
+  assert.deepEqual([inApp.kind, inApp.name, inApp.app, inApp.personas, inApp.written], ['project', 'Acme for the app', true, 2, 2], 'another name writes the personas again, for this project alone');
+  const app = JSON.parse(readFileSync(join(import.meta.dirname, '../../app/package.json'), 'utf8'));
+  assert.ok(inApp.project.startsWith(home));
+  assert.ok(dirname(inApp.project).endsWith(join(...app.name.split('/'), 'projects')), inApp.project);
+  assert.match(basename(inApp.project), /^[\w-]+\.gnomi$/, 'the folder names the app lists');
+  assert.deepEqual(JSON.parse(readFileSync(join(inApp.project, 'project-name.json'), 'utf8')), { name: 'Acme for the app' });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).product.name, 'Acme', 'the audience file stays what it was written for');
+});
+
 test('--settings routing for one role keeps the default for the others, and a role without a provider and model is refused', () => {
   const settings = join(dir, 'navigator.json');
   writeFileSync(settings, JSON.stringify({ routing: { navigator: { provider: 'openai', model: 'gpt-6-luna' } } }));
@@ -575,6 +653,16 @@ test("the skill's --also-model commands name a priced model that reads images, s
   const models = [...skill.matchAll(/^npm run .* --also-model (\w+):(\S+)/gm)].map(([, provider, model]): ModelChoice => ({ provider: provider as ProviderId, model: model! }));
   assert.equal(models.length, 2);
   for (const model of models) assert.ok(readsImages(model) && isPriced(model), model.model);
+});
+
+test("the skill's segments example is a file --segments takes", () => {
+  const skill = readFileSync(join(import.meta.dirname, '../../.claude/skills/gnomi/SKILL.md'), 'utf8');
+  const example = JSON.parse(skill.match(/### Segments from a file[\s\S]*?```json\n([\s\S]*?)```/)![1]!);
+  const everyone = defaultAudience({ name: 'Acme', role: null, goal: 'Pick a plan' }).segments[0]!;
+  assert.deepEqual(
+    segmentsFrom(example, everyone).map((s) => [s.name, s.share, s.mobile_share, s.patience, s.usage_frequency]),
+    [['Hiring managers', 71, 0, [1, 5], 'weekly'], ['Occasional interviewers', 29, 0, [1, 3], 'rarely']],
+  );
 });
 
 test('--repeat, --repeats and --also-model refuse what cannot work, before anything runs', () => {

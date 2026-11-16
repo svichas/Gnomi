@@ -2,14 +2,15 @@
 // The project work is the app's own (workspace.ts); provider keys come from the environment, e.g. ANTHROPIC_API_KEY.
 // With --json every stdout line is one JSON object and the last is the command's result, for agents (.claude/skills/gnomi/SKILL.md).
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultAudience, diversityReport, MAX_PERSONAS, personasToWrite, proposeAudience, syncPersonas } from './audience/index.ts';
 import { applyAnalytics } from './audience/analytics.ts';
 import { readAudienceFile, writeAudienceFile, type AudienceFile } from './audience/file.ts';
 import { groundSegment, readSources, sourceOf, sourcesNotice, SOURCES_BUDGET_USD } from './audience/ground.ts';
+import { segmentsFrom } from './audience/segments.ts';
 import { askPersona, audienceDeps, BRIEF_SET, briefedRerun, cappedGateway, checkRun, compareRuns, credential, editFinding, estimateFor, finishedRun, KEYS, launchRun, modelRun, planStudy, projectGateway, recordOutcome, repeatReports, repeatRuns, rerunProject, returningPrior, rewriteReport, runPersonas, runRoles, runSet, type AddedPost, type BriefRequest, type Secrets } from './workspace.ts';
 import { BRIEF_MAX } from '@gnomi/simulation/agent/prompt.ts';
 import { INTERVIEW_LABEL, QUESTION_MAX, QUESTION_WARNING } from '@gnomi/simulation/agent/interview.ts';
@@ -37,7 +38,8 @@ import type { Audience, GnomiEvent, ModelChoice, Persona, PersonaProgress, Perso
 
 const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
   audience create --out <audience.json> --goal "<goal>" [--name <product>] [--product "<what personas know about it>"]
-      [--pois <pois.json> | --url <url>] [--count <n>] [--propose] [--settings <settings.json>] [--fake-llm]
+      [--pois <pois.json> | --url <url>] [--count <n>] [--propose | --segments <segments.json>] [--settings <settings.json>] [--fake-llm]
+      --propose asks the model for the segments and --segments reads them from a file; with neither there is one segment, Everyone.
   audience update <audience.json> [--settings <settings.json>] [--fake-llm]
       writes the personas again where the file's audience or product was edited; the rest are kept
   audience analytics <audience.json> --file <csv> [--segment <id>] [--dry-run]
@@ -48,6 +50,10 @@ const USAGE = `Usage (node engine/src/cli.ts, or npm run gnomi --):
       remarks, with one persona_writer call, refused if it could cost more than --budget ($${SOURCES_BUDGET_USD} by default). Emails and phone numbers
       are removed first; names and other details are not, and the text goes to your model provider. The files are not kept.
   personas <audience.json> [--id <persona id>]
+  project create (--pois <pois.json> | --url <url> [--allow host1,host2]) (--project <dir> | --app) [--audience <audience.json>]
+      [--goal "<goal>"] [--name <product>] [--product "<what personas know about it>"] [--settings <settings.json>] [--fake-llm]
+      sets a project up as run does, with its points of interest and the audience's personas, and starts no run. --app puts it
+      among the desktop app's projects, to review and run there; --project names a new folder. A failure leaves no folder behind.
   estimate (--pois <pois.json> | --url <url>) [--audience <audience.json>] [--goal "<goal>"] [--settings <settings.json>]
       [--repeats <n>] [--also-model <provider:model>] [--also-trait-free] [--what-if "<post text>" [--what-if-round <n>]]
   estimate <project dir> --base <run id> [--repeats <n> | --persona <persona id> --brief "<text>"] [--returning]
@@ -110,6 +116,9 @@ Every command takes --json: one JSON object per stdout line, the last being the 
 design frame "path" instead of "asset": the file is imported. Ids, names and the web defaults are filled in when left out.
 A POI may carry "task" (its own task, replacing --goal while personas are on it) and "context" (what the setup implies:
 who they are logged in as, what words mean, what is placeholder, what happened off screen).
+--segments is a JSON array of segments, each with "name", "description" and "share"; "mobile_share" (0 to 1), "patience" and
+"tech_skill" ([min, max], 1 to 5), "usage_frequency", "typical_goals", "account_state", "entry", "goal_override" and "kind" are
+optional and start from the Everyone segment. Shares are scaled to sum to 100.
 --settings is a JSON object of run settings (routing, rounds, budgets…) laid over the defaults.
 Keys come from ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY or DEEPSEEK_API_KEY; --fake-llm calls no model.`;
 
@@ -124,8 +133,10 @@ const OPTIONS = {
   product: { type: 'string' },
   count: { type: 'string' },
   propose: { type: 'boolean', default: false },
+  segments: { type: 'string' },
   settings: { type: 'string' },
   project: { type: 'string' },
+  app: { type: 'boolean', default: false },
   id: { type: 'string' },
   run: { type: 'string' },
   base: { type: 'string' },
@@ -391,6 +402,9 @@ async function writeAudience(path: string, previous: AudienceFile | null, config
 
 async function createAudienceFile(v: Values): Promise<void> {
   if (!v.out || !v.goal) throw new Error(`audience create needs --out and --goal.\n\n${USAGE}`);
+  if (v.propose && v.segments) throw new Error('--segments names the segments, which leaves --propose nothing to propose: pass one of them.');
+  // --segment belongs to analytics and sources; taken for --segments, the file would be dropped and the audience one segment, in silence.
+  if (v.segment) throw new Error('audience create reads segments from --segments <segments.json>, not --segment.');
   const { out: path } = v;
   const count = v.count === undefined ? undefined : Number(v.count);
   if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > MAX_PERSONAS)) throw new Error(`--count must be a whole number from 1 to ${MAX_PERSONAS}.`);
@@ -413,6 +427,7 @@ async function createAudienceFile(v: Values): Promise<void> {
       spent = proposed.cost_usd;
       note(`Proposed ${audience.segments.length} segments: ${audience.segments.map((s) => `${s.name} (${s.share}%)`).join(', ')}`);
     }
+    if (v.segments) audience = { ...audience, segments: segmentsFrom(readJson(v.segments, 'Segments file'), audience.segments[0]!) };
     if (count) audience = { ...audience, persona_count: count };
     await writeAudience(path, previous, { ...config, audience, persona_schema }, store, llm, spent);
   });
@@ -596,6 +611,17 @@ async function runPlanned(dir: string, store: ProjectStore, record: Recorder, pl
 }
 
 /** A flag nobody can act on here would pass for a run with memory. */
+/** Puts the audience file's personas in the project, writing again those this project's name, description or goal made stale. */
+async function storeFilePersonas(store: ProjectStore, config: ProjectConfig, file: AudienceFile, record: Recorder, fake: boolean) {
+  const llm = projectGateway({ fake, secrets: envSecrets, config, record });
+  const { personas, cost_usd } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
+  const written = rewritten(file.personas, personas);
+  // Not saved back: the file stays what it was written for.
+  if (written) note(`${written} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
+  store.replacePersonas(personas, file.audience.persona_count);
+  return { personas, written, cost_usd };
+}
+
 function refuseReturning(v: Values) {
   if (v.returning) throw new Error('--returning needs a run to remember: use rerun, or estimate with --base.');
 }
@@ -618,14 +644,7 @@ async function runSimulation(v: Values): Promise<void> {
     store.saveProject(config);
     note(`Project folder: ${dir}`);
     const record = timeline(store);
-    if (file) {
-      const llm = projectGateway({ fake, secrets: envSecrets, config, record });
-      const { personas } = await syncPersonas(file.audience, file.personas, audienceDeps(store, config, llm, { emit: progressLine() }));
-      const again = rewritten(file.personas, personas);
-      // Not saved back: the file stays what it was written for.
-      if (again) note(`${again} of ${personas.length} personas were written again for this product. Run "audience create" with the same --name, --product and --goal to keep them in the file.`);
-      store.replacePersonas(personas, file.audience.persona_count);
-    }
+    if (file) await storeFilePersonas(store, config, file, record, fake);
     const personas = planned.map((run) => checkRun(store, run.config, { reset: false, fake, secrets: envSecrets }))[0]!;
     const estimated = estimateFor(config, personas, repeats, also, v['also-trait-free'], whatIf);
     warnFewPairs(whatIf, repeats);
@@ -634,6 +653,49 @@ async function runSimulation(v: Values): Promise<void> {
   } finally {
     store.close();
   }
+}
+
+// The desktop app's package name: Electron keeps the app's data, its projects among it, in a folder of that name.
+const APP_NAME = '@gnomi/app';
+
+/** Where the desktop app lists its projects from. The engine never imports Electron, so its userData path is rebuilt here. */
+function appProjects(): string {
+  const data = process.platform === 'darwin' ? join(homedir(), 'Library', 'Application Support')
+    : process.platform === 'win32' ? process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
+    : process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+  return join(data, ...APP_NAME.split('/'), 'projects');
+}
+
+/** The setup of a run with no run: for a person to review and start in the app, or for a later run --project. */
+async function createProject(v: Values): Promise<void> {
+  if (v.app === !!v.project) throw new Error(`project create needs --project <dir> or --app, and only one of them.\n\n${USAGE}`);
+  const file = v.audience ? readAudienceFile(v.audience) : null;
+  const fake = v['fake-llm'];
+  const settings = settingsFrom(v);
+  // The app lists only the folders named as its own are, an id and ".gnomi", directly in its library.
+  const dir = v.app ? join(appProjects(), `${randomUUID()}.gnomi`) : resolve(v.project!);
+  // A new folder only, so a failure can take back everything it made.
+  if (existsSync(dir)) throw new Error(`${dir} already exists. Name a new folder, or add a run to a project there with "run --project".`);
+  const store = openProject(dir);
+  try {
+    const config = configFor(v, file, await poisFrom(v, createFsBlobStore(dir)), settings);
+    // Before the project is saved: personas written for another name, description or goal cost model calls here.
+    if (file && personasToWrite({ ...config, audience: file.audience }, file.personas)) requireKey(settings, 'persona_writer', fake);
+    store.saveProject(config);
+    const { personas, written, cost_usd } = file ? await storeFilePersonas(store, config, file, timeline(store), fake) : { personas: [], written: 0, cost_usd: 0 };
+    // The name file is what the app's own "New project" leaves beside the database.
+    if (v.app) writeFileSync(join(dir, 'project-name.json'), JSON.stringify({ name: config.name }));
+    out(
+      `Project "${config.name}" is in ${dir}: ${config.pois.length} ${config.pois.length === 1 ? 'point' : 'points'} of interest, ${personas.length} personas (${written} written, $${cost_usd.toFixed(4)}), no run.${v.app ? " It is in the desktop app's project list." : ''}`,
+      { kind: 'project', project: dir, name: config.name, app: v.app, pois: config.pois.length, personas: personas.length, written, cost_usd },
+    );
+  } catch (err) {
+    store.close();
+    // A half-made project would sit in the app's list, or pass for a project to a later run.
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  store.close();
 }
 
 /** --url poi_id=url, as many as there are POIs to move. */
@@ -914,6 +976,7 @@ async function main(): Promise<void> {
   if (command === 'audience' && sub === 'analytics') return audienceAnalytics(values, target);
   if (command === 'audience' && sub === 'sources') return audienceSources(values, target);
   if (command === 'personas') return listPersonas(values, sub);
+  if (command === 'project' && sub === 'create') return createProject(values);
   if (command === 'estimate') return values.base ? estimateRerun(values, sub) : estimate(values);
   if (command === 'run') return runSimulation(values);
   if (command === 'runs') return listRuns(sub);

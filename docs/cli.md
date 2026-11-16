@@ -12,11 +12,12 @@ Run `npm run gnomi` with no command for every option. [Development](development.
 
 | Command | Purpose |
 | --- | --- |
-| `audience create` | Write an audience and its personas to a file. `--propose` asks the model for segments. |
+| `audience create` | Write an audience and its personas to a file. `--propose` asks the model for segments, and `--segments <file.json>` reads them from a file. |
 | `audience update` | Write personas again after editing the file's segments or count. |
 | `audience analytics` | Set segment, device, country and language shares from an analytics CSV. No model calls. |
 | `audience sources` | Condense interview notes or support tickets into a segment's goals, vocabulary and objections. |
 | `personas` | List an audience's personas, or show one with `--id`. |
+| `project create` | Set a project up with its points of interest and personas, and start no run. `--app` puts it among the desktop app's projects, to review and run there. |
 | `estimate` | Estimate cost and time before a run. |
 | `run` | Run the audience against `--url` or a `--pois` file and write the report into `--project`. |
 | `runs` | List a project's runs. |
