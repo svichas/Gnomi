@@ -1,6 +1,6 @@
 ---
 name: gnomi
-description: Run Gnomi social simulations from the terminal - build an audience of simulated personas, estimate the cost, run them against a staging web app, text or design images, and read the friction report. Use when asked to test a product, page, copy or design with simulated users, to create or edit personas, or to read a Gnomi report.
+description: Run Gnomi social simulations from the terminal - build an audience of simulated personas, estimate the cost, run them against a staging web app, text or design images, and read the friction report, or set a project up for someone to run in the Gnomi desktop app. Use when asked to test a product, page, copy or design with simulated users, to set up a Gnomi study or project, to create or edit personas, or to read a Gnomi report.
 ---
 
 # Gnomi from the CLI
@@ -16,7 +16,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
    ```bash
    npm run -s gnomi -- audience create --out audiences/acme.json --name Acme --product "An applicant tracking system for recruiters. Users are logged in; only admins can buy credits." --goal "What people should try to do" --pois pois.json --count 20 --propose --json
    ```
-   `--propose` asks the model for segments that fit the product; without it there is one "Everyone" segment. Writing personas costs model calls; the result line gives `cost_usd`.
+   `--propose` asks the model for segments that fit the product; without it there is one "Everyone" segment. When you or the user already know who uses the product, pass `--segments segments.json` instead ([Segments from a file](#segments-from-a-file)): it costs no proposal call and leaves nothing to edit and write again. Writing personas costs model calls; the result line gives `cost_usd`.
 3. **Estimate** before running, and tell the user the cost range:
    ```bash
    npm run -s gnomi -- estimate --pois pois.json --audience audiences/acme.json --json
@@ -26,7 +26,7 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
    ```bash
    npm run -s gnomi -- run --pois pois.json --audience audiences/acme.json --project runs/acme --json > runs/acme.log 2>&1
    ```
-   Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"` (`"kind":"repeats"` for a [repeat set](#repeat-runs)), or when the process has exited with an error on stderr.
+   Check on it by reading the last lines of the log. It is done when the last line has `"kind":"run"` (`"kind":"repeats"` for a [repeat set](#repeat-runs)), or when the process has exited with an error on stderr. When the user wants to start the run themselves in the desktop app, set the project up there instead ([A project for the desktop app](#a-project-for-the-desktop-app)).
 5. **Read the result.** The `run` line carries a `summary`: completion, friction rate, each POI's top five themes, sentiment by segment, cost. A rate is `null`, not 0, when nobody it covers started (for example a segment a stopped run never reached). Read `report_md` only for the detail behind a theme (quotes, evidence, suggested changes). Screenshot paths are in `report_json` if you need to look at what a persona saw: each theme's `pictures` give one screenshot per page it was met on, with `box` when the element shows.
 
 ## Points of interest
@@ -48,6 +48,18 @@ Always pass `--json`: every stdout line is then one JSON object, and **the last 
 
 Paths are relative to the POI file. Logins cannot be recorded from the CLI: web runs are logged out, and an audience whose segments name a `role` is refused.
 
+### Design frames
+
+A persona is told the POI's name, sees one frame at a time with its name and the frame before it, and says what they would do and what they expect next. The next frame is then checked against that, and a mismatch is a friction. So how the frames are cut, ordered and named decides what a run can find.
+
+- **Keep text readable.** A PNG over 1,024 px on its long side is shrunk before the model sees it. Crop to the part that matters (a drawer, a dialog, a panel) at its real size and not a whole 1,440 px screen, and cut a long scrolling screen between its sections into frames named "…, scrolled down".
+- **One POI is one path.** Order the frames as someone would meet them, and name each with what happened before it: "Add evaluation drawer, after clicking Insert".
+- **A branch gets its own POI.** A step a persona would not pick unprompted (Dismiss, when Insert is the obvious next click) reads as a mismatch in the main path. Give it a POI named for the action ("Dismissing the draft") that starts from the frame it branches from.
+- **Alternatives get their own project.** Two designs of one screen, such as a current and a redesigned version, belong in separate projects with the same audience: every persona goes through all of a project's POIs in order, and one who has seen the first version reads the second differently.
+- **Match each frame to its step.** A mock-up often shows a later state, such as a rating already picked. Use the frame that shows what the product does at that step, or name the step it really shows.
+- **Do not explain the design.** Leave out of `--product`, `--goal`, `task` and `context` whatever the screens are meant to make clear. `context` is for what no screen can show.
+- For screens made for a computer, give every segment `"mobile_share": 0`: a persona on a phone is told these are phone screens.
+
 ## Personas
 
 - `personas <audience.json> --json` lists them: one `persona` line each (id, name, segment, job title, device, country, tech skill, patience, `current`), then a total.
@@ -59,6 +71,37 @@ Paths are relative to the POI file. Logins cannot be recorded from the CLI: web 
 - **Analytics.** `audience analytics <audience.json> --file export.csv [--segment <id>] [--dry-run] --json` sets numbers from a CSV export with no model call. The file needs a count column (`users`, `total users`, `active users` or `sessions`) and any of `country`, `language`, `device` or `device category`, and `segment`, whose values must match segment names. With a `segment` column it sets `share`, `mobile_share`, `countries` and `languages` for each segment it names, and a segment it does not name keeps its share. Without one, `--segment` names the segment it describes, and shares stay. The last line has `changes`, `skipped` (values it could not map, which it never guesses) and `stale`, the personas that `audience update` would write again. Use `--dry-run` to read the changes first. The file is not copied: only its name and hash go into the segment's `grounding.sources`.
 - **Research notes.** `audience sources <audience.json> --segment <id> --file notes.md [--file tickets.txt] [--budget <usd>] --json` condenses `.md` or `.txt` files into `grounding` on that segment: at most 8 `facts` and 5 `remarks`, the remarks word for word from the text. It is one `persona_writer` call. Ask the user first: emails and phone numbers are removed, but **names and other details are not, and the text goes to their model provider**. A `note` says so before the call. It is refused if it could cost more than `--budget` (default $1), and a failure leaves the file as it was. The last line has `kind: "sources"` with `facts`, `remarks`, `dropped` (remarks not found word for word), `sources`, `cost_usd` and `stale`. The files are not kept, and a new digest replaces the last. Run `audience update` afterwards to write that segment's personas. Advise keeping some interviews back for a study, because data used to write personas cannot also test them. Grounded personas are still fictional, and their findings are still hypotheses.
 - A run reuses the file's personas while they are current for the product name, description and goal. Passing a different `--goal`, `--name` or `--product` to `run` writes them again for that run only (a `note` says so) and costs model calls; re-run `audience create` with the new values to keep them.
+
+### Segments from a file
+
+`audience create --segments segments.json` takes the segments from a JSON array and makes no proposal call. Use it when the user names the groups, or when the product makes them plain:
+
+```json
+[
+  { "name": "Hiring managers", "description": "Managers who interview for their own team and add an evaluation every week.", "share": 50, "mobile_share": 0 },
+  { "name": "Occasional interviewers", "description": "People who interview a few times a quarter and rarely open the product.", "share": 20, "mobile_share": 0, "usage_frequency": "rarely", "patience": [1, 3], "tech_skill": [1, 3] }
+]
+```
+
+- `name`, `description` and `share` are required. Shares are weights: they are scaled to whole percents that sum to 100, so 50 and 20 become 71 and 29.
+- Optional, each starting from the Everyone segment: `mobile_share` (0–1, default 0.25), `patience` and `tech_skill` (`[min, max]`, 1–5, default the full range), `usage_frequency` (daily, weekly, monthly, rarely or never; default weekly), `typical_goals` (default the goal), `account_state` (empty or populated), `entry` (direct, email_link or shared_link), `goal_override` and `kind`. An unknown field is refused, and so is `--propose` with it.
+- Define a segment by what its people do with the product (role, how often, what they come for, device), never by age, gender, nationality or disability: language and accessibility needs are sampled across everyone.
+- Each segment gets at least 3 personas when the count allows, so a small `--count` over several segments drifts from the shares: 10 personas over shares of 50, 30 and 20 come out as 4, 3 and 3.
+- To change segments later, edit the audience file and run `audience update`, as above.
+
+## A project for the desktop app
+
+When the user wants to look a study over and start it themselves in the Gnomi app, set the project up there and run nothing:
+
+```bash
+npm run -s gnomi -- project create --pois pois.json --audience audiences/acme.json --name "Acme checkout" --app --json
+```
+
+- It does what `run` does before a run: the POI files are imported, the project is saved with the goal and settings, and the audience's personas are put in it. The last line has `kind: "project"` with `project` (the folder), `name`, `app`, `pois`, `personas`, `written` and `cost_usd`.
+- `--app` puts the folder among the app's own projects, where its project list shows it the next time it opens. `--project <dir>` names a new folder instead, for a later `run --project`. Pass one of them. A folder that exists is refused, and a failure leaves no folder behind.
+- The project is called `--name`, or else the audience file's product name, and the app lists projects by that name alone. A `--name`, `--product` or `--goal` other than the file's writes the personas again for this project (`written`, `cost_usd`, and a `note`): the sampled traits stay, the names and backgrounds change. So several projects on one audience either share a name or each get their own wording of the same people. Tell the user which.
+- It starts no run and prices nothing. Run `estimate` with the same `--pois` and `--audience` first and give the user the range. The app runs on the keys saved in its own Settings, not on the shell's.
+- No command deletes or changes an app project. To redo one, ask the user to delete it in the app, then create it again.
 
 ## Repeat runs
 
